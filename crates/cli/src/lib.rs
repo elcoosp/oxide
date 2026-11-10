@@ -3,7 +3,8 @@
 //! oxide-fw-cli — clap entry, commands (spec §19.1).
 //!
 //! Commands: dev, build, start, preview, routes, analyze, check, why, doctor,
-//! add, generate, cache, audit, migrate, test (in-process app.fetch helper).
+//! secrets, add, generate, cache, audit, migrate, test (in-process
+//! app.fetch helper), mcp, schema, config, render, perf (§V2-F18 bisect).
 
 use clap::{Parser, Subcommand};
 use oxide_fw_jshost::loader_host::ActionRunArgs;
@@ -37,6 +38,7 @@ use std::path::{Path, PathBuf};
 
 mod audit;
 pub mod mcp;
+pub mod perf_bisect;
 mod native_plugins;
 
 mod build_cache;
@@ -273,8 +275,18 @@ pub enum Command {
         #[arg(long)]
         stream: bool,
     },
+    /// Performance tooling (§V2-F18): `oxide perf bisect` hunts the commit
+    /// that regressed a metric between two revisions.
+    Perf {
+        /// Project directory (default: cwd).
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[command(subcommand)]
+        op: PerfOp,
+    },
 }
 
+/// `oxide cache` operations (§19.1).
 #[derive(Debug, Subcommand)]
 pub enum CacheOp {
     Inspect,
@@ -287,6 +299,31 @@ pub enum CacheOp {
         idle_secs: u64,
         #[arg(long, default_value_t = 1024 * 1024 * 1024)]
         max_bytes: u64,
+    },
+}
+
+/// `oxide perf` subcommands (§V2-F18).
+#[derive(Debug, Subcommand)]
+pub enum PerfOp {
+    /// Bisect a performance regression: build each commit in `good..bad`
+    /// (first-parent) in a git worktree under `.oxide/bisect/` and report
+    /// the first one whose metric exceeds the good baseline by more than
+    /// the threshold. All candidates share the project's cache via
+    /// `OXIDE_CACHE_DIR` so rebuilds are incremental.
+    Bisect {
+        /// Known-good revision (an ancestor of `bad`).
+        good: String,
+        /// Known-bad revision (the descendant that shows the regression).
+        bad: String,
+        /// What to measure: build-ms, client-js-bytes or ttfb-ms.
+        #[arg(long, value_enum, default_value = "build-ms")]
+        metric: perf_bisect::Metric,
+        /// Regression threshold: a non-negative percentage (`10%` or `10`).
+        #[arg(long, default_value = "10%")]
+        threshold: String,
+        /// Measurements per candidate; the median is what compares.
+        #[arg(long, default_value_t = 3)]
+        runs: usize,
     },
 }
 
@@ -411,7 +448,8 @@ impl Command {
             | Command::Test { root, .. }
             | Command::Mcp { root, .. }
             | Command::Config { root, .. }
-            | Command::Render { root, .. } => root.as_str(),
+            | Command::Render { root, .. }
+            | Command::Perf { root, .. } => root.as_str(),
             Command::Schema => return None,
         })
     }
@@ -570,6 +608,15 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             data,
             stream,
         } => cmd_render(&root, &route, url.as_deref(), &params, &data, stream, w).await,
+        Command::Perf { root, op } => match op {
+            PerfOp::Bisect {
+                good,
+                bad,
+                metric,
+                threshold,
+                runs,
+            } => cmd_perf_bisect(&root, &good, &bad, metric, &threshold, runs, w).await,
+        },
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
@@ -7885,7 +7932,7 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(1024 * 1024 * 1024);
-        let cache_dir = rootp.join(".oxide/cache");
+        let cache_dir = perf_bisect::cache_dir_for(&rootp);
         if cache_dir.is_dir() {
             let mut files = Vec::new();
             walk_files(&cache_dir, &mut files);
@@ -12975,6 +13022,108 @@ async fn cmd_why_route(root: &str, route_id: &str, w: Writer<'_>) -> anyhow::Res
     Ok(0)
 }
 
+/// `oxide perf bisect` (§V2-F18): find the first commit in the first-parent
+/// `good..bad` range whose metric regresses past the threshold. Candidates
+/// build in git worktrees under `.oxide/bisect/`, all sharing the project's
+/// cache via `OXIDE_CACHE_DIR`; the median of `--runs` measurements is what
+/// the spec-verbatim search compares. Probe failures surface as `PERF-*`
+/// diagnostics with a fix line.
+async fn cmd_perf_bisect(
+    root: &str,
+    good: &str,
+    bad: &str,
+    metric: perf_bisect::Metric,
+    threshold: &str,
+    runs: usize,
+    w: Writer<'_>,
+) -> anyhow::Result<i32> {
+    let _span = tracing::info_span!(
+        "cli_perf_bisect",
+        good = %good,
+        bad = %bad,
+        metric = metric.label()
+    )
+    .entered();
+    let rootp = PathBuf::from(root);
+    let threshold_pct = perf_bisect::parse_threshold_pct(threshold)
+        .map_err(|e| anyhow::Error::new(e.diagnostic()))?;
+
+    let out = std::process::Command::new("git")
+        .args(perf_bisect::rev_list_args(good, bad))
+        .current_dir(&rootp)
+        .output()
+        .map_err(|e| {
+            anyhow::Error::new(
+                perf_bisect::BisectError::git_spawn_error("rev-list", &e).diagnostic(),
+            )
+        })?;
+    if !out.status.success() {
+        return Err(anyhow::Error::new(
+            perf_bisect::BisectError::GitFailure {
+                context: "rev-list".to_string(),
+                detail: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            }
+            .diagnostic(),
+        ));
+    }
+    let revs = perf_bisect::parse_rev_list_oldest_first(&String::from_utf8_lossy(&out.stdout));
+    if revs.is_empty() {
+        return Err(anyhow::Error::new(
+            perf_bisect::BisectError::EmptyRange {
+                good: good.to_string(),
+                bad: bad.to_string(),
+            }
+            .diagnostic(),
+        ));
+    }
+
+    outln!(
+        w,
+        "bisect {good}..{bad}: {} candidate(s), metric {}, threshold {threshold}, \
+         median of {runs} run(s)",
+        revs.len(),
+        metric.label()
+    );
+    let mut probe = perf_bisect::BuildProbe::new(&rootp, metric);
+    let good_owned = good.to_string();
+    let job = move || -> Result<perf_bisect::BisectOutcome, perf_bisect::BisectError> {
+        let baseline = probe.measure(&good_owned, runs)?;
+        let inner = perf_bisect::find_culprit(&revs, &mut probe, baseline, threshold_pct, runs);
+        Ok((baseline, inner))
+    };
+    let outcome = tokio::task::spawn_blocking(job)
+        .await
+        .map_err(|e| anyhow::anyhow!("the bisect worker panicked: {e}"))?;
+    // The worktrees are best-effort swept whatever the outcome.
+    let _ = std::fs::remove_dir_all(rootp.join(perf_bisect::BISECT_DIRNAME));
+    let (baseline, inner) = outcome.map_err(|e| anyhow::Error::new(e.diagnostic()))?;
+    outln!(w, "baseline {good}: {baseline:.1}");
+    let verdict = inner.map_err(|e| anyhow::Error::new(e.diagnostic()))?;
+    match verdict {
+        None => outln!(
+            w,
+            "no regression: the bad end measures within the +{threshold} limit"
+        ),
+        Some(v) => {
+            outln!(w, "metric series (median of {runs}, limit {:.1}):", v.limit);
+            for (rev, m) in &v.series {
+                outln!(w, "  {rev:<16} {m:>12.1}");
+            }
+            outln!(
+                w,
+                "culprit: {} ({} of {} candidates; {:.1} > limit {:.1}, {} probes)",
+                v.rev,
+                v.index,
+                revs.len(),
+                v.metric,
+                v.limit,
+                v.probes
+            );
+        }
+    }
+    Ok(0)
+}
+
 /// Resolve a `--route` id against the scanned tree. Accepts the canonical
 /// id (`routes/dashboard`) or the directory form without the `routes/`
 /// prefix (`dashboard`).
@@ -13093,14 +13242,18 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let cfg = load_config_or_default(&rootp, "development");
     let routes_ok = rootp.join(&cfg.routes.dir).is_dir() || rootp.join("app").is_dir();
     check(w, routes_ok, "routes directory (src/routes or app/)")?;
-    let cache_dir = rootp.join(".oxide/cache");
+    let cache_dir = perf_bisect::cache_dir_for(&rootp);
     let cache_ok = std::fs::create_dir_all(&cache_dir).is_ok();
     let cache_ok = cache_ok && {
         let probe = cache_dir.join(".oxide-doctor-probe");
 
         std::fs::write(&probe, b"probe").is_ok() && std::fs::remove_file(&probe).is_ok()
     };
-    check(w, cache_ok, "cache directory writable (.oxide/cache)")?;
+    check(
+        w,
+        cache_ok,
+        &format!("cache directory writable ({})", cache_dir.display()),
+    )?;
     // §9.4 / BUG-05: the build secret makes server-fn ids stable across
     // builds. A missing file is fine (the next build creates it); this is
     // an informational check, not a failure.
@@ -13434,9 +13587,10 @@ async fn cmd_generate(root: &str, kind: &str, path: &str, w: Writer<'_>) -> anyh
 }
 
 /// `oxide cache <inspect|clear|stats>` (§19.1): operates directly on the
-/// content-addressed blob directory at `<root>/.oxide/cache`.
+/// effective cache root — the `OXIDE_CACHE_DIR` override or the historical
+/// `<root>/.oxide/cache` (§V2-F18).
 async fn cmd_cache(root: &str, op: CacheOp, w: Writer<'_>) -> anyhow::Result<i32> {
-    let dir = PathBuf::from(root).join(".oxide/cache");
+    let dir = perf_bisect::cache_dir_for(Path::new(root));
     let mut files: Vec<PathBuf> = Vec::new();
     walk_files(&dir, &mut files);
     match op {
