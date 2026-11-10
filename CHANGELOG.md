@@ -8,6 +8,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.13.0] — 2026-11-10
+
+### Added
+
+- **adapters**: The config-key refusal seam (trait + check_config)
+- **adapters**: Wire the refusal seam; the capability-id method
+- **config**: The feature-report mapping over the typed config
+- **config**: Export ProjectFacts and the feature_report surface
+- **cli**: The config-refusal wire-up; the matrix-row presentation
+
+### Chores
+
+- **release**: V0.13.0
+
+### Dependencies
+
+- **deps**: The lock gains the config-to-adapters edge
+
+### Documentation
+
+- **adapters**: The config-refusal walkthrough example
+- **adapters**: The refusal seam and capability ids on the README
+- **config**: Fix the load signature drift; add the refusal seam
+- **deviations**: The R02 config-half record
+- **spec**: Refresh the V2.O row for the R02 config half
+- **architecture**: The refusal half on the adapters row
+- **handoff**: Record the R02 config-half session
+- Re-measure the README test badge for the new pins
+
+### Style
+
+- **adapters**: Retire the pedantic findings in the walkthrough
+
+### Testing
+
+- **config**: The feature-report mapping pins
+- **adapters**: The config-refusal TDD pins
+- **adapters**: The config_refusal criterion bench
+- **adapters**: The capability-id pins; extract the spec table
+- **cli**: The refusal-facts and matrix-row pins
+
+### Build
+
+- **config**: The adapters dependency edge for the refusal seam
+- **adapters**: The bench-util feature and the criterion target
+
 ## [0.12.0] — 2026-11-10
 
 ### Added
