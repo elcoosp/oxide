@@ -78,7 +78,6 @@ fn dockerfile_user_is_on_its_own_line() {
 
 #[test]
 fn dockerfile_every_instruction_starts_its_own_line() {
-    let df = dockerfile(false);
     const KNOWN: &[&str] = &[
         "FROM ",
         "WORKDIR ",
@@ -92,6 +91,7 @@ fn dockerfile_every_instruction_starts_its_own_line() {
         "CMD ",
         "ARG ",
     ];
+    let df = dockerfile(false);
     for line in df.lines() {
         let t = line.trim();
         if t.is_empty() || t.starts_with('#') {
@@ -109,8 +109,8 @@ fn capability_matrix_binary_is_all_full() {
     let m = caps(Target::Binary);
     assert_eq!(
         m.len(),
-        8,
-        "all eight §18 capabilities reported (Live joins in V2-F05)"
+        Capability::ALL.len(),
+        "every §18 capability reported (the v0.2 rows join in V2-R02)"
     );
     for (cap, sup) in &m {
         assert_eq!(*sup, FeatureSupport::Full, "{cap:?} must be Full on binary");
@@ -131,13 +131,34 @@ fn capability_matrix_node_deno_bun_match() {
     let node = caps(Target::Node);
     assert_eq!(caps(Target::Deno), node, "§18: deno = node");
     assert_eq!(caps(Target::Bun), node, "§18: bun = node");
+    // The NodeLike class's Degraded cells (V2-R02 included): snapshots
+    // (code cache), skew/delta/search/brownout/permissions (the worker
+    // runtime's documented limits). RustFns is the class's lone Unsupported
+    // cell — a native binary cannot load in a JS runtime. Everything else
+    // is Full.
+    let degraded: std::collections::HashSet<Capability> = [
+        Capability::Snapshots,
+        Capability::Skew,
+        Capability::DeltaDeploy,
+        Capability::Search,
+        Capability::Brownout,
+        Capability::Permissions,
+    ]
+    .into_iter()
+    .collect();
     for (cap, sup) in &node {
-        if *cap == Capability::Snapshots {
+        if degraded.contains(cap) {
             assert_eq!(
                 *sup,
                 FeatureSupport::Degraded,
-                "node snapshots = degraded (code cache)"
+                "{cap:?} must be Degraded on node (documented reason required)",
             );
+            assert!(
+                degradation(Target::Node, *cap).is_some(),
+                "{cap:?} documents its degradation"
+            );
+        } else if *cap == Capability::RustFns {
+            assert_eq!(*sup, FeatureSupport::Unsupported, "rustFns on node refuses");
         } else {
             assert_eq!(*sup, FeatureSupport::Full, "{cap:?} must be Full on node");
         }
@@ -182,11 +203,11 @@ fn capability_matrix_cloudflare_exact() {
 
 #[test]
 fn capability_matrix_serverless_targets_match() {
+    use Capability::*;
+    use FeatureSupport::*;
     let lambda = caps(Target::Lambda);
     assert_eq!(caps(Target::Vercel), lambda, "§18: vercel = lambda class");
     assert_eq!(caps(Target::Netlify), lambda, "§18: netlify = lambda class");
-    use Capability::*;
-    use FeatureSupport::*;
     let m = capability_matrix(Target::Lambda);
     assert_eq!(m.get(&L0Cache), Some(&Degraded));
     assert_eq!(m.get(&Isr), Some(&Degraded));
@@ -367,7 +388,11 @@ fn emit_refuses_unsupported_capability_naming_target_and_feature() {
         &dir.path().join("d2"),
     )
     .unwrap();
-    assert!(!ok.is_empty());
+    assert_ne!(
+        ok,
+        Vec::<std::path::PathBuf>::new(),
+        "the artifact lists its files"
+    );
     // A degraded capability never refuses.
     let isr = serde_json::json!({ "requires": { "isr": true } });
     emit(
@@ -411,8 +436,7 @@ fn emit_serverless_targets_write_handler_and_configs() {
         let handler = &get("handler.mjs").1;
         assert!(
             handler.contains("b8"),
-            "{:?} handler interpolates build_id",
-            target
+            "{target:?} handler interpolates build_id"
         );
         assert!(handler.contains("Request"), "web-standard wrapper");
         // The handler file sits at a different depth per platform; the
@@ -650,7 +674,7 @@ fn edge_handler_js_is_deterministic_and_contains_build_id() {
 /// P0-1: the edge handler's `mergeHead` must be JS-only. The Rust
 /// `merge_head` merges flat `Vec<(String, String)>` pairs; the edge head
 /// model is structured and deduped per kind. The old wasm path returned
-/// `[]` silently (serde_json deserialize failure swallowed by
+/// `[]` silently (`serde_json` deserialize failure swallowed by
 /// `unwrap_or_default`, then the parse of `"[]"` returned `[]` with no
 /// throw, so the JS fallback never ran). This test ensures the template
 /// cannot regress into that path.
