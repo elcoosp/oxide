@@ -3011,8 +3011,9 @@ Copy into `WORKLOG.md` and update as WPs merge. Status values: `todo`, `doing`, 
 | F06 | merged | #5 | ODF patch deltas (ODP1, policy, client) |
 | F07 | merged | #6 | resumable streams (`stream_store`, reattach route, client) |
 | F12 | merged |  | brownout governor substrate (landed as direct commits) |
-| F16 | doing |  | the Rust substrate (engine, OX-DYN diagnostics, `why --route`, reasons side-car) lands in the why-dynamic milestone; the `--fix` codemods are deferred — see `docs/deviations.md` |
-| F01, F02, F08 to F11, F13 to F15, F17 to F20 | todo |  |  |
+| F16 | merged |  | the why-dynamic substrate (reason engine, OX-DYN diagnostics, `why --route`, reasons side-car) landed in v0.6.1; the `--fix` codemods are deferred — see `docs/deviations.md` |
+| F18 | merged |  | the performance-bisect substrate — the spec-verbatim `bisect` search, the injectable `Probe` seam (median-of-`runs`, `ceil(log2(n))+1` acceptance bound), `oxide perf bisect` (git worktree candidates, shared `OXIDE_CACHE_DIR`), the `PERF-*` diagnostics, the criterion bench and the consumer example |
+| F01, F02, F08 to F11, F13 to F15, F17, F19, F20 | todo |  |  |
 | E01 to E13 | todo |  |  |
 | R01, R03 to R06 | todo |  |  |
 

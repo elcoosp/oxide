@@ -34,8 +34,19 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), update boundaries, inspector model (§13.4), prebundle keys | §13 |
 | `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
-| `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/add/generate/cache/audit/migrate/test; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json` | §19, V2-F16 |
+| `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
+| `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`) | §19, §V2-F16, §V2-F18 |
 ## What changed since 2026-10-12
+
+- **`cli` (the cache root + `perf`)**: the performance-bisect substrate
+  (V2-F18) — `perf_bisect` (`Metric` build-ms/client-js-bytes/ttfb-ms, the
+  spec-verbatim `bisect` search, the injectable `Probe` seam with the
+  median-of-`runs` contract, the `ceil(log2(n))+1` acceptance bound, the
+  `PERF-*` diagnostics with fix lines) behind `oxide perf bisect`, the
+  criterion bench behind `bench-util`, and the F18 environment row:
+  every cache-root resolution in the CLI (build fingerprints, L1 disk
+  tier, precompile CAS, audit/mcp/doctor/cache surfaces) now honours
+  `OXIDE_CACHE_DIR` so a bisect's candidate worktrees share one cache.
 
 - **`compiler` + `cli` + `diagnostics`**: the why-dynamic substrate
   (V2-F16) — `compiler::infer_reasons` (`DynamicReason`/`ReasonKind`, the
