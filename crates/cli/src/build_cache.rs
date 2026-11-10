@@ -123,7 +123,9 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn fingerprint_path(root: &Path) -> PathBuf {
-    root.join(".oxide/cache/build-fingerprint")
+    // §V2-F18: the cache root honours `OXIDE_CACHE_DIR` so a bisect's
+    // candidate worktrees share the parent checkout's fingerprints.
+    crate::perf_bisect::cache_dir_for(root).join("build-fingerprint")
 }
 
 /// True when the stored fingerprint for `root` equals `fp`.
@@ -219,7 +221,7 @@ pub fn env_fingerprint(
 }
 
 fn env_fingerprint_path(root: &Path, env: &str) -> PathBuf {
-    root.join(format!(".oxide/cache/env-{env}-fingerprint"))
+    crate::perf_bisect::cache_dir_for(root).join(format!("env-{env}-fingerprint"))
 }
 
 /// True when the stored per-env fingerprint equals `fp`.
