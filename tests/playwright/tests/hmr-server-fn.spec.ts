@@ -1,10 +1,9 @@
 // §1.5: editing a plain `.server.ts` body must NOT reload the page.
 //
 // Before: `classify_path("greeting.server.ts")` → `ServerModule` →
-// `ServerSwap` → `HmrMessage::ServerModuleSwap` → client
-// `case 'server-module-swap'` (which shared its arm with `'full-reload'`)
-// → `location.reload()`. So editing a server-fn body lost the user's
-// page state for no benefit.
+// `ServerSwap` → the v0 wire's `server-module-swap` frame, whose client
+// arm shared its shape with `full-reload` → `location.reload()`. So
+// editing a server-fn body lost the user's page state for no benefit.
 //
 // After: same edit still fires `invalidate_framework_modules` on the
 // server (worker generation bump → next call re-imports fresh code),
@@ -136,7 +135,7 @@ test('HMR: plain .server.ts body edit does NOT reload (Tier 1.5)', async ({ page
     writeFileSync(FIXTURE, patched, 'utf8')
   }
 
-  // Wait for at least one WS message (server-module-swap or similar).
+  // Wait for at least one WS message (the swap’s invalidation frame or similar).
   await expect.poll(
     () => frames.length,
     { timeout: 10_000, intervals: [100, 200, 500] },
