@@ -1,3 +1,123 @@
+# Handoff — V2-E01 phase 2 CSS boundary substrate landed (the §13.3 terminal: `plan_classified` + `UpdateKind` + `DEV-HMR-002`, style-graph harvest); substrate authored, Rust gates pending a toolchain
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per
+reviewer-visible intent — for the ship tooling to materialize).
+**Verified this session (no Rust toolchain in the sandbox, per the
+handoff's no-execution constraint):**
+- `cargo fmt/clippy/test/bench` NOT run — same constraint as the E01,
+  F18 and F20 sessions. The pins were authored TDD-first (the
+  `tests/boundary_tdd.rs` phase-2 section before `src/boundary.rs`),
+  import public API only, and every pin is pure and deterministic (paths
+  in, plans out — no I/O, no clocks, no framework runtime). The riskiest
+  surface is the `cmd_dev` StyleSwap tail swap: the planner decision is
+  additive (the emitted `ModuleUpdate`/`CssUpdate` frames are
+  byte-identical; the only new traffic is the `DEV-HMR-002` warning frame
+  for an orphaned in-`src/` stylesheet), the legacy bundler-mode path is
+  untouched, and the harvest change is invisible to JS events (a
+  stylesheet can only terminate a walk that reaches it — JS chains never
+  do).
+- Every edited Rust file was re-parsed with a Rust grammar (tree-sitter,
+  a parser library — not the Rust toolchain) as a syntax smoke check:
+  all eight files parse clean. This is NOT a substitute for
+  `cargo fmt --all --check` / clippy; it only rules out syntax-level
+  breakage before the toolchain host runs the real gates.
+- `grep -rnE '#!?\[(allow|expect)\(|cfg_attr\([^)]*_allow\('` over
+  `src/ crates/ tests/ benches/ examples/ build.rs xtask/` — empty (the
+  zero-allow-escape policy holds; the new files carry no lint escapes
+  either).
+- Doc-drift audit + fixes are IN this diff (see below): the README's
+  v0.9.0 tag drift (two places — the F20 session fixed the v0.8.0 pair
+  and the release commit re-drifted them) plus the 1,750-vs-1,713 badge
+  re-measure (`scripts/count-tests.sh`'s own grep, post-diff).
+
+## What landed
+
+V2-E01's phase-2 CSS boundary substrate from `docs/spec-v0.2-draft.md` (the
+deferred half of the boundary WP whose full surface is pure and V8-free),
+in the F16/F18/F20 substrate pattern:
+
+1. **`boundary.rs` (`crates/dev/src/boundary.rs`):** `UpdateKind` (the
+   §13.3 schema's `kind: 'js'|'css'|'data'` discriminant; `as_str` is the
+   wire spelling the TS client switches on), `update_kind` (the SPEC-14
+   `ChangeKind` → wire-kind bridge), `css_self_accepts` (the
+   extension-level style-injection probe), `plan_classified` +
+   `ClassifiedPlan` (the fan-out's decision function: `ChangeKind` + the
+   `plan` walk in one call, with the §13.3 CSS terminal — a `FullReload`
+   walk for a stylesheet collapses to `Update([changed])`, the swap), and
+   `css_orphan_diagnostic` (`DEV-HMR-002` with the fix help text).
+   `hmr_boundary_classified` tracing spans on the seam. The phase-1
+   surface (`plan` / `source_self_accepts` / `full_reload_diagnostic`) is
+   unchanged.
+2. **CLI wiring (`crates/cli/src/lib.rs`):** `build_hmr_graph` walks
+   `css`/`scss`/`sass` too (stylesheets join the graph; they only receive
+   JS→CSS edges — the specifiers always carry the extension, so
+   exact-path resolution hits) and marks stylesheets self-accepting via
+   the probe; the `cmd_dev` StyleSwap branch (ESM, in-`src/`) routes its
+   decision through `plan_classified` — the emitted frames stay
+   byte-identical, and an orphaned stylesheet publishes the `DEV-HMR-002`
+   warning instead of reload noise. The legacy bundler-mode path is
+   untouched.
+3. **Micro-debt retired:** `HmrMessage::to_json` flattened serialize
+   failures into an empty frame silently (`unwrap_or_default`) — the
+   failure path is now a `tracing::error!`, the fallible `try_to_json`
+   seam exists for callers that must distinguish, and `to_json`'s
+   signature is unchanged (no caller churn). The stale `ModuleUpdate`
+   rustdoc ("v0.1 does a reload ... post-v0.1 track") now describes the
+   landed planner-driven fan-out.
+4. **Bench + example + pins:** three criterion groups behind `bench-util`
+   (`boundary_css_terminal` — the orphan collapse; `boundary_css_edge` —
+   the own-boundary shape; `boundary_classified_js` — the Js control on
+   the 50-deep chain), `crates/dev/examples/css_boundary.rs` (the
+   walkthrough consumer), and 9 phase-2 pins in `tests/boundary_tdd.rs`
+   plus the `try_to_json` unit pin — the Rust test count moves
+   1,740 → 1,750 (`scripts/count-tests.sh`).
+
+**Spec deltas recorded in `docs/deviations.md` (3):** the terminal lives
+in `plan_classified`, not `plan` (the pure function stays spec-verbatim);
+stylesheets receive edges but never emit them (a CSS `@import` chain needs
+no graph edges — the child sheet self-accepts); the orphan-CSS case warns
+(`DEV-HMR-002`) instead of reloading. **Deferred (the rest of E01):** the
+message-schema v1 wire flip (Rust enum + TS client + adapter suites +
+Playwright pins move together), state preservation across boundary swaps,
+the Vue/Solid refresh wiring, and the browser-run CSS acceptance pins.
+
+## Docs drift noted this session
+
+- Fixed in-scope: root `README.md` (the "`v0.8.0` is tagged" note and the
+  "v0.2.0 through v0.8.0" line — v0.9.0 is tagged and CHANGELOG'd; the
+  test-count badge re-measured to 1,750 post-diff via
+  `scripts/count-tests.sh`'s own grep), `docs/architecture.md` (the `dev`
+  row + the phase-2 what-changed bullet), `docs/deviations.md` (the
+  phase-2 record), the spec's V2.O table (the E01 row),
+  `crates/dev/README.md` (the provides list gains the classified-planner
+  surface), and `HANDOFF.md` itself (this header).
+- Noted for the doc owners (carried, unchanged): the `packages/*/
+  package.json` versions remain at 0.6.1 while the workspace is 0.9.0
+  (the `scripts/bump-version.sh` drift guard still refuses to run — a
+  `chore(packages)` sync should ride the next release commit, as the F20
+  handoff already recorded); README's TypeScript badge (458/458) could
+  not be re-measured here (no `node_modules`; the script's TS counter
+  reports 0 across 95 files without them); the crates.io/npm publication
+  step is still pending for every tagged release.
+
+## Where to pick up, in one sentence
+
+Run the Rust gates on a toolchain host (`cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo nextest run --workspace`, `cargo test -p oxide-fw-dev --features
+bench-util --benches --no-run`), then the E01 remainder is the
+message-schema v1 wire flip (the Rust enum's kebab tags, the TS client's
+`hmr.ts` and the four adapter suites move together) or state preservation
+(consumes `Plan`/`ClassifiedPlan` unchanged), with the release-CI
+double-build + `verify --rebuild` acceptance job still the cheapest F20
+deferral to close.
+
+---
+
 # Handoff — V2-F20 attested reproducible builds landed (SBOM + provenance + signature engine, `build --attest` / `verify`); substrate authored, Rust gates pending a toolchain
 
 ## Where things stand

@@ -31,7 +31,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery | §7.1, §10, V2-A04 |
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`) | §12, §17, D7, V2-F05, V2-F07, V2-F12 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
-| `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic), inspector model (§13.4), prebundle keys | §13, V2-E01 |
+| `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic) and its phase-2 CSS boundary substrate (`plan_classified` — the `kind: 'js'|'css'|'data'` classification with the §13.3 CSS terminal, `css_self_accepts`, the `DEV-HMR-002` orphan-stylesheet warning), inspector model (§13.4), prebundle keys | §13, V2-E01 |
 | `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
@@ -66,10 +66,17 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   is planner-driven (`build_hmr_graph` harvests `importers`/`accepting`/
   `entries` in one walk): a non-boundary chain now updates its top
   component boundary instead of leaving the import binding stale — the
-  one-hop `update_boundary` simplification is retired. Deltas (the
+  one-hop `update_boundary` simplification is retired. Phase 2 (the CSS
+  boundary substrate) adds the classified planner:
+  `dev::boundary::plan_classified` (`UpdateKind` `js|css|data` + the walk
+  in one call, the §13.3 CSS terminal — a stylesheet never reloads),
+  `css_self_accepts` (the harvest's style-injection probe; stylesheets
+  join the graph), `css_orphan_diagnostic` (`DEV-HMR-002`), three more
+  criterion groups and the `css_boundary` example. Deltas (the
   changed file always re-imports; orphans pre-filtered to a quiet
-  self-update) and deferrals (state preservation, CSS boundaries, Vue/
-  Solid refresh) — see `docs/deviations.md`.
+  self-update; the CSS terminal lives in `plan_classified`, not `plan`)
+  and deferrals (state preservation, the message-schema v1 wire flip,
+  Vue/Solid refresh) — see `docs/deviations.md`.
 
 - **`cli` (the cache root + `perf`)**: the performance-bisect substrate
   (V2-F18) — `perf_bisect` (`Metric` build-ms/client-js-bytes/ttfb-ms, the

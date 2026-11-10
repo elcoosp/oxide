@@ -1001,3 +1001,63 @@ the shipped shape); and the CI acceptance job that builds twice in
 different paths and runs `verify --rebuild` (the pure reproducibility
 contract is pinned by `write_attestation_is_reproducible_across_directories`;
 the end-to-end job needs the release CI wiring).
+
+## V2-E01 phase 2 — CSS boundary substrate — deltas and deferrals (substrate step)
+
+**What the spec asks.** The message schema (version 1) with the
+`kind: 'js' | 'css' | 'data'` discriminant, and the CSS boundary algorithm:
+"`kind: 'css'` swaps the `<link>` or `<style data-ox-css=path>` without
+reload" — CSS joins the planner instead of living in a dev-loop
+side-channel (the phase-1 record: "CSS never enters the graph").
+
+**What lands.** The pure substrate in `crates/dev/src/boundary.rs`:
+`UpdateKind` (the wire discriminant; `as_str` is the spec-verbatim
+spelling), `update_kind` (the SPEC-14 `ChangeKind` → wire-kind bridge),
+`css_self_accepts` (the extension-level style-injection probe),
+`plan_classified` + `ClassifiedPlan` (the fan-out's decision function —
+`ChangeKind` + the `plan` walk in one call, with the §13.3 CSS terminal: a
+`FullReload` walk for a stylesheet collapses to `Update([changed])`, the
+swap), and `css_orphan_diagnostic` (`DEV-HMR-002` with the fix help text).
+`hmr_boundary_classified` tracing spans on the seam. Ten new pins
+(`tests/boundary_tdd.rs` phase-2 section + the `try_to_json` unit pin),
+three criterion groups behind `bench-util` (`boundary_css_terminal`,
+`boundary_css_edge`, `boundary_classified_js`), and the `css_boundary`
+walkthrough example. The CLI's `build_hmr_graph` walks
+`css`/`scss`/`sass` too and marks stylesheets self-accepting; the
+`cmd_dev` StyleSwap branch (ESM, in-`src/`) routes its decision through
+`plan_classified` — the swap frames are byte-identical to the
+pre-substrate wire, and the only new traffic is the `DEV-HMR-002` warning
+frame for an orphaned in-`src/` stylesheet (the swap still runs — a static
+`<link>` may carry the sheet; the warning is additive and the overlay
+renders it without a reload).
+
+**Spec deltas:**
+
+1. **The terminal lives in the planner, not the transport.** `plan` itself
+   stays spec-verbatim (an orphan stylesheet walk returns
+   `FullReload("... is not imported")`); the collapse happens in
+   `plan_classified`, so the pure function's contract is unchanged and the
+   pins exercise both shapes.
+2. **Stylesheets only receive edges, never emit them.** The harvest adds
+   `css`/`scss`/`sass` to the walk (JS→CSS side-effect imports resolve
+   exactly — their specifiers always carry the extension), but a CSS
+   `@import` chain is NOT scanned into the graph: the changed child sheet
+   self-accepts and swaps on its own, so parent edges would add walk cost
+   with no behavioral difference.
+3. **The orphan-CSS case warns instead of reloading.** The spec's `_ =>`
+   arm is right for the pure function; the dev loop collapses it (the swap
+   still runs) and publishes `DEV-HMR-002` so a stylesheet the module
+   graph cannot see is visible in the overlay and the logs.
+
+**What is deliberately deferred (the rest of E01):**
+
+- The message-schema v1 wire flip (`{ v: 1, type: 'update', updates:
+  [...] }` with `kind`/`acceptedPath`/`timestamp`/`hash` per item): the
+  Rust enum's kebab-case tags (`module-update`/`css-update`/...) stay the
+  wire truth until the TS client, the four adapter test suites and the
+  Playwright pins move together — `UpdateKind::as_str` is the substrate
+  the flip consumes.
+- State preservation across boundary swaps and the Vue/Solid refresh
+  wiring (adapter-track work; the planner fan-out is framework-agnostic).
+- The Playwright CSS-state acceptance pins (edit a CSS file, no navigation
+  event fires) against a real browser.

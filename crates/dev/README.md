@@ -22,8 +22,12 @@ The design goal is a dev loop that never restarts the process. A source edit tri
 - **`Watcher`** — debounced, content-hash-confirmed watch of source, config, and content dirs (seeded boot baseline; OS-native `notify` backend with a poll fallback)
 - **`HmrHub`** — WebSocket fan-out with message kinds: `css-update`, `module-update`, `batch-module-update`, `route-data-update`, `server-module-swap`, `full-reload`, `error`, `connected`
 - **`plan` / `Plan`** — the V2-E01 HMR boundary planner: a breadth-first walk-up over the module graph's importers that stops at self-accepting boundaries and falls back to a reasoned full reload (§V2-E01)
+- **`boundary::plan_classified` / `boundary::ClassifiedPlan`** — the phase-2 classified planner: the watcher's `ChangeKind` and the walk in one call, with the §13.3 CSS terminal — a stylesheet change plans `kind: 'css'` and never reloads (the swap owns the update)
+- **`boundary::UpdateKind` / `boundary::update_kind`** — the §13.3 wire discriminant (`js`/`css`/`data`) and the SPEC-14 bridge from the watcher's `ChangeKind`
 - **`source_self_accepts`** — the `import.meta.hot.accept` probe that feeds the planner's accepting set
+- **`boundary::css_self_accepts`** — the extension-level style-injection probe the harvest uses to mark stylesheets as boundaries
 - **`full_reload_diagnostic`** — the `DEV-HMR-001` warning carrying the fix help text the §13.4 overlay renders
+- **`boundary::css_orphan_diagnostic`** — the `DEV-HMR-002` warning for a stylesheet the module graph cannot see (the swap still runs; the fan-out never includes it)
 - **`apply_proxy`** — longest-prefix proxy rule matching with optional path strip
 - **`WaterfallRecorder`** — per-request timing rows for the inspector
 - **`RouteTableInspector`** — the `/__oxide` route table snapshot
@@ -69,10 +73,11 @@ assert!(source_self_accepts("import.meta.hot.accept(() => {});"));
 ```
 
 > **Tip:** The planner is pure — the same graph always produces the same
-> `Plan` (boundaries sorted and deduplicated). The dev loop's stale-guard
-> (`wrap_dispatch_with_stale_guard`, in `oxide-fw-cli`) sits one layer up:
-> it aborts a mid-flight render when a file changed between dispatch entry
-> and response completion.
+> `Plan` (boundaries sorted and deduplicated), and `plan_classified` adds
+> the §13.3 wire classification on top without changing that contract. The
+> dev loop's stale-guard (`wrap_dispatch_with_stale_guard`, in
+> `oxide-fw-cli`) sits one layer up: it aborts a mid-flight render when a
+> file changed between dispatch entry and response completion.
 
 ## How it fits in Oxide
 
