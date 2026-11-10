@@ -4876,6 +4876,7 @@ name = "oxide-fw-adapters"
 version = "0.12.0"
 dependencies = [
  "blake3",
+ "criterion",
  "insta",
  "oxide-fw-diagnostics",
  "serde",
@@ -5039,6 +5040,7 @@ dependencies = [
 name = "oxide-fw-config"
 version = "0.12.0"
 dependencies = [
+ "oxide-fw-adapters",
  "oxide-fw-diagnostics",
  "serde",
  "serde_json",
