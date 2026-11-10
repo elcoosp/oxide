@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 
 mod env_file;
 mod extract;
+mod refusal;
 pub mod schema;
+
+pub use refusal::{FeatureReport, ProjectFacts};
 
 /// Test-only wrapper around the minimal-config extractor. Production code
 /// reaches the same result through `OxideConfig::load`; this exposes the
