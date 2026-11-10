@@ -55,6 +55,14 @@ name = "hmr_wire"
 harness = false
 required-features = ["bench-util"]
 
+# V2-E01 phase 4: criterion bench for the state-preservation seam — the
+# `update_frame` verdict stamp the fan-out runs per publish (boundary
+# batches 1/16/64, the full-reload clear path, the verdict's own serde).
+[[bench]]
+name = "state"
+harness = false
+required-features = ["bench-util"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
