@@ -13,7 +13,7 @@
 //      `performance.timeOrigin` constant (no navigation) — across THREE
 //      successive edits.
 //   4. HMR: editing the page loader (`page.server.ts`) re-renders fresh
-//      data in place (route-data-update → ox:data → adapter.update).
+//      data in place (the v1 ox:data frame → adapter.update).
 //
 // Fixture: examples/smoke-app-vue. Run:
 //   pnpm --filter @oxide/playwright exec playwright test hmr-vue.spec.ts --project=chromium

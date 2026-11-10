@@ -702,7 +702,7 @@ test.describe('HMR runtime (browser)', () => {
         'broken edit must show the overlay WITHOUT reloading',
       ).toBe(timeOrigin)
 
-      // Fix → module-update clears overlay → in-place React Refresh.
+      // Fix → the update frame clears the overlay → in-place React Refresh.
       const fixed = original.replace(/HMR-TARGET-ORIGINAL/, fixedMarker)
       if (fixed === original) throw new Error('hmr-target.tsx lost the HMR-TARGET-ORIGINAL marker')
       writeFileSync(targetFile, fixed, 'utf8')
@@ -975,7 +975,7 @@ test.describe('HMR runtime (browser)', () => {
     }
   })
 
-  test('HMR: one save yields exactly one module-update frame (Tier 3.1)', async ({ page }) => {
+  test('HMR: one save yields exactly one update frame (Tier 3.1)', async ({ page }) => {
     test.setTimeout(60_000)
     test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
 
@@ -986,7 +986,7 @@ test.describe('HMR runtime (browser)', () => {
     // produced extra publishes from a stale buffer drain, this catches it.
     //
     // Pure client-side measurement: capture the HMR WebSocket, count
-    // `"type":"module-update"` frames received across the save. The client
+    // `"type":"update"` frames received across the save. The client
     // COALESCE_MS collapses `reloadModule` calls, not wire frames, so it does
     // not affect this count.
     const targetFile = join(smokeRoot, 'src', 'components', 'hmr-target.tsx')
@@ -1031,7 +1031,7 @@ test.describe('HMR runtime (browser)', () => {
       await new Promise((r) => setTimeout(r, 800))
 
       const countModUpdates = () =>
-        hmrFrames.filter((f) => f.includes('"type":"module-update"')).length
+        hmrFrames.filter((f) => f.includes('"type":"update"')).length
       const modUpdatesBefore = countModUpdates()
 
       const patched = original.replace(/HMR-TARGET-ORIGINAL/, marker)
@@ -1062,9 +1062,9 @@ test.describe('HMR runtime (browser)', () => {
     test.skip(!HMR_AVAILABLE, 'react-refresh not installed in smoke-app')
 
     // §3.2: "git checkout <branch>" touches ~50 DISTINCT files, which used
-    // to fire ~50 separate `module-update` frames. This test touches N=5
+    // to fire ~50 separate `update` frames. This test touches N=5
     // distinct component files in one burst and asserts the watcher
-    // coalesces them into a SINGLE `batch-module-update` frame — one
+    // coalesces them into a SINGLE `update` frame (N entries) — one
     // WebSocket message, one client dispatch. (Same-file writes are a
     // different case; per-path content-hash dedup already collapses them.)
     const N = 5
@@ -1108,14 +1108,13 @@ test.describe('HMR runtime (browser)', () => {
       }
     })
     // §3.2: after the wire batching lands, the server emits ONE
-    // `batch-module-update` for a multi-file burst instead of N singular
-    // `module-update` frames. Count both so the assertion measures the
+    // `update` frame with N entries for a multi-file burst instead of N
+    // singular frames. Count the v1 frames so the assertion measures the
     // total dispatch count either way — 1 means batched, N means per-event.
     const count = () =>
       hmrFrames.filter(
         (f) =>
-          f.includes('"type":"module-update"') ||
-          f.includes('"type":"batch-module-update"'),
+          f.includes('"type":"update"'),
       ).length
 
     try {
@@ -1143,7 +1142,7 @@ test.describe('HMR runtime (browser)', () => {
       expect(
         delta,
         `§3.2: a burst touching ${N} DISTINCT files must publish exactly ONE ` +
-        `dispatched message (batch-module-update) on the wire. Observed ${delta}. ` +
+        `dispatched message (update) on the wire. Observed ${delta}. ` +
         `If ${N}, the coalesce block in the watcher loop regressed; if >${N}, ` +
         `duplication.`,
       ).toBe(1)

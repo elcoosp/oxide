@@ -162,7 +162,7 @@ test('editing a React fixture does NOT reach a Solid dev server (Tier 3.6)', asy
     // React's WS receives the ModuleUpdate (proves the edit propagated at all).
     await expect
       .poll(
-        () => reactFrames.find((f) => f.includes('"type":"module-update"')) ?? null,
+        () => reactFrames.find((f) => f.includes('"type":"update"')) ?? null,
         { timeout: 15_000 },
       )
       .not.toBeNull()
