@@ -12,6 +12,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+oxide-fw-adapters = { workspace = true }
 oxide-fw-diagnostics = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
