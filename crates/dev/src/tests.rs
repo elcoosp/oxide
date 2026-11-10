@@ -131,6 +131,7 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
                 timestamp: 1_760_000_000_000,
                 hash: "abc123def4567890".into(),
             }],
+            preserve: Preservation::default(),
         },
         HmrMessage::FullReload {
             reason: "config changed".into(),
@@ -199,14 +200,19 @@ fn update_frame_is_the_singular_and_the_batch_alike() {
     };
     let singular = HmrMessage::Update {
         updates: vec![entry("/abs/a.tsx", "/src/a.tsx")],
+        preserve: Preservation::default(),
     };
     let batch = HmrMessage::Update {
         updates: vec![
             entry("/abs/a.tsx", "/src/a.tsx"),
             entry("/abs/b.tsx", "/src/b.tsx"),
         ],
+        preserve: Preservation::default(),
     };
-    let empty = HmrMessage::Update { updates: vec![] };
+    let empty = HmrMessage::Update {
+        updates: vec![],
+        preserve: Preservation::default(),
+    };
     for frame in [&singular, &batch, &empty] {
         let json = frame.to_json();
         assert!(json.contains("\"type\":\"update\""), "{json}");
@@ -336,6 +342,7 @@ async fn hmr_hub_broadcasts_to_two_subscribers() {
             timestamp: 0,
             hash: String::new(),
         }],
+        preserve: Preservation::default(),
     });
 }
 
@@ -670,6 +677,7 @@ fn hmr_wire_v1_frame_survives_a_pretty_json_object_path() {
             timestamp: 1,
             hash: String::new(),
         }],
+        preserve: Preservation::default(),
     };
     let framed = frame.try_to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&framed).unwrap();
@@ -678,7 +686,7 @@ fn hmr_wire_v1_frame_survives_a_pretty_json_object_path() {
     let back = HmrMessage::from_json(&re).unwrap();
     assert_eq!(back, frame);
     match back {
-        HmrMessage::Update { updates } => {
+        HmrMessage::Update { updates, .. } => {
             assert_eq!(updates.len(), 1);
             assert_eq!(updates[0].kind, UpdateKind::Data);
             assert_eq!(updates[0].path, "/slow");
