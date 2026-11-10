@@ -1907,7 +1907,14 @@ async fn populate_dev_component_source(
 }
 
 /// V2-E01: the module-graph inputs of the HMR boundary planner, harvested
-/// in one walk over `src/**/*.{ts,tsx,js,jsx,mjs,vue,svelte}`.
+/// in one walk over `src/**/*.{ts,tsx,js,jsx,mjs,vue,svelte}` — and, since
+/// the phase-2 CSS boundary substrate, `src/**/*.{css,scss,sass}` too:
+/// stylesheets join the graph so a stylesheet change plans through
+/// [`oxide_fw_dev::boundary::plan_classified`] (the §13.3 terminal makes the
+/// swap never a reload). Stylesheets only RECEIVE importer edges
+/// (JS→CSS side-effect imports, whose specifiers always carry the
+/// extension, so exact-path resolution hits); a CSS `@import` chain needs
+/// no edges — the changed child sheet self-accepts and swaps on its own.
 struct HmrModuleGraph {
     /// Reverse deps: `module -> { importers }` over canonicalized paths.
     /// Rebuilt per watcher tick — cheap for a normal dev tree (~30 files),
@@ -1967,6 +1974,7 @@ fn build_hmr_graph(rootp: &std::path::Path, routes_dir: &std::path::Path) -> Hmr
                 if matches!(
                     ext.as_str(),
                     "ts" | "tsx" | "js" | "jsx" | "mjs" | "vue" | "svelte"
+                        | "css" | "scss" | "sass"
                 ) {
                     out.push(p);
                 }
@@ -1984,7 +1992,9 @@ fn build_hmr_graph(rootp: &std::path::Path, routes_dir: &std::path::Path) -> Hmr
         };
         // Boundary marks, harvested in the same pass that already reads the
         // source: component files are boundaries by framework-plugin
-        // convention, `.server.*` files by the §13.3 behavior table, and a
+        // convention, `.server.*` files by the §13.3 behavior table,
+        // stylesheets by the phase-2 CSS terminal probe
+        // (`css_self_accepts` — style injection swaps in place), and a
         // hot-accept registration self-accepts by the spec's definition.
         let lower_name = canon_file.to_string_lossy().to_ascii_lowercase();
         let is_component = lower_name.ends_with(".tsx")
@@ -1992,7 +2002,12 @@ fn build_hmr_graph(rootp: &std::path::Path, routes_dir: &std::path::Path) -> Hmr
             || lower_name.ends_with(".vue")
             || lower_name.ends_with(".svelte");
         let is_server = lower_name.ends_with(".server.ts") || lower_name.ends_with(".server.tsx");
-        if is_component || is_server || oxide_fw_dev::source_self_accepts(&content) {
+        let is_stylesheet = oxide_fw_dev::boundary::css_self_accepts(&canon_file);
+        if is_component
+            || is_server
+            || is_stylesheet
+            || oxide_fw_dev::source_self_accepts(&content)
+        {
             graph.accepting.insert(canon_file.clone());
         }
         // Route-structural files are the planner's entries.
@@ -3597,6 +3612,69 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         let in_src = path.starts_with(&src_dir);
                         let is_esm = cfg.dev.esm;
                         if in_src && is_esm {
+                            // V2-E01 phase 2: the CSS decision is the
+                            // planner's (`plan_classified`), not a
+                            // side-channel. The §13.3 terminal makes a
+                            // stylesheet swap NEVER a reload — the walk's
+                            // verdict collapses to the in-place swap of the
+                            // changed sheet — and the emitted frames below
+                            // stay byte-identical to the pre-substrate wire.
+                            let changed_pb = std::fs::canonicalize(path)
+                                .unwrap_or_else(|_| path.to_path_buf());
+                            let graph =
+                                build_hmr_graph(&rootp, &rootp.join(&cfg.routes.dir));
+                            let classified = {
+                                let importers: std::collections::HashMap<
+                                    std::path::PathBuf,
+                                    Vec<std::path::PathBuf>,
+                                > = graph
+                                    .importers
+                                    .iter()
+                                    .map(|(module, imps)| {
+                                        (module.clone(), imps.iter().cloned().collect())
+                                    })
+                                    .collect();
+                                oxide_fw_dev::boundary::plan_classified(
+                                    oxide_fw_dev::ChangeKind::Css,
+                                    &changed_pb,
+                                    &importers,
+                                    &graph.accepting,
+                                    &graph.entries,
+                                )
+                            };
+                            if classified.is_full_reload() {
+                                // Unreachable for stylesheets (the §13.3
+                                // terminal collapses the walk) — logged
+                                // loudly if a future ChangeKind ever routes
+                                // here with a reload verdict.
+                                if let oxide_fw_dev::Plan::FullReload(reason) =
+                                    &classified.plan
+                                {
+                                    tracing::warn!(
+                                        reason = %reason,
+                                        "DEV-HMR: a style swap planned a full reload"
+                                    );
+                                }
+                            } else if !graph
+                                .importers
+                                .get(&changed_pb)
+                                .is_some_and(|imps| !imps.is_empty())
+                            {
+                                // DEV-HMR-002: the graph has no edge for this
+                                // stylesheet — the swap still runs (a static
+                                // `<link>` may carry it), but nothing on the
+                                // module side references it, so the boundary
+                                // fan-out will never include it.
+                                let diag = oxide_fw_dev::boundary::css_orphan_diagnostic(
+                                    &changed_pb,
+                                );
+                                tracing::warn!(
+                                    code = diag.code,
+                                    message = %diag.message,
+                                    "DEV-HMR-002: orphan stylesheet"
+                                );
+                                hub.publish(HmrMessage::Error { diagnostic: diag });
+                            }
                             let root_str = rootp.to_string_lossy();
                             let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
                             let rel_slash = rel.replace('\\', "/");
