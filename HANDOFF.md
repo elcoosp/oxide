@@ -1,3 +1,106 @@
+# Handoff — V2-E01 phase-4 state preservation + V2-R02 capability-matrix v2 landed (the third HMR acceptance is a wire contract: the v1 `update` frame carries a `preserve` verdict, and the client snapshots/restores around the swap); both milestone crates are pedantic-clean under a command-line `-W clippy::pedantic` sweep
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per
+reviewer-visible intent — for the ship tooling to materialize).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/10 GB-disk sandbox):**
+- `cargo fmt --all --check` clean; `cargo clippy -p oxide-fw-dev -p
+  oxide-fw-adapters --all-targets --all-features -- -D warnings -W
+  clippy::pedantic` ZERO findings in both milestone crates (a first for
+  `adapters`: the sweep's pre-existing findings in that crate — missing
+  `# Errors` docs, `format!`-push, `must_use` candidates, `too_many_lines`
+  on the 169-line edge template, `match_same_arms`/`unnested_or_patterns`
+  against the old table — were retired in this diff, not suppressed; the
+  untouched `graph` crate holds the remaining pedantic debt). The CI bar
+  holds workspace-wide by policy; `cargo clippy -p oxide-fw-cli
+  --all-targets -- -D warnings` is the compile-verified gate for the
+  V8-linked crate (see the not-run list in `.github/pr-body.md`).
+- Runtime suites green: `oxide-fw-dev` 84 (54 lib + 21 boundary + 7
+  state + 2 doctests), `oxide-fw-adapters` 52 (26 lib + 5 deploy_matrix
+  + 2 integration + 4 live_matrix + 6 matrix_v2 + 9 snapshots),
+  `packages/core` node --test 325/325 incl. the 9 new `hmr-state` pins and the 2 boot-restore pins (the ESM-dev probe reads `window.document` while the boot flow reads `globalThis.document` — the fixture fills both);
+  the `state_preservation` criterion group runs behind `bench-util` and
+  the `hmr_state` walkthrough example prints the keep/clear verdicts.
+- The zero-`#[allow]` gate: `grep -rnE '#!\[(allow|expect)\(|cfg_attr\([^)]*_allow\('`
+  over `src/ crates/ tests/ examples/ build.rs` — empty.
+- Doc-drift fixes IN this diff: `crates/adapters/README.md` described a
+  `FrameworkRenderer`/`AdapterPageRenderer` API this crate has never
+  exported (the render adapters live in `oxide-fw-jshost`) — rewritten
+  around the real surface (Target/Capability/support/capability_matrix/
+  degradation/emit/check_requirements); the spec's V2.O table (R02
+  merged; E01's phase-4 record), `docs/architecture.md` (the dev +
+  adapters rows and the what-changed bullets), `docs/deviations.md` (the
+  two new records), `README.md` (the badge re-measured 1,775→1,789 via
+  `scripts/count-tests.sh`), and `HANDOFF.md` (this header).
+
+## What landed
+
+**M1 — V2-E01 phase 4, the state-preservation substrate** (`feat/
+hmr-state-preservation`): `crates/dev/src/state.rs` — `Preservation`
+(`Keep` / `Clear{reason}`, internally tagged on `policy`), the
+injectable `StatePolicy` trait + `DefaultStatePolicy` (boundary Update →
+keep, FullReload → clear with the planner's reason verbatim),
+`update_frame(&ClassifiedPlan, &dyn StatePolicy, updates)` as the single
+frame-construction seam under the `hmr_state_preservation` span. The
+wire: `HmrMessage::Update` gains `preserve` behind `#[serde(default)]`
+(a pre-substrate frame decodes as `Keep` — additive, no schema bump).
+The CLI fan-out stamps every update frame through `update_frame`
+(tailwind rebuild, both /@css/ swaps, the non-ESM swap, the data-entry
+fallback, the §3.2 batch) and a tick-scoped `tick_reload_reason`
+downgrades the batch verdict to `clear` when any event in the same
+watcher tick planned a full reload — the two frames then carry the SAME
+reason. The TS client (`packages/core/src/client/hmr.ts` +
+`boot.ts`): `snapshotFormState`/`restoreFormState` (fields keyed
+name → id → ordinal path + focus, restore idempotent, gated on the
+async applies via `Promise.allSettled`), the `ox-hmr-state`
+sessionStorage stash across a fallback reload (10 s TTL, cleared on
+restore), `scheduleStashRestore` on the ESM-dev boot path. Pins: 7 Rust
+(`tests/state_tdd.rs`) + 9 TS (`packages/core/test/hmr-state.test.ts`);
+the `state_preservation` criterion group behind `bench-util`; the
+`hmr_state` walkthrough example. 1,775→1,789 Rust test functions.
+
+**M2 — V2-R02, the capability-matrix v2** (`feat/capability-matrix-v2`):
+`crates/adapters/src/lib.rs` — the fixed-size `row([...; 8])` table is
+now `support(target, capability)`, a total function over the private
+`Class` mapping (one arm per capability, exhaustive inner match on the
+class — both dimensions compiler-proved); `Capability::ALL` gains the
+ten v0.2 rows (`MixedIslands`, `Resume`, `Skew`, `DeltaDeploy`,
+`RustFns`, `Search`, `Offline`, `Brownout`, `Permissions`,
+`Attestation`); every new `Degraded` cell documents its reason in
+`degradation` (matrix-wide pin); the §18 refusal rule extends to the
+v0.2 `requires` keys. `capability_matrix` is the fold over `ALL`, so map
+and function cannot disagree. The golden pin holds the v0.1 rows
+byte-identical (the R02 sketch's Edge-Live `U` corrected to the landed
+F05 `D` — byte-identical beats the sketch; recorded in `support`'s
+comment and the deviation record). 6 new pins in
+`tests/matrix_v2_tdd.rs`; the `capability_matrix` walkthrough example.
+
+**Micro-debt retired (in-diff, additive — not milestone substitutes):**
+the adapters crate's pedantic findings (27 lib + 6 src-tests + 4
+test-target findings): `# Errors` on `emit`, `#[must_use]` on the eleven
+pure emitters/getters, `write!`-over-`format!-push` in the
+headers/redirects/wrangler emitters, the 169-line edge template lifted
+to `EDGE_FALLBACK_JS`, doc backticks (`NodeLike`, `WinterCG`,
+`NodeHost`, `serde_json`), `assert_ne!` over `assert!(!is_empty)`,
+uninlined format args, items-after-statements, `map_or`/`is_some_and`
+over `map+unwrap_or`, `expect_err` over `.err().expect`,
+`needless_raw_string_hashes`, and two `type_complexity` aliases in the
+new pin file.
+
+## Where to pick up, in one sentence
+
+The E01 remainder is the Vue/Solid refresh wiring (tooling-pool compile
+step + the adapters' client runtimes — a V8-host job), R02's remainder
+is the config-key refusal half (`AST-LIV-001`/`AST-SRC-001`/
+`AST-FNT-001`/`RFN-002` in the config/CLI layer) plus the doctor column
+and `--explain` matrix row; the browser-host Playwright proof
+(`hmr-state` spec) rides the same host as every prior E01 phase.
+
+---
+
 # Handoff — V2-A07 prerender error-status sidecar landed (a prerendered error page is no longer served as a 200); all Rust gates RUN for the first time in five sessions — the compile breaks the "pending a toolchain" sessions left behind are repaired, the workspace is fmt/clippy/test green on rustc 1.99.1
 
 ## Where things stand
