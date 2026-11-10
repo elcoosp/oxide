@@ -162,6 +162,20 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
     assert!(HmrMessage::from_json("not json").is_none());
 }
 
+#[test]
+fn try_to_json_is_the_fallible_seal_of_the_same_wire_bytes() {
+    // The weak-error retirement: `to_json` keeps its signature (the wire
+    // never carries a half-frame) but the failure path is now loud via
+    // `try_to_json` — and on the happy path the two agree byte-for-byte.
+    let m = HmrMessage::CssUpdate {
+        path: "a.css".into(),
+        code: ".a{color:red}".into(),
+    };
+    let tried = m.try_to_json().expect("a kebab-tagged message serializes");
+    assert_eq!(tried, m.to_json());
+    assert!(tried.contains("\"type\":\"css-update\""), "{tried}");
+}
+
 // ---------------- HMR hub ----------------
 
 #[tokio::test]

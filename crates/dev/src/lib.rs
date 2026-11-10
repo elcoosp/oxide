@@ -365,10 +365,15 @@ fn emit_diff(path: &Path, seen: &mut BTreeSet<(PathBuf, String)>, events: &mut V
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum HmrMessage {
-    /// §13.3: a client module changed. v0.1 does a reload — the adapter HMR
-    /// hook (`onModuleUpdate`) is wired but the `code`/`boundary` payload
-    /// fields were always empty, so they are gone. Populating them (real
-    /// module-swap HMR) is a post-v0.1 track.
+    /// §13.3: a client module changed. The ESM dev loop re-imports the
+    /// module through the planner-driven fan-out (V2-E01): `url` is the
+    /// `/src/...` dev URL the browser fetched, so the client's HMR runtime
+    /// re-fetches it and the framework runtime applies the patch in place
+    /// (React Refresh owns component updates; the boundary planner supplies
+    /// the fan-out set). Absent `url` in the bundler mode (legacy messages
+    /// deserialize with an empty string). The v0.1-era `code`/`boundary`
+    /// payload fields are retired — they were always empty and the URL
+    /// carries the swap.
     ModuleUpdate {
         path: String,
         /// Dev-ESM mode: the URL the browser fetched (`/src/...`) so the
@@ -426,8 +431,28 @@ pub struct BatchModuleItem {
 }
 
 impl HmrMessage {
+    /// Wire serialization. The failure path is loud, not silent: a message
+    /// that cannot serialize is a dev-loop bug, so `to_json` logs the
+    /// `serde_json` error through `tracing::error!` and returns the empty
+    /// string (the wire never carries a half-frame — the caller sends what
+    /// this returns). Callers that must distinguish a serialize failure from
+    /// a legitimately empty payload use [`HmrMessage::try_to_json`].
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
+        match self.try_to_json() {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "HMR message serialization failed; sending an empty frame"
+                );
+                String::new()
+            }
+        }
+    }
+    /// Fallible serialization — the seam for callers that must distinguish
+    /// a serialize failure from an empty frame.
+    pub fn try_to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
     }
     pub fn from_json(s: &str) -> Option<Self> {
         serde_json::from_str(s).ok()
