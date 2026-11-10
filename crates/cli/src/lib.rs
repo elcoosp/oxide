@@ -3537,6 +3537,17 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         // ServerModule/ConfigOrRoutes) still publish per-event below, since
         // they carry different semantics and shouldn't be batched.
         let mut adapter_hmr_batch: Vec<(String, String)> = Vec::new();
+        // V2-E01 phase 4: the state-preservation policy (the injectable
+        // `StatePolicy` seam — the default maps a boundary update to `keep`
+        // and a full reload to `clear` with the walk's reason) and the
+        // tick-scoped reload tracker: when ANY event in this batch planned
+        // a full reload, the accumulated update frame must not claim
+        // `keep` — the client would stash state for a page that is about
+        // to go away. The verdict for that case is `clear` with the SAME
+        // reason the `full-reload` frame carries, so the two frames tell
+        // one story.
+        let state_policy = oxide_fw_dev::state::DefaultStatePolicy;
+        let mut tick_reload_reason: Option<String> = None;
         for ev in events {
             tracing::info!(?ev, "file change");
             outln!(w, "change: {ev:?}");
@@ -3583,19 +3594,30 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 bytes = css.len(),
                                 "tailwind HMR: rebuilt CSS"
                             );
-                            hub.publish(HmrMessage::Update {
+                            hub.publish(oxide_fw_dev::state::update_frame(
+                                // Tailwind rebuild: the entry IS the whole
+                                // surface (a rebuilt sheet at its cache-busted
+                                // URL) — boundary-scoped by construction, so
+                                // the synthetic plan the policy reads says so.
+                                &oxide_fw_dev::boundary::ClassifiedPlan {
+                                    kind: oxide_fw_dev::UpdateKind::Css,
+                                    plan: oxide_fw_dev::boundary::Plan::Update(vec![
+                                        path.to_path_buf(),
+                                    ]),
+                                },
+                                &state_policy,
                                 // The rebuilt sheet is served at `url` — the
                                 // v1 entry is not file-backed (the swap
                                 // refetches through the cache-busted URL;
                                 // the v0 inline `code` payload had no
                                 // client reader).
-                                updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                                vec![oxide_fw_dev::UpdateEntry::stamped(
                                     oxide_fw_dev::UpdateKind::Css,
                                     url.clone(),
                                     url,
                                     None,
                                 )],
-                            });
+                            ));
                         }
                         Ok(None) => {
                             tracing::debug!(
@@ -3697,33 +3719,48 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 // module: the entry's acceptedPath is the
                                 // module URL the client re-imports (style
                                 // injection, never a reload — §13.3).
-                                hub.publish(HmrMessage::Update {
-                                    updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                                hub.publish(oxide_fw_dev::state::update_frame(
+                                    &classified,
+                                    &state_policy,
+                                    vec![oxide_fw_dev::UpdateEntry::stamped(
                                         oxide_fw_dev::UpdateKind::Css,
                                         pstr.clone(),
                                         format!("/@css/{inner}"),
                                         Some(std::path::Path::new(&pstr)),
                                     )],
-                                });
+                                ));
                             } else {
-                                hub.publish(HmrMessage::Update {
-                                    updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                                hub.publish(oxide_fw_dev::state::update_frame(
+                                    &classified,
+                                    &state_policy,
+                                    vec![oxide_fw_dev::UpdateEntry::stamped(
                                         oxide_fw_dev::UpdateKind::Css,
                                         pstr.clone(),
                                         pstr.clone(),
                                         Some(std::path::Path::new(&pstr)),
                                     )],
-                                });
+                                ));
                             }
                         } else {
-                            hub.publish(HmrMessage::Update {
-                                updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                            hub.publish(oxide_fw_dev::state::update_frame(
+                                // Non-ESM / non-src CSS: a `<link>` href swap
+                                // for the changed sheet — the single entry is
+                                // the whole surface (boundary-scoped by
+                                // construction).
+                                &oxide_fw_dev::boundary::ClassifiedPlan {
+                                    kind: oxide_fw_dev::UpdateKind::Css,
+                                    plan: oxide_fw_dev::boundary::Plan::Update(vec![
+                                        path.to_path_buf(),
+                                    ]),
+                                },
+                                &state_policy,
+                                vec![oxide_fw_dev::UpdateEntry::stamped(
                                     oxide_fw_dev::UpdateKind::Css,
                                     pstr.clone(),
                                     pstr.clone(),
                                     Some(std::path::Path::new(&pstr)),
                                 )],
-                            });
+                            ));
                         }
                         // §1.4: a `.module.css` change also regenerates its
                         // pre-computed SSR map. The client's own update comes
@@ -3768,14 +3805,24 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             // pattern match then dropped it). The v1 entry
                             // keeps the same conservative shape — a data
                             // entry whose path the client pattern-matches.
-                            hub.publish(HmrMessage::Update {
-                                updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                            hub.publish(oxide_fw_dev::state::update_frame(
+                                // A data entry re-fetches `/__data` for one
+                                // route — the single entry is the whole
+                                // surface (boundary-scoped by construction).
+                                &oxide_fw_dev::boundary::ClassifiedPlan {
+                                    kind: oxide_fw_dev::UpdateKind::Data,
+                                    plan: oxide_fw_dev::boundary::Plan::Update(vec![
+                                        path.to_path_buf(),
+                                    ]),
+                                },
+                                &state_policy,
+                                vec![oxide_fw_dev::UpdateEntry::stamped(
                                     oxide_fw_dev::UpdateKind::Data,
                                     pstr.clone(),
                                     String::new(),
                                     Some(std::path::Path::new(&pstr)),
                                 )],
-                            });
+                            ));
                         } else {
                             hub.publish(HmrMessage::OxData {
                                 route: route_pattern,
@@ -3937,17 +3984,22 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                                 let diag =
                                                     oxide_fw_dev::full_reload_diagnostic(&reason);
                                                 hub.publish(HmrMessage::Error { diagnostic: diag });
+                                                tick_reload_reason = Some(reason.clone());
                                                 hub.publish(HmrMessage::FullReload { reason });
                                             }
                                         }
                                     }
                                 }
                             } else {
+                                tick_reload_reason =
+                                    Some(format!("rebuild skipped for non-src file {pstr}"));
                                 hub.publish(HmrMessage::FullReload {
                                     reason: format!("rebuild skipped for non-src file {pstr}"),
                                 });
                             }
                         } else if client_rebuilt {
+                            tick_reload_reason =
+                                Some(format!("rebuilt client bundle after {pstr}"));
                             hub.publish(HmrMessage::FullReload {
                                 reason: format!("rebuilt client bundle after {pstr}"),
                             });
@@ -4118,6 +4170,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         );
                                         consolidate_tailwind_css_and_manifest(&rootp);
                                     }
+                                    tick_reload_reason = Some("route tree rebuilt".to_string());
                                     hub.publish(HmrMessage::FullReload {
                                         reason: "route tree rebuilt".to_string(),
                                     });
@@ -4127,12 +4180,15 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                         error = %e,
                                         "dev: route rescan failed; keeping current tree"
                                     );
+                                    tick_reload_reason =
+                                        Some(format!("{pstr} changed (route rescan failed)"));
                                     hub.publish(HmrMessage::FullReload {
                                         reason: format!("{pstr} changed (route rescan failed)"),
                                     });
                                 }
                             }
                         } else {
+                            tick_reload_reason = Some(format!("{pstr} changed"));
                             hub.publish(HmrMessage::FullReload {
                                 reason: format!("{pstr} changed"),
                             });
@@ -4150,7 +4206,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             // §3.2: the v1 `updates` array is natively a batch — the
             // singular/batch wire distinction dissolves into N entries:
             // one frame, one serialization, one dispatch tick.
-            let updates = adapter_hmr_batch
+            let updates: Vec<oxide_fw_dev::UpdateEntry> = adapter_hmr_batch
                 .into_iter()
                 .map(|(path, url)| {
                     oxide_fw_dev::UpdateEntry::stamped(
@@ -4161,7 +4217,30 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                     )
                 })
                 .collect();
-            hub.publish(oxide_fw_dev::HmrMessage::Update { updates });
+            // V2-E01 phase 4: the frame's verdict is the policy's call on
+            // the batch plan — unless this same tick planned a full reload
+            // (any branch above), in which case the verdict is `clear` with
+            // the SAME reason the `full-reload` frame carries.
+            let batch_plan = oxide_fw_dev::boundary::ClassifiedPlan {
+                kind: oxide_fw_dev::UpdateKind::Js,
+                plan: oxide_fw_dev::boundary::Plan::Update(
+                    // The accepted dev URLs (`/src/...`) are the boundaries
+                    // the client re-imports; the batch is already
+                    // deduplicated by the fan-out's `in_batch` set.
+                    updates
+                        .iter()
+                        .filter(|e| !e.accepted_path.is_empty())
+                        .map(|e| std::path::PathBuf::from(e.accepted_path.trim_start_matches('/')))
+                        .collect(),
+                ),
+            };
+            let preserve = match &tick_reload_reason {
+                Some(reason) => oxide_fw_dev::Preservation::Clear {
+                    reason: reason.clone(),
+                },
+                None => oxide_fw_dev::state::StatePolicy::preservation(&state_policy, &batch_plan),
+            };
+            hub.publish(oxide_fw_dev::HmrMessage::Update { updates, preserve });
         }
 
         if !warmed && idle_since.elapsed() >= IDLE_WARM {
