@@ -115,6 +115,12 @@ pub enum Command {
         /// Static export (§10.5).
         #[arg(long)]
         r#static: bool,
+        /// V2-R02 (spec §V2-R02): print the chosen target's §18 capability
+        /// matrix row at the end of the build — which capabilities are
+        /// Full, which Degraded (with the documented degradation string),
+        /// which Unsupported.
+        #[arg(long)]
+        explain: bool,
         #[arg(long)]
         mode: Option<String>,
         /// §17.2: deny outbound network from plugin/tooling workers.
@@ -597,6 +603,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         Command::Build {
             root,
             r#static,
+            explain,
             mode: _,
             offline_plugins: _,
             attest,
@@ -604,7 +611,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
         } => {
             // P1 (readiness): `OXIDE_OFFLINE_PLUGINS` is written pre-runtime
             // by `apply_startup_env` — see `apply_startup_env` and `main.rs`.
-            cmd_build(&root, r#static, attest, key.as_deref(), w).await
+            cmd_build(&root, r#static, explain, attest, key.as_deref(), w).await
         }
         Command::Start {
             root,
@@ -712,6 +719,123 @@ fn load_config_strict(root: &Path, mode: &str) -> anyhow::Result<OxideConfig> {
     oxide_fw_config::load(root, mode, BTreeMap::new())
         .map(|l| l.config)
         .map_err(anyhow::Error::new)
+}
+
+/// The §18 project facts the config-key refusal consults (V2-R02's config
+/// half, spec §V2-R02), read from the scanned route tree:
+///
+/// - `live_routes` — any `RouteEntry` carrying the V2-F05 `live` opt-in;
+/// - `non_static_routes` — any routable page whose EFFECTIVE render mode
+///   (explicit `config.render` wins, then the `static_override` seeds,
+///   then the `has_server_module` fallback) is not `static`. Infrastructure
+///   rows (error / not-found / template) have no render mode of their own
+///   and never count — the same rule the enriched server manifest applies.
+///
+/// `rust_fns` is not tree-visible (it needs a source walk) and is filled
+/// by [`has_rust_fn_sources`] at the call site.
+fn project_facts_from_tree(
+    tree: &oxide_fw_router::RouteTree,
+    static_override: &std::collections::BTreeSet<String>,
+) -> oxide_fw_config::ProjectFacts {
+    let mut facts = oxide_fw_config::ProjectFacts::default();
+    let mut non_static = false;
+    for e in &tree.entries {
+        if e.live.is_some() {
+            facts.live_routes = true;
+        }
+        // WP-A1: error / not-found / template rows are rendering
+        // infrastructure, not routable pages — the §10.1 mode question is
+        // about pages (the manifest enrichment loop skips them too).
+        if matches!(
+            e.kind,
+            oxide_fw_router::RouteKind::Error
+                | oxide_fw_router::RouteKind::NotFound
+                | oxide_fw_router::RouteKind::Template
+        ) {
+            continue;
+        }
+        let mode = e.render_mode.as_deref().unwrap_or_else(|| {
+            if static_override.contains(&e.id.0) {
+                "static"
+            } else if e.has_server_module {
+                "dynamic"
+            } else {
+                "static"
+            }
+        });
+        if mode != "static" {
+            non_static = true;
+        }
+    }
+    facts.non_static_routes = non_static;
+    facts
+}
+
+/// V2-F08's project surface for the config-key refusal: does the project
+/// carry native Rust server function sources (`**/*.server.rs`)?
+///
+/// Walks the project's source root (the routes dir's parent — the same
+/// source root the route scanner treats as the project tree), skipping
+/// dependency and build-output directories. F08's loader is still todo,
+/// but the files' PRESENCE is decidable today, and RFN-002 is the
+/// enforcement arm the registry already names: a project carrying the
+/// files cannot deploy them to a target that cannot load a native binary.
+fn has_rust_fn_sources(source_root: &Path) -> bool {
+    let _span = tracing::debug_span!("cli_has_rust_fn_sources").entered();
+    let mut stack = vec![source_root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                // Dependency and build-output trees never carry first-party
+                // server functions.
+                if matches!(
+                    name.as_ref(),
+                    "node_modules" | "dist" | "target" | ".git" | ".oxide"
+                ) {
+                    continue;
+                }
+                stack.push(path);
+            } else if name.ends_with(".server.rs") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The §18 capability-matrix row for `target` as the printable lines the
+/// doctor's capability section and `build --explain` render (V2-R02's
+/// deferred presentation half, spec §V2-R02: "oxide doctor prints a column
+/// per capability").
+///
+/// One line per capability in [`Capability::ALL`] declaration order — the
+/// order the matrix contract fixes (D39): `[full]`, `[degraded]` (with the
+/// documented degradation string) and `[unsupported]`. Pure formatting
+/// over [`oxide_fw_adapters::capability_matrix`] — the print can never
+/// disagree with the matrix.
+fn capability_row_lines(target: oxide_fw_adapters::Target) -> Vec<String> {
+    let matrix = oxide_fw_adapters::capability_matrix(target);
+    oxide_fw_adapters::Capability::ALL
+        .iter()
+        .map(|c| {
+            let id = c.as_str();
+            match matrix.get(c) {
+                Some(oxide_fw_adapters::FeatureSupport::Full) => format!("  [full] {id}"),
+                Some(oxide_fw_adapters::FeatureSupport::Degraded) => {
+                    let reason = oxide_fw_adapters::degradation(target, *c)
+                        .unwrap_or("no documented degradation reason");
+                    format!("  [degraded] {id}: {reason}")
+                }
+                _ => format!("  [unsupported] {id}"),
+            }
+        })
+        .collect()
 }
 
 /// §10.1: refine each route's render mode with the AST-based inference.
@@ -6253,6 +6377,7 @@ async fn bundle_edge_entry(
 async fn cmd_build(
     root: &str,
     r#static: bool,
+    explain: bool,
     attest: bool,
     key_path: Option<&str>,
     w: Writer<'_>,
@@ -8118,6 +8243,32 @@ async fn cmd_build(
             )
         })?
     };
+
+    // V2-R02's config half (§18 refusal rule, spec §V2-R02): refuse the
+    // config keys / project surfaces the chosen target cannot honor BEFORE
+    // any deploy-artifact work — an Unsupported cell fails the build (the
+    // registry code, e.g. `AST-LIV-001`), a Degraded one proceeds with the
+    // documented degradation string as a warning.
+    {
+        let _span = tracing::debug_span!("cli_check_config_refusal").entered();
+        let mut facts = project_facts_from_tree(&tree, &static_override);
+        facts.rust_fns = has_rust_fn_sources(routes_root.parent().unwrap_or(routes_root.as_path()));
+        let findings = oxide_fw_adapters::check_config(&cfg.feature_report(facts), target);
+        for d in findings
+            .iter()
+            .filter(|d| d.severity == oxide_fw_diagnostics::Severity::Warning)
+        {
+            tracing::warn!(code = %d.code, target = %target.as_str(), "{}", d.message);
+            outln!(w, "warn: [{}] {}", d.code, d.message);
+        }
+        if let Some(d) = findings
+            .iter()
+            .find(|d| d.severity == oxide_fw_diagnostics::Severity::Error)
+        {
+            anyhow::bail!("{} {}", d.code, d.message);
+        }
+    }
+
     let static_fallback = cfg.static_export.fallback.clone();
     let artifact = oxide_fw_adapters::BuildArtifact {
         out_dir: dist.clone(),
@@ -8406,6 +8557,16 @@ async fn cmd_build(
             if removed > 0 {
                 tracing::info!(removed, "cache gc: evicted idle/over-cap entries");
             }
+        }
+    }
+
+    // V2-R02's presentation half (spec §V2-R02): `--explain` prints the
+    // chosen target's matrix row at the end of the build — the same lines
+    // `oxide doctor` renders, against the target the build actually used.
+    if explain {
+        outln!(w, "capability matrix for `{}` (§18):", target.as_str());
+        for line in capability_row_lines(target) {
+            outln!(w, "{line}");
         }
     }
     Ok(0)
@@ -14056,6 +14217,16 @@ async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
             "[ok] host allow list: {} host pattern(s)",
             cfg.security.host_allow_list.len()
         );
+    }
+    // V2-R02's presentation half (spec §V2-R02): the per-capability column
+    // for the project's configured adapter target — informational (`[--]`,
+    // never a doctor failure), one line per capability in declaration
+    // order, degradation strings included.
+    let target =
+        oxide_fw_adapters::Target::parse(&cfg.adapter).unwrap_or(oxide_fw_adapters::Target::Binary);
+    outln!(w, "[--] capability matrix for `{}` (§18):", target.as_str());
+    for line in capability_row_lines(target) {
+        outln!(w, "{line}");
     }
     Ok(if all_ok { 0 } else { 1 })
 }
