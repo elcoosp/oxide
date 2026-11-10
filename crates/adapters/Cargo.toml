@@ -21,7 +21,22 @@ thiserror = { workspace = true }
 [dev-dependencies]
 insta = { workspace = true }
 tempfile = { workspace = true }
+criterion = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# V2-R02 config half: exposes the criterion bench harness for the config-key
+# refusal seam (the B09 pattern: plain `cargo test` never pays the criterion
+# build).
+[features]
+bench-util = []
+
+# V2-R02 config half: criterion bench for the §18 config-key refusal — the
+# `check_config` verdict the build path runs once per deploy (all 12 targets
+# with a fully-featured report, the empty report, the single-surface splits).
+[[bench]]
+name = "config_refusal"
+harness = false
+required-features = ["bench-util"]
