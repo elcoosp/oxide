@@ -609,7 +609,15 @@ fn pem_private_key(der: &[u8]) -> String {
 }
 
 fn pem_public_key(spki: &[u8]) -> String {
-    pem("PUBLIC KEY", spki)
+    // A REAL RFC 8410 SPKI DER: the 12-byte ed25519 AlgorithmIdentifier
+    // prefix (`302a300506032b6570032100`) + the raw 32-byte key. Wrapping
+    // the bare key in armor would not be a subject the loader accepts.
+    let mut der = Vec::with_capacity(12 + spki.len());
+    der.extend_from_slice(&[
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    ]);
+    der.extend_from_slice(spki);
+    pem("PUBLIC KEY", &der)
 }
 
 fn pem(tag: &str, der: &[u8]) -> String {
