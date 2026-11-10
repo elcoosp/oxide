@@ -26,9 +26,9 @@ use oxide_fw_diagnostics::Diagnostic;
 /// recorded V2-R02 deviation). A fixture implementing this trait is also
 /// the seam's test vocabulary.
 ///
-/// The method set is the config surface that exists TODAY; the `search`
-/// key (F09) joins with an additional method and refusal arm when F09
-/// introduces it — additive, like a matrix row (D39's rule applied to the
+/// The method set is the config surface that exists TODAY, including F09's
+/// `search` key: `search_configured` joined the set with its `AST-SRC-001`
+/// refusal arm (additive, like a matrix row — D39's rule applied to the
 /// refusal seam).
 pub trait ConfigFeatureReport {
     /// A route opted into the live loaders (`page.server.ts` config
@@ -43,6 +43,16 @@ pub trait ConfigFeatureReport {
     /// them to a target that cannot load a native binary.
     #[must_use]
     fn rust_fns_present(&self) -> bool;
+
+    /// The built-in search is configured (`search.collections` carries at
+    /// least one collection, V2-F09 / Appendix V2.L). The refusal maps
+    /// this onto the `Search` capability: edge targets refuse
+    /// (`AST-SRC-001`), Node/serverless/static ship degraded (static JSON).
+    /// The §16.5 per-collection indexes are static JSON — the registry's
+    /// own remedy for unsupported targets — so their presence must NOT set
+    /// this; only the config key does.
+    #[must_use]
+    fn search_configured(&self) -> bool;
 
     /// `fonts.subset` carries the `'used'` glyph-usage spelling (C08:
     /// `subset: ['used']`). Only sound when every route is `static` — all
@@ -62,6 +72,8 @@ pub trait ConfigFeatureReport {
 const AST_LIV_001_FIX: &str = "Use `live.transport: 'poll'` or change target";
 /// The registry fix text for `RFN-002` (Appendix V2.K).
 const RFN_002_FIX: &str = "Use Binary or Docker, or remove the Rust functions";
+/// The registry fix text for `AST-SRC-001` (Appendix V2.K).
+const AST_SRC_001_FIX: &str = "Use static JSON search or a Binary or Docker target";
 /// The registry fix text for `AST-FNT-001` (Appendix V2.K).
 const AST_FNT_001_FIX: &str = "Use `latin` or `unicode-range`, or make all routes static";
 
@@ -69,7 +81,8 @@ const AST_FNT_001_FIX: &str = "Use `latin` or `unicode-range`, or make all route
 /// target's matrix cell decides the verdict (spec §V2-R02).
 ///
 /// - `Unsupported` → an **error** diagnostic with the registry code
-///   (`AST-LIV-001`, `RFN-002`) and fix text — the build refuses.
+///   (`AST-LIV-001`, `RFN-002`, `AST-SRC-001`) and fix text — the build
+///   refuses.
 /// - `Degraded` → a **warning** diagnostic carrying the documented
 ///   degradation string (V2-K: "Degraded yields a warning with the
 ///   documented degradation string") — the build proceeds, degraded.
@@ -79,7 +92,8 @@ const AST_FNT_001_FIX: &str = "Use `latin` or `unicode-range`, or make all route
 /// refuted by the presence of any non-`static` route on every target.
 ///
 /// Findings come back in a deterministic order (live, then rust fns, then
-/// fonts), so callers print them the same way every run.
+/// search — capability declaration order — then the target-independent
+/// fonts rule), so callers print them the same way every run.
 ///
 /// This is pure and infallible: no I/O, no config read — the report is the
 /// input. Returns every finding (errors and warnings together, ordered);
@@ -137,6 +151,41 @@ pub fn check_config(report: &impl ConfigFeatureReport, target: Target) -> Vec<Di
             )
             .with_fix(RFN_002_FIX),
         );
+    }
+
+    // Search third (capability declaration order: RustFns < Search): the
+    // `search.collections` key (V2-F09) against the `Search` row — edge
+    // refuses (`AST-SRC-001`), Node/serverless/static warn with the
+    // documented degradation string (the static-JSON fallback).
+    if report.search_configured() {
+        match support(target, Capability::Search) {
+            FeatureSupport::Unsupported => findings.push(
+                Diagnostic::error(
+                    "AST-SRC-001",
+                    format!(
+                        "`search` is configured but target `{}` does not support the \
+                         built-in search capability (§18 capability matrix)",
+                        target.as_str()
+                    ),
+                )
+                .with_fix(AST_SRC_001_FIX),
+            ),
+            FeatureSupport::Degraded => {
+                let reason = degradation(target, Capability::Search)
+                    .unwrap_or("no documented degradation reason");
+                findings.push(
+                    Diagnostic::warning(
+                        "AST-SRC-001",
+                        format!(
+                            "`search` on target `{}` degrades: {reason}",
+                            target.as_str()
+                        ),
+                    )
+                    .with_fix(AST_SRC_001_FIX),
+                );
+            }
+            FeatureSupport::Full => {}
+        }
     }
 
     // Fonts last: the C08 glyph-usage rule is target-independent —
