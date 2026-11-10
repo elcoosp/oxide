@@ -38,6 +38,26 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`) | §19, §V2-F16, §V2-F18, §V2-F20 |
 ## What changed since 2026-10-12
 
+- **`dev` + `cli` + `packages/core`**: the message-schema v1 wire flip
+  (V2-E01 phase 3) — `HmrMessage` speaks the spec's v1 shapes behind a
+  `{"v":1}` envelope: `update` (N `UpdateEntry`s — `kind: 'js'|'css'|'data'`,
+  `acceptedPath`, a publish-time `timestamp` and a blake3 `hash`; the §3.2
+  singular/batch wire distinction dissolves into the array), `full-reload`,
+  `error`, `ox:data` (the pushed loader payload) and `connected{build}`.
+  The decode side gains the typed gate (`try_from_json` +
+  `HmrWireError::Schema` + the `DEV-HMR-003` fix-text diagnostic) and
+  `from_json`'s silent `.ok()` swallow becomes a loud warn. The CLI fan-out
+  publishes stamped entries (`UpdateEntry::stamped`); the tailwind sheet's
+  inline `code` payload is retired (no client ever read it — the swap
+  refetches through the cache-busted URL) and `server-module-swap` is
+  retired (it was a client no-op). The TS client applies the v1 shapes
+  through one code path with a legacy read-compat normalizer for stale
+  tabs; `hot.ts`'s worker socket rides `acceptedPath`. Pin counts move
+  1,750→1,756 Rust and 304→314 TS; the criterion bench (`hmr_wire`) and
+  the `hmr_wire` walkthrough example ride along. Deltas (base64 `data`,
+  kind = the client's update mechanism, the compat window) and deferrals
+  (state preservation, Vue/Solid refresh) — see `docs/deviations.md`.
+
 - **`cli` + `cache`**: the attested-reproducible-builds substrate (V2-F20)
   — `cli::attest` (`canonical_json` with the explicit recursive key sort,
   the strict `Cargo.lock` / `pnpm-lock.yaml` line parsers, the CycloneDX
@@ -75,8 +95,9 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   criterion groups and the `css_boundary` example. Deltas (the
   changed file always re-imports; orphans pre-filtered to a quiet
   self-update; the CSS terminal lives in `plan_classified`, not `plan`)
-  and deferrals (state preservation, the message-schema v1 wire flip,
-  Vue/Solid refresh) — see `docs/deviations.md`.
+  and deferrals (state preservation, Vue/Solid refresh — the
+  message-schema v1 wire flip landed as phase 3 above) — see
+  `docs/deviations.md`.
 
 - **`cli` (the cache root + `perf`)**: the performance-bisect substrate
   (V2-F18) — `perf_bisect` (`Metric` build-ms/client-js-bytes/ttfb-ms, the

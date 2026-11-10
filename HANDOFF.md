@@ -1,4 +1,123 @@
-# Handoff — V2-E01 phase 2 CSS boundary substrate landed (the §13.3 terminal: `plan_classified` + `UpdateKind` + `DEV-HMR-002`, style-graph harvest); substrate authored, Rust gates pending a toolchain
+# Handoff — V2-E01 phase 3 message-schema v1 wire flip landed (the §13.3 v1 envelope: `update` entries + `ox:data` + the typed `DEV-HMR-003` gate); client gates green, Rust gates pending a toolchain
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per
+reviewer-visible intent — for the ship tooling to materialize).
+**Verified this session (Rust toolchain absent; node v24 present):**
+- `cargo fmt/clippy/test/bench` NOT run — the standing constraint. The
+  Rust pins were authored TDD-first (`crates/dev/src/tests.rs`'s v1 wire
+  section before the `HmrMessage` restructure), import public API only,
+  and every pin is pure/deterministic (fixed stamps, tempfile fixtures).
+  The riskiest surface is the CLI publish-site migration: the §3.2 batch
+  tail now emits one `Update` frame with N entries (the v0 code published
+  `ModuleUpdate`/`BatchModuleUpdate` with the same `(path, url)` payload
+  — the entries carry the same URLs, plus stamps), the FullReload/Error
+  arms are untouched, and `ServerSwap` stops publishing a frame the
+  client no-opped anyway.
+- **`packages/core`: `node --test test/*.test.ts` — 314/314 green**
+  (baseline 304; +10 phase-3 pins: the v1 `update` fan-out through
+  `reloadModule`, the N-entry batch, the one-reload fallback, the css
+  link swap vs the `/@css/` module swap, the data-entry refetch, the
+  `ox:data` push, the empty-updates no-op, and the two legacy
+  read-compat pins). The legacy suite (css-update, route-data-update,
+  full-reload, overlay) passes unchanged through the normalizer.
+- The zero-`#[allow]` gate: `grep -rnE '#!\[(allow|expect)\(|cfg_attr\([^)]*_allow\('`
+  over `crates/ tests/ examples/ benches/` — empty (unchanged policy; the
+  new files carry no lint escapes; the u128→u64 stamp uses `try_from`,
+  no casts).
+- Doc-drift audit + fixes are IN this diff: the README test badge
+  re-measured 1,750→1,756 (`scripts/count-tests.sh`'s own grep, post-diff),
+  `docs/architecture.md` (the phase-3 what-changed bullet + the E01
+  deferral list), `docs/deviations.md` (the phase-3 record, 6 deltas),
+  the spec's V2.O table (the E01 row), `crates/dev/README.md` (the
+  provides list gains the v1 wire surface), and `HANDOFF.md` (this
+  header).
+
+## What landed
+
+V2-E01's phase-3 message-schema v1 wire flip from `docs/spec-v0.2-draft.md`
+(the E01 remainder the last three handoffs carried), in the F16/F18/F20/E01
+substrate pattern:
+
+1. **The v1 wire (`crates/dev/src/lib.rs`):** `HmrMessage` speaks the
+   spec's five shapes behind a `{"v":1}` envelope — `update` (N
+   `UpdateEntry`s: `kind: 'js'|'css'|'data'` (the phase-2 `UpdateKind`,
+   now the serde type), `path`, `acceptedPath`, publish-time `timestamp`,
+   blake3 `hash`), `full-reload`, `error`, `ox:data`, `connected{build}`.
+   `to_json`/`try_to_json` stamp the envelope; `try_from_json` is the
+   typed decode gate (`HmrWireError::Parse`/`Schema`); `from_json` keeps
+   its Option signature but warns loudly (the micro-debt retirement); the
+   schema gate's `DEV-HMR-003` diagnostic carries the stale-tab/stale-CLI
+   fix text. `UpdateEntry::stamped` + `unix_millis` + `content_hash` are
+   the publish-time stamp helpers.
+2. **CLI wiring (`crates/cli/src/lib.rs`):** every publish site speaks v1 —
+   the fan-out entries are stamped (`Some(Path::new(&pstr))` hashes the
+   real file), the §3.2 tail emits ONE `Update` frame (the singular/batch
+   wire split dissolves), the tailwind sheet publishes a `css` entry (the
+   unused inline `code` payload is retired — the swap refetches), the
+   payload-less loader change is a `data` entry, the pushed loader
+   payload is `OxData`, and `ServerSwap` stops publishing (a client
+   no-op). The second micro-debt retirement: the esm prebundle failure
+   path's bare `eprintln!` is a `tracing::warn!` (the rolldown-worker /
+   Watcher class).
+3. **The client (`packages/core/src/client/hmr.ts` + `hot.ts`):** one
+   code path applies the v1 shapes — a `js` entry re-imports
+   `acceptedPath` through the HMR runtime, a `css` entry swaps via the
+   `/@css/` module (module-owned) or the `<link>` href (bare), a `data`
+   entry re-fetches `/__data`, `ox:data` decodes the pushed payload —
+   with `normalizeLegacyFrame` mapping the retired v0 spellings for
+   stale-tab sessions. `hot.ts`'s worker socket rides `acceptedPath`.
+4. **Bench + example + pins:** the `hmr_wire` criterion group behind
+   `bench-util` (encode/decode at batch 1/16/64 + the two non-entry
+   controls), `crates/dev/examples/hmr_wire.rs` (the walkthrough
+   consumer the wire never had), the v1 wire pins in
+   `crates/dev/src/tests.rs` (the Rust count moves 1,750→1,756), and 10
+   client pins (314/314).
+
+**Spec deltas recorded in `docs/deviations.md` (6):** kind is the
+client's update mechanism (a `src/` stylesheet is a `css` entry whose
+mechanism is the `/@css/` module re-import); `ox:data.data` rides base64
+and a payload-less data change is an `Update` entry; the tailwind `code`
+payload is retired; `server-module-swap` is retired; the v1 gate is
+strict server-side and compat client-side; `UpdateKind` gains its serde
+spelling. **Deferred (the rest of E01):** state preservation, the
+Vue/Solid refresh wiring, the compat-window retirement, the Playwright
+v1 runs on a toolchain host.
+
+## Docs drift noted this session
+
+- Fixed in-scope: the README badge (1,750→1,756 via
+  `scripts/count-tests.sh`'s own grep) and the test-functions line, the
+  stale v0 wire spellings in the dev README's provides list, the
+  `boundary.rs`/`css_boundary.rs`/`boundary_tdd.rs` rustdoc mentions of
+  the retired variants, and `HANDOFF.md` itself (this header).
+- Noted for the doc owners (carried, unchanged): the `packages/*/
+  package.json` versions remain at 0.6.1/0.6.0 while the workspace is
+  0.9.0 (the `scripts/bump-version.sh` drift guard still refuses to run —
+  a `chore(packages)` sync should ride the next release commit); the TS
+  badge (458/458) could not be re-measured (the adapter suites need
+  `node_modules`; `packages/core` runs, its count is inside the badge's
+  aggregate); the crates.io/npm publication step is still pending for
+  every tagged release.
+
+## Where to pick up, in one sentence
+
+Run the Rust gates on a toolchain host (`cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings
+-W clippy::pedantic`, `cargo nextest run --workspace`, `cargo test -p
+oxide-fw-dev --features bench-util --benches --no-run`, and the
+Playwright suite for the v1 frames), then the E01 remainder is state
+preservation (consumes `Plan`/`ClassifiedPlan` unchanged) or the
+Vue/Solid refresh wiring, with the release-CI double-build +
+`verify --rebuild` acceptance job still the cheapest F20 deferral to
+close.
+
+---
+
+
 
 ## Where things stand
 
