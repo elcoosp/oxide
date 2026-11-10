@@ -179,6 +179,56 @@ pub struct OxideConfig {
     /// parse).
     #[serde(default = "default_true")]
     pub interaction_replay: bool,
+    /// V2-F09 (Appendix V2.L): the built-in search surface. Inert by
+    /// default — with no `collections` configured nothing indexes, nothing
+    /// serves `/_oxide/search`, and the §18 config-key refusal reports the
+    /// surface as unconfigured. A non-empty `collections` list is the
+    /// "search configured" fact the refusal consults (`AST-SRC-001` on a
+    /// target without the `Search` capability); the index/serve engine
+    /// itself is F09's remaining WP and consumes the query knobs
+    /// (`fields`, `snippet`, `languages`) from this same typed key — no
+    /// second schema churn.
+    #[serde(default)]
+    pub search: SearchConfig,
+}
+
+/// V2-F09 (Appendix V2.L): the `search` config key. The key shape is the
+/// spec's (collections, field boosts, snippet length, languages); the
+/// refusal seam reads `collections` today, the F09 engine reads the rest
+/// from this same typed surface. Unknown keys are rejected
+/// (`deny_unknown_fields`) so a typo cannot silently disable the feature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct SearchConfig {
+    /// The content collections (§16.5 names) the built-in search indexes.
+    /// Empty = search not configured (the inert-defaults contract; the
+    /// §18 refusal reads exactly this field).
+    #[serde(default)]
+    pub collections: Vec<String>,
+    /// Query-time field boosts (F09's documented defaults: `title` 3,
+    /// `body` 1). `None` = the engine default applies.
+    #[serde(default)]
+    pub fields: SearchFieldsConfig,
+    /// Snippet length in characters (F09's documented default: 160).
+    /// `None` = the engine default applies.
+    #[serde(default)]
+    pub snippet: Option<u32>,
+    /// Index languages (F09's documented default: `["en"]`).
+    #[serde(default)]
+    pub languages: Vec<String>,
+}
+
+/// V2-F09: the `search.fields` query-time boosts. `None` = the engine
+/// default applies (the spec's `title: 3`, `body: 1`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct SearchFieldsConfig {
+    /// The title-field boost (F09: title matches outrank body matches).
+    #[serde(default)]
+    pub title: Option<f32>,
+    /// The body-field boost.
+    #[serde(default)]
+    pub body: Option<f32>,
 }
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
@@ -349,6 +399,7 @@ impl Default for OxideConfig {
             stream: StreamConfig::default(),
             brownout: BrownoutConfig::default(),
             interaction_replay: true,
+            search: SearchConfig::default(),
         }
     }
 }
