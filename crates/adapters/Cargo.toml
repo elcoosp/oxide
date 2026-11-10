@@ -40,3 +40,11 @@ bench-util = []
 name = "config_refusal"
 harness = false
 required-features = ["bench-util"]
+
+# E11: criterion bench for the generated capability-matrix docs table — the
+# deterministic markdown render `capability_markdown_table` produces and the
+# crate README embeds.
+[[bench]]
+name = "doc_table"
+harness = false
+required-features = ["bench-util"]
