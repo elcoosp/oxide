@@ -1189,3 +1189,136 @@ status.
 - `serve_og_endpoint`/`serve_image_endpoint` and the dispatch (L0/SSR)
   paths are untouched: the L0 seed already carries the status for seeded
   routes, so the sidecar covers only the disk-served paths it must.
+
+## V2-E01 phase 4 — state-preservation substrate — deltas and deferrals (substrate step)
+
+**What lands.** The server half in `crates/dev/src/state.rs` (new module):
+`Preservation` — the `preserve` verdict the §13.3 v1 `update` frame now
+carries (`{"policy":"keep"}` or `{"policy":"clear","reason":...}`,
+internally tagged; `#[serde(default)]` so a pre-substrate frame decodes as
+`Keep`, the verdict those servers always meant — additive, not a schema
+break); the injectable `StatePolicy` seam (`DefaultStatePolicy`: a
+boundary `Update` keeps state, a `Plan::FullReload` clears it with the
+planner's reason verbatim); and `update_frame(&ClassifiedPlan, &dyn
+StatePolicy, updates)` — the single frame-construction seam under an
+`hmr_state_preservation` tracing span. The CLI fan-out publishes every
+`update` frame through it (the tailwind rebuild, the two /@css/ style
+swaps, the non-ESM style swap, the data-entry fallback, and the §3.2
+batch), with a tick-scoped `tick_reload_reason` tracker: when any event in
+the same watcher batch planned a full reload, the accumulated batch frame
+is stamped `clear` with the SAME reason the `full-reload` frame carries,
+so the two frames tell one story. The client half in
+`packages/core/src/client/hmr.ts`: `snapshotFormState`/`restoreFormState`
+(form fields keyed name → id → ordinal path, plus the focused field;
+restore is assignment-idempotent and gated on the async applies settling
+via `Promise.allSettled`), `stashFormStateToSession`/
+`restoreStashedFormState` (the fallback-reload stash under
+`ox-hmr-state`, 10 s TTL, cleared on restore), and
+`scheduleStashRestore` wired into `bootWithRouter`'s ESM-dev path. The
+spec's third HMR acceptance — *type into an input, edit the component's
+text, the input value survives* — now holds for boundary-scoped updates
+on every adapter, including the fallback-reload path.
+
+**Spec deltas:**
+
+1. **The verdict rides the existing v1 frame instead of a new message.**
+   The spec's schema names no preservation field; an additive `preserve`
+   field on `update` keeps the schema version at 1 (no gate change, no
+   TS-client versioning) and leaves the `full-reload` frame untouched —
+   a reload clears state by definition.
+2. **The policy is a trait, not a constant.** The F18 `Probe` seam
+   pattern: the default policy is spec-verbatim, and a custom policy can
+   flip any class (the never-preserve pin proves injectability is load
+   bearing). The verdict is deterministic wire contract — the same plan
+   must always produce the same verdict.
+3. **DOM-state preservation is a client mechanism, not an adapter
+   runtime.** The spec lists per-adapter refresh runtimes (React
+   Refresh, Vue `__VUE_HMR_RUNTIME__`, Solid `solid-refresh`); the
+   snapshot/restore layer under them is adapter-independent and covers
+   the raw form state those runtimes do not own (uncontrolled inputs,
+   textareas, selects, focus).
+4. **The R02 sketch's Live cells stay as F05 landed them.** Not an E01
+   delta — recorded here because the same substrate pass touched the
+   matrix: see the V2-R02 record below.
+
+**What is deliberately deferred:**
+
+- The Playwright acceptance run (`hmr-state`: type into an input, edit
+  the component, assert the value survives; edit CSS, no navigation) —
+  the in-sandbox evidence is the 7-pin Rust wire suite, the 9-test TS
+  client suite and the `hmr_state` walkthrough example; the browser-run
+  proof belongs on a browser host (the same deferral every prior E01
+  phase recorded).
+- Island-hydration race hardening for the boot-time stash restore: the
+  double pass (microtask + 50 ms timer) is idempotent by assignment, but
+  a late-hydrating island that rebuilds a field after the second pass can
+  still lose the restored value; tracking the adapter mount promise is
+  the follow-up.
+- A config surface for the policy (`dev.hmr.preserve: 'never'` etc.) —
+  the trait is the seam; no config key until a user asks.
+
+## V2-R02 capability matrix v2 — deltas and deferrals (substrate step)
+
+**What lands.** `crates/adapters/src/lib.rs`: the fixed-size
+`row([(Capability, FeatureSupport); 8])` table becomes `support(target,
+capability)`, a total function over the private `Class` enum
+(`Native`/`NodeLike`/`Static`/`Edge`/`Serverless`) — one arm per
+capability with an exhaustive inner match on the class, so the compiler
+proves both dimensions (a new `Capability` variant is a compile error
+until its row lands; a new `Target` class is a compile error until every
+row covers it). `Capability::ALL` (declaration order: v0.1 first — the
+`BTreeMap` iteration order is observable — then `Live`, then the v0.2
+set) gains `MixedIslands`, `Resume`, `Skew`, `DeltaDeploy`, `RustFns`,
+`Search`, `Offline`, `Brownout`, `Permissions`, `Attestation`.
+`capability_matrix` is now a fold of `support` over `ALL`, so the map and
+the function cannot disagree. Every new `Degraded` cell documents its
+reason in `degradation` (the `every_degraded_cell_documents_its_reason`
+pin enforces the obligation matrix-wide). The §18 refusal rule
+(`check_requirements`) extends to the v0.2 server-manifest `requires`
+keys (`live`, `mixedIslands`, `resume`, `skew`, `deltaDeploy`, `rustFns`,
+`search`, `offline`, `brownout`, `permissions`, `attestation`): an
+Unsupported capability refuses the build (`ADP-CAP`), a Degraded one
+proceeds with the documented string. Pins in
+`tests/matrix_v2_tdd.rs`: the v0.1 golden rows byte-identical, the v0.2
+rows per the spec table, every target × every capability, the refusal
+rule over the new keys, and the `ALL` order stability.
+
+**Spec deltas:**
+
+1. **The v0.1 rows win over the R02 sketch's Live arm.** The sketch wrote
+   `(Static | Edge, Live) => Unsupported`, but the landed V2-F05 table —
+   and `tests/live_matrix_tdd.rs`, the pin D39 protects — has Edge Live =
+   Degraded with the poll fallback. Byte-identical beats the sketch; the
+   comment in `support` records the ruling.
+2. **Row shape: per-capability arms with inner class matches, not the
+   sketch's flat `(Class, Capability)` arms.** The sketch's shape trips
+   `clippy::match_same_arms` (identical bodies, even non-adjacent) and
+   `clippy::unnested_or_patterns` under the pedantic sweep; the nested
+   shape keeps both compiler-proved totality properties and is what the
+   lint-clean build runs.
+3. **The refusal rule extends through the server manifest's `requires`
+   object only.** The spec also names config-key refusals (`live: true`
+   on static → `AST-LIV-001`, `search` on edge → `AST-SRC-001`,
+   `fonts.subset` + dynamic routes → `AST-FNT-001`, rust fns →
+   `RFN-002`); those keys live in the config/CLI layer and are the
+   follow-up half of R02, not this substrate (the adapters crate cannot
+   see `oxide.config.ts`).
+4. **The v0.2 rows describe target classes, not shipped features.** The
+   matrix is the target-class contract (D39's "add capabilities without
+   ever editing rows"); features whose WPs are still todo (F01, F08, F09,
+   F10, F11, F14, F19) carry their row from day one so no row is ever
+   edited later. The F19 caveat the spec itself writes (Permissions:
+   "Native is Full only if F19 passes") is recorded in the
+   `Capability::Permissions` doc — a documented caveat, not a silent one.
+
+**What is deliberately deferred:**
+
+- The config/CLI half of the refusal rule (the `AST-*`/`RFN-*` codes on
+  config keys) — needs the config surface, and lands with the features
+  that introduce the keys.
+- `oxide doctor`'s per-capability column and `oxide build --explain`'s
+  matrix row — presentation work on the CLI side; the matrix output is
+  already machine-readable via `capability_matrix`.
+- The generated docs table (`doc_table_matches_matrix`, E11) — the
+  docs-site generator does not consume the matrix yet; the README-level
+  tables stay prose.
