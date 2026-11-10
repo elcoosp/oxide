@@ -123,27 +123,25 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
         .at(Location::file("app.tsx", 3, 5))
         .with_fix("fix it");
     let msgs = vec![
-        HmrMessage::ModuleUpdate {
-            path: "app.tsx".into(),
-            url: String::new(),
-        },
-        HmrMessage::CssUpdate {
-            path: "a.css".into(),
-            code: ".a{color:red}".into(),
-        },
-        HmrMessage::RouteDataUpdate {
-            route: "/".into(),
-            odf_b64: "aGk=".into(),
-        },
-        HmrMessage::ServerModuleSwap {
-            path: "db.server.ts".into(),
+        HmrMessage::Update {
+            updates: vec![UpdateEntry {
+                kind: UpdateKind::Js,
+                path: "src/routes/index/page.tsx".into(),
+                accepted_path: "/src/routes/index/page.tsx".into(),
+                timestamp: 1_760_000_000_000,
+                hash: "abc123def4567890".into(),
+            }],
         },
         HmrMessage::FullReload {
             reason: "config changed".into(),
         },
         HmrMessage::Error { diagnostic: diag },
+        HmrMessage::OxData {
+            route: "/".into(),
+            data: "aGk=".into(),
+        },
         HmrMessage::Connected {
-            build_id: "b123".into(),
+            build: "b123".into(),
         },
     ];
     for m in &msgs {
@@ -154,26 +152,149 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
             m,
             "roundtrip for {json}"
         );
+        // The schema-v1 envelope: every frame carries the version.
+        assert!(json.contains("\"v\":1"), "v1 envelope in {json}");
     }
-    // Wire tags are kebab-case per the serde attr (client protocol stability).
-    let json = msgs[0].to_json();
-    assert!(json.contains("\"type\":\"module-update\""), "{json}");
-    assert!(msgs[4].to_json().contains("\"type\":\"full-reload\""));
+    // Wire tags are the §13.3 v1 spellings (client protocol stability).
+    assert!(msgs[0].to_json().contains("\"type\":\"update\""));
+    assert!(msgs[1].to_json().contains("\"type\":\"full-reload\""));
+    assert!(msgs[3].to_json().contains("\"type\":\"ox:data\""));
+    assert!(msgs[4].to_json().contains("\"type\":\"connected\""));
     assert!(HmrMessage::from_json("not json").is_none());
 }
 
 #[test]
-fn try_to_json_is_the_fallible_seal_of_the_same_wire_bytes() {
-    // The weak-error retirement: `to_json` keeps its signature (the wire
-    // never carries a half-frame) but the failure path is now loud via
-    // `try_to_json` — and on the happy path the two agree byte-for-byte.
-    let m = HmrMessage::CssUpdate {
-        path: "a.css".into(),
-        code: ".a{color:red}".into(),
+fn wire_v1_update_entry_spells_the_spec_fields() {
+    // The §13.3 v1 entry: kind/path/acceptedPath/timestamp/hash, with the
+    // camelCase wire spelling the TS client reads.
+    let e = UpdateEntry {
+        kind: UpdateKind::Css,
+        path: "src/styles/app.css".into(),
+        accepted_path: "/@css/app.css".into(),
+        timestamp: 1_760_000_000_000,
+        hash: "deadbeefdeadbeef".into(),
     };
-    let tried = m.try_to_json().expect("a kebab-tagged message serializes");
+    let json = serde_json::to_string(&e).unwrap();
+    assert!(json.contains("\"kind\":\"css\""), "{json}");
+    assert!(json.contains("\"acceptedPath\":\"/@css/app.css\""), "{json}");
+    assert!(json.contains("\"timestamp\":1760000000000"), "{json}");
+    assert!(json.contains("\"hash\":\"deadbeefdeadbeef\""), "{json}");
+    assert!(json.contains("\"path\":\"src/styles/app.css\""), "{json}");
+}
+
+#[test]
+fn update_frame_is_the_singular_and_the_batch_alike() {
+    // §3.2: the v1 `updates` array is natively a batch — the old
+    // singular/batch wire distinction dissolves into N entries. An empty
+    // array is a valid no-op frame (the client fans out zero entries).
+    let entry = |path: &str, accepted: &str| UpdateEntry {
+        kind: UpdateKind::Js,
+        path: path.into(),
+        accepted_path: accepted.into(),
+        timestamp: 1_760_000_000_000,
+        hash: String::new(),
+    };
+    let singular = HmrMessage::Update {
+        updates: vec![entry("/abs/a.tsx", "/src/a.tsx")],
+    };
+    let batch = HmrMessage::Update {
+        updates: vec![entry("/abs/a.tsx", "/src/a.tsx"), entry("/abs/b.tsx", "/src/b.tsx")],
+    };
+    let empty = HmrMessage::Update { updates: vec![] };
+    for frame in [&singular, &batch, &empty] {
+        let json = frame.to_json();
+        assert!(json.contains("\"type\":\"update\""), "{json}");
+        assert_eq!(&HmrMessage::from_json(&json).unwrap(), frame);
+    }
+}
+
+#[test]
+fn try_from_json_is_the_fallible_decode_seam() {
+    // The symmetric seam to `try_to_json`: callers that must distinguish a
+    // parse failure from a schema-version mismatch get the typed error.
+    let frame = HmrMessage::Connected { build: "b1".into() }.to_json();
+    assert!(HmrMessage::try_from_json(&frame).is_ok());
+    assert!(HmrMessage::try_from_json("not json").is_err());
+    // A v-less (legacy) frame and a foreign-version frame are both schema
+    // mismatches, not parse errors — the DEV-HMR-003 story.
+    let legacy = r#"{"type":"module-update","path":"a.tsx","url":"/src/a.tsx"}"#;
+    match HmrMessage::try_from_json(legacy) {
+        Err(HmrWireError::Schema { found, expected }) => {
+            assert_eq!((found, expected), (0, HmrMessage::SCHEMA_VERSION));
+        }
+        other => panic!("expected a Schema mismatch, got {other:?}"),
+    }
+    assert!(matches!(
+        HmrMessage::try_from_json(r#"{"v":2,"type":"connected","build":"x"}"#),
+        Err(HmrWireError::Schema {
+            found: 2,
+            expected: 1
+        })
+    ));
+}
+
+#[test]
+fn from_json_warns_and_returns_none_on_bad_frames() {
+    // The weak-error retirement: `from_json` keeps its Option signature
+    // (the callers are few and non-critical) but the failure path is now
+    // loud through `try_from_json` + the `tracing::warn!` inside.
+    assert!(HmrMessage::from_json("not json").is_none());
+    // A v-less frame is legacy now: rejected at the v1 gate.
+    assert!(HmrMessage::from_json(r#"{"type":"connected"}"#).is_none());
+}
+
+#[test]
+fn schema_mismatch_diagnostic_is_dev_hmr_003() {
+    let d = schema_mismatch_diagnostic(2);
+    assert_eq!(d.code, "DEV-HMR-003");
+    assert_eq!(d.severity, oxide_fw_diagnostics::Severity::Warning);
+    assert!(d.fix.is_some());
+    assert!(d.message.contains("2"), "names the found version: {}", d.message);
+}
+
+#[test]
+fn wire_helpers_stamp_entries_deterministically() {
+    // `unix_millis` is the schema's wall-clock unit (unix ms).
+    assert!(unix_millis() > 1_600_000_000_000);
+    // `content_hash` is the watcher's D6 blake3 prefix (16 hex); unreadable
+    // paths hash to None (the entry then carries "").
+    let dir = tempdir().unwrap();
+    let f = dir.path().join("a.tsx");
+    fs::write(&f, "hello").unwrap();
+    let h = content_hash(&f).expect("a readable file hashes");
+    assert_eq!(h.len(), 16);
+    assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+    assert!(content_hash(&dir.path().join("missing.tsx")).is_none());
+    // `UpdateEntry::stamped` composes the three: a real file gets the hash,
+    // a None hash_path carries "".
+    let stamped = UpdateEntry::stamped(
+        UpdateKind::Js,
+        "src/a.tsx",
+        "/src/a.tsx",
+        Some(&f),
+    );
+    assert_eq!(stamped.hash, h);
+    assert!(stamped.timestamp > 1_600_000_000_000);
+    assert_eq!(stamped.accepted_path, "/src/a.tsx");
+    assert_eq!(
+        UpdateEntry::stamped(UpdateKind::Css, "tw.css", "/@css/tw.css", None).hash,
+        ""
+    );
+}
+
+#[test]
+fn try_to_json_is_the_fallible_seal_of_the_same_wire_bytes() {
+    // `to_json` keeps its signature (the wire never carries a half-frame)
+    // but the failure path is loud via `try_to_json` — and on the happy
+    // path the two agree byte-for-byte, envelope included.
+    let m = HmrMessage::OxData {
+        route: "/".into(),
+        data: "aGk=".into(),
+    };
+    let tried = m.try_to_json().expect("a v1-tagged message serializes");
     assert_eq!(tried, m.to_json());
-    assert!(tried.contains("\"type\":\"css-update\""), "{tried}");
+    assert!(tried.contains("\"type\":\"ox:data\""), "{tried}");
+    assert!(tried.contains("\"v\":1"), "{tried}");
 }
 
 // ---------------- HMR hub ----------------
@@ -189,7 +310,7 @@ async fn hmr_hub_broadcasts_to_two_subscribers() {
         reason: "routes changed".into(),
     });
     hub.publish(HmrMessage::Connected {
-        build_id: "b1".into(),
+        build: "b1".into(),
     });
 
     let want = HmrMessage::FullReload {
@@ -199,7 +320,7 @@ async fn hmr_hub_broadcasts_to_two_subscribers() {
     assert_eq!(s1.recv().await.unwrap(), want);
     assert_eq!(s2.recv().await.unwrap(), want);
     let want2 = HmrMessage::Connected {
-        build_id: "b1".into(),
+        build: "b1".into(),
     }
     .to_json();
     assert_eq!(s1.recv().await.unwrap(), want2);
@@ -207,9 +328,14 @@ async fn hmr_hub_broadcasts_to_two_subscribers() {
 
     // Publishing with no subscribers must not panic.
     let solo = HmrHub::default();
-    solo.publish(HmrMessage::CssUpdate {
-        path: "x.css".into(),
-        code: String::new(),
+    solo.publish(HmrMessage::Update {
+        updates: vec![UpdateEntry {
+            kind: UpdateKind::Css,
+            path: "x.css".into(),
+            accepted_path: "x.css".into(),
+            timestamp: 0,
+            hash: String::new(),
+        }],
     });
 }
 
@@ -531,51 +657,57 @@ fn classify_event_true_created_on_brand_new_file_is_structural() {
 }
 
 #[test]
-fn hmr_message_batch_module_update_round_trips() {
-    use crate::{BatchModuleItem, HmrMessage};
-    let msg = HmrMessage::BatchModuleUpdate {
-        items: vec![
-            BatchModuleItem {
-                path: "/abs/a.tsx".into(),
-                url: "/src/a.tsx".into(),
-            },
-            BatchModuleItem {
-                path: "/abs/b.tsx".into(),
-                url: "/src/b.tsx".into(),
-            },
-        ],
+fn hmr_wire_v1_frame_survives_a_pretty_json_object_path() {
+    // The envelope round-trips through a serde_json::Value (the same path
+    // `try_to_json`'s insert uses), so a consumer that re-serializes the
+    // frame cannot lose the version field.
+    let frame = HmrMessage::Update {
+        updates: vec![UpdateEntry {
+            kind: UpdateKind::Data,
+            path: "/slow".into(),
+            accepted_path: String::new(),
+            timestamp: 1,
+            hash: String::new(),
+        }],
     };
-    let json = msg.to_json();
-    assert!(
-        json.contains("batch-module-update"),
-        "kebab-case type: {json}"
-    );
-    assert!(
-        json.contains("a.tsx") && json.contains("b.tsx"),
-        "paths in JSON: {json}"
-    );
-    let back = HmrMessage::from_json(&json).unwrap();
+    let value = serde_json::to_value(&frame).unwrap();
+    let re = serde_json::to_string(&value).unwrap();
+    let back = HmrMessage::from_json(&re).unwrap();
+    assert_eq!(back, frame);
     match back {
-        HmrMessage::BatchModuleUpdate { items } => {
-            assert_eq!(items.len(), 2);
-            assert_eq!(items[0].url, "/src/a.tsx");
-            assert_eq!(items[1].path, "/abs/b.tsx");
+        HmrMessage::Update { updates } => {
+            assert_eq!(updates.len(), 1);
+            assert_eq!(updates[0].kind, UpdateKind::Data);
+            assert_eq!(updates[0].path, "/slow");
+            // The default: a data entry's acceptedPath is empty (the client
+            // re-fetches `/__data` for the route `path` names).
+            assert_eq!(updates[0].accepted_path, "");
         }
-        other => panic!("expected BatchModuleUpdate, got {other:?}"),
+        other => panic!("expected Update, got {other:?}"),
     }
 }
 
 #[test]
-fn hmr_message_batch_empty_is_valid() {
-    // An empty batch is valid serde; the CLIENT treats it as a no-op. The
-    // server SHOULD never publish one (it falls back to singular for 1
-    // and skips publish for 0), but the shape must round-trip.
-    use crate::HmrMessage;
-    let msg = HmrMessage::BatchModuleUpdate { items: vec![] };
-    let json = msg.to_json();
-    let back = HmrMessage::from_json(&json).unwrap();
-    match back {
-        HmrMessage::BatchModuleUpdate { items } => assert!(items.is_empty()),
-        _ => panic!("wrong variant"),
+fn hmr_wire_v1_rejects_the_retired_wire() {
+    // The retired v0 spellings (module-update / css-update /
+    // route-data-update / server-module-swap) carry no schema version, so
+    // the v1 gate rejects them as Schema mismatches — the flip is total on
+    // the Rust side (the TS client keeps a read-compat normalizer for
+    // stale-tab sessions; see docs/deviations.md).
+    for legacy in [
+        r#"{"type":"module-update","path":"a.tsx"}"#,
+        r#"{"type":"css-update","path":"a.css","code":""}"#,
+        r#"{"type":"route-data-update","route":"/","odf_b64":""}"#,
+        r#"{"type":"server-module-swap","path":"db.server.ts"}"#,
+        r#"{"type":"batch-module-update","items":[]}"#,
+    ] {
+        assert!(
+            matches!(
+                HmrMessage::try_from_json(legacy),
+                Err(HmrWireError::Schema { found: 0, expected: 1 })
+            ),
+            "{legacy}"
+        );
+        assert!(HmrMessage::from_json(legacy).is_none());
     }
 }
