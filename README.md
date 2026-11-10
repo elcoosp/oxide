@@ -54,7 +54,7 @@ adds `@oxide-fw/cli` as a dependency, so a fresh project needs no global
 install.
 
 > [!NOTE]
-> **Not yet published to the registries.** `v0.6.1` is tagged on this repo, but `oxide-fw-cli` does not yet resolve on crates.io and `create-oxide` is not on npm yet — build from source (see [Building from source](#building-from-source)). Every command above works the same against `./target/release/oxide`.
+> **Not yet published to the registries.** `v0.7.0` is tagged on this repo, but `oxide-fw-cli` does not yet resolve on crates.io and `create-oxide` is not on npm yet — build from source (see [Building from source](#building-from-source)). Every command above works the same against `./target/release/oxide`.
 
 `create-oxide` is the separate npm scaffolder ([npmjs.com/package/create-oxide](https://www.npmjs.com/package/create-oxide)).
 
@@ -162,7 +162,7 @@ oxide start --root examples/smoke-app-react --port 3100
 | Rust | 1,701 test functions; clippy-clean at `-D warnings` with **zero** `#[allow(clippy::*)]` |
 | Security | `cargo audit` exits 0; one advisory suppressed with a [reachability analysis](.cargo/audit.toml) |
 
-`v0.2.0` through `v0.6.1` are tagged; the crates.io / npm publication step is still pending. Releases follow a **48-hour / 5-consecutive-green-CI** soak rule — see [PUBLISHING.md](PUBLISHING.md).
+`v0.2.0` through `v0.7.0` are tagged; the crates.io / npm publication step is still pending. Releases follow a **48-hour / 5-consecutive-green-CI** soak rule — see [PUBLISHING.md](PUBLISHING.md).
 
 ## Documentation
 

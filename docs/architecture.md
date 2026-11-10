@@ -31,12 +31,28 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery | §7.1, §10, V2-A04 |
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`) | §12, §17, D7, V2-F05, V2-F07, V2-F12 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
-| `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), update boundaries, inspector model (§13.4), prebundle keys | §13 |
+| `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic), inspector model (§13.4), prebundle keys | §13, V2-E01 |
 | `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`) | §19, §V2-F16, §V2-F18 |
 ## What changed since 2026-10-12
+
+- **`dev` + `cli`**: the HMR boundary substrate (V2-E01) —
+  `dev::boundary::plan` (`Plan::Update`/`Plan::FullReload`, the
+  spec-verbatim breadth-first walk-up over `importers` that stops at
+  self-accepting boundaries on every path, cycle-safe, sorted + deduped),
+  `source_self_accepts` (the `import.meta.hot.accept` probe), the
+  `DEV-HMR-001` full-reload diagnostic with the fix help text for the
+  §13.4 overlay, `hmr_boundary` tracing spans, the criterion bench behind
+  `bench-util`, and the walkthrough example. The CLI's adapter-HMR fan-out
+  is planner-driven (`build_hmr_graph` harvests `importers`/`accepting`/
+  `entries` in one walk): a non-boundary chain now updates its top
+  component boundary instead of leaving the import binding stale — the
+  one-hop `update_boundary` simplification is retired. Deltas (the
+  changed file always re-imports; orphans pre-filtered to a quiet
+  self-update) and deferrals (state preservation, CSS boundaries, Vue/
+  Solid refresh) — see `docs/deviations.md`.
 
 - **`cli` (the cache root + `perf`)**: the performance-bisect substrate
   (V2-F18) — `perf_bisect` (`Metric` build-ms/client-js-bytes/ttfb-ms, the
