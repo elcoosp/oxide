@@ -71,6 +71,16 @@ impl ConfigFeatureReport for FeatureReport<'_> {
         self.facts.rust_fns
     }
 
+    fn search_configured(&self) -> bool {
+        // The F09 config key (Appendix V2.L): `search.collections` —
+        // a non-empty list is the "search configured" surface. The §16.5
+        // collection indexes are static JSON (the registry's own remedy
+        // for unsupported targets), so their presence must NOT set this —
+        // only the key does. The F09 engine consumes the same key's query
+        // knobs (`fields`/`snippet`/`languages`) when it lands.
+        !self.config.search.collections.is_empty()
+    }
+
     fn font_subset_used(&self) -> bool {
         // The C08 config key: `fonts.subset: ['used']` — the glyph-usage
         // spelling is the `"used"` entry inside the subset list.
