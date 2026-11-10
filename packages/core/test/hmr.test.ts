@@ -248,3 +248,224 @@ test('route-data-update: malformed pushed odf_b64 is ignored', async () => {
     restore()
   }
 })
+
+// ---------------------------------------------------------------------------
+// §13.3 message-schema v1: `update` frames (N entries, kind-discriminated),
+// `ox:data`, and the legacy read-compat normalizer. The wire carries a
+// `{ v: 1 }` envelope; the client reads fields by name.
+// ---------------------------------------------------------------------------
+
+interface ReloadRuntime {
+  reloads: string[]
+  reloadModule(u: string): Promise<void>
+}
+
+function installRuntime(): { runtime: ReloadRuntime; restore: () => void } {
+  const g = globalThis as Record<string, unknown>
+  const saved = g.__oxide_hmr__
+  const runtime: ReloadRuntime = { reloads: [], reloadModule(u: string) { this.reloads.push(u); return Promise.resolve() } }
+  g.__oxide_hmr__ = runtime
+  return {
+    runtime,
+    restore: () => {
+      if (saved === undefined) delete g.__oxide_hmr__
+      else g.__oxide_hmr__ = saved
+    },
+  }
+}
+
+test('v1 update: a js entry re-imports acceptedPath through the runtime', () => {
+  const saved = (globalThis as Record<string, unknown>).document
+  const { doc } = fakeDoc()
+  ;(globalThis as Record<string, unknown>).document = doc
+  const { runtime, restore } = installRuntime()
+  try {
+    const handled = applyHmrMessage(
+      { type: 'update', v: 1, updates: [{ kind: 'js', path: '/abs/util.ts', acceptedPath: '/src/util.ts', timestamp: 1, hash: 'h' }] },
+      {},
+    )
+    assert.equal(handled, true)
+    assert.deepEqual(runtime.reloads, ['/src/util.ts'])
+  } finally {
+    restore()
+    if (saved === undefined) delete (globalThis as Record<string, unknown>).document
+    else (globalThis as Record<string, unknown>).document = saved
+  }
+})
+
+test('v1 update: N entries fan out (the §3.2 batch is one frame)', () => {
+  const saved = (globalThis as Record<string, unknown>).document
+  const { doc } = fakeDoc()
+  ;(globalThis as Record<string, unknown>).document = doc
+  const { runtime, restore } = installRuntime()
+  try {
+    applyHmrMessage(
+      {
+        type: 'update',
+        v: 1,
+        updates: [
+          { kind: 'js', path: '/abs/a.tsx', acceptedPath: '/src/a.tsx' },
+          { kind: 'js', path: '/abs/b.tsx', acceptedPath: '/src/b.tsx' },
+        ],
+      },
+      {},
+    )
+    assert.deepEqual(runtime.reloads, ['/src/a.tsx', '/src/b.tsx'])
+  } finally {
+    restore()
+    if (saved === undefined) delete (globalThis as Record<string, unknown>).document
+    else (globalThis as Record<string, unknown>).document = saved
+  }
+})
+
+test('v1 update: a js entry without a runtime or callback reloads once', () => {
+  const saved = (globalThis as Record<string, unknown>).document
+  const { doc } = fakeDoc()
+  ;(globalThis as Record<string, unknown>).document = doc
+  try {
+    let reloaded = 0
+    applyHmrMessage(
+      { type: 'update', v: 1, updates: [{ kind: 'js', path: '/abs/a.tsx', acceptedPath: '/src/a.tsx' }] },
+      { reload: () => { reloaded++ } },
+    )
+    assert.equal(reloaded, 1, 'one reload for the whole frame, never N')
+  } finally {
+    if (saved === undefined) delete (globalThis as Record<string, unknown>).document
+    else (globalThis as Record<string, unknown>).document = saved
+  }
+})
+
+test('v1 update: a css entry with a bare path swaps the link href', () => {
+  const saved = (globalThis as Record<string, unknown>).document
+  const { doc, links, make } = fakeDoc()
+  const link = make('link')
+  link.setAttribute('rel', 'stylesheet')
+  link.setAttribute('href', '/styles/app.css')
+  links.push(link)
+  ;(globalThis as Record<string, unknown>).document = doc
+  try {
+    let seen = ''
+    applyHmrMessage(
+      { type: 'update', v: 1, updates: [{ kind: 'css', path: '/styles/app.css', acceptedPath: '/styles/app.css' }] },
+      { onCssUpdate: (p) => { seen = p } },
+    )
+    assert.ok((link.getAttribute('href') ?? '').startsWith('/styles/app.css?t='), 'href cache-busted')
+    assert.equal(seen, '/styles/app.css')
+  } finally {
+    if (saved === undefined) delete (globalThis as Record<string, unknown>).document
+    else (globalThis as Record<string, unknown>).document = saved
+  }
+})
+
+test('v1 update: a css entry with a module URL re-imports the /@css/ module', () => {
+  const saved = (globalThis as Record<string, unknown>).document
+  const { doc, links } = fakeDoc()
+  ;(globalThis as Record<string, unknown>).document = doc
+  const { runtime, restore } = installRuntime()
+  try {
+    applyHmrMessage(
+      { type: 'update', v: 1, updates: [{ kind: 'css', path: 'src/styles/app.css', acceptedPath: '/@css/app.css' }] },
+      {},
+    )
+    assert.deepEqual(runtime.reloads, ['/@css/app.css'], 'module-owned swap rides the runtime')
+    assert.equal(links.length, 0, 'no link swap for a module-owned stylesheet')
+  } finally {
+    restore()
+    if (saved === undefined) delete (globalThis as Record<string, unknown>).document
+    else (globalThis as Record<string, unknown>).document = saved
+  }
+})
+
+test('v1 update: a data entry re-fetches /__data for the route', async () => {
+  const { doc, dispatched } = fakeDocWithDispatch()
+  const fetched: string[] = []
+  const odf = encodeLite({ route: '/slow', url: '/slow', params: {}, data: { n: 9 } })
+  const restore = installHmrGlobals({
+    doc,
+    location: { pathname: '/slow', search: '' },
+    fetch: (async (url: string) => {
+      fetched.push(url)
+      return new Response(odf, { status: 200 })
+    }) as typeof fetch,
+  })
+  try {
+    let callbackRoute = ''
+    applyHmrMessage(
+      { type: 'update', v: 1, updates: [{ kind: 'data', path: '/slow' }] },
+      { onRouteData: (r) => { callbackRoute = r } },
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(callbackRoute, '/slow')
+    assert.deepEqual(fetched, ['/__data?route=%2Fslow'])
+    assert.equal(dispatched.length, 1)
+  } finally {
+    restore()
+  }
+})
+
+test('v1 ox:data decodes the pushed payload and dispatches ox:data', async () => {
+  const { doc, dispatched } = fakeDocWithDispatch()
+  const restore = installHmrGlobals({
+    doc,
+    location: { pathname: '/slow', search: '' },
+  })
+  try {
+    const odf = encodeLite({ route: '/slow', url: '/slow', params: {}, data: { n: 3 } })
+    const b64 = Buffer.from(odf).toString('base64')
+    let got: [string, string] = ['', '']
+    const handled = applyHmrMessage({ type: 'ox:data', v: 1, route: '/slow', data: b64 }, { onRouteData: (r, o) => { got = [r, o] } })
+    assert.equal(handled, true)
+    assert.deepEqual(got, ['/slow', b64])
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(dispatched.length, 1)
+    assert.equal(mustEl(dispatched, 0).detail?.input?.data && (mustEl(dispatched, 0).detail?.input?.data as { n?: number }).n, 3)
+  } finally {
+    restore()
+  }
+})
+
+test('v1 update: an empty updates array is a handled no-op', () => {
+  const saved = (globalThis as Record<string, unknown>).document
+  const { doc } = fakeDoc()
+  ;(globalThis as Record<string, unknown>).document = doc
+  try {
+    let reloaded = false
+    const handled = applyHmrMessage({ type: 'update', v: 1, updates: [] }, { reload: () => { reloaded = true } })
+    assert.equal(handled, true)
+    assert.equal(reloaded, false, 'no reload for an empty frame')
+  } finally {
+    if (saved === undefined) delete (globalThis as Record<string, unknown>).document
+    else (globalThis as Record<string, unknown>).document = saved
+  }
+})
+
+test('legacy module-update still applies (stale-tab read-compat)', () => {
+  const saved = (globalThis as Record<string, unknown>).document
+  const { doc } = fakeDoc()
+  ;(globalThis as Record<string, unknown>).document = doc
+  const { runtime, restore } = installRuntime()
+  try {
+    const handled = applyHmrMessage({ type: 'module-update', path: '/abs/a.tsx', url: '/src/a.tsx' }, {})
+    assert.equal(handled, true)
+    assert.deepEqual(runtime.reloads, ['/src/a.tsx'])
+  } finally {
+    restore()
+    if (saved === undefined) delete (globalThis as Record<string, unknown>).document
+    else (globalThis as Record<string, unknown>).document = saved
+  }
+})
+
+test('legacy server-module-swap is a handled no-op (retired on the v1 wire)', () => {
+  const saved = (globalThis as Record<string, unknown>).document
+  const { doc } = fakeDoc()
+  ;(globalThis as Record<string, unknown>).document = doc
+  try {
+    let reloaded = false
+    const handled = applyHmrMessage({ type: 'server-module-swap', path: 'db.server.ts' }, { reload: () => { reloaded = true } })
+    assert.equal(handled, true)
+    assert.equal(reloaded, false)
+  } finally {
+    if (saved === undefined) delete (globalThis as Record<string, unknown>).document
+    else (globalThis as Record<string, unknown>).document = saved
+  }
+})
