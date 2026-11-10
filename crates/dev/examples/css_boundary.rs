@@ -101,7 +101,7 @@ fn main() {
     show("3) lib/util.ts edited (imported by page.tsx)", &js, &classified);
 
     // 4. The Data control: a page loader change classifies `kind: 'data'`
-    //    (the RouteDataUpdate track); the walk stays available for consumers
+    //    (the OxData / data-entry track); the walk stays available for consumers
     //    that fan data updates out through boundaries.
     let data = p("blog/[slug]/page.server.ts");
     let classified =
