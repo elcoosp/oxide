@@ -67,7 +67,10 @@ fn main() {
             hash: String::new(),
         });
     }
-    let update = HmrMessage::Update { updates };
+    let update = HmrMessage::Update {
+        updates,
+        preserve: oxide_fw_dev::Preservation::default(),
+    };
     println!("update frame: {}", update.to_json());
 
     // 3. The non-entry frames: the pushed loader payload and the reload
