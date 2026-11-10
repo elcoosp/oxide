@@ -37,6 +37,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod audit;
+pub mod attest;
 pub mod mcp;
 pub mod perf_bisect;
 mod native_plugins;
@@ -119,6 +120,16 @@ pub enum Command {
         /// §17.2: deny outbound network from plugin/tooling workers.
         #[arg(long)]
         offline_plugins: bool,
+        /// §V2-F20: write `dist/build-id` and `dist/attest/` (the
+        /// CycloneDX SBOM, the in-toto provenance and its ed25519
+        /// signature) for the dist this build emitted.
+        #[arg(long)]
+        attest: bool,
+        /// §V2-F20: the ed25519 signing key for `--attest` (PKCS#8 PEM or
+        /// DER). Overrides `OXIDE_SIGNING_KEY`; the build fails without a
+        /// key rather than attesting unsigned.
+        #[arg(long)]
+        key: Option<String>,
     },
     /// Start the production server (binary target, §12).
     Start {
@@ -283,6 +294,27 @@ pub enum Command {
         root: String,
         #[command(subcommand)]
         op: PerfOp,
+    },
+    /// Verify an attested build (§V2-F20): the canonical form of the
+    /// provenance, its ed25519 signature (with `--pubkey`) and every
+    /// subject digest against the dist on disk. `--rebuild` re-runs the
+    /// build in a scratch copy and compares the dist digests.
+    Verify {
+        /// Project directory (default: cwd).
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// The dist to verify (default: `<root>/dist`).
+        #[arg(long)]
+        dist: Option<String>,
+        /// The ed25519 verifier key (SPKI PEM, 64-char hex or 32-byte
+        /// base64). Without it the signature check is skipped loudly and
+        /// the digests still verify.
+        #[arg(long)]
+        pubkey: Option<String>,
+        /// Rebuild in a scratch copy of the project and compare the dist
+        /// digests (the §V2-F20 reproducibility check).
+        #[arg(long)]
+        rebuild: bool,
     },
 }
 
@@ -449,7 +481,8 @@ impl Command {
             | Command::Mcp { root, .. }
             | Command::Config { root, .. }
             | Command::Render { root, .. }
-            | Command::Perf { root, .. } => root.as_str(),
+            | Command::Perf { root, .. }
+            | Command::Verify { root, .. } => root.as_str(),
             Command::Schema => return None,
         })
     }
@@ -566,10 +599,12 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             r#static,
             mode: _,
             offline_plugins: _,
+            attest,
+            key,
         } => {
             // P1 (readiness): `OXIDE_OFFLINE_PLUGINS` is written pre-runtime
             // by `apply_startup_env` — see `apply_startup_env` and `main.rs`.
-            cmd_build(&root, r#static, w).await
+            cmd_build(&root, r#static, attest, key.as_deref(), w).await
         }
         Command::Start {
             root,
@@ -617,6 +652,12 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
                 runs,
             } => cmd_perf_bisect(&root, &good, &bad, metric, &threshold, runs, w).await,
         },
+        Command::Verify {
+            root,
+            dist,
+            pubkey,
+            rebuild,
+        } => cmd_verify(&root, dist.as_deref(), pubkey.as_deref(), rebuild, w).await,
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
@@ -664,10 +705,13 @@ fn load_config_or_default(root: &Path, mode: &str) -> OxideConfig {
 }
 
 /// Strict config load for commands that must surface validation errors (§19.1 check).
+/// The structured `OxideError` is preserved, not flattened into a string —
+/// the `[CFG-*]` code, the message and the `fix:` help line all survive
+/// into the anyhow chain the command boundary prints.
 fn load_config_strict(root: &Path, mode: &str) -> anyhow::Result<OxideConfig> {
     oxide_fw_config::load(root, mode, BTreeMap::new())
         .map(|l| l.config)
-        .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))
+        .map_err(anyhow::Error::new)
 }
 
 /// §10.1: refine each route's render mode with the AST-based inference.
@@ -5969,7 +6013,13 @@ async fn bundle_edge_entry(
     Ok(Some(target))
 }
 
-async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<i32> {
+async fn cmd_build(
+    root: &str,
+    r#static: bool,
+    attest: bool,
+    key_path: Option<&str>,
+    w: Writer<'_>,
+) -> anyhow::Result<i32> {
     // Canonicalize once at entry. Downstream joins (routes scan, bundler,
     // write_prerender) all expect absolute paths so a nested `root.join`
     // cannot double the prefix — `PathBuf::join` returns the RHS unchanged
@@ -8032,6 +8082,13 @@ async fn cmd_build(root: &str, r#static: bool, w: Writer<'_>) -> anyhow::Result<
     let fp = build_cache::fingerprint(&rootp, "production", r#static);
     if let Err(e) = build_cache::store(&rootp, &fp) {
         eprintln!("warn: could not write build fingerprint: {e}");
+    }
+    // §V2-F20: `--attest` writes dist/build-id + dist/attest/ (the SBOM,
+    // the in-toto provenance and its ed25519 signature) for the dist this
+    // build just emitted. A failed attestation fails the build — an
+    // attestation that silently did not happen is worse than none.
+    if attest {
+        cmd_attest_write(&rootp, &dist, key_path, w)?;
     }
     // SPEC-5D: GC the on-disk artifact cache after every build. Default
     // policy: idle > 7 days, cap 1 GiB. Overridable via env (a long-running
@@ -13236,6 +13293,285 @@ async fn cmd_perf_bisect(
         }
     }
     Ok(0)
+}
+
+/// The `--attest` tail of `oxide build` (§V2-F20): collect the build facts
+/// (config hash, git state, builder id, `SOURCE_DATE_EPOCH`), resolve the
+/// signing key (`--key` overrides `OXIDE_SIGNING_KEY`), and hand the pure
+/// [`attest::write_attestation`] composer the dist this build emitted.
+fn cmd_attest_write(
+    rootp: &Path,
+    dist: &Path,
+    key_path: Option<&str>,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let _span = tracing::info_span!("cli_attest_build", root = %rootp.display()).entered();
+    // The key: --key wins, then OXIDE_SIGNING_KEY; attesting unsigned is
+    // not a mode — a missing key fails the build.
+    let resolved = key_path
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os(attest::SIGNING_KEY_VAR).map(PathBuf::from))
+        .ok_or_else(|| anyhow::Error::new(attest::AttestError::KeyMissing.diagnostic()))?;
+    let key_bytes = std::fs::read(&resolved).map_err(|e| {
+        anyhow::Error::new(
+            attest::AttestError::KeyUnreadable {
+                path: resolved.to_string_lossy().into_owned(),
+                detail: e.to_string(),
+            }
+            .diagnostic(),
+        )
+    })?;
+    let pair = attest::load_signing_key_bytes(&key_bytes)
+        .map_err(|e| anyhow::Error::new(e.diagnostic()))?;
+
+    // The facts: everything process-shaped stays here; the statement
+    // builder is pure and pinned.
+    let config_hash = config_fingerprint(rootp);
+    let git_commit = git_output(rootp, ["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
+    let dirty = git_output(rootp, ["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
+    let facts = attest::BuildFacts {
+        oxide_version: env!("CARGO_PKG_VERSION").to_string(),
+        config_hash,
+        git_commit,
+        dirty,
+        builder_id: attest::builder_id_from(std::env::var(attest::BUILDER_ID_VAR).ok().as_deref()),
+        source_date_epoch: std::env::var(attest::SOURCE_DATE_EPOCH_VAR)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok()),
+    };
+
+    let report = attest::write_attestation(rootp, dist, &facts, &pair)
+        .map_err(|e| anyhow::Error::new(e.diagnostic()))?;
+    outln!(w, "attest: build-id {}", report.build_id);
+    outln!(
+        w,
+        "attest: {} subjects, {} sbom components -> dist/{}",
+        report.subjects,
+        report.components,
+        attest::ATTEST_DIRNAME
+    );
+    outln!(w, "attest: signed (keyid {})", report.keyid);
+    Ok(())
+}
+
+/// `oxide verify` (§V2-F20): the canonical-form gate, the optional
+/// signature check (`--pubkey`; skipped loudly without one — the envelope
+/// records the key id, not the key), the subject-digest walk, and with
+/// `--rebuild` the scratch-copy rebuild whose dist digests must match.
+async fn cmd_verify(
+    root: &str,
+    dist_path: Option<&str>,
+    pubkey_path: Option<&str>,
+    rebuild: bool,
+    w: Writer<'_>,
+) -> anyhow::Result<i32> {
+    let _span = tracing::info_span!("cli_attest_verify", root = %root).entered();
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    let dist = dist_path.map(PathBuf::from).unwrap_or_else(|| rootp.join("dist"));
+    let attest_dir = dist.join(attest::ATTEST_DIRNAME);
+    let provenance_path = attest_dir.join(attest::PROVENANCE_FILENAME);
+
+    // Canonical gate first: a whitespace-only tamper dies here, before
+    // the signature check could be fooled by a re-serialization.
+    let bytes = std::fs::read(&provenance_path).map_err(|_| {
+        anyhow::Error::new(attest::AttestError::BuildIdMissing.diagnostic())
+    })?;
+    if !attest::is_canonical(&bytes) {
+        return Err(anyhow::Error::new(
+            attest::AttestError::NotCanonical {
+                detail: "provenance.intoto.json is not the canonical spelling".to_string(),
+            }
+            .diagnostic(),
+        ));
+    }
+    outln!(w, "canonical: ok");
+    let statement: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| anyhow::Error::new(attest::AttestError::NotCanonical { detail: e.to_string() }.diagnostic()))?;
+
+    // The signature: verified only when a verifier key is supplied.
+    match pubkey_path {
+        None => outln!(
+            w,
+            "signature: skipped (pass --pubkey <file> to check keyid {})",
+            signature_keyid(&attest_dir)?
+        ),
+        Some(spec) => {
+            let pubkey = resolve_pubkey(spec)?;
+            let envelope: attest::SignatureEnvelope = serde_json::from_str(
+                &std::fs::read_to_string(attest_dir.join(attest::SIGNATURE_FILENAME))
+                    .map_err(|e| anyhow::Error::new(attest::AttestError::Io { detail: e.to_string() }.diagnostic()))?,
+            )
+            .map_err(|_| anyhow::Error::new(attest::AttestError::SignatureMismatch.diagnostic()))?;
+            attest::verify_signature(&bytes, &envelope, &pubkey)
+                .map_err(|e| anyhow::Error::new(e.diagnostic()))?;
+            outln!(w, "signature: verified (keyid {})", envelope.keyid);
+        }
+    }
+
+    // The subjects: every signed digest must still match the dist.
+    attest::verify_subjects(&dist, &statement).map_err(|e| anyhow::Error::new(e.diagnostic()))?;
+    let subject_count = statement["subject"].as_array().map_or(0, Vec::len);
+    outln!(w, "subjects: {subject_count} verified against dist");
+
+    // The reproducibility check: rebuild in a scratch copy and compare.
+    if rebuild {
+        let (match_, detail) = rebuild_and_compare(&rootp).await?;
+        outln!(w, "rebuild: {}", if match_ { "dist digests match" } else { "MISMATCH" });
+        if !match_ {
+            outln!(w, "rebuild detail: {detail}");
+            return Ok(1);
+        }
+    }
+    Ok(0)
+}
+
+/// The key id recorded in the signature envelope (printed when the
+/// signature check is skipped, so the operator knows whose key to supply).
+fn signature_keyid(attest_dir: &Path) -> anyhow::Result<String> {
+    let raw = std::fs::read_to_string(attest_dir.join(attest::SIGNATURE_FILENAME))
+        .map_err(|e| anyhow::Error::new(attest::AttestError::Io { detail: e.to_string() }.diagnostic()))?;
+    let envelope: attest::SignatureEnvelope =
+        serde_json::from_str(&raw).map_err(|_| anyhow::Error::new(attest::AttestError::SignatureMismatch.diagnostic()))?;
+    Ok(envelope.keyid)
+}
+
+/// Resolve `--pubkey`: a path that exists is read; anything else is the
+/// key material itself (SPKI PEM, 64-char hex or 32-byte base64).
+fn resolve_pubkey(spec: &str) -> anyhow::Result<Vec<u8>> {
+    let material = match std::fs::read_to_string(spec) {
+        Ok(text) => text,
+        Err(_) => spec.to_string(),
+    };
+    attest::ed25519_pubkey_from_pem(&material).map_err(|e| anyhow::Error::new(e.diagnostic()))
+}
+
+/// The `--rebuild` check: copy the project (minus `dist/`, `target/`,
+/// `node_modules/`, `.git/`, `.oxide/`) into a scratch dir under the
+/// system temp, build it with the shared cache and `OXIDE_FORCE_BUILD=1`,
+/// and compare every statement subject (except `dist/build-id` — the
+/// scratch build runs without `--attest`, and the id is derived from the
+/// same content the other subjects pin) against the rebuilt tree.
+/// Returns `(match, detail)`.
+async fn rebuild_and_compare(rootp: &Path) -> anyhow::Result<(bool, String)> {
+    // std-only scratch: a per-pid directory, swept whatever the outcome.
+    let scratch = std::env::temp_dir().join(format!("oxide-verify-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let outcome = rebuild_in(&scratch, rootp).await;
+    let _ = std::fs::remove_dir_all(&scratch);
+    outcome
+}
+
+async fn rebuild_in(scratch: &Path, rootp: &Path) -> anyhow::Result<(bool, String)> {
+    copy_project(rootp, scratch)?;
+    let exe = std::env::current_exe()?;
+    let status = tokio::process::Command::new(&exe)
+        .args(["build", "--root"])
+        .arg(scratch)
+        .env("OXIDE_FORCE_BUILD", "1")
+        .env(
+            perf_bisect::CACHE_DIR_VAR,
+            perf_bisect::cache_dir_for(rootp),
+        )
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map_err(|e| anyhow::anyhow!("the scratch build did not spawn: {e}"))?;
+    if !status.success() {
+        return Ok((false, "the scratch rebuild failed to build".to_string()));
+    }
+    let statement: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        rootp
+            .join("dist")
+            .join(attest::ATTEST_DIRNAME)
+            .join(attest::PROVENANCE_FILENAME),
+    )?)?;
+    let rebuilt_dist = scratch.join("dist");
+    let subjects = statement["subject"].as_array().cloned().unwrap_or_default();
+    if subjects.is_empty() {
+        return Ok((false, "the statement carries no subjects".to_string()));
+    }
+    for row in &subjects {
+        let name = row["name"].as_str().unwrap_or_default();
+        let expected = row["digest"]["sha256"].as_str().unwrap_or_default();
+        if name == format!("dist/{}", attest::BUILD_ID_FILE) || name.is_empty() {
+            continue;
+        }
+        let rel = name.strip_prefix("dist/").unwrap_or(name);
+        let target = rebuilt_dist.join(rel);
+        let actual = if rel.ends_with('/') {
+            if !target.is_dir() {
+                return Ok((false, format!("{name} is missing from the rebuild")));
+            }
+            match attest::subtree_digest(&target) {
+                Ok(d) => d,
+                Err(e) => return Ok((false, e.to_string())),
+            }
+        } else {
+            match std::fs::read(&target) {
+                Ok(bytes) => attest::sha256_hex(&bytes),
+                Err(_) => return Ok((false, format!("{name} is missing from the rebuild"))),
+            }
+        };
+        if actual != expected {
+            return Ok((false, format!("{name} digests {actual} != {expected}")));
+        }
+    }
+    Ok((true, String::new()))
+}
+
+/// Copy the project sources into `dst`, skipping the directories the build
+/// regenerates or fetches (dist, target, node_modules, .git, .oxide).
+fn copy_project(rootp: &Path, dst: &Path) -> anyhow::Result<()> {
+    const SKIP: [&str; 5] = ["dist", "target", "node_modules", ".git", ".oxide"];
+    fn walk(src: &Path, dst: &Path) -> anyhow::Result<()> {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if SKIP.contains(&name.as_ref()) {
+                continue;
+            }
+            let from = entry.path();
+            let to = dst.join(&*name);
+            if from.is_dir() {
+                walk(&from, &to)?;
+            } else {
+                std::fs::copy(&from, &to)?;
+            }
+        }
+        Ok(())
+    }
+    walk(rootp, dst)
+}
+
+/// blake3 hex over the project's config file bytes (`oxide.config.ts`, then
+/// `.json`); `none` when the project ships neither.
+fn config_fingerprint(rootp: &Path) -> String {
+    for name in ["oxide.config.ts", "oxide.config.json"] {
+        let path = rootp.join(name);
+        if path.is_file() {
+            if let Ok(bytes) = std::fs::read(&path) {
+                let mut h = blake3::Hasher::new();
+                h.update(&bytes);
+                return h.finalize().to_hex().to_string();
+            }
+        }
+    }
+    "none".to_string()
+}
+
+/// `git -C <dir> <args>` stdout, trimmed — `None` when git is absent or
+/// the tree is not a repository (the fact then says `unknown`/clean).
+fn git_output(dir: &Path, args: impl IntoIterator<Item = &'static str>) -> Option<String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("-C").arg(dir).args(args);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// Resolve a `--route` id against the scanned tree. Accepts the canonical
