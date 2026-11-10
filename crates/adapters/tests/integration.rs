@@ -43,7 +43,7 @@ fn edge_handler_does_not_route_the_flat_merge_head_through_wasm() {
     );
     // The structured port IS preferred — that is the WP-C1 fix.
     assert!(
-        js.contains(r#"useWasm("#) && js.contains(r#""merge_head_structured""#),
+        js.contains(r"useWasm(") && js.contains(r#""merge_head_structured""#),
         "merge_head_structured is preferred when wasm is present"
     );
     // The JS implementation must be present and reference the comment that
