@@ -8,6 +8,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.9.0] — 2026-11-10
+
+### Added
+
+- **cli**: The V2-F20 attestation substrate
+
+### Chores
+
+- **release**: V0.9.0
+
+### Documentation
+
+- **cli**: The attest walkthrough example
+- Record the F20 substrate and fix the v0.8.0 drift
+
+### Refactored
+
+- **bundler**: Tracing-warn the incremental worker failures
+
+### Testing
+
+- **cli**: Pin the V2-F20 attestation contract
+
+### Build
+
+- **cli**: The attest criterion bench behind bench-util
+
 ## [0.8.0] — 2026-11-10
 
 ### Added
