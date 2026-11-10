@@ -73,8 +73,7 @@ pub const BUILD_TYPE: &str = "https://github.com/elcoosp/oxide/build/v1";
 /// walkthrough example can mint a key from a fixed seed without a
 /// dependency on ring's RNG.
 const ED25519_PKCS8_PREFIX: [u8; 16] = [
-    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04,
-    0x20,
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
 ];
 
 /// The 12-byte SPKI prefix of an ed25519 `SubjectPublicKeyInfo` DER
@@ -192,8 +191,10 @@ impl AttestError {
                  (`openssl pkcs8 -topk8 -nocrypt`); raw seeds are accepted only as 48-byte DER"
                 .to_string(),
             AttestError::LockUnparseable { file, .. } => {
-                format!("`{file}` must be a plain generated lockfile; re-run the \
-                 package manager to regenerate it before attesting")
+                format!(
+                    "`{file}` must be a plain generated lockfile; re-run the \
+                 package manager to regenerate it before attesting"
+                )
             }
             AttestError::DistMissing { .. } => "run `oxide build --attest` — verification \
                  runs against the dist a build emitted"
@@ -202,8 +203,10 @@ impl AttestError {
                  flow writes dist/build-id and dist/attest/"
                 .to_string(),
             AttestError::SubjectMismatch { name, .. } => {
-                format!("rebuild with `oxide build --attest` — `{name}` changed since \
-                 the provenance was signed")
+                format!(
+                    "rebuild with `oxide build --attest` — `{name}` changed since \
+                 the provenance was signed"
+                )
             }
             AttestError::NotCanonical { .. } => "the statement must be written by the same \
                  `oxide build --attest` that signed it; hand-edited or re-serialized \
@@ -282,8 +285,9 @@ pub fn is_canonical(bytes: &[u8]) -> bool {
 /// [`AttestError::Io`] when the epoch does not fit an `i64` (the `chrono`
 /// conversion range).
 pub fn rfc3339_from_epoch(secs: u64) -> Result<String, AttestError> {
-    let secs = i64::try_from(secs)
-        .map_err(|_| AttestError::Io { detail: "SOURCE_DATE_EPOCH is out of range".to_string() })?;
+    let secs = i64::try_from(secs).map_err(|_| AttestError::Io {
+        detail: "SOURCE_DATE_EPOCH is out of range".to_string(),
+    })?;
     let dt = chrono::DateTime::from_timestamp(secs, 0).ok_or_else(|| AttestError::Io {
         detail: "SOURCE_DATE_EPOCH is out of range".to_string(),
     })?;
@@ -306,7 +310,10 @@ pub struct LockPackage {
 impl LockPackage {
     /// A `(name, version)` pair, for fixtures and callers.
     pub fn new(name: &str, version: &str) -> Self {
-        Self { name: name.to_string(), version: version.to_string() }
+        Self {
+            name: name.to_string(),
+            version: version.to_string(),
+        }
     }
 }
 
@@ -426,12 +433,14 @@ pub fn parse_pnpm_lock_packages(text: &str) -> Result<Vec<LockPackage>, AttestEr
         let key = strip_yaml_quotes(key.trim());
         let key = key.strip_prefix('/').unwrap_or(key);
         let identity = key.split('(').next().unwrap_or(key);
-        let at = identity.rfind('@').ok_or_else(|| AttestError::LockUnparseable {
-            file: "pnpm-lock.yaml".to_string(),
-            which: "pnpm".to_string(),
-            line: line_no,
-            detail: format!("a package key without `name@version`: `{identity}`"),
-        })?;
+        let at = identity
+            .rfind('@')
+            .ok_or_else(|| AttestError::LockUnparseable {
+                file: "pnpm-lock.yaml".to_string(),
+                which: "pnpm".to_string(),
+                line: line_no,
+                detail: format!("a package key without `name@version`: `{identity}`"),
+            })?;
         let (name, version) = identity.split_at(at);
         let version = version.strip_prefix('@').unwrap_or(version);
         if name.is_empty() || version.is_empty() {
@@ -442,7 +451,10 @@ pub fn parse_pnpm_lock_packages(text: &str) -> Result<Vec<LockPackage>, AttestEr
                 detail: format!("an empty name or version in `{identity}`"),
             });
         }
-        packages.push(LockPackage { name: name.to_string(), version: version.to_string() });
+        packages.push(LockPackage {
+            name: name.to_string(),
+            version: version.to_string(),
+        });
     }
     packages.sort();
     packages.dedup();
@@ -503,10 +515,10 @@ pub fn sbom_from_locks(
         "specVersion": "1.5",
         "version": 1,
     });
-    if let Some(epoch) = generated_at_epoch {
-        if let Ok(ts) = rfc3339_from_epoch(epoch) {
-            sbom["metadata"]["timestamp"] = serde_json::Value::String(ts);
-        }
+    if let Some(epoch) = generated_at_epoch
+        && let Ok(ts) = rfc3339_from_epoch(epoch)
+    {
+        sbom["metadata"]["timestamp"] = serde_json::Value::String(ts);
     }
     sbom
 }
@@ -553,10 +565,13 @@ pub fn subtree_digest(dir: &Path) -> Result<String, AttestError> {
     let mut manifest: Vec<(String, String)> = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
-        let entries =
-            std::fs::read_dir(&current).map_err(|e| AttestError::Io { detail: e.to_string() })?;
+        let entries = std::fs::read_dir(&current).map_err(|e| AttestError::Io {
+            detail: e.to_string(),
+        })?;
         for entry in entries {
-            let entry = entry.map_err(|e| AttestError::Io { detail: e.to_string() })?;
+            let entry = entry.map_err(|e| AttestError::Io {
+                detail: e.to_string(),
+            })?;
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
@@ -567,11 +582,14 @@ pub fn subtree_digest(dir: &Path) -> Result<String, AttestError> {
             }
             let rel = path
                 .strip_prefix(dir)
-                .map_err(|e| AttestError::Io { detail: e.to_string() })?
+                .map_err(|e| AttestError::Io {
+                    detail: e.to_string(),
+                })?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let bytes =
-                std::fs::read(&path).map_err(|e| AttestError::Io { detail: e.to_string() })?;
+            let bytes = std::fs::read(&path).map_err(|e| AttestError::Io {
+                detail: e.to_string(),
+            })?;
             manifest.push((rel, sha256_hex(&bytes)));
         }
     }
@@ -608,22 +626,30 @@ pub struct Subject {
 /// [`AttestError::Io`] on walk/read failures.
 pub fn dist_subjects(dist: &Path) -> Result<Vec<Subject>, AttestError> {
     if !dist.is_dir() {
-        return Err(AttestError::DistMissing { path: dist.to_string_lossy().into_owned() });
+        return Err(AttestError::DistMissing {
+            path: dist.to_string_lossy().into_owned(),
+        });
     }
     if !dist.join(BUILD_ID_FILE).is_file() {
         return Err(AttestError::BuildIdMissing);
     }
     let mut subjects = vec![Subject {
         name: format!("dist/{BUILD_ID_FILE}"),
-        digest_sha256: sha256_hex(
-            &std::fs::read(dist.join(BUILD_ID_FILE))
-                .map_err(|e| AttestError::Io { detail: e.to_string() })?,
-        ),
+        digest_sha256: sha256_hex(&std::fs::read(dist.join(BUILD_ID_FILE)).map_err(|e| {
+            AttestError::Io {
+                detail: e.to_string(),
+            }
+        })?),
     }];
     let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(dist)
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?
-        .collect::<Result<_, _>>()
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?
+        .map_err(|e| AttestError::Io {
+            detail: e.to_string(),
+        })?
+        .collect::<std::result::Result<Vec<std::fs::DirEntry>, std::io::Error>>()
+        .map_err(|e| AttestError::Io {
+            detail: e.to_string(),
+        })?
+        .into_iter()
         .map(|e| e.path())
         .collect();
     entries.sort();
@@ -641,8 +667,9 @@ pub fn dist_subjects(dist: &Path) -> Result<Vec<Subject>, AttestError> {
                 digest_sha256: subtree_digest(&path)?,
             });
         } else if path.is_file() {
-            let bytes =
-                std::fs::read(&path).map_err(|e| AttestError::Io { detail: e.to_string() })?;
+            let bytes = std::fs::read(&path).map_err(|e| AttestError::Io {
+                detail: e.to_string(),
+            })?;
             subjects.push(Subject {
                 name: format!("dist/{file_name}"),
                 digest_sha256: sha256_hex(&bytes),
@@ -691,10 +718,7 @@ pub fn builder_id_from(env: Option<&str>) -> String {
 /// `internalParameters.sourceDateEpoch` only when the epoch was set (an
 /// absent field is the determinism contract, not a missing value).
 #[must_use]
-pub fn provenance_statement(
-    subjects: &[Subject],
-    facts: &BuildFacts,
-) -> serde_json::Value {
+pub fn provenance_statement(subjects: &[Subject], facts: &BuildFacts) -> serde_json::Value {
     let subject: Vec<serde_json::Value> = subjects
         .iter()
         .map(|s| {
@@ -764,8 +788,9 @@ pub fn load_signing_key(pem_or_base64: &str) -> Result<Ed25519KeyPair, AttestErr
     } else {
         decode_base64(text)?
     };
-    Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der)
-        .map_err(|e| AttestError::KeyMalformed { detail: e.to_string() })
+    Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der).map_err(|e| AttestError::KeyMalformed {
+        detail: e.to_string(),
+    })
 }
 
 /// Load an ed25519 private key from raw file bytes: PEM armor when the
@@ -784,8 +809,9 @@ pub fn load_signing_key_bytes(bytes: &[u8]) -> Result<Ed25519KeyPair, AttestErro
         return Ok(pair);
     }
     let der = decode_base64(&text)?;
-    Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der)
-        .map_err(|e| AttestError::KeyMalformed { detail: e.to_string() })
+    Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der).map_err(|e| AttestError::KeyMalformed {
+        detail: e.to_string(),
+    })
 }
 
 /// Resolve an ed25519 public key from SPKI PEM (`openssl pkey -pubout`),
@@ -807,7 +833,9 @@ pub fn ed25519_pubkey_from_pem(text: &str) -> Result<Vec<u8>, AttestError> {
         (0..32)
             .map(|i| {
                 u8::from_str_radix(&trimmed[i * 2..i * 2 + 2], 16).map_err(|e| {
-                    AttestError::PubkeyMalformed { detail: e.to_string() }
+                    AttestError::PubkeyMalformed {
+                        detail: e.to_string(),
+                    }
                 })
             })
             .collect::<Result<_, _>>()?
@@ -824,9 +852,12 @@ pub fn ed25519_pubkey_from_pem(text: &str) -> Result<Vec<u8>, AttestError> {
 }
 
 /// The key id the signature envelope records: the hex of the 32-byte
-/// ed25519 public key.
+/// ed25519 public key. ring exposes the public key through the
+/// `signature::KeyPair` trait — brought into scope here, not at the call
+/// sites (ring 0.17: `Ed25519KeyPair` has no inherent `public_key`).
 #[must_use]
 pub fn key_id(pair: &Ed25519KeyPair) -> String {
+    use ring::signature::KeyPair as _;
     hex_lower(pair.public_key().as_ref())
 }
 
@@ -845,11 +876,14 @@ pub struct SignatureEnvelope {
 #[must_use]
 pub fn sign_statement(statement: &serde_json::Value, pair: &Ed25519KeyPair) -> SignatureEnvelope {
     let message = canonical_json(statement);
-    let mut signature = [0_u8; ring::signature::ED25519_SIGNATURE_LEN];
-    pair.sign(message.as_bytes(), &mut signature);
+    // ring 0.17's `Ed25519KeyPair::sign` returns the signature (an
+    // `ed25519::Signature`, exactly 64 bytes per RFC 8032 §5.1 — ring does
+    // not export a length constant, so the signature is carried as its
+    // own bytes rather than through a fixed-size buffer).
+    let signature = pair.sign(message.as_bytes());
     SignatureEnvelope {
         keyid: key_id(pair),
-        sig: base64::engine::general_purpose::STANDARD.encode(signature),
+        sig: base64::engine::general_purpose::STANDARD.encode(signature.as_ref()),
     }
 }
 
@@ -972,15 +1006,19 @@ pub fn write_attestation(
     )
     .entered();
     if !dist.is_dir() {
-        return Err(AttestError::DistMissing { path: dist.to_string_lossy().into_owned() });
+        return Err(AttestError::DistMissing {
+            path: dist.to_string_lossy().into_owned(),
+        });
     }
 
     // The A04 id closes the deferral the substrate needs: the statement's
     // first subject is the id file itself.
-    let build_id = oxide_fw_cache::build_id_of_dist(dist)
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?;
-    std::fs::write(dist.join(BUILD_ID_FILE), &build_id)
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?;
+    let build_id = oxide_fw_cache::build_id_of_dist(dist).map_err(|e| AttestError::Io {
+        detail: e.to_string(),
+    })?;
+    std::fs::write(dist.join(BUILD_ID_FILE), &build_id).map_err(|e| AttestError::Io {
+        detail: e.to_string(),
+    })?;
 
     // The binary's crates: the project's Cargo.lock when it exists (the
     // release-binaries CI builds inside the oxide workspace, where the
@@ -1007,20 +1045,27 @@ pub fn write_attestation(
     let envelope = sign_statement(&statement, key);
 
     let attest_dir = dist.join(ATTEST_DIRNAME);
-    std::fs::create_dir_all(&attest_dir)
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?;
+    std::fs::create_dir_all(&attest_dir).map_err(|e| AttestError::Io {
+        detail: e.to_string(),
+    })?;
     let sbom_path = attest_dir.join(SBOM_FILENAME);
     let provenance_path = attest_dir.join(PROVENANCE_FILENAME);
     let signature_path = attest_dir.join(SIGNATURE_FILENAME);
-    std::fs::write(&sbom_path, canonical_json(&sbom).into_bytes())
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?;
+    std::fs::write(&sbom_path, canonical_json(&sbom).into_bytes()).map_err(|e| {
+        AttestError::Io {
+            detail: e.to_string(),
+        }
+    })?;
     let statement_bytes = canonical_json(&statement).into_bytes();
-    std::fs::write(&provenance_path, &statement_bytes)
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?;
-    let envelope_json = serde_json::to_string(&envelope)
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?;
-    std::fs::write(&signature_path, envelope_json)
-        .map_err(|e| AttestError::Io { detail: e.to_string() })?;
+    std::fs::write(&provenance_path, &statement_bytes).map_err(|e| AttestError::Io {
+        detail: e.to_string(),
+    })?;
+    let envelope_json = serde_json::to_string(&envelope).map_err(|e| AttestError::Io {
+        detail: e.to_string(),
+    })?;
+    std::fs::write(&signature_path, envelope_json).map_err(|e| AttestError::Io {
+        detail: e.to_string(),
+    })?;
     tracing::debug!(
         subjects = subjects.len(),
         components,
@@ -1049,14 +1094,19 @@ fn pem_section(text: &str, tag: &str) -> Option<String> {
     let end = format!("-----END {tag}-----");
     let start = text.find(&begin)? + begin.len();
     let stop = text[start..].find(&end)? + start;
-    let body: String = text[start..stop].chars().filter(|c| !c.is_whitespace()).collect();
+    let body: String = text[start..stop]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     if body.is_empty() { None } else { Some(body) }
 }
 
 fn decode_base64(text: &str) -> Result<Vec<u8>, AttestError> {
     base64::engine::general_purpose::STANDARD
         .decode(text.trim())
-        .map_err(|e| AttestError::KeyMalformed { detail: format!("base64: {e}") })
+        .map_err(|e| AttestError::KeyMalformed {
+            detail: format!("base64: {e}"),
+        })
 }
 
 #[cfg(test)]
@@ -1070,7 +1120,10 @@ mod tests {
         let mut map = serde_json::Map::new();
         map.insert("z".to_string(), serde_json::json!(1));
         map.insert("a".to_string(), serde_json::json!(2));
-        assert_eq!(canonical_json(&serde_json::Value::Object(map)), r#"{"a":2,"z":1}"#);
+        assert_eq!(
+            canonical_json(&serde_json::Value::Object(map)),
+            r#"{"a":2,"z":1}"#
+        );
     }
 
     #[test]

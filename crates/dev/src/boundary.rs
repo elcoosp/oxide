@@ -64,7 +64,6 @@ pub enum Plan {
 ///
 /// The boundary check runs BEFORE the entry check, so a module that is both
 /// (a route `page.tsx` is a component boundary) updates in place.
-#[must_use]
 pub fn plan(
     changed: &Path,
     importers: &HashMap<PathBuf, Vec<PathBuf>>,
@@ -307,7 +306,9 @@ mod tests {
     #[test]
     fn self_accept_scans_the_call_not_the_module_system() {
         assert!(source_self_accepts("import.meta.hot.accept(() => {});"));
-        assert!(source_self_accepts("import.meta.hot.acceptDependencies(['./x'])"));
+        assert!(source_self_accepts(
+            "import.meta.hot.acceptDependencies(['./x'])"
+        ));
         assert!(!source_self_accepts("import.meta.env.MODE;"));
         assert!(!source_self_accepts(""));
     }

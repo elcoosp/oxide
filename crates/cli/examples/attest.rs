@@ -17,15 +17,18 @@
 //!    subject check, exactly as the spec's "tampering with one byte fails
 //!    `verify`" acceptance requires.
 //!
-//! A fixed-seed ed25519 key ([`seed_to_pkcs8`](oxide_fw_cli::attest::seed_to_pkcs8)
-//! + the PEM loader) makes the walkthrough reproducible; the real command
-//! takes the key from `--key` / `OXIDE_SIGNING_KEY`. The fake dist lives
-//! in a tempdir so the example runs in milliseconds with no build:
+//! A fixed-seed ed25519 key (the `seed_to_pkcs8` + PEM loader helpers in
+//! `oxide_fw_cli::attest`) makes the walkthrough reproducible; the real
+//! command takes the key from `--key` / `OXIDE_SIGNING_KEY`. The fake dist
+//! lives in a tempdir so the example runs in milliseconds with no build:
 //!
 //! ```text
 //! cargo run -p oxide-fw-cli --example attest
 //! ```
 
+// ring exposes `Ed25519KeyPair::public_key` only through its
+// `signature::KeyPair` trait.
+use ring::signature::KeyPair as _;
 use std::fs;
 
 use base64::Engine as _;
@@ -55,13 +58,19 @@ fn main() {
         source_date_epoch: Some(1_700_000_000),
     };
 
-    let report =
-        write_attestation(tmp.path(), &dist, &facts, &pair).expect("the fixture attests");
+    let report = write_attestation(tmp.path(), &dist, &facts, &pair).expect("the fixture attests");
     println!("build-id  : {}", report.build_id);
-    println!("subjects  : {} (build-id + client/ + server/ + ssr.js)", report.subjects);
+    println!(
+        "subjects  : {} (build-id + client/ + server/ + ssr.js)",
+        report.subjects
+    );
     println!(
         "artifacts : {}",
-        report.provenance_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        report
+            .provenance_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
     );
     println!("keyid     : {}", report.keyid);
 
@@ -69,7 +78,14 @@ fn main() {
     // the canonical spelling — a re-serialized (pretty-printed) file is
     // rejected before the signature even runs.
     let bytes = fs::read(&report.provenance_path).expect("the statement was written");
-    println!("canonical : {}", if is_canonical(&bytes) { "ok" } else { "REFUSED" });
+    println!(
+        "canonical : {}",
+        if is_canonical(&bytes) {
+            "ok"
+        } else {
+            "REFUSED"
+        }
+    );
 
     // The signature round trip with the verifier key derived from the
     // same pair (the SPKI PEM `openssl pkey -pubout` prints).
@@ -121,7 +137,9 @@ fn pem(der: &[u8]) -> String {
 fn pem_public(key: &[u8]) -> String {
     use base64::engine::general_purpose::STANDARD;
     // SPKI DER = the 12-byte ed25519 prefix in front of the 32-byte key.
-    let mut spki = vec![0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00];
+    let mut spki = vec![
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    ];
     spki.extend_from_slice(key);
     format!(
         "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n",

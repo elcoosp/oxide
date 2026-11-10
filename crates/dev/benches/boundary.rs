@@ -74,13 +74,10 @@ fn diamond() -> (PathBuf, HashMap<PathBuf, Vec<PathBuf>>, HashSet<PathBuf>) {
     importers.insert(p("lib/util.ts"), vec![p("comp/a.tsx"), p("comp/b.tsx")]);
     importers.insert(p("comp/a.tsx"), vec![p("routes/index/page.tsx")]);
     importers.insert(p("comp/b.tsx"), vec![p("routes/index/page.tsx")]);
-    let accepting: HashSet<PathBuf> = [
-        p("comp/a.tsx"),
-        p("comp/b.tsx"),
-        p("routes/index/page.tsx"),
-    ]
-    .into_iter()
-    .collect();
+    let accepting: HashSet<PathBuf> =
+        [p("comp/a.tsx"), p("comp/b.tsx"), p("routes/index/page.tsx")]
+            .into_iter()
+            .collect();
     (p("lib/util.ts"), importers, accepting)
 }
 

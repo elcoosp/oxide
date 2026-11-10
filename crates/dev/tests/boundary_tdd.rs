@@ -37,10 +37,7 @@ fn graph(
 ) {
     let mut imps: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
     for (module, targets) in importers {
-        imps.insert(
-            p(module),
-            targets.iter().map(|t| p(t)).collect::<Vec<_>>(),
-        );
+        imps.insert(p(module), targets.iter().map(|t| p(t)).collect::<Vec<_>>());
     }
     let acc = accepting.iter().map(|a| p(a)).collect::<HashSet<_>>();
     let ent = entries.iter().map(|e| p(e)).collect::<HashSet<_>>();
@@ -110,10 +107,7 @@ fn multiple_boundaries_are_sorted_and_deduped() {
         &["routes/index/page.tsx"],
     );
     let plan = plan(&p("lib/util.ts"), &imps, &acc, &ent);
-    assert_eq!(
-        plan,
-        Plan::Update(vec![p("comp/a.tsx"), p("comp/b.tsx")])
-    );
+    assert_eq!(plan, Plan::Update(vec![p("comp/a.tsx"), p("comp/b.tsx")]));
 }
 
 #[test]
@@ -129,7 +123,10 @@ fn entry_module_reached_without_a_boundary_is_a_full_reload() {
     let plan = plan(&p("lib/util.ts"), &imps, &acc, &ent);
     assert_eq!(
         plan,
-        Plan::FullReload(format!("{} has no HMR boundary", p("routes/api/users/route.ts").display()))
+        Plan::FullReload(format!(
+            "{} has no HMR boundary",
+            p("routes/api/users/route.ts").display()
+        ))
     );
 }
 
@@ -152,7 +149,10 @@ fn an_import_cycle_without_a_boundary_yields_an_empty_update() {
     // the cycle-safe outcome the spec's BFS produces. The CLI seam never
     // routes a boundary-less empty plan to the wire (see docs/deviations.md).
     let (imps, acc, ent) = graph(
-        &[("comp/a.tsx", &["comp/b.tsx"]), ("comp/b.tsx", &["comp/a.tsx"])],
+        &[
+            ("comp/a.tsx", &["comp/b.tsx"]),
+            ("comp/b.tsx", &["comp/a.tsx"]),
+        ],
         &[],
         &[],
     );
@@ -214,8 +214,16 @@ fn source_self_accepts_recognizes_the_hot_accept_registration() {
 #[test]
 fn full_reload_diagnostic_carries_code_and_fix_help() {
     let diag = full_reload_diagnostic("src/routes/api/users/route.ts has no HMR boundary");
-    assert_eq!(diag.message, "HMR fell back to a full reload: src/routes/api/users/route.ts has no HMR boundary");
-    assert!(diag.fix.as_deref().unwrap_or_default().contains("import.meta.hot.accept"));
+    assert_eq!(
+        diag.message,
+        "HMR fell back to a full reload: src/routes/api/users/route.ts has no HMR boundary"
+    );
+    assert!(
+        diag.fix
+            .as_deref()
+            .unwrap_or_default()
+            .contains("import.meta.hot.accept")
+    );
 }
 
 #[test]
@@ -229,10 +237,7 @@ fn changed_path_types_flow_through_plan_unchanged() {
     );
     let changed: &Path = Path::new("src/lib/util.ts");
     let plan = plan(changed, &imps, &acc, &ent);
-    assert_eq!(
-        plan,
-        Plan::Update(vec![PathBuf::from("src/lib/helper.ts")])
-    );
+    assert_eq!(plan, Plan::Update(vec![PathBuf::from("src/lib/helper.ts")]));
 }
 
 // ---------------- §V2-E01 phase 2: the CSS boundary substrate ----------------
@@ -312,7 +317,10 @@ fn a_loader_change_classifies_as_data_and_walks_normally() {
     // itself is unchanged — the planner still computes the surface for
     // consumers that fan out data updates through boundaries.
     let (imps, acc, ent) = graph(
-        &[("blog/[slug]/page.server.ts", &["routes/blog/[slug]/page.tsx"])],
+        &[(
+            "blog/[slug]/page.server.ts",
+            &["routes/blog/[slug]/page.tsx"],
+        )],
         &["routes/blog/[slug]/page.tsx"],
         &[],
     );

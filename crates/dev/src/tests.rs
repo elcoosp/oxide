@@ -176,7 +176,10 @@ fn wire_v1_update_entry_spells_the_spec_fields() {
     };
     let json = serde_json::to_string(&e).unwrap();
     assert!(json.contains("\"kind\":\"css\""), "{json}");
-    assert!(json.contains("\"acceptedPath\":\"/@css/app.css\""), "{json}");
+    assert!(
+        json.contains("\"acceptedPath\":\"/@css/app.css\""),
+        "{json}"
+    );
     assert!(json.contains("\"timestamp\":1760000000000"), "{json}");
     assert!(json.contains("\"hash\":\"deadbeefdeadbeef\""), "{json}");
     assert!(json.contains("\"path\":\"src/styles/app.css\""), "{json}");
@@ -198,7 +201,10 @@ fn update_frame_is_the_singular_and_the_batch_alike() {
         updates: vec![entry("/abs/a.tsx", "/src/a.tsx")],
     };
     let batch = HmrMessage::Update {
-        updates: vec![entry("/abs/a.tsx", "/src/a.tsx"), entry("/abs/b.tsx", "/src/b.tsx")],
+        updates: vec![
+            entry("/abs/a.tsx", "/src/a.tsx"),
+            entry("/abs/b.tsx", "/src/b.tsx"),
+        ],
     };
     let empty = HmrMessage::Update { updates: vec![] };
     for frame in [&singular, &batch, &empty] {
@@ -249,7 +255,11 @@ fn schema_mismatch_diagnostic_is_dev_hmr_003() {
     assert_eq!(d.code, "DEV-HMR-003");
     assert_eq!(d.severity, oxide_fw_diagnostics::Severity::Warning);
     assert!(d.fix.is_some());
-    assert!(d.message.contains("2"), "names the found version: {}", d.message);
+    assert!(
+        d.message.contains("2"),
+        "names the found version: {}",
+        d.message
+    );
 }
 
 #[test]
@@ -267,12 +277,7 @@ fn wire_helpers_stamp_entries_deterministically() {
     assert!(content_hash(&dir.path().join("missing.tsx")).is_none());
     // `UpdateEntry::stamped` composes the three: a real file gets the hash,
     // a None hash_path carries "".
-    let stamped = UpdateEntry::stamped(
-        UpdateKind::Js,
-        "src/a.tsx",
-        "/src/a.tsx",
-        Some(&f),
-    );
+    let stamped = UpdateEntry::stamped(UpdateKind::Js, "src/a.tsx", "/src/a.tsx", Some(&f));
     assert_eq!(stamped.hash, h);
     assert!(stamped.timestamp > 1_600_000_000_000);
     assert_eq!(stamped.accepted_path, "/src/a.tsx");
@@ -309,9 +314,7 @@ async fn hmr_hub_broadcasts_to_two_subscribers() {
     hub.publish(HmrMessage::FullReload {
         reason: "routes changed".into(),
     });
-    hub.publish(HmrMessage::Connected {
-        build: "b1".into(),
-    });
+    hub.publish(HmrMessage::Connected { build: "b1".into() });
 
     let want = HmrMessage::FullReload {
         reason: "routes changed".into(),
@@ -319,10 +322,7 @@ async fn hmr_hub_broadcasts_to_two_subscribers() {
     .to_json();
     assert_eq!(s1.recv().await.unwrap(), want);
     assert_eq!(s2.recv().await.unwrap(), want);
-    let want2 = HmrMessage::Connected {
-        build: "b1".into(),
-    }
-    .to_json();
+    let want2 = HmrMessage::Connected { build: "b1".into() }.to_json();
     assert_eq!(s1.recv().await.unwrap(), want2);
     assert_eq!(s2.recv().await.unwrap(), want2);
 
@@ -658,9 +658,10 @@ fn classify_event_true_created_on_brand_new_file_is_structural() {
 
 #[test]
 fn hmr_wire_v1_frame_survives_a_pretty_json_object_path() {
-    // The envelope round-trips through a serde_json::Value (the same path
-    // `try_to_json`'s insert uses), so a consumer that re-serializes the
-    // frame cannot lose the version field.
+    // The ENVELOPED frame round-trips through a serde_json::Value (the same
+    // path `try_to_json`'s insert uses), so a consumer that re-serializes
+    // the frame cannot lose the version field. A bare `to_value(&frame)`
+    // carries no envelope — that is exactly the shape the v1 gate rejects.
     let frame = HmrMessage::Update {
         updates: vec![UpdateEntry {
             kind: UpdateKind::Data,
@@ -670,7 +671,9 @@ fn hmr_wire_v1_frame_survives_a_pretty_json_object_path() {
             hash: String::new(),
         }],
     };
-    let value = serde_json::to_value(&frame).unwrap();
+    let framed = frame.try_to_json().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&framed).unwrap();
+    assert_eq!(value["v"], 1, "the envelope survives the Value round trip");
     let re = serde_json::to_string(&value).unwrap();
     let back = HmrMessage::from_json(&re).unwrap();
     assert_eq!(back, frame);
@@ -704,7 +707,10 @@ fn hmr_wire_v1_rejects_the_retired_wire() {
         assert!(
             matches!(
                 HmrMessage::try_from_json(legacy),
-                Err(HmrWireError::Schema { found: 0, expected: 1 })
+                Err(HmrWireError::Schema {
+                    found: 0,
+                    expected: 1
+                })
             ),
             "{legacy}"
         );

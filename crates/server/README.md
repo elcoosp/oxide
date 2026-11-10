@@ -26,6 +26,7 @@ The pipeline:
 - **`SecuritySettings`** — CSP, CSRF, host allow-list, SSRF allow-list, cookie keys, session keys, trusted proxies
 - **`finish_response_with_request`** — response finalization: security headers, hash-mode CSP, CSRF token issuance, `Server-Timing`, compression decision
 - **`StaticAssets::scan`** — index a directory by URL path
+- **`StaticAssets::status_sidecars`** — the V2-A07 prerender error-status sidecars the same scan collects (`StatusSidecars::scan`/`status_for`); `serve` applies a sidecar status to the page it serves so a prerendered error page is never a 200, and `write_status_sidecar` is the build-side half of the contract
 - **`Metrics`** — per-route latency histogram with cardinality bounded by the route pattern (never the resolved URL)
 
 The dispatch surface (the seven `dyn` traits):

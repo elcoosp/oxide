@@ -28,10 +28,12 @@ use oxide_fw_cli::perf_bisect::{BisectError, Probe, Verdict, find_culprit, probe
 
 /// A synthetic history: nine commits, oldest first.
 fn history() -> Vec<String> {
-    ["boot", "a11y", "css", "hmr", "island", "ssr", "cache", "og", "edge"]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
+    [
+        "boot", "a11y", "css", "hmr", "island", "ssr", "cache", "og", "edge",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 /// A fake measure: the build gets slower from `ssr` onward (index 5), as

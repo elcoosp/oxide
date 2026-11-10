@@ -902,6 +902,186 @@ async fn write_prerender_without_loader_uses_empty_data() {
     assert_eq!(data, serde_json::json!({}), "empty data when no loader");
 }
 
+// ------------------------- prerender status sidecar (spec §V2-A07, TDD)
+
+/// Shared fixture for the sidecar pins: the PrerenderArgs shape the two
+/// write_prerender tests above use, parameterized by the loader/renderer.
+/// `params`/`plugin_head` are caller-owned (the struct borrows them).
+fn sidecar_args<'a>(
+    dist: &'a std::path::Path,
+    params: &'a std::collections::BTreeMap<String, String>,
+    plugin_head: &'a serde_json::Value,
+    page_renderer: Option<&'a std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+    loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
+) -> PrerenderArgs<'a> {
+    PrerenderArgs {
+        dist,
+        rel: "prerendered/boom.html",
+        route_id: "routes/boom",
+        pattern: "/boom",
+        url_path: "/boom",
+        params,
+        locale: "",
+        nonce: "test-nonce",
+        page_renderer,
+        loader_runner,
+        module_path: Some(std::path::Path::new("/fake/page.server.ts")),
+        boot_script_url: None,
+        layouts: &[],
+        layout_module_paths: &[],
+        error_route_id: None,
+        plugin_head,
+    }
+}
+
+/// The two caller-owned fixtures every sidecar pin needs (borrowed by
+/// `sidecar_args`): an empty params map and the empty neutral head.
+macro_rules! sidecar_fixtures {
+    () => {{
+        let params: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        let plugin_head = serde_json::json!({"meta":[],"link":[],"style":[],"script":[]});
+        (params, plugin_head)
+    }};
+}
+
+/// §V2-A07: a prerendered page whose loader short-circuits with a non-200
+/// status writes `<rel>.status` carrying the decimal status — the serve-time
+/// scan (oxide-fw-server) turns it into a real 404/500 instead of a 200.
+#[tokio::test]
+async fn write_prerender_loader_short_circuit_writes_the_status_sidecar() {
+    use std::sync::Arc;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dist = tmp.path().to_path_buf();
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let page_renderer: Arc<dyn oxide_fw_server::PageRenderer> = renderer;
+    let loader = Arc::new(ScriptedLoader::http_error(404, "gone"));
+    let loader_runner: Arc<dyn oxide_fw_server::LoaderRunner> = loader;
+
+    let (params, plugin_head) = sidecar_fixtures!();
+    let (_, status) = write_prerender(sidecar_args(
+        &dist,
+        &params,
+        &plugin_head,
+        Some(&page_renderer),
+        Some(&loader_runner),
+    ))
+    .await
+    .expect("write_prerender ok");
+    assert_eq!(status, 404, "the returned status is the loader's");
+    let sidecar = dist.join("prerendered/boom.html.status");
+    assert_eq!(
+        std::fs::read_to_string(&sidecar).expect("sidecar file exists"),
+        "404",
+        "the sidecar carries the decimal status"
+    );
+}
+
+/// §V2-A07: the adapter's error-status markers (the `str_signals_error`
+/// contract) produce a 500 prerender whose sidecar lands next to the page —
+/// the same status the L0 seed already carries (Wave 3 item 2 parity).
+///
+/// The prerender path renders BUFFERED (`PageRenderer::render`), so the
+/// marker must ride the buffered shell — the streaming-only marker the
+/// live path peeks for never reaches `write_prerender`. The existing
+/// `BufferedErrorMarkerRenderer` fixture (below, with the §10.2 step 5
+/// pins) is reused here.
+#[tokio::test]
+async fn write_prerender_adapter_error_marker_writes_the_status_sidecar() {
+    use std::sync::Arc;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dist = tmp.path().to_path_buf();
+
+    let page_renderer: Arc<dyn oxide_fw_server::PageRenderer> =
+        Arc::new(BufferedErrorMarkerRenderer);
+    let (params, plugin_head) = sidecar_fixtures!();
+    let (_, status) = write_prerender(sidecar_args(
+        &dist,
+        &params,
+        &plugin_head,
+        Some(&page_renderer),
+        None,
+    ))
+    .await
+    .expect("write_prerender ok");
+    assert_eq!(status, 500, "the marker contract is a 500");
+    let sidecar = dist.join("prerendered/boom.html.status");
+    assert_eq!(
+        std::fs::read_to_string(&sidecar).expect("sidecar file exists"),
+        "500",
+        "the sidecar carries the decimal status"
+    );
+}
+
+/// §V2-A07: a 200 prerender leaves NO sidecar file.
+#[tokio::test]
+async fn write_prerender_200_leaves_no_status_sidecar() {
+    use std::sync::Arc;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dist = tmp.path().to_path_buf();
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let page_renderer: Arc<dyn oxide_fw_server::PageRenderer> = renderer;
+    let loader = Arc::new(ScriptedLoader::ok(serde_json::json!({})));
+    let loader_runner: Arc<dyn oxide_fw_server::LoaderRunner> = loader;
+
+    let (params, plugin_head) = sidecar_fixtures!();
+    let (_, status) = write_prerender(sidecar_args(
+        &dist,
+        &params,
+        &plugin_head,
+        Some(&page_renderer),
+        Some(&loader_runner),
+    ))
+    .await
+    .expect("write_prerender ok");
+    assert_eq!(status, 200);
+    assert!(
+        !dist.join("prerendered/boom.html.status").exists(),
+        "a 200 prerender must not leave a sidecar"
+    );
+}
+
+/// §V2-A07: a 200 prerender REMOVES a stale sidecar from a previous build —
+/// the incremental-reuse path writes fresh HTML over the old page, and the
+/// previous build's 500 must not outlive it (status changes both ways).
+#[tokio::test]
+async fn write_prerender_200_removes_a_stale_status_sidecar() {
+    use std::sync::Arc;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dist = tmp.path().to_path_buf();
+
+    let stale = dist.join("prerendered/boom.html.status");
+    std::fs::create_dir_all(dist.join("prerendered")).expect("mkdir");
+    std::fs::write(&stale, "500").expect("stale sidecar");
+
+    let renderer = Arc::new(DataCapturingRenderer::new());
+    let page_renderer: Arc<dyn oxide_fw_server::PageRenderer> = renderer;
+    let loader = Arc::new(ScriptedLoader::ok(serde_json::json!({})));
+    let loader_runner: Arc<dyn oxide_fw_server::LoaderRunner> = loader;
+
+    let (params, plugin_head) = sidecar_fixtures!();
+    let (_, status) = write_prerender(sidecar_args(
+        &dist,
+        &params,
+        &plugin_head,
+        Some(&page_renderer),
+        Some(&loader_runner),
+    ))
+    .await
+    .expect("write_prerender ok");
+    assert_eq!(status, 200);
+    assert!(
+        !stale.exists(),
+        "the stale sidecar from the previous build must be removed"
+    );
+}
+
 // --------------------------------------- smoke-app E2E (real user path)
 
 /// The `examples/smoke-app-react` fixture is a working project that exercises the
@@ -2567,6 +2747,8 @@ async fn static_build_prerenders_page_routes() {
                 r#static: true,
                 mode: None,
                 offline_plugins: false,
+                attest: false,
+                key: None,
             },
         },
         &mut buf,
@@ -2608,6 +2790,8 @@ async fn static_build_enumerates_generate_params() {
                 r#static: true,
                 mode: None,
                 offline_plugins: false,
+                attest: false,
+                key: None,
             },
         },
         &mut buf,
@@ -2659,6 +2843,8 @@ async fn static_build_refuses_dynamic_without_fallback() {
                 r#static: true,
                 mode: None,
                 offline_plugins: false,
+                attest: false,
+                key: None,
             },
         },
         &mut buf,
@@ -2878,6 +3064,8 @@ async fn build_emits_content_search_index_for_collection() {
                 r#static: true,
                 mode: None,
                 offline_plugins: false,
+                attest: false,
+                key: None,
             },
         },
         &mut buf,
