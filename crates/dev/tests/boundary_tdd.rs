@@ -1,4 +1,5 @@
-//! TDD pins for the V2-E01 HMR boundary planner (spec §V2-E01, §13.3).
+//! TDD pins for the V2-E01 HMR boundary planner (spec §V2-E01, §13.3) and
+//! its phase-2 CSS boundary substrate.
 //!
 //! These tests are the spec-verbatim contract of `oxide_fw_dev::plan` and
 //! its diagnostics seam. They exercise ONLY the public API of `oxide-fw-dev`
@@ -6,9 +7,15 @@
 //! the pure breadth-first walk-up over `importers` that stops at
 //! self-accepting boundaries and falls back to a `FullReload` with an
 //! actionable reason when a path reaches an entry module (or an orphan)
-//! without one.
+//! without one. The phase-2 section pins the CSS terminal: a stylesheet
+//! classifies `kind: 'css'` and never reloads (§13.3 — the style swap),
+//! whatever the graph beneath it says.
 
-use oxide_fw_dev::{Plan, full_reload_diagnostic, plan, source_self_accepts};
+use oxide_fw_dev::boundary::{
+    ClassifiedPlan, UpdateKind, css_orphan_diagnostic, css_self_accepts, plan_classified,
+    update_kind,
+};
+use oxide_fw_dev::{ChangeKind, Plan, full_reload_diagnostic, plan, source_self_accepts};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -226,4 +233,131 @@ fn changed_path_types_flow_through_plan_unchanged() {
         plan,
         Plan::Update(vec![PathBuf::from("src/lib/helper.ts")])
     );
+}
+
+// ---------------- §V2-E01 phase 2: the CSS boundary substrate ----------------
+
+#[test]
+fn update_kind_wire_spellings_are_the_spec_verbatim_kinds() {
+    // The message schema's `kind` discriminant (§13.3): the TS client
+    // switches on these exact strings, so the spellings are load-bearing.
+    assert_eq!(UpdateKind::Js.as_str(), "js");
+    assert_eq!(UpdateKind::Css.as_str(), "css");
+    assert_eq!(UpdateKind::Data.as_str(), "data");
+}
+
+#[test]
+fn the_watcher_change_kind_maps_onto_the_wire_kind() {
+    // SPEC-14's `ChangeKind` is the watcher's classification; the wire kind
+    // is the schema's. A page.server.ts loader change is a data update, a
+    // stylesheet is css, everything else is a module update.
+    assert_eq!(update_kind(ChangeKind::Css), UpdateKind::Css);
+    assert_eq!(update_kind(ChangeKind::ServerLoader), UpdateKind::Data);
+    assert_eq!(update_kind(ChangeKind::Component), UpdateKind::Js);
+    assert_eq!(update_kind(ChangeKind::ServerModule), UpdateKind::Js);
+    assert_eq!(update_kind(ChangeKind::ConfigOrRoutes), UpdateKind::Js);
+}
+
+#[test]
+fn a_stylesheet_change_is_always_an_in_place_swap_even_orphaned() {
+    // The §13.3 CSS terminal: an orphaned stylesheet (no importers row, no
+    // accepting mark) produces a `FullReload` walk — and `plan_classified`
+    // collapses it to `Update([changed])`. A stylesheet never reloads.
+    let (imps, acc, ent) = graph(&[], &[], &[]);
+    let changed = p("styles/main.css");
+    let classified = plan_classified(ChangeKind::Css, &changed, &imps, &acc, &ent);
+    assert_eq!(classified.kind, UpdateKind::Css);
+    assert!(!classified.is_full_reload());
+    assert_eq!(classified.plan, Plan::Update(vec![p("styles/main.css")]));
+}
+
+#[test]
+fn a_stylesheet_in_the_accepting_set_plans_as_its_own_boundary() {
+    // Post-harvest shape (phase 2 walks stylesheets too): the stylesheet is
+    // marked self-accepting by `css_self_accepts`, so the walk stops at the
+    // changed file itself — the same in-place swap, no collapse needed.
+    let (imps, acc, ent) = graph(
+        &[("styles/main.css", &["routes/index/page.tsx"])],
+        &["styles/main.css"],
+        &[],
+    );
+    let classified = plan_classified(ChangeKind::Css, &p("styles/main.css"), &imps, &acc, &ent);
+    assert_eq!(classified.kind, UpdateKind::Css);
+    assert_eq!(classified.plan, Plan::Update(vec![p("styles/main.css")]));
+}
+
+#[test]
+fn a_component_change_through_the_classified_planner_keeps_the_walk() {
+    // The Js kind is a pass-through: `plan_classified` must not alter the
+    // boundary walk the plain `plan` produces for a component change.
+    let (imps, acc, ent) = graph(
+        &[("lib/util.ts", &["routes/index/page.tsx"])],
+        &["routes/index/page.tsx"],
+        &[],
+    );
+    let classified = plan_classified(ChangeKind::Component, &p("lib/util.ts"), &imps, &acc, &ent);
+    assert_eq!(classified.kind, UpdateKind::Js);
+    assert_eq!(
+        classified,
+        ClassifiedPlan {
+            kind: UpdateKind::Js,
+            plan: plan(&p("lib/util.ts"), &imps, &acc, &ent),
+        }
+    );
+}
+
+#[test]
+fn a_loader_change_classifies_as_data_and_walks_normally() {
+    // `ServerLoader` → `kind: 'data'` (the RouteDataUpdate track); the walk
+    // itself is unchanged — the planner still computes the surface for
+    // consumers that fan out data updates through boundaries.
+    let (imps, acc, ent) = graph(
+        &[("blog/[slug]/page.server.ts", &["routes/blog/[slug]/page.tsx"])],
+        &["routes/blog/[slug]/page.tsx"],
+        &[],
+    );
+    let classified = plan_classified(
+        ChangeKind::ServerLoader,
+        &p("blog/[slug]/page.server.ts"),
+        &imps,
+        &acc,
+        &ent,
+    );
+    assert_eq!(classified.kind, UpdateKind::Data);
+    assert!(!classified.is_full_reload());
+}
+
+#[test]
+fn css_self_accepts_covers_the_style_extensions_only() {
+    // The probe is extension-level on purpose (the planner runs per watcher
+    // tick and must not parse). Case-insensitive on the extension.
+    assert!(css_self_accepts(Path::new("src/styles/main.css")));
+    assert!(css_self_accepts(Path::new("src/styles/app.SCSS")));
+    assert!(css_self_accepts(Path::new("src/styles/app.sass")));
+    assert!(!css_self_accepts(Path::new("src/routes/index/page.tsx")));
+    assert!(!css_self_accepts(Path::new("src/lib/util.ts")));
+    assert!(!css_self_accepts(Path::new("src/app.server.ts")));
+    assert!(!css_self_accepts(Path::new("src/styles/main")));
+}
+
+#[test]
+fn css_orphan_diagnostic_is_a_warning_with_the_dev_hmr_002_code() {
+    // The orphan-stylesheet warning: the swap still runs (a static `<link>`
+    // may carry the sheet), but the graph has no edge for it — the dev
+    // should know the fan-out will never include it.
+    let diag = css_orphan_diagnostic(Path::new("src/styles/main.css"));
+    assert_eq!(diag.code, "DEV-HMR-002");
+    assert_eq!(diag.severity, oxide_fw_diagnostics::Severity::Warning);
+    assert!(diag.message.contains("is not imported by any module"));
+    assert!(diag.fix.as_deref().unwrap_or_default().contains("<link>"));
+}
+
+#[test]
+fn plan_classified_is_deterministic_across_calls() {
+    // Same graph, same answer — the classified plan inherits the planner's
+    // determinism (sorted, deduplicated boundaries).
+    let (imps, acc, ent) = graph(&[], &[], &[]);
+    let a = plan_classified(ChangeKind::Css, &p("styles/main.css"), &imps, &acc, &ent);
+    let b = plan_classified(ChangeKind::Css, &p("styles/main.css"), &imps, &acc, &ent);
+    assert_eq!(a, b);
 }
