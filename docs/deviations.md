@@ -906,3 +906,98 @@ harvests `importers`, `accepting` and `entries` in the same walk the old
 - The Playwright transitive-HMR pins against a real browser: the existing
   `hmr-transitive` spec pins today's contract, which the planner is a
   strict superset of (deeper chains now update instead of stalling).
+
+## V2-F20 attested reproducible builds — deltas and deferrals (substrate step)
+
+**What the spec asks.** `oxide build --attest` writes `dist/attest/`:
+`sbom.cdx.json` (CycloneDX 1.5 from `Cargo.lock` for the binary plus
+`pnpm-lock.yaml` for packages that reached a bundle, own serde structs, no
+external generator), `provenance.intoto.json` (in-toto Statement v1 with
+the `https://slsa.dev/provenance/v1` predicate; subjects are the SHA-256
+of `dist/build-id`, the binary and each top-level artifact;
+`buildDefinition` carries the oxide version, config hash, git commit and
+dirty flag; `runDetails.builder.id` from `OXIDE_BUILDER_ID` or `local`),
+and `provenance.sig` (ed25519 over the canonical JSON, key from
+`OXIDE_SIGNING_KEY` or `--key <file>`; the public key id is recorded).
+`oxide verify <dist> [--pubkey <file>] [--rebuild]` checks the signature,
+the subject digests and, with `--rebuild`, the rebuild's `dist-digest`.
+Determinism requirements (tested): no timestamps in artifacts
+(`SOURCE_DATE_EPOCH` for any needed time), sorted maps and file lists,
+path normalization (strip the project root), identical `dist-digest` for
+two builds in different directories.
+
+**What lands.** The full pure substrate in `crates/cli/src/attest.rs` —
+`canonical_json` (explicit recursive key sort, so the bytes stay sorted
+even if a dependency unifies in `serde_json/preserve_order`), `is_canonical`
+(the verify gate that makes a whitespace-only tamper fail before the
+signature check), the strict `Cargo.lock` / `pnpm-lock.yaml` line parsers
+(own code, no external generator or new dependency), `sbom_from_locks`
+(CycloneDX 1.5, `pkg:cargo`/`pkg:npm` purls, sorted components),
+`provenance_statement` (the spec's exact `_type` / `predicateType` /
+`buildDefinition.externalParameters` shapes, `internalParameters.
+sourceDateEpoch` only when the epoch is set), `subtree_digest` +
+`dist_subjects` (root-relative, slash-normalized, sorted, `attest/`
+excluded so the statement can never self-reference), `seed_to_pkcs8` +
+`load_signing_key(_bytes)` + `ed25519_pubkey_from_pem` (ring's ed25519 —
+already in the workspace graph — so no new dependency),
+`sign_statement`/`verify_signature`, `verify_subjects`,
+`write_attestation`, and the `ATT-*` diagnostic taxonomy with fix lines.
+Command surface: `oxide build --attest [--key <file>]` (the `cmd_build`
+tail) and `oxide verify <dist> [--pubkey] [--rebuild]`. The criterion
+bench behind `bench-util`, the walkthrough example
+(`crates/cli/examples/attest.rs`), and 24 TDD pins in
+`crates/cli/tests/attest_tdd.rs` including the two-builds-different-
+directories reproducibility pin and the one-byte-tamper pin.
+
+**Spec deltas:**
+
+1. **The signature envelope is a small JSON file, not bare bytes.**
+   `provenance.sig` is `{ "keyid": "<hex public key>", "sig": "<base64>" }`
+   — the spec says "the public key id is recorded", and a self-describing
+   envelope lets `oxide verify` name the missing key (`signature: skipped
+   (pass --pubkey <file> to check keyid ...)`) when no verifier key is
+   supplied. Without `--pubkey`, the signature check is skipped loudly and
+   the digests still verify; the envelope records only the key id, so a
+   keyless verify can never be mistaken for a signed one.
+2. **Verification is a two-gate flow: canonical, then signature.** The
+   spec's "tampering with one byte fails `verify`" is enforced before the
+   crypto runs: `oxide verify` first requires the file bytes to equal
+   `canonical_json(parse(bytes))` (`ATT-CANON`), so a re-serialized or
+   whitespace-tampered statement dies even though a signature over the
+   canonical form would still match the parsed value.
+3. **Subjects: files hash whole; directories hash as subtree manifests.**
+   A top-level directory (`dist/client/`, `dist/server/`) contributes one
+   subject whose digest is the SHA-256 over the sorted
+   `path<TAB>sha256` manifest of its files — the same shape
+   `cache::build_id_of_dist` uses for the A04 id (SHA-256 where that uses
+   blake3, because the subject digests are the cross-implementation
+   surface the spec fixes). `dist/attest/` is never a subject, so the
+   statement cannot self-reference its own output.
+4. **A project without a `Cargo.lock` attests with an empty cargo
+   section.** The spec's "SBOM contains known crates" acceptance runs
+   inside this workspace, where the lock exists; a plain user app (no
+   cargo workspace) gets the npm components only, and the report says so.
+   The release-binaries CI always builds in-workspace, so the published
+   artifacts always carry the crate list.
+5. **The pnpm side lists every locked package — the "reached a bundle"
+   filter is deferred.** Intersecting `pnpm-lock.yaml` with the client
+   manifest's source list needs the bundler's module-to-package map on
+   the attest path; until that lands, the SBOM over-reports (every locked
+   package, not only the ones that reached the bundle). Over-reporting is
+   the safe direction for an SBOM.
+6. **`--rebuild` compares every subject except `dist/build-id`.** The
+   scratch build runs without `--attest` (verify holds no signing key),
+   so the rebuilt `dist` has no `build-id` file; the id is derived from
+   the same content the other subjects pin, so matching
+   `dist/client/` + `dist/server/` + every top-level file implies a
+   matching id by construction.
+
+**What is deliberately deferred:** the bundler-side "packages that
+reached a bundle" manifest filter (delta 5); the A01-phase-3 unconditional
+`dist/build-id` write (today it is written under `--attest` only, which is
+the only consumer the substrate has); a DSSE envelope upgrade for
+`provenance.sig` (the spec asks for a bare signature, so the envelope is
+the shipped shape); and the CI acceptance job that builds twice in
+different paths and runs `verify --rebuild` (the pure reproducibility
+contract is pinned by `write_attestation_is_reproducible_across_directories`;
+the end-to-end job needs the release CI wiring).
