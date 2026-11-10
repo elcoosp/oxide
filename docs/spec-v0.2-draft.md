@@ -3013,7 +3013,8 @@ Copy into `WORKLOG.md` and update as WPs merge. Status values: `todo`, `doing`, 
 | F12 | merged |  | brownout governor substrate (landed as direct commits) |
 | F16 | merged |  | the why-dynamic substrate (reason engine, OX-DYN diagnostics, `why --route`, reasons side-car) landed in v0.6.1; the `--fix` codemods are deferred — see `docs/deviations.md` |
 | F18 | merged |  | the performance-bisect substrate — the spec-verbatim `bisect` search, the injectable `Probe` seam (median-of-`runs`, `ceil(log2(n))+1` acceptance bound), `oxide perf bisect` (git worktree candidates, shared `OXIDE_CACHE_DIR`), the `PERF-*` diagnostics, the criterion bench and the consumer example |
-| F01, F02, F08 to F11, F13 to F15, F17, F19, F20 | todo |  |  |
+| F20 | merged |  | the attested-reproducible-builds substrate (`cli::attest`: canonical JSON, the lockfile parsers, the CycloneDX SBOM, the in-toto/SLSA provenance, the ed25519 sign/verify, `dist_subjects`/`subtree_digest`, the `ATT-*` diagnostics) behind `oxide build --attest` (writes `dist/build-id` + `dist/attest/`) and `oxide verify` (canonical gate, `--pubkey` signature check, subject walk, `--rebuild`); the criterion bench, the walkthrough example and 24 TDD pins included; deltas and deferrals (the bundle filter, the keyless-verify shape, the CI double-build job) — see `docs/deviations.md` |
+| F01, F02, F08 to F11, F13 to F15, F17, F19 | todo |  |  |
 | E01 | doing |  | the boundary-planner substrate landed (`dev::boundary::plan`, the self-accepting scanner, the `DEV-HMR-001` reload diagnostic, the planner-driven `cmd_dev` fan-out, the bench + example); state preservation, CSS boundaries and the Vue/Solid refresh wiring remain — see `docs/deviations.md` |
 | E02 to E13 | todo |  |  |
 | R01, R03 to R06 | todo |  |  |

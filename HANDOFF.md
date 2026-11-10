@@ -1,3 +1,134 @@
+# Handoff — V2-F20 attested reproducible builds landed (SBOM + provenance + signature engine, `build --attest` / `verify`); substrate authored, Rust gates pending a toolchain
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per
+reviewer-visible intent — for the ship tooling to materialize).
+**Verified this session (no Rust toolchain in the sandbox, per the
+handoff's no-execution constraint):**
+- `cargo fmt/clippy/test/bench` NOT run — same constraint as the E01
+  and F03 sessions. The pins were authored TDD-first
+  (`tests/attest_tdd.rs` before `src/attest.rs`), import public API
+  only, and every pin is pure or fixed-seed deterministic (a fixed
+  32-byte ed25519 seed mints the same key file every run), so the
+  suite's only external facts are the SHA-256 test vectors and the
+  tempfile fixtures. The riskiest surface is the `cmd_build` tail swap
+  (the `--attest` hook runs after the fingerprint store, before the GC
+  sweep) and the `Verify` command plumbing, both additive — a plain
+  `oxide build` without `--attest` executes none of the new code.
+- Every edited Rust file was re-parsed with a Rust grammar (tree-sitter,
+  a parser library — not the Rust toolchain) as a syntax smoke check:
+  all six files parse clean. This is NOT a substitute for
+  `cargo fmt --all --check` / clippy; it only rules out syntax-level
+  breakage before the toolchain host runs the real gates.
+- `grep -rnE '#!?\[(allow|expect)\(|cfg_attr\([^)]*allow\('` over
+  `src/ crates/ tests/ benches/ examples/ build.rs xtask/` — empty (the
+  zero-allow-escape policy holds; the new files carry no lint escapes
+  either).
+- Doc-drift audit + fixes are IN this diff (see below): the README's
+  v0.8.0 tag drift (two places) and its 1,713-vs-1,701 test-count
+  re-measure, the cli README's command-list drift (phantom `oxide
+  serve`; missing `why` / `perf bisect` / `verify`), and the spec's
+  V2.O table (F20 split out of the all-`todo` F-row).
+
+## What landed
+
+V2-F20's attestation substrate from `docs/spec-v0.2-draft.md` (the next
+S-sized item whose dependency, A04, is merged and whose full surface is
+pure + fixed-seed deterministic), in the F16/F18 substrate pattern:
+
+1. **`attest.rs` (`crates/cli/src/attest.rs`):** the spec-verbatim
+   engine — `canonical_json` (explicit recursive key sort; the bytes are
+   stable even if `serde_json/preserve_order` ever unifies in),
+   `is_canonical` (the pre-signature gate that kills whitespace-only
+   tampers), the strict `Cargo.lock` / `pnpm-lock.yaml` line parsers
+   (own code, no new dependency, no external generator), `sbom_from_locks`
+   (CycloneDX 1.5, `pkg:cargo`/`pkg:npm` purls, sorted),
+   `provenance_statement` (in-toto Statement v1 + SLSA v1, the spec's
+   `buildDefinition` facts, `internalParameters.sourceDateEpoch` only
+   when set), `subtree_digest` / `dist_subjects` (root-relative,
+   slash-normalized, sorted, `attest/` excluded — no self-reference),
+   `seed_to_pkcs8` / `load_signing_key(_bytes)` /
+   `ed25519_pubkey_from_pem` (ring, already in the workspace graph),
+   `sign_statement` / `verify_signature` / `verify_subjects`, the
+   `write_attestation` composer, and the `ATT-*` diagnostics with fix
+   help text. `attest_sbom` / `cli_attest_build` / `cli_attest_verify`
+   tracing spans on the seams.
+2. **CLI wiring (`crates/cli/src/lib.rs`):** `build --attest [--key]`
+   hooks after the fingerprint store — writes `dist/build-id` (the A04
+   `build_id_of_dist`; part of the A04 deferral closes here) and
+   `dist/attest/{sbom.cdx.json, provenance.intoto.json, provenance.sig}`,
+   failing the build on attestation failure; `oxide verify [--dist]
+   [--pubkey] [--rebuild]` runs the canonical gate, the signature check
+   (skipped loudly without a key — the envelope records the keyid), the
+   subject walk, and the scratch-copy rebuild comparison. Facts
+   collection (config blake3, `git rev-parse`/`status --porcelain`,
+   builder id, `SOURCE_DATE_EPOCH`) stays in the command layer.
+3. **Micro-debt retired:** the bundler's incremental worker failure
+   paths logged through bare `eprintln!`
+   (`rolldown_backend.rs` runtime/init arms — now `tracing::warn!` with
+   the fallback spelled out, the same class as the E01 watcher fix), and
+   `load_config_strict` flattening the structured `OxideError` into a
+   string (the `[CFG-*]` code + `fix:` help line now survive into the
+   anyhow chain the command boundary prints).
+4. **Bench + example + pins:** `crates/cli/benches/attest.rs`
+   (`canonical_json/{obj_64,obj_512}`, `sbom/{100,1000}`,
+   `subtree_digest/dist_128_files`, `ed25519/{sign_60k,verify_60k}`;
+   behind `bench-util`, the B09 pattern), `crates/cli/examples/
+   attest.rs` (the walkthrough consumer: attest → canonical → signature
+   → subjects → the one-byte tamper), and `tests/attest_tdd.rs`
+   (24 pins incl. the two-builds-different-directories reproducibility
+   pin, the one-byte-tamper pin, the SHA-256 known vectors and the
+   lockfile-parser contracts).
+
+**Spec deltas recorded in `docs/deviations.md` (6):** the signature
+envelope is a JSON `{keyid, sig}` file; verification is canonical-gate
+first, then signature; directories hash as subtree manifests and
+`attest/` is never a subject; a lock-less project attests with an empty
+cargo section; the pnpm side lists every locked package (the
+"reached a bundle" filter is deferred); `--rebuild` compares every
+subject except `dist/build-id` (the scratch build runs without
+`--attest`). **Deferred:** the bundle filter, the unconditional A04
+`dist/build-id` write (today `--attest`-only), a DSSE envelope upgrade,
+and the CI double-build acceptance job.
+
+## Docs drift noted this session
+
+- Fixed in-scope: root `README.md` (the `v0.7.0`-tagged note and the
+  "v0.2.0 through v0.7.0" line — v0.8.0 is tagged and CHANGELOG'd; the
+  test-count badge re-measured to 1,713 via `scripts/count-tests.sh`'s
+  own grep; the CLI groups gained `oxide verify` and the example block
+  shows `build --attest`), `crates/cli/README.md` (the phantom `oxide
+  serve` command → `oxide start`/`preview`; the missing `why`, `perf
+  bisect` and `verify` rows), `HANDOFF.md` itself (this header), `docs/
+  architecture.md` (`cli` row + the F20 what-changed bullet),
+  `docs/deviations.md` (the F20 record), and the spec's V2.O table (F20
+  split out of the all-`todo` F-row to `merged` with the deferral
+  pointer).
+- Noted for the doc owners (carried, unchanged): the `packages/*/
+  package.json` versions remain at 0.6.1/0.6.0 while the workspace is
+  0.8.0 (the `scripts/bump-version.sh` drift guard still refuses to run —
+  a `chore(packages)` sync should ride the next release commit); README's
+  TypeScript badge (458/458) could not be re-measured here (no
+  `node_modules`); the crates.io/npm publication step is still pending
+  for every tagged release.
+
+## Where to pick up, in one sentence
+
+Run the Rust gates on a toolchain host (`cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`,
+`cargo nextest run --workspace`, `cargo test -p oxide-fw-cli --features
+bench-util --benches --no-run`), wire the release-CI double-build +
+`verify --rebuild` acceptance job, then the E01 remainder (state
+preservation, CSS boundaries, Vue/Solid refresh — consumes `Plan`
+unchanged) or the A01 phase-3 dispatch split (which uncloses the
+unconditional `dist/build-id` write and the deferred F05/F07/F12
+wiring) are the next candidates.
+
+---
+
 # Handoff — V2-E01 HMR boundary substrate landed (planner + planner-driven fan-out + reload diagnostics); substrate authored, Rust gates pending a toolchain
 
 ## Where things stand

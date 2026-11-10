@@ -7,7 +7,7 @@
     <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
     <a href="https://crates.io/crates/oxide-fw-cli"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
     <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
-    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1701%20Rust%20%7C%20458%2F458%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1713%20Rust%20%7C%20458%2F458%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
   </p>
   <p>
     <a href="#install">Install</a> ·
@@ -54,7 +54,7 @@ adds `@oxide-fw/cli` as a dependency, so a fresh project needs no global
 install.
 
 > [!NOTE]
-> **Not yet published to the registries.** `v0.7.0` is tagged on this repo, but `oxide-fw-cli` does not yet resolve on crates.io and `create-oxide` is not on npm yet — build from source (see [Building from source](#building-from-source)). Every command above works the same against `./target/release/oxide`.
+> **Not yet published to the registries.** `v0.8.0` is tagged on this repo, but `oxide-fw-cli` does not yet resolve on crates.io and `create-oxide` is not on npm yet — build from source (see [Building from source](#building-from-source)). Every command above works the same against `./target/release/oxide`.
 
 `create-oxide` is the separate npm scaffolder ([npmjs.com/package/create-oxide](https://www.npmjs.com/package/create-oxide)).
 
@@ -126,13 +126,14 @@ One binary. Grouped by intent:
 - **Dev loop** — `oxide dev` `oxide build` `oxide start` `oxide preview`
 - **Inspect** — `oxide routes` `oxide analyze` `oxide why` `oxide doctor` `oxide check` `oxide config` `oxide render`
 - **Author** — `oxide generate` `oxide add` `oxide migrate` `oxide schema`
-- **Operate** — `oxide secrets` `oxide cache` `oxide audit` `oxide test` `oxide mcp` `oxide perf`
+- **Operate** — `oxide secrets` `oxide cache` `oxide audit` `oxide test` `oxide mcp` `oxide perf` `oxide verify`
 
 ```
-oxide doctor   # 7 env checks: node, cargo, config, routes, cache, secrets, cookie keys
-oxide build    # bundles, prerender, typegen, manifests, deploy artifacts
-oxide routes   # scan routes, infer render modes, emit typegen, print table
-oxide mcp      # expose routes, config, audit, graph as MCP tools for agents
+oxide doctor          # 7 env checks: node, cargo, config, routes, cache, secrets, cookie keys
+oxide build --attest  # bundles, prerender, typegen, manifests + dist/attest/ (SBOM, provenance, signature)
+oxide verify dist     # canonical form, ed25519 signature (--pubkey), subject digests, --rebuild
+oxide routes          # scan routes, infer render modes, emit typegen, print table
+oxide mcp             # expose routes, config, audit, graph as MCP tools for agents
 ```
 
 ## Building from source
@@ -159,10 +160,10 @@ oxide start --root examples/smoke-app-react --port 3100
 | --- | --- |
 | Spec compliance | **95 / 100** on a 21-section scorecard — [every finding public](docs/deviations.md) |
 | CI | 20 jobs on Linux, macOS, Windows — 17 per pull request; nightly Miri, the release-profile check and smoke-deploy run on schedule/main |
-| Rust | 1,701 test functions; clippy-clean at `-D warnings` with **zero** `#[allow(clippy::*)]` |
+| Rust | 1,713 test functions; clippy-clean at `-D warnings` with **zero** `#[allow(clippy::*)]` |
 | Security | `cargo audit` exits 0; one advisory suppressed with a [reachability analysis](.cargo/audit.toml) |
 
-`v0.2.0` through `v0.7.0` are tagged; the crates.io / npm publication step is still pending. Releases follow a **48-hour / 5-consecutive-green-CI** soak rule — see [PUBLISHING.md](PUBLISHING.md).
+`v0.2.0` through `v0.8.0` are tagged; the crates.io / npm publication step is still pending. Releases follow a **48-hour / 5-consecutive-green-CI** soak rule — see [PUBLISHING.md](PUBLISHING.md).
 
 ## Documentation
 

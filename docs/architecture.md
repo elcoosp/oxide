@@ -35,8 +35,25 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
-| `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`) | §19, §V2-F16, §V2-F18 |
+| `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`) | §19, §V2-F16, §V2-F18, §V2-F20 |
 ## What changed since 2026-10-12
+
+- **`cli` + `cache`**: the attested-reproducible-builds substrate (V2-F20)
+  — `cli::attest` (`canonical_json` with the explicit recursive key sort,
+  the strict `Cargo.lock` / `pnpm-lock.yaml` line parsers, the CycloneDX
+  1.5 SBOM builder, the in-toto Statement v1 / SLSA v1 provenance with
+  the spec's `buildDefinition` facts, `subtree_digest` + `dist_subjects`
+  over root-relative slash-normalized paths, the fixed-seed ed25519
+  sign/verify round trip, and the `ATT-*` diagnostics with fix lines)
+  behind `oxide build --attest` (writes `dist/build-id` — the A04 id —
+  and `dist/attest/{sbom.cdx.json, provenance.intoto.json,
+  provenance.sig}`) and `oxide verify` (canonical gate, `--pubkey`
+  signature check, subject walk, `--rebuild` scratch-copy digest
+  comparison). The composer closes part of the A04 deferral: the
+  `dist/build-id` write now happens under `--attest`. Deltas (empty
+  cargo section for lock-less projects, no manifest filter on the pnpm
+  side yet, no signature check without `--pubkey`) and deferrals — see
+  `docs/deviations.md`.
 
 - **`dev` + `cli`**: the HMR boundary substrate (V2-E01) —
   `dev::boundary::plan` (`Plan::Update`/`Plan::FullReload`, the

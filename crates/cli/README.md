@@ -20,17 +20,20 @@ Everything the framework does at the operational level: dev server, production b
 The commands:
 
 - **`oxide dev`** — dev server with HMR (CSS hot-swap, module reload, route-data updates)
-- **`oxide build`** — production build (client + SSR + prerender + typegen)
-- **`oxide serve`** — serve a built project
+- **`oxide build`** — production build (client + SSR + prerender + typegen; `--attest` adds `dist/build-id` + `dist/attest/`)
+- **`oxide start`** — serve a built project (`oxide preview` serves the same build without a `--port` flag)
 - **`oxide check`** — config validation, route scan, typecheck, lint, plugin diagnostics
 - **`oxide routes`** — print the route table with render modes and L0 eligibility
 - **`oxide analyze`** — per-route JS byte budget report
+- **`oxide why`** — importers of a module (§13.4) or why a route is dynamic with OX-DYN reasons (`--route`)
 - **`oxide migrate`** — codemod from Next / Nuxt / SvelteKit / Vite
 - **`oxide doctor`** — environment and config health
 - **`oxide add <pkg>`** — install and register an Oxide module
 - **`oxide generate`** — scaffold a route / layout / action
 - **`oxide test`** — gate on build manifests
 - **`oxide audit`** — OSV advisory scan against package-lock.json
+- **`oxide perf bisect`** — hunt the commit that regressed a metric (build-ms / client-js-bytes / ttfb-ms)
+- **`oxide verify`** — check an attested build: canonical provenance, ed25519 signature (`--pubkey`), subject digests, `--rebuild`
 - **`oxide schema`** — print the JSON Schema for `oxide.config.ts`
 - **`oxide mcp`** — MCP server over stdio
 - **`oxide render`** — render one route to HTML, bypass the server
@@ -42,8 +45,8 @@ The commands:
 
 ```bash
 oxide dev
-oxide build
-oxide serve --port 3000
+oxide build --attest
+oxide start --port 3000
 oxide check --strict
 ```
 
