@@ -174,10 +174,17 @@ oxc_span = { version = "0.155.0" }
 oxc_semantic = { version = "0.155.0" }
 oxc_transformer = { version = "0.155.0" }
 oxc_codegen = { version = "0.155.0" }
-# `experimental` feature pulls rolldown_plugin_lazy_compilation, whose
-# Cargo.toml pins `oxc_allocator = "=0.156"` while the workspace uses 0.155 —
-# a version split that fails to compile. We do not use any experimental
-# rolldown APIs; disable the feature.
+# `experimental` is REQUIRED, not vestigial: the incremental-rebuild engine
+# (`IncrementalWorker` in `crates/bundler/src/rolldown_backend.rs`) drives
+# rolldown's experimental-gated `incremental_write`/scan-mode API — this is
+# the Path A DX rescue (f0b4a2c9). Do not drop the feature without also
+# retiring that worker. History, so the next oxc roll re-reads this block:
+# rolldown 1.2.15's `experimental` once pulled `rolldown_plugin_lazy_
+# compilation`, whose Cargo.toml pinned `oxc_allocator = "=0.156"` while the
+# workspace used 0.155 — a version split that failed to compile. The
+# ecosystem pin (27f5de09) resolved that split. (An older comment here
+# claimed the feature was unused and should be disabled; that was stale —
+# grep for `incremental_write` before believing it again.)
 rolldown = { version = "1.2.15", features = ["experimental"] }
 rolldown_common = { version = "1.2.15" }
 rolldown_plugin = { version = "1.2.15" }
