@@ -25,9 +25,27 @@ rustls = { workspace = true }
 local-ip-address = { workspace = true }
 qrcode = { workspace = true }
 rcgen = { workspace = true }
+# V2-E01: `hmr_boundary` spans on the planner (§V2-E01) — workspace-pinned,
+# no new dep.
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# V2-E01: criterion harness for the boundary-planner bench (the B09 pattern:
+# plain `cargo test` never pays the criterion build).
+criterion = { workspace = true }
+
+[features]
+# V2-E01: exposes the criterion bench harness for the boundary planner, the
+# same opt-in the A02/A05/A06/B09/F03/F05/F18 benches use.
+bench-util = []
+
+# V2-E01: criterion bench for the HMR boundary planner (deep chains, wide
+# fan-outs, the reload fallback).
+[[bench]]
+name = "boundary"
+harness = false
+required-features = ["bench-util"]
 
 [package.metadata.docs.rs]
 all-features = true

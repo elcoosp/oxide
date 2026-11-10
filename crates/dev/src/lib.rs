@@ -108,7 +108,11 @@ impl Watcher {
                 backend: Some(backend),
             },
             Err(e) => {
-                eprintln!("warn: notify watcher unavailable ({e}); using the poll backend");
+                // Not `eprintln!`: the dev loop is a tracing pipeline — an
+                // unstructured stderr line bypassed every subscriber/JSON
+                // sink (and fired on every headless boot). A warn span keeps
+                // the fallback visible without polluting non-TTY output.
+                tracing::warn!(error = %e, "notify watcher unavailable; using the poll backend");
                 Self::new(roots)
             }
         }
@@ -613,36 +617,6 @@ pub enum HmrBehavior {
     ServerSwap,
     /// Restart affected subsystems; process restart only if the adapter changes.
     RestartSubsystems,
-}
-
-/// Compute the smallest update boundary for a changed file given reverse deps
-/// (importers) — walks up to the nearest HMR boundary (§13.3).
-///
-/// Boundary rule: `*.server.ts` files and CSS are boundaries. Documented
-/// simplification (the full graph walk-up lives in the graph engine): with a single
-/// importer the walk continues on it; with multiple importers (or none) the changed
-/// file itself becomes the boundary — every importer subtree then refreshes against
-/// it instead of being re-resolved per-importer.
-pub fn update_boundary(path: &str, importers: &BTreeSet<String>) -> String {
-    if is_boundary(path) {
-        return path.to_string();
-    }
-    match importers.len() {
-        0 => path.to_string(),
-        1 => {
-            let single = importers.iter().next().expect("len == 1");
-            if single == path {
-                path.to_string() // self-import / no further info: stop here
-            } else {
-                update_boundary(single, importers)
-            }
-        }
-        _ => path.to_string(), // multi-importer: own boundary (see doc above)
-    }
-}
-
-fn is_boundary(path: &str) -> bool {
-    path.ends_with(".server.ts") || path.ends_with(".css")
 }
 
 fn path_of(e: &FileEvent) -> &Path {
@@ -1155,6 +1129,12 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
+
+/// V2-E01: the HMR boundary planner — the spec-verbatim breadth-first
+/// walk-up over the module graph's importers, the self-accepting scanner
+/// and the full-reload diagnostics seam (§13.3, §V2-E01).
+pub mod boundary;
+pub use boundary::{Plan, full_reload_diagnostic, plan, source_self_accepts};
 
 pub mod dev_server;
 pub use dev_server::{
