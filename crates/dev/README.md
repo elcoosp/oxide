@@ -24,6 +24,7 @@ The design goal is a dev loop that never restarts the process. A source edit tri
 - **`plan` / `Plan`** — the V2-E01 HMR boundary planner: a breadth-first walk-up over the module graph's importers that stops at self-accepting boundaries and falls back to a reasoned full reload (§V2-E01)
 - **`boundary::plan_classified` / `boundary::ClassifiedPlan`** — the phase-2 classified planner: the watcher's `ChangeKind` and the walk in one call, with the §13.3 CSS terminal — a stylesheet change plans `kind: 'css'` and never reloads (the swap owns the update)
 - **`boundary::UpdateKind` / `boundary::update_kind`** — the §13.3 wire discriminant (`js`/`css`/`data`, the serde spelling inside `UpdateEntry`) and the SPEC-14 bridge from the watcher's `ChangeKind`
+- **`state::Preservation` / `state::StatePolicy` / `state::DefaultStatePolicy` / `state::update_frame`** — the phase-4 state-preservation seam: the v1 `update` frame carries a `preserve` verdict (`{"policy":"keep"}` or `{"policy":"clear","reason":...}`) the fan-out's policy stamps from the plan, so the client can snapshot/restore DOM state around the swap and stash it across a fallback reload (§V2-E01)
 - **`source_self_accepts`** — the `import.meta.hot.accept` probe that feeds the planner's accepting set
 - **`boundary::css_self_accepts`** — the extension-level style-injection probe the harvest uses to mark stylesheets as boundaries
 - **`full_reload_diagnostic`** — the `DEV-HMR-001` warning carrying the fix help text the §13.4 overlay renders
@@ -77,13 +78,16 @@ assert!(source_self_accepts("import.meta.hot.accept(() => {});"));
 > **Tip:** The planner is pure — the same graph always produces the same
 > `Plan` (boundaries sorted and deduplicated), and `plan_classified` adds
 > the §13.3 wire classification on top without changing that contract. The
-> dev loop's stale-guard (`wrap_dispatch_with_stale_guard`, in
+> phase-4 state seam composes the same way: `update_frame(&classified,
+> &policy, entries)` stamps the preservation verdict onto the frame, and
+> the policy is injectable ([`StatePolicy`]) the way the F18 `Probe` seam
+> is. The dev loop's stale-guard (`wrap_dispatch_with_stale_guard`, in
 > `oxide-fw-cli`) sits one layer up: it aborts a mid-flight render when a
 > file changed between dispatch entry and response completion.
 
 ## How it fits in Oxide
 
-`oxide-fw-cli`'s `cmd_dev` creates the `Watcher` and `HmrHub`, then loops: on each file event, it classifies the path, triggers the appropriate rebuild (Tailwind CSS, plugin `handleHotUpdate`, route re-scan), runs the V2-E01 boundary planner over the harvested module graph (`build_hmr_graph`), and publishes the HMR message batch. The production `cmd_serve` path does not touch this crate.
+`oxide-fw-cli`'s `cmd_dev` creates the `Watcher` and `HmrHub`, then loops: on each file event, it classifies the path, triggers the appropriate rebuild (Tailwind CSS, plugin `handleHotUpdate`, route re-scan), runs the V2-E01 boundary planner over the harvested module graph (`build_hmr_graph`), and publishes the HMR message batch — every `update` frame stamped with the state-preservation verdict through `state::update_frame` (a full reload planned in the same tick downgrades the verdict to `clear` with the same reason). The production `cmd_serve` path does not touch this crate.
 
 ## See also
 
