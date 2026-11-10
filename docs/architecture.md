@@ -31,12 +31,39 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery | §7.1, §10, V2-A04 |
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`); §V2-A07 prerender error-status sidecars (`static_status`: `StatusSidecars::scan` serve-start walk, `status_for`, `write_status_sidecar`, the `serve` 200-override) | §12, §17, D7, V2-F05, V2-F07, V2-F12, V2-A07 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
-| `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic) and its phase-2 CSS boundary substrate (`plan_classified` — the `kind: 'js'|'css'|'data'` classification with the §13.3 CSS terminal, `css_self_accepts`, the `DEV-HMR-002` orphan-stylesheet warning), inspector model (§13.4), prebundle keys | §13, V2-E01 |
-| `adapters` | Deploy targets + capability matrix + refusal rule, `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18 |
+| `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic) and its phase-2 CSS boundary substrate (`plan_classified` — the `kind: 'js'|'css'|'data'` classification with the §13.3 CSS terminal, `css_self_accepts`, the `DEV-HMR-002` orphan-stylesheet warning) and its phase-4 state-preservation substrate (`state::Preservation` on the v1 `update` frame, the injectable `StatePolicy` seam, `update_frame`), inspector model (§13.4), prebundle keys | §13, V2-E01 |
+| `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`) | §19, §V2-F16, §V2-F18, §V2-F20 |
 ## What changed since 2026-10-12
+
+- **`dev` + `cli` + `packages/core`**: the state-preservation substrate
+  (V2-E01 phase 4) — `dev::state` (`Preservation` — the `preserve`
+  verdict on the v1 `update` frame, `keep` or `clear` with the planner's
+  reason; the injectable `StatePolicy` seam with `DefaultStatePolicy`;
+  `update_frame`, the single frame-construction seam), the CLI fan-out
+  stamping every `update` frame through it (a full reload planned in the
+  same tick downgrades the batch verdict to `clear` with the same reason
+  the `full-reload` frame carries), and the TS client half
+  (`packages/core/src/client/hmr.ts`: snapshot → apply → restore around
+  boundary-scoped updates, the sessionStorage stash across a fallback
+  reload, `boot.ts` restoring the stash on the ESM dev path). The spec's
+  third HMR acceptance — *type into an input, edit the component's text,
+  the input value survives* — is now a wire contract, not an adapter
+  accident. Deltas and deferrals — see `docs/deviations.md`.
+
+- **`adapters`**: the capability-matrix v2 seam (V2-R02) — the fixed-size
+  `row([...])` table becomes `support(target, capability)`, a total
+  function over the private `Target → Class` mapping, exhaustive on both
+  dimensions (the compiler proves every capability has a cell for every
+  target class); `Capability::ALL` gains the v0.2 rows (`MixedIslands`,
+  `Resume`, `Skew`, `DeltaDeploy`, `RustFns`, `Search`, `Offline`,
+  `Brownout`, `Permissions`, `Attestation`) with every new `Degraded`
+  cell documented in `degradation`, and the §18 refusal rule extends to
+  the v0.2 server-manifest `requires` keys. The v0.1 rows are pinned
+  byte-identical by the golden test. Deltas and deferrals — see
+  `docs/deviations.md`.
 
 - **`server` + `cli`**: the prerender error-status sidecar substrate
   (V2-A07) — `server::static_status` (`StatusSidecars::scan`, the spec's
