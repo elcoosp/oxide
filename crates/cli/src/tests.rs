@@ -2745,6 +2745,7 @@ async fn static_build_prerenders_page_routes() {
             command: Command::Build {
                 root: dir.path().to_str().unwrap().to_string(),
                 r#static: true,
+                explain: false,
                 mode: None,
                 offline_plugins: false,
                 attest: false,
@@ -2788,6 +2789,7 @@ async fn static_build_enumerates_generate_params() {
             command: Command::Build {
                 root: dir.path().to_str().unwrap().to_string(),
                 r#static: true,
+                explain: false,
                 mode: None,
                 offline_plugins: false,
                 attest: false,
@@ -2841,6 +2843,7 @@ async fn static_build_refuses_dynamic_without_fallback() {
             command: Command::Build {
                 root: dir.path().to_str().unwrap().to_string(),
                 r#static: true,
+                explain: false,
                 mode: None,
                 offline_plugins: false,
                 attest: false,
@@ -3062,6 +3065,7 @@ async fn build_emits_content_search_index_for_collection() {
             command: Command::Build {
                 root: root.to_str().unwrap().to_string(),
                 r#static: true,
+                explain: false,
                 mode: None,
                 offline_plugins: false,
                 attest: false,
@@ -9172,4 +9176,202 @@ async fn why_module_with_a_corrupt_manifest_fails_loud() {
         .expect_err("a malformed manifest must fail loudly");
     let msg = format!("{err:#}");
     assert!(msg.contains("client.manifest.json"), "{msg}");
+}
+
+// ------------------------------ V2-R02 config half: the §18 refusal facts
+
+/// A minimal routable page entry; the fields the facts reader consumes are
+/// `live`, `render_mode`, `has_server_module` and `kind`.
+fn refusal_facts_entry(id: &str, kind: oxide_fw_router::RouteKind) -> oxide_fw_router::RouteEntry {
+    oxide_fw_router::RouteEntry {
+        live: None,
+        id: oxide_fw_router::RouteId(id.to_string()),
+        kind,
+        segments: vec![],
+        file: std::path::PathBuf::from(format!("{id}/page.tsx")),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    }
+}
+
+#[test]
+fn project_facts_read_live_and_dynamic_routes_from_the_tree() {
+    // The V2-F05 `live` opt-in rides the route entry (the scanner parsed
+    // it) — the facts reader reports it verbatim. A dynamic render mode
+    // marks the project non-static; an infrastructure row (error boundary)
+    // with the same shape never counts.
+    let mut tree = oxide_fw_router::RouteTree::new();
+    let mut live_entry = refusal_facts_entry("routes/index", oxide_fw_router::RouteKind::Page);
+    live_entry.live = Some(oxide_fw_router::RouteLive { debounce_ms: None });
+    tree.insert(live_entry);
+    let mut dyn_entry = refusal_facts_entry("routes/dashboard", oxide_fw_router::RouteKind::Page);
+    dyn_entry.render_mode = Some("dynamic".to_string());
+    tree.insert(dyn_entry);
+    let mut infra = refusal_facts_entry("routes/__error", oxide_fw_router::RouteKind::Error);
+    infra.render_mode = Some("dynamic".to_string());
+    tree.insert(infra);
+
+    let facts = crate::project_facts_from_tree(&tree, &std::collections::BTreeSet::new());
+    assert!(facts.live_routes, "the live opt-in is a fact");
+    assert!(facts.non_static_routes, "the dynamic page is a fact");
+    assert!(!facts.rust_fns, "the tree walk does not decide rust fns");
+}
+
+#[test]
+fn project_facts_apply_the_effective_mode_rule() {
+    // The same rule the enriched server manifest applies: explicit
+    // render_mode wins, then the static_override seeds, then the
+    // has_server_module fallback → dynamic.
+    let mut tree = oxide_fw_router::RouteTree::new();
+    let mut server_entry = refusal_facts_entry("routes/loader", oxide_fw_router::RouteKind::Page);
+    server_entry.has_server_module = true;
+    tree.insert(server_entry);
+    let mut seed_entry = refusal_facts_entry("routes/seeded", oxide_fw_router::RouteKind::Page);
+    seed_entry.has_server_module = true;
+    tree.insert(seed_entry);
+
+    let mut override_set = std::collections::BTreeSet::new();
+    override_set.insert("routes/seeded".to_string());
+    let facts = crate::project_facts_from_tree(&tree, &override_set);
+    assert!(
+        facts.non_static_routes,
+        "a server module without an explicit mode is dynamic"
+    );
+
+    // All static, no server modules, no seeds: the project is static.
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(refusal_facts_entry(
+        "routes/index",
+        oxide_fw_router::RouteKind::Page,
+    ));
+    tree.insert(refusal_facts_entry(
+        "routes/about",
+        oxide_fw_router::RouteKind::Page,
+    ));
+    let facts = crate::project_facts_from_tree(&tree, &std::collections::BTreeSet::new());
+    assert!(!facts.non_static_routes, "all-static project");
+    assert!(!facts.live_routes, "no live opt-ins");
+}
+
+#[test]
+fn has_rust_fn_sources_finds_server_rs_and_skips_dep_trees() {
+    // V2-F08's project surface: a first-party `*.server.rs` anywhere under
+    // the source root is a fact; one inside node_modules is not (the walk
+    // skips dependency and build-output trees).
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src/routes/nested")).unwrap();
+    std::fs::write(root.join("src/routes/nested/thumb.server.rs"), "fn t() {}").unwrap();
+    assert!(
+        crate::has_rust_fn_sources(root),
+        "first-party server fn found"
+    );
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("node_modules/pkg/dist")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("node_modules/pkg/vendor.server.rs"), "fn t() {}").unwrap();
+    std::fs::write(root.join("src/page.tsx"), "export default () => null;").unwrap();
+    assert!(
+        !crate::has_rust_fn_sources(root),
+        "vendored .server.rs under node_modules is not a first-party fact"
+    );
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    assert!(
+        !crate::has_rust_fn_sources(tmp.path()),
+        "an empty project carries no rust fns"
+    );
+}
+
+#[test]
+fn the_default_project_refuses_on_no_target() {
+    // The wire-up end-to-end over the default config: no facts, no `used`
+    // subset — `check_config` is empty on every target, so the build path
+    // gains nothing on an unconfigured project (the inert-defaults
+    // contract the refusal inherits).
+    let cfg = OxideConfig::default();
+    let facts = crate::project_facts_from_tree(
+        &oxide_fw_router::RouteTree::new(),
+        &std::collections::BTreeSet::new(),
+    );
+    for t in oxide_fw_adapters::Target::ALL {
+        assert!(oxide_fw_adapters::check_config(&cfg.feature_report(facts), *t).is_empty());
+    }
+}
+
+// --------------------- V2-R02 presentation half: doctor column + --explain
+
+#[test]
+fn capability_row_lines_cover_every_capability_in_order() {
+    // The doctor column and the `--explain` row print one line per
+    // capability in declaration order, with the `[full]`/`[degraded]`/
+    // `[unsupported]` markers and the documented degradation strings.
+    let lines = crate::capability_row_lines(oxide_fw_adapters::Target::Static);
+    let ids: Vec<&str> = lines
+        .iter()
+        .map(|l| {
+            let after = l.split("] ").nth(1).expect("marker + id shape");
+            after.split(':').next().unwrap_or(after).trim()
+        })
+        .collect();
+    let expected: Vec<&str> = oxide_fw_adapters::Capability::ALL
+        .iter()
+        .map(|c| c.as_str())
+        .collect();
+    assert_eq!(ids, expected, "one line per capability, in order");
+    // The static row's refusals the §18 rule turns into build failures:
+    assert!(
+        lines.iter().any(|l| l.contains("[unsupported] live")),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("[unsupported] rust-fns")),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("[unsupported] sockets")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn capability_row_lines_carry_degradation_strings() {
+    // A Degraded cell renders with its documented reason (V2-R02: every
+    // Degraded cell documents its reason — the print shows it).
+    let lines = crate::capability_row_lines(oxide_fw_adapters::Target::Lambda);
+    let live = lines
+        .iter()
+        .find(|l| l.contains("[degraded] live"))
+        .expect("lambda live is degraded");
+    assert!(
+        live.contains("transport: 'poll'"),
+        "the F05 degradation string is printed: {live}"
+    );
+    // Full cells stay bare.
+    let lines = crate::capability_row_lines(oxide_fw_adapters::Target::Binary);
+    assert!(lines.iter().any(|l| l == "  [full] live"), "{lines:?}");
+}
+
+#[tokio::test]
+async fn doctor_prints_the_capability_matrix() {
+    // V2-R02 (spec §V2-R02): "oxide doctor prints a column per capability" —
+    // the section is informational ([--], never a doctor failure).
+    let (_d, root) = fixture_project();
+    let (code, out) = run_ok(&["oxide", "doctor", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("[--] capability matrix for `binary` (§18):"),
+        "{out}"
+    );
+    assert!(out.contains("[full] l0-cache"), "{out}");
+    // The fixture's adapter is `binary` — the Native row is Full on every
+    // capability (that IS the §18 row); the `[unsupported]` rendering is
+    // pinned by `capability_row_lines_cover_every_capability_in_order`.
+    assert!(out.contains("[full] rust-fns"), "{out}");
+    assert!(out.contains("[full] attestation"), "{out}");
 }
