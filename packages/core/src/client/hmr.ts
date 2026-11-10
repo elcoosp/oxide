@@ -34,6 +34,170 @@ export interface HmrMessage {
   [k: string]: unknown
 }
 
+/**
+ * The §13.3 v1 `preserve` verdict (V2-E01 phase 4, mirrors
+ * `oxide_dev::state::Preservation`): the server's answer to "may the client
+ * keep DOM state across this update?". `policy: 'keep'` — the update is
+ * boundary-scoped, so the client snapshots form state before applying the
+ * entries and restores it after (including across a fallback reload, via
+ * the `sessionStorage` stash). `policy: 'clear'` — the state dies with the
+ * page and `reason` says why (the planner's reload reason, so the loss is
+ * explainable). Absent on pre-substrate frames: the client keeps its
+ * pre-substrate behavior (no snapshot) — the field is additive.
+ */
+export interface HmrPreservation {
+  policy?: string
+  reason?: string
+}
+
+/** One stashed form field: a stable key (name, id or ordinal path) + value. */
+export interface StashedField {
+  key: string
+  value: string
+  tag: string
+}
+
+/** The DOM-state snapshot the keep verdict snapshot/restores around a swap. */
+export interface FormStateStash {
+  at: number
+  fields: StashedField[]
+  /** The key of the focused field, so focus survives the swap too. */
+  focus: string | null
+}
+
+/** The sessionStorage key the fallback-reload stash rides. */
+export const HMR_STATE_STASH_KEY = 'ox-hmr-state'
+
+/** How long a stash stays fresh (a stale tab must not resurrect old input). */
+const STASH_TTL_MS = 10_000
+
+/**
+ * Snapshot the DOM state a boundary-scoped update should preserve (V2-E01
+ * phase 4): every form field (`input`, `textarea`, `select`) keyed by its
+ * `name`, falling back to `id`, falling back to its ordinal path — plus the
+ * focused field. Pure read; never throws into the HMR loop.
+ */
+export function snapshotFormState(doc: Document): FormStateStash {
+  const fields: StashedField[] = []
+  let focus: string | null = null
+  try {
+    const els = doc.querySelectorAll('input, textarea, select')
+    const active = (doc as { activeElement?: Element }).activeElement
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i]
+      if (el === undefined) continue
+      const key = fieldKey(el, i)
+      const value = 'value' in el ? String((el as HTMLInputElement).value) : (el.getAttribute('value') ?? '')
+      fields.push({ key, value, tag: el.tagName })
+      if (active !== undefined && el === active) focus = key
+    }
+  } catch {
+    // A hostile DOM must not break the socket loop — partial stash is fine.
+  }
+  return { at: Date.now(), fields, focus }
+}
+
+/** The stable key for a stashed field (name → id → ordinal path). */
+function fieldKey(el: Element, index: number): string {
+  const name = el.getAttribute('name')
+  if (name) return `name:${name}`
+  const id = el.getAttribute('id')
+  if (id) return `id:${id}`
+  return `nth:${index}`
+}
+
+/**
+ * Restore a [`snapshotFormState`] stash after the swap landed: re-apply the
+ * captured values by key and re-focus the focused field. Assignment is
+ * idempotent, so the boot-time double pass (microtask + short timer — see
+ * `scheduleStashRestore`) races island hydration safely.
+ */
+export function restoreFormState(doc: Document, stash: FormStateStash): void {
+  try {
+    const els = doc.querySelectorAll('input, textarea, select')
+    const byKey = new Map<string, StashedField>()
+    for (const f of stash.fields) byKey.set(f.key, f)
+    let focused = false
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i]
+      if (el === undefined) continue
+      const f = byKey.get(fieldKey(el, i))
+      if (f === undefined || f.tag !== el.tagName) continue
+      if ('value' in el) {
+        ;(el as HTMLInputElement).value = f.value
+      } else {
+        el.setAttribute('value', f.value)
+      }
+      if (stash.focus !== null && stash.focus === f.key && typeof (el as HTMLElement).focus === 'function') {
+        ;(el as HTMLElement).focus()
+        focused = true
+      }
+    }
+    if (!focused) stash.focus = null
+  } catch {
+    // Best-effort: a restore failure must never break the update loop.
+  }
+}
+
+/**
+ * Stash the DOM state into `sessionStorage` before a state-preserving
+ * fallback reload: the page is going away, but the boot path restores the
+ * stash on the other side (V2-E01 phase 4). Returns `false` when no storage
+ * is available (the reload proceeds without a stash — never blocks it).
+ */
+export function stashFormStateToSession(doc: Document, storage?: Storage): boolean {
+  const st = storage ?? (globalThis as { sessionStorage?: Storage }).sessionStorage
+  if (!st) return false
+  try {
+    st.setItem(HMR_STATE_STASH_KEY, JSON.stringify(snapshotFormState(doc)))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Boot-side half of the fallback-reload stash: apply (and clear) a fresh
+ * `ox-hmr-state` stash. A stash older than [`STASH_TTL_MS`] is dropped —
+ * the tab it belonged to is gone; resurrecting its input would be a
+ * surprise. Best-effort and silent by contract.
+ */
+export function restoreStashedFormState(doc: Document, storage?: Storage): boolean {
+  const st = storage ?? (globalThis as { sessionStorage?: Storage }).sessionStorage
+  if (!st) return false
+  try {
+    const raw = st.getItem(HMR_STATE_STASH_KEY)
+    if (raw === null) return false
+    st.removeItem(HMR_STATE_STASH_KEY)
+    const stash = JSON.parse(raw) as FormStateStash
+    if (!Number.isFinite(stash.at) || Date.now() - stash.at > STASH_TTL_MS) return false
+    restoreFormState(doc, stash)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Schedule the boot-time stash restore: a microtask pass and one short
+ * timer pass — the first usually lands before island hydration finishes,
+ * the second catches the stragglers. Idempotent by assignment, so the
+ * double pass cannot double-apply.
+ */
+export function scheduleStashRestore(doc: Document): void {
+  const run = () => {
+    try {
+      restoreStashedFormState(doc)
+    } catch {
+      // Silent by contract: a failed restore is a degraded HMR, not a
+      // broken boot.
+    }
+  }
+  queueMicrotask(run)
+  const g = globalThis as { setTimeout?: (fn: () => void, ms: number) => unknown }
+  g.setTimeout?.(run, 50)
+}
+
 export interface HmrOptions {
   /** The WebSocket URL. Default: `ws(s)://<host>/_oxide/hmr`. */
   url?: string
@@ -48,6 +212,8 @@ export interface HmrOptions {
   onModuleUpdate?: (path: string) => void
   /** Overridable reload (tests). */
   reload?: () => void
+  /** Called after a `keep` verdict's snapshot was restored (tests / adapters). */
+  onStateRestore?: () => void
   /** The overlay root element (created if absent). */
   overlayParent?: HTMLElement
 }
@@ -310,14 +476,24 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
   const frame = normalizeLegacyFrame(msg)
   switch (frame.type) {
     case 'update': {
-      const rec = frame as unknown as { updates?: unknown }
+      const rec = frame as unknown as { updates?: unknown; preserve?: HmrPreservation }
       const updates = Array.isArray(rec.updates) ? (rec.updates as HmrUpdateEntry[]) : []
+      // V2-E01 phase 4: a `keep` verdict lets the client preserve DOM state
+      // across the swap — snapshot BEFORE the entries apply, restore after
+      // (or stash to sessionStorage when the update ends in a fallback
+      // reload). A `clear` verdict (or an absent field — a pre-substrate
+      // frame) keeps the pre-substrate behavior: no snapshot, and a reload
+      // loses state exactly as before.
+      const preserve = rec.preserve
+      const keeping = preserve?.policy === 'keep'
+      const stash = keeping ? snapshotFormState(doc) : undefined
       // A fresh update frame supersedes any earlier diagnostic; the user
       // fixed the file, the rebuild succeeded, the overlay is stale.
       clearOverlay(opts.overlayParent)
       const hmr = (globalThis as { __oxide_hmr__?: { reloadModule?: (u: string) => Promise<void> } }).__oxide_hmr__
       const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
       const fallbackUrls: string[] = []
+      const applied: Promise<unknown>[] = []
       let usedRuntime = false
       for (const entry of updates) {
         const path = typeof entry.path === 'string' ? entry.path : ''
@@ -330,7 +506,7 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
           // (cache-busted).
           if (accepted && accepted !== path && typeof hmr?.reloadModule === 'function') {
             usedRuntime = true
-            void hmr.reloadModule(accepted)
+            applied.push(hmr.reloadModule(accepted))
           } else {
             swapCss(doc, accepted || path)
           }
@@ -341,12 +517,14 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
           // it through the same event the boot machinery consumes. Async and
           // silent — the message itself is handled synchronously. §1.3: the
           // route is passed through so a foreign route's data is dropped
-          // instead of re-rendering the page (see refreshRouteData).
-          void refreshRouteData(path, '')
+          // instead of re-rendering the page (see refreshRouteData). The
+          // promise joins the restore gate so the state lands AFTER the
+          // re-render, not before it.
+          applied.push(refreshRouteData(path, ''))
         } else {
           if (accepted && typeof hmr?.reloadModule === 'function') {
             usedRuntime = true
-            void hmr.reloadModule(accepted)
+            applied.push(hmr.reloadModule(accepted))
           } else if (accepted) {
             fallbackUrls.push(accepted)
           } else {
@@ -354,13 +532,30 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
           }
         }
       }
+      // V2-E01 phase 4: restore the snapshot once every async apply has
+      // settled (module re-import, loader re-fetch) — restoring earlier
+      // would race the re-render that owns the fields.
+      if (stash !== undefined) {
+        if (applied.length > 0) {
+          void Promise.allSettled(applied).then(() => {
+            restoreFormState(doc, stash)
+            opts.onStateRestore?.()
+          })
+        } else {
+          restoreFormState(doc, stash)
+          opts.onStateRestore?.()
+        }
+      }
       // Entries that could not ride the runtime fall back the way the
       // singular module-update did: the callback when one exists, one page
-      // reload otherwise (never N reloads for one frame).
+      // reload otherwise (never N reloads for one frame). A `keep` verdict
+      // stashes the snapshot first — the boot path restores it after the
+      // reload, so the input value survives the fallback too.
       if (fallbackUrls.length > 0 && !usedRuntime) {
         if (opts.onModuleUpdate) {
           for (const url of fallbackUrls) opts.onModuleUpdate(url)
         } else {
+          if (keeping) stashFormStateToSession(doc)
           reload?.()
         }
       }
