@@ -15,6 +15,10 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+mod refusal;
+
+pub use refusal::{ConfigFeatureReport, check_config};
+
 pub type Result<T> = std::result::Result<T, OxideError>;
 
 pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
@@ -187,6 +191,34 @@ impl Capability {
         Capability::Permissions,
         Capability::Attestation,
     ];
+
+    /// The kebab-case id — the stable spelling the doctor column, the
+    /// `build --explain` row and the generated docs table (E11) print.
+    /// Mirrors [`Target::as_str`]; the declaration order above is the
+    /// print order, so the two `match`es stay aligned by construction.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Capability::L0Cache => "l0-cache",
+            Capability::Isr => "isr",
+            Capability::Sockets => "sockets",
+            Capability::ImageOptimization => "image-optimization",
+            Capability::NativeRules => "native-rules",
+            Capability::Snapshots => "snapshots",
+            Capability::Tls => "tls",
+            Capability::Live => "live",
+            Capability::MixedIslands => "mixed-islands",
+            Capability::Resume => "resume",
+            Capability::Skew => "skew",
+            Capability::DeltaDeploy => "delta-deploy",
+            Capability::RustFns => "rust-fns",
+            Capability::Search => "search",
+            Capability::Offline => "offline",
+            Capability::Brownout => "brownout",
+            Capability::Permissions => "permissions",
+            Capability::Attestation => "attestation",
+        }
+    }
 }
 
 /// The target classes the matrix reasons over (V2-R02): targets within a
