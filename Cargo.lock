@@ -4873,7 +4873,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-adapters"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "insta",
@@ -4886,7 +4886,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-assets"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "comrak",
@@ -4911,7 +4911,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-bundler"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "arcstr",
@@ -4933,7 +4933,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-cache"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4960,7 +4960,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-cli"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5014,7 +5014,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-compiler"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "oxc",
@@ -5036,7 +5036,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-config"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "oxide-fw-diagnostics",
  "serde",
@@ -5047,7 +5047,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-core-wasm"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "oxide-fw-odf",
@@ -5060,7 +5060,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-dev"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "local-ip-address",
@@ -5079,7 +5079,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-diagnostics"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "miette",
  "serde",
@@ -5089,7 +5089,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-dispatch"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -5105,7 +5105,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-graph"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -5127,7 +5127,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-jshost"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -5153,7 +5153,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-odf"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -5166,7 +5166,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-plugin"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "oxide-fw-diagnostics",
  "serde",
@@ -5180,7 +5180,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-render"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "blake3",
@@ -5201,7 +5201,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-router"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "criterion",
@@ -5221,7 +5221,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-schema"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "oxide-fw-config",
  "oxide-fw-diagnostics",
@@ -5231,7 +5231,7 @@ dependencies = [
 
 [[package]]
 name = "oxide-fw-server"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",

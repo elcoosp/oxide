@@ -8,6 +8,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.7.0] — 2026-11-10
+
+### Added
+
+- **cli**: The V2-F18 performance-bisect engine
+
+### Chores
+
+- **packages**: Sync package.json versions to 0.6.1
+- Gitignore the ship.toml delivery manifest
+- **release**: V0.7.0
+
+### Documentation
+
+- **changelog**: Regenerate for v0.6.1
+- **deps**: Correct the rolldown experimental comment
+- Fix the v0.6.1 drift the F18 audit surfaced
+
+### Performance
+
+- **cli**: Honor OXIDE_CACHE_DIR across the cache roots
+
+### Testing
+
+- **cli**: Pin the V2-F18 perf-bisect contract
+
+### Build
+
+- **cli**: The bench-util feature and the perf_bisect bench
+
 ## [0.6.1] — 2026-11-09
 
 ### Added
