@@ -31,6 +31,7 @@
 
 use crate::ChangeKind;
 use oxide_fw_diagnostics::Diagnostic;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -130,9 +131,11 @@ pub fn full_reload_diagnostic(reason: &str) -> Diagnostic {
 
 /// The §13.3 message schema's update-kind discriminant
 /// (`kind: 'js' | 'css' | 'data'`). The TS client switches on the exact
-/// spelling, so [`UpdateKind::as_str`] is wire contract, not decoration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[must_use]
+/// spelling, so [`UpdateKind::as_str`] is wire contract, not decoration —
+/// and since the message-schema v1 flip, the kind rides the wire directly
+/// inside [`crate::UpdateEntry`], so the serde derives spell it lowercase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum UpdateKind {
     /// A client module changed: the boundary re-imports (adapter HMR) and
     /// the framework runtime applies the patch in place.
@@ -142,7 +145,8 @@ pub enum UpdateKind {
     /// §13.3 CSS terminal [`plan_classified`] applies).
     Css,
     /// A `page.server.ts` loader changed: the route re-runs the loader and
-    /// pushes fresh ODF data (`RouteDataUpdate`) — no module re-import.
+    /// pushes fresh ODF data (`OxData`, or a `data` entry the client
+    /// re-fetches) — no module re-import.
     Data,
 }
 
@@ -272,6 +276,27 @@ pub fn css_orphan_diagnostic(path: &Path) -> Diagnostic {
          (`import './styles.css'`) or reference it from a static `<link>`; \
          a stylesheet the module graph cannot see only updates through the \
          swap, never through a boundary fan-out",
+    )
+}
+
+/// The `DEV-HMR-003` schema-mismatch warning (§13.3, the message-schema v1
+/// flip): a peer spoke another wire generation — a frame without a version
+/// (legacy v0) or a foreign `v`. The dev loop drops the frame loudly; the
+/// fix text names both escape hatches (the stale tab and the stale CLI).
+#[must_use]
+pub fn schema_mismatch_diagnostic(found: u32) -> Diagnostic {
+    Diagnostic::warning(
+        "DEV-HMR-003",
+        format!(
+            "HMR frame speaks schema v{found}; this build speaks v{}",
+            crate::HmrMessage::SCHEMA_VERSION
+        ),
+    )
+    .with_fix(
+        "hard-reload the stale tab (it keeps the previous session's client \
+         runtime) or rebuild the CLI (the dev server and the client must \
+         speak the same message-schema version); frames from the mismatched \
+         side are dropped until the versions agree",
     )
 }
 

@@ -359,78 +359,158 @@ fn emit_diff(path: &Path, seen: &mut BTreeSet<(PathBuf, String)>, events: &mut V
     }
 }
 
-/// HMR message kinds (§13.3): module updates, CSS updates, route-data updates,
-/// server updates, full-reload and error events. Update boundary computed in Rust
-/// from the graph.
+/// The §13.3 message-schema **v1** update entry: one client-visible change
+/// inside an [`HmrMessage::Update`] frame. `kind` is the client's update
+/// mechanism (the [`UpdateKind`] wire discriminant the TS client switches
+/// on), `accepted_path` is what the client re-imports or swaps (`""` when
+/// the mechanism needs only `path`), `timestamp` is the publish-time unix
+/// millisecond stamp, and `hash` is the content hash the client can use for
+/// cache busting (`""` when the changed file was unreadable or virtual).
+///
+/// The wire spelling is the spec's camelCase (`acceptedPath`); the §3.2
+/// batch and the singular module update dissolve into this one shape — an
+/// `Update` frame with N entries IS the batch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpdateEntry {
+    /// The §13.3 client update mechanism (`js` = module re-import, `css` =
+    /// style swap without reload, `data` = loader re-fetch).
+    pub kind: UpdateKind,
+    /// The changed file (or, for `data`, the route the loader belongs to).
+    pub path: String,
+    /// What the client re-imports/swaps — the dev URL of the accepting
+    /// module (e.g. `/src/...`, `/@css/...`); empty when `path` alone
+    /// drives the update.
+    #[serde(rename = "acceptedPath", default)]
+    pub accepted_path: String,
+    /// Publish time, unix milliseconds.
+    pub timestamp: u64,
+    /// blake3 content-hash prefix (the watcher's D6 digest, 16 hex) of the
+    /// changed file; `""` when unreadable or not file-backed.
+    #[serde(default)]
+    pub hash: String,
+}
+
+impl UpdateEntry {
+    /// Stamp an entry at publish time: `unix_millis()` for the timestamp
+    /// and [`content_hash`] of `hash_of` for the hash (`None` for entries
+    /// that are not file-backed — the tailwind sheet and route patterns).
+    #[must_use]
+    pub fn stamped(
+        kind: UpdateKind,
+        path: impl Into<String>,
+        accepted_path: impl Into<String>,
+        hash_of: Option<&Path>,
+    ) -> Self {
+        Self {
+            kind,
+            path: path.into(),
+            accepted_path: accepted_path.into(),
+            timestamp: unix_millis(),
+            hash: hash_of.and_then(content_hash).unwrap_or_default(),
+        }
+    }
+}
+
+/// Unix milliseconds — the schema v1 `timestamp` unit (§13.3).
+#[must_use]
+pub fn unix_millis() -> u64 {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, std::time::Duration::as_millis);
+    u64::try_from(ms).unwrap_or(u64::MAX)
+}
+
+/// blake3 content hash (the watcher's D6 digest) under the wire-v1 name:
+/// the `hash` field's source. `None` when the file is unreadable (the
+/// entry then carries an empty hash).
+#[must_use]
+pub fn content_hash(path: &Path) -> Option<String> {
+    hash_file(path)
+}
+
+/// HMR wire frames (§13.3 message schema **v1**): update batches, reloads,
+/// errors, pushed loader data and the connected handshake. Update boundaries
+/// computed in Rust from the graph ([`boundary::plan_classified`]).
+///
+/// Every frame serializes behind a `{"v":1}` envelope
+/// ([`HmrMessage::SCHEMA_VERSION`]) — `to_json` inserts it, `from_json`/
+/// `try_from_json` enforce it. The v0 spellings (`module-update`,
+/// `css-update`, `route-data-update`, `batch-module-update`,
+/// `server-module-swap`) are retired: they carry no version and are
+/// rejected at the v1 gate with [`HmrWireError::Schema`] (the `DEV-HMR-003`
+/// story; the TS client keeps a read-compat normalizer for stale tabs).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum HmrMessage {
-    /// §13.3: a client module changed. The ESM dev loop re-imports the
-    /// module through the planner-driven fan-out (V2-E01): `url` is the
-    /// `/src/...` dev URL the browser fetched, so the client's HMR runtime
-    /// re-fetches it and the framework runtime applies the patch in place
-    /// (React Refresh owns component updates; the boundary planner supplies
-    /// the fan-out set). Absent `url` in the bundler mode (legacy messages
-    /// deserialize with an empty string). The v0.1-era `code`/`boundary`
-    /// payload fields are retired — they were always empty and the URL
-    /// carries the swap.
-    ModuleUpdate {
-        path: String,
-        /// Dev-ESM mode: the URL the browser fetched (`/src/...`) so the
-        /// client's HMR runtime can reload the module (Phase 2) or perform
-        /// an in-place React Refresh (Phase 3). Absent in the bundler mode
-        /// (legacy messages deserialize with an empty string).
-        #[serde(default)]
-        url: String,
+    /// §13.3: client modules/stylesheets/data changed. The ESM dev loop
+    /// fans the planner's boundaries out as entries: a `js` entry's
+    /// `acceptedPath` is the dev URL the client re-imports through the HMR
+    /// runtime (React Refresh applies it in place), a `css` entry swaps
+    /// its styles without reload, a `data` entry re-fetches the loader.
+    /// The §3.2 coalescing publishes one frame with N entries; the batch
+    /// of 1 and the singular update are the same shape now.
+    Update {
+        /// One entry per changed surface, in the planner's batch order.
+        updates: Vec<UpdateEntry>,
     },
-    CssUpdate {
-        path: String,
-        code: String,
-    },
-    /// §3.2: several distinct modules changed in the same watcher batch (a
-    /// `git checkout <branch>` touching ~50 files; a scripted edit burst).
-    /// Batched into one frame so the client can fan out the re-imports and
-    /// run a single `performReactRefresh()` at the end, instead of N
-    /// separate refs (which the React scheduler has to reconcile
-    /// concurrently).
-    ///
-    /// `items` is `Vec<BatchModuleItem>`. Each item is exactly what a
-    /// singular `ModuleUpdate` would have carried. Empty `items` is a no-op
-    /// on the client; a batch of 1 SHOULD be published as `ModuleUpdate`
-    /// instead (the server coalesces but falls back to singular for 1).
-    BatchModuleUpdate {
-        items: Vec<BatchModuleItem>,
-    },
-    RouteDataUpdate {
-        route: String,
-        odf_b64: String,
-    },
-    ServerModuleSwap {
-        path: String,
-    },
+    /// No boundary found on some path: reload the client. The reason is
+    /// the spec's spelling and feeds [`full_reload_diagnostic`] for the
+    /// §13.4 overlay.
     FullReload {
         reason: String,
     },
     Error {
         diagnostic: Diagnostic,
     },
+    /// §13.3: fresh loader data for a route, pushed with the frame. `data`
+    /// is the base64-encoded ODF payload (the JSON transport needs text;
+    /// the spec's `data` value rides as base64 — see docs/deviations.md).
+    /// An empty `data` is not published as `OxData` — a data change without
+    /// a payload is an `Update` entry with `kind: 'data'` (the client
+    /// re-fetches `/__data`).
+    #[serde(rename = "ox:data")]
+    OxData {
+        /// The route's URL path pattern (the client drops it when the
+        /// viewer is on another route — §1.3).
+        route: String,
+        /// Base64 ODF payload.
+        #[serde(default)]
+        data: String,
+    },
+    /// The handshake: the build id so a stale tab can detect a rebuild.
+    /// (The v0 field was `build_id`; the v1 schema spells it `build`.)
     Connected {
-        build_id: String,
+        build: String,
     },
 }
 
-/// §3.2: one entry in a `BatchModuleUpdate`. Structurally identical to a
-/// singular `ModuleUpdate` — path + URL — but exists as its own type so the
-/// serde shape is explicit and a future change (e.g. adding a `kind` field
-/// per item) doesn't touch the singular variant.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BatchModuleItem {
-    pub path: String,
-    #[serde(default)]
-    pub url: String,
+/// The typed failure of [`HmrMessage::try_from_json`]: a parse error or a
+/// schema-version mismatch (the `DEV-HMR-003` story — see
+/// [`boundary::schema_mismatch_diagnostic`]).
+#[derive(Debug, thiserror::Error)]
+pub enum HmrWireError {
+    /// The frame is not valid JSON (or not a JSON object).
+    #[error("not a decodable HMR frame: {0}")]
+    Parse(#[from] serde_json::Error),
+    /// The frame speaks another schema version (`0` = no version field —
+    /// a legacy v0 frame).
+    #[error(
+        "unsupported HMR schema version: found {found}, this build speaks v{expected} \
+         (rebuild the CLI or hard-reload the stale tab)"
+    )]
+    Schema {
+        /// The version the frame declared (`0` when absent).
+        found: u32,
+        /// The version this build speaks ([`HmrMessage::SCHEMA_VERSION`]).
+        expected: u32,
+    },
 }
 
 impl HmrMessage {
+    /// The §13.3 message-schema version this build speaks. `to_json`
+    /// stamps it into every frame; `try_from_json` enforces it.
+    pub const SCHEMA_VERSION: u32 = 1;
+
     /// Wire serialization. The failure path is loud, not silent: a message
     /// that cannot serialize is a dev-loop bug, so `to_json` logs the
     /// `serde_json` error through `tracing::error!` and returns the empty
@@ -450,12 +530,49 @@ impl HmrMessage {
         }
     }
     /// Fallible serialization — the seam for callers that must distinguish
-    /// a serialize failure from an empty frame.
+    /// a serialize failure from an empty frame. Emits the schema-v1
+    /// envelope: `{"v":1,"type":...,}` (key order is serde_json's; the
+    /// client reads fields by name).
     pub fn try_to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
+        let mut value = serde_json::to_value(self)?;
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert(String::from("v"), serde_json::Value::from(Self::SCHEMA_VERSION));
+        }
+        serde_json::to_string(&value)
     }
+    /// Fallible decode — the seam for callers that must distinguish a parse
+    /// failure from a schema-version mismatch. Enforces the v1 envelope: a
+    /// frame without (or with a foreign) `v` is [`HmrWireError::Schema`],
+    /// not a parse error.
+    pub fn try_from_json(s: &str) -> Result<Self, HmrWireError> {
+        let value: serde_json::Value = serde_json::from_str(s)?;
+        let found = value
+            .get("v")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0);
+        if found != Self::SCHEMA_VERSION {
+            return Err(HmrWireError::Schema {
+                found,
+                expected: Self::SCHEMA_VERSION,
+            });
+        }
+        Ok(serde_json::from_value(value)?)
+    }
+    /// Infallible-by-contract decode. The failure path is loud (a frame a
+    /// peer sent but we cannot read is a version-skew bug worth a log line):
+    /// `from_json` warns through `tracing::warn!` and returns `None`.
     pub fn from_json(s: &str) -> Option<Self> {
-        serde_json::from_str(s).ok()
+        match Self::try_from_json(s) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "HMR frame decode failed; dropping the frame"
+                );
+                None
+            }
+        }
     }
 }
 
@@ -1159,7 +1276,10 @@ fn html_escape(s: &str) -> String {
 /// walk-up over the module graph's importers, the self-accepting scanner
 /// and the full-reload diagnostics seam (§13.3, §V2-E01).
 pub mod boundary;
-pub use boundary::{Plan, full_reload_diagnostic, plan, source_self_accepts};
+pub use boundary::{
+    Plan, UpdateKind, full_reload_diagnostic, plan, plan_classified, schema_mismatch_diagnostic,
+    source_self_accepts,
+};
 
 pub mod dev_server;
 pub use dev_server::{
@@ -1175,26 +1295,35 @@ mod esm_module_update_tests {
     use super::*;
 
     #[test]
-    fn module_update_url_deserializes_default() {
-        // A legacy message (no `url`) must still parse — the URL is optional.
-        let raw = r#"{"type":"module-update","path":"src/routes/foo/page.tsx"}"#;
+    fn wire_v1_entry_accepted_path_deserializes_default() {
+        // A v1 entry without `acceptedPath` still parses — the field is
+        // optional on the wire (a data entry needs only the route).
+        let raw = r#"{"v":1,"type":"update","updates":[{"kind":"js","path":"src/routes/foo/page.tsx","timestamp":0}]}"#;
         let m: HmrMessage = serde_json::from_str(raw).unwrap();
         match m {
-            HmrMessage::ModuleUpdate { path, url } => {
-                assert_eq!(path, "src/routes/foo/page.tsx");
-                assert_eq!(url, "");
+            HmrMessage::Update { updates } => {
+                assert_eq!(updates.len(), 1);
+                assert_eq!(updates[0].path, "src/routes/foo/page.tsx");
+                assert_eq!(updates[0].accepted_path, "");
+                assert_eq!(updates[0].kind, UpdateKind::Js);
             }
-            _ => panic!("expected ModuleUpdate"),
+            _ => panic!("expected Update"),
         }
     }
 
     #[test]
-    fn module_update_roundtrips_with_url() {
-        let m = HmrMessage::ModuleUpdate {
-            path: "src/routes/foo/page.tsx".to_string(),
-            url: "/src/routes/foo/page.tsx".to_string(),
+    fn wire_v1_entry_roundtrips_with_accepted_path() {
+        let m = HmrMessage::Update {
+            updates: vec![UpdateEntry {
+                kind: UpdateKind::Js,
+                path: "src/routes/foo/page.tsx".to_string(),
+                accepted_path: "/src/routes/foo/page.tsx".to_string(),
+                timestamp: unix_millis(),
+                hash: String::new(),
+            }],
         };
         let j = m.to_json();
+        assert!(j.contains("\"v\":1"), "{j}");
         let back = HmrMessage::from_json(&j).unwrap();
         assert_eq!(m, back);
     }
