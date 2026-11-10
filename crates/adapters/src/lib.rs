@@ -12,6 +12,7 @@
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
@@ -56,6 +57,7 @@ impl Target {
         Target::Bun,
     ];
 
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "binary" => Target::Binary,
@@ -73,6 +75,7 @@ impl Target {
             _ => return None,
         })
     }
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Target::Binary => "binary",
@@ -91,8 +94,13 @@ impl Target {
     }
 }
 
-/// Capabilities per target (§18 capability matrix).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Capabilities per target (§18 capability matrix; V2-R02).
+///
+/// The v0.1 declaration order is load-bearing: [`Capability::ALL`] feeds
+/// [`capability_matrix`], whose `BTreeMap` iteration order is observable in
+/// docs and doctor output — D39 says existing rows are never reordered, so
+/// the v0.2 capabilities are APPENDED, never interleaved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Capability {
     L0Cache,
     Isr,
@@ -107,80 +115,234 @@ pub enum Capability {
     /// client mode; Unsupported targets refuse `live: true` at build time
     /// (`AST-LIV-001`).
     Live,
+    /// V2-R02: the v0.2 capability set. Each row is written once, here,
+    /// and never edited by a later capability — adding one means adding
+    /// arms to [`support`], not touching these.
+    ///
+    /// V2-F01: mixed-framework islands on one page. Degraded on the edge
+    /// (every framework's client runtime must ship in the worker bundle).
+    MixedIslands,
+    /// V2-F07: resumable streams — a detached client reattaches to its
+    /// in-flight stream by id. Needs a server that holds stream state.
+    Resume,
+    /// V2-F10: skew protection — a build-id handshake gates stale clients
+    /// against a fresh deploy. Full on native (atomic deploy flip);
+    /// everywhere else best-effort detection and a warning.
+    Skew,
+    /// V2-F11: delta deploys — upload only the chunks the previous build
+    /// did not produce. Full on binary/docker/static (the operator or the
+    /// CDN controls the upload); platform-managed runtimes stay full-upload
+    /// with a computed delta manifest (Degraded).
+    DeltaDeploy,
+    /// V2-F08: native Rust server functions (`*.server.rs`). Needs a
+    /// native binary — NodeLike/Static/Edge/Serverless runtimes cannot
+    /// load one, and the build refuses `rustFns: true` there.
+    RustFns,
+    /// V2-F09: built-in search. Full on native (in-process index);
+    /// Degraded where the index lives inside the Node worker or ships
+    /// read-only with the bundle; Unsupported on the edge.
+    Search,
+    /// V2-F14: offline-first module (service-worker precache + an offline
+    /// route shell). A client-side capability: every target serves it.
+    Offline,
+    /// V2-F12: brownout mode — shed load by admission control when the
+    /// queue depth crosses the threshold. Full on native (one process
+    /// owns the queue signal); Degraded on `NodeLike` (per-instance signal
+    /// only); Unsupported where no server runs.
+    Brownout,
+    /// V2-F19: per-route capability permissions. Full on native (the
+    /// binary enforces its own grant table); Degraded on `NodeLike` (the
+    /// worker checks, the runtime cannot sandbox); the F19 WP outcome may
+    /// still revise the Native cell — a documented caveat, not a silent
+    /// one (see docs/deviations.md).
+    Permissions,
+    /// V2-F20: attested reproducible builds — canonical manifests, SBOM,
+    /// in-toto provenance, ed25519 sign/verify. Emitted at build time and
+    /// verified by the client toolchain: every target carries it.
+    Attestation,
+}
+
+impl Capability {
+    /// Every capability, in declaration order — v0.1 first (the `BTreeMap`
+    /// iteration order is observable in docs and doctor output), then the
+    /// v0.2 set (V2-R02). [`capability_matrix`] folds over this, so a
+    /// capability missing here is a capability missing from every row.
+    pub const ALL: &'static [Capability] = &[
+        Capability::L0Cache,
+        Capability::Isr,
+        Capability::Sockets,
+        Capability::ImageOptimization,
+        Capability::NativeRules,
+        Capability::Snapshots,
+        Capability::Tls,
+        Capability::Live,
+        Capability::MixedIslands,
+        Capability::Resume,
+        Capability::Skew,
+        Capability::DeltaDeploy,
+        Capability::RustFns,
+        Capability::Search,
+        Capability::Offline,
+        Capability::Brownout,
+        Capability::Permissions,
+        Capability::Attestation,
+    ];
+}
+
+/// The target classes the matrix reasons over (V2-R02): targets within a
+/// class are runtime twins for capability purposes, so the support table is
+/// a function of the CLASS, and a new target lands by adding one arm to
+/// [`class`] — never by editing capability rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// One executable, everything native (Binary, Docker).
+    Native,
+    /// NodeHost-backed runtimes (Node, Deno, Bun).
+    NodeLike,
+    /// No runtime: CDN/build-time only (Static).
+    Static,
+    /// Workers: `WinterCG` edge subset (Cloudflare, Cloudflare Pages).
+    Edge,
+    /// Serverless platforms: remote cache, platform-managed TLS
+    /// (Lambda, Vercel, Vercel Functions, Netlify).
+    Serverless,
+}
+
+/// The target → class mapping (V2-R02). The exhaustive match is the
+/// single place a new `Target` variant touches the matrix.
+#[must_use]
+fn class(t: Target) -> Class {
+    match t {
+        Target::Binary | Target::Docker => Class::Native,
+        Target::Node | Target::Deno | Target::Bun => Class::NodeLike,
+        Target::Static => Class::Static,
+        Target::Cloudflare | Target::CloudflarePages => Class::Edge,
+        Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify => {
+            Class::Serverless
+        }
+    }
+}
+
+/// One cell of the §18 matrix: `support(target, capability)` (V2-R02).
+///
+/// The match is exhaustive over `(Class, Capability)` — the compiler
+/// proves every capability has a value for every target class, so adding
+/// a capability means adding arms (the D39 rule), never editing existing
+/// rows. The v0.1 arms are copied cell-by-cell from the fixed-size row
+/// table this function replaced; `tests/matrix_v2_tdd.rs::
+/// v01_rows_are_byte_identical_to_the_pre_v2_table` is the golden pin.
+#[must_use]
+pub fn support(t: Target, c: Capability) -> FeatureSupport {
+    use Class as K;
+    use FeatureSupport::{Degraded as D, Full as F, Unsupported as U};
+    // One arm per capability, each with an exhaustive inner match on the
+    // target class — the §V2-R02 shape ("a function of `(target class,
+    // capability)`"), with both dimensions compiler-proved: the outer
+    // match is exhaustive over `Capability` (a new variant is a compile
+    // error until its row lands) and every inner match is exhaustive over
+    // `Class` (a new target class is a compile error until every row
+    // covers it). Row arms never reorder (D39); a new capability APPENDS.
+    match c {
+        Capability::L0Cache => match class(t) {
+            K::Native | K::NodeLike => F,
+            K::Static | K::Edge | K::Serverless => D,
+        },
+        Capability::Isr => match class(t) {
+            K::Native | K::NodeLike => F,
+            K::Edge | K::Serverless => D,
+            K::Static => U,
+        },
+        Capability::Sockets => match class(t) {
+            K::Native | K::NodeLike => F,
+            K::Static | K::Edge | K::Serverless => U,
+        },
+        Capability::ImageOptimization => match class(t) {
+            K::Native | K::NodeLike => F,
+            K::Static | K::Serverless => D,
+            K::Edge => U,
+        },
+        Capability::NativeRules => match class(t) {
+            K::Native | K::NodeLike | K::Edge | K::Serverless => F,
+            K::Static => D,
+        },
+        Capability::Snapshots => match class(t) {
+            K::Native => F,
+            K::NodeLike | K::Serverless => D,
+            K::Static | K::Edge => U,
+        },
+        Capability::Tls => match class(t) {
+            K::Native | K::NodeLike | K::Edge => F,
+            K::Static | K::Serverless => U,
+        },
+        Capability::Live => match class(t) {
+            K::Native | K::NodeLike => F,
+            K::Edge | K::Serverless => D,
+            K::Static => U,
+        },
+        Capability::MixedIslands => match class(t) {
+            K::Native | K::NodeLike | K::Static | K::Serverless => F,
+            K::Edge => D,
+        },
+        Capability::Resume => match class(t) {
+            K::Native | K::NodeLike => F,
+            K::Static | K::Edge | K::Serverless => U,
+        },
+        Capability::Skew => match class(t) {
+            K::Native => F,
+            K::NodeLike | K::Static | K::Edge | K::Serverless => D,
+        },
+        Capability::DeltaDeploy => match class(t) {
+            K::Native | K::Static => F,
+            K::NodeLike | K::Edge | K::Serverless => D,
+        },
+        Capability::RustFns => match class(t) {
+            K::Native => F,
+            K::NodeLike | K::Static | K::Edge | K::Serverless => U,
+        },
+        Capability::Search => match class(t) {
+            K::Native => F,
+            K::NodeLike | K::Static | K::Serverless => D,
+            K::Edge => U,
+        },
+        Capability::Offline => match class(t) {
+            K::Native | K::NodeLike | K::Static | K::Edge | K::Serverless => F,
+        },
+        Capability::Brownout => match class(t) {
+            K::Native => F,
+            K::NodeLike => D,
+            K::Static | K::Edge | K::Serverless => U,
+        },
+        Capability::Permissions => match class(t) {
+            K::Native => F,
+            K::NodeLike => D,
+            K::Static | K::Edge | K::Serverless => U,
+        },
+        Capability::Attestation => match class(t) {
+            K::Native | K::NodeLike | K::Static | K::Edge | K::Serverless => F,
+        },
+    }
 }
 
 /// The capability matrix: which features work per target and how absent ones degrade.
+/// The V2-R02 shape — a fold of [`support`] over [`Capability::ALL`], so the map and
+/// the function can never disagree.
+#[must_use]
 pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport> {
-    use Capability::{ImageOptimization, Isr, L0Cache, Live, NativeRules, Snapshots, Sockets, Tls};
-    use FeatureSupport::{Degraded, Full, Unsupported};
-    /// §18 table row, written as (capability, support) pairs in canonical order.
-    fn row(pairs: [(Capability, FeatureSupport); 8]) -> BTreeMap<Capability, FeatureSupport> {
-        pairs.into_iter().collect()
-    }
-    match target {
-        // One executable, everything native.
-        Target::Binary | Target::Docker => row([
-            (L0Cache, Full),
-            (Isr, Full),
-            (Sockets, Full),
-            (ImageOptimization, Full),
-            (NativeRules, Full),
-            (Snapshots, Full),
-            (Tls, Full),
-            (Live, Full),
-        ]),
-        // NodeHost-backed runtimes: only snapshots degrade (code cache warms cold start).
-        Target::Node | Target::Deno | Target::Bun => row([
-            (L0Cache, Full),
-            (Isr, Full),
-            (Sockets, Full),
-            (ImageOptimization, Full),
-            (NativeRules, Full),
-            (Snapshots, Degraded),
-            (Tls, Full),
-            (Live, Full),
-        ]),
-        // No runtime: everything dynamic is out; what remains is CDN/build-time.
-        Target::Static => row([
-            (L0Cache, Degraded),
-            (Isr, Unsupported),
-            (Sockets, Unsupported),
-            (ImageOptimization, Degraded),
-            (NativeRules, Degraded),
-            (Snapshots, Unsupported),
-            (Tls, Unsupported),
-            (Live, Unsupported),
-        ]),
-        // Workers: WinterCG edge subset; KV/R2 for cache, no sockets, no images.
-        Target::Cloudflare | Target::CloudflarePages => row([
-            (L0Cache, Degraded),
-            (Isr, Degraded),
-            (Sockets, Unsupported),
-            (ImageOptimization, Unsupported),
-            (NativeRules, Full),
-            (Snapshots, Unsupported),
-            (Tls, Full),
-            (Live, Degraded),
-        ]),
-        // Serverless platforms: remote cache + platform-managed TLS.
-        Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify => row([
-            (L0Cache, Degraded),
-            (Isr, Degraded),
-            (Sockets, Unsupported),
-            (ImageOptimization, Degraded),
-            (NativeRules, Full),
-            (Snapshots, Degraded),
-            (Tls, Unsupported),
-            (Live, Degraded),
-        ]),
-    }
+    Capability::ALL
+        .iter()
+        .map(|c| (*c, support(target, *c)))
+        .collect()
 }
 
 /// Why a [`FeatureSupport::Degraded`] cell degrades, or `None` for Full/Unsupported
 /// (absence is not degradation — the refusal rule §18 covers Unsupported at build
 /// time, and [`capability_matrix`] is the machine-readable source of truth).
+#[must_use]
 pub fn degradation(target: Target, cap: Capability) -> Option<&'static str> {
-    use Capability::{ImageOptimization, Isr, L0Cache, Live, NativeRules, Snapshots};
+    use Capability::{
+        Brownout, DeltaDeploy, ImageOptimization, Isr, L0Cache, Live, MixedIslands, NativeRules,
+        Permissions, Search, Skew, Snapshots,
+    };
     let reason: &str = match (target, cap) {
         (Target::Node | Target::Deno | Target::Bun, Snapshots) => {
             "no v8 startup snapshot on this runtime; cold start warmed via code cache"
@@ -219,6 +381,48 @@ pub fn degradation(target: Target, cap: Capability) -> Option<&'static str> {
         (Target::Cloudflare | Target::CloudflarePages, Live) => {
             "Workers stream responses but do not guarantee long-lived connections; the client falls back to transport: 'poll'"
         }
+        // V2-R02: the v0.2 Degraded cells (every `D` in `support` must have
+        // a reason — `every_degraded_cell_documents_its_reason` pins it).
+        (Target::Cloudflare | Target::CloudflarePages, MixedIslands) => {
+            "every framework's client runtime ships in the worker bundle; no cross-island shared chunk"
+        }
+        (Target::Node | Target::Deno | Target::Bun, Skew) => {
+            "the build-id handshake detects skew but the runtime cannot block a stale worker atomically"
+        }
+        (Target::Static, Skew) => {
+            "static hosts swap files non-atomically; skew detection warns instead of blocking"
+        }
+        (Target::Cloudflare | Target::CloudflarePages, Skew) => {
+            "edge deploys propagate gradually; skew detection warns instead of blocking"
+        }
+        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, Skew) => {
+            "function versions overlap across a deploy window; skew detection warns instead of blocking"
+        }
+        (Target::Node | Target::Deno | Target::Bun, DeltaDeploy) => {
+            "the delta manifest is computed, but the platform upload remains full"
+        }
+        (Target::Cloudflare | Target::CloudflarePages, DeltaDeploy) => {
+            "the delta manifest is computed, but Workers upload the full bundle"
+        }
+        (
+            Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify,
+            DeltaDeploy,
+        ) => "the delta manifest is computed, but the platform zip upload remains full",
+        (Target::Node | Target::Deno | Target::Bun, Search) => {
+            "the index lives in the Node worker; memory-bound by the isolate"
+        }
+        (Target::Static, Search) => {
+            "a prebuilt index ships with the bundle; queries are client-side"
+        }
+        (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, Search) => {
+            "a read-only index ships with the bundle; reindexing is a deploy"
+        }
+        (Target::Node | Target::Deno | Target::Bun, Brownout) => {
+            "the queue-depth signal is per-instance, so admission control is local only"
+        }
+        (Target::Node | Target::Deno | Target::Bun, Permissions) => {
+            "the worker checks the grant table; the runtime cannot sandbox a violation"
+        }
         _ => return None,
     };
     Some(reason)
@@ -254,6 +458,15 @@ pub struct BuildArtifact {
 /// Emits: manifests, `_headers`/`_redirects` for static (§10.5), Dockerfile for docker,
 /// Worker entry for cloudflare, handler wrappers for serverless. Fails the build when a
 /// selected feature is unavailable for the target (§18 refusal rule).
+///
+/// # Errors
+///
+/// [`OxideError`] with an `ADP-*` diagnostic when: `out_dir` cannot be
+/// created (`ADP-IO`), the §18 refusal rule fires on an Unsupported
+/// capability the server manifest requires (`ADP-CAP`), a static-export
+/// dynamic route has no prerendered output and no fallback (`ADP-STATIC-DYN`),
+/// a referenced artifact file is missing on disk (`ADP-IO`), or a generated
+/// manifest cannot be serialized (`ADP-JSON`).
 pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<Vec<PathBuf>> {
     std::fs::create_dir_all(out_dir).map_err(|e| {
         err(
@@ -611,6 +824,20 @@ fn check_requirements(target: Target, artifact: &BuildArtifact) -> Result<()> {
             "nativeRules" | "native_rules" => Some(Capability::NativeRules),
             "snapshots" => Some(Capability::Snapshots),
             "tls" => Some(Capability::Tls),
+            // V2-R02: the v0.2 requires keys go through the same refusal
+            // rule — an Unsupported capability refuses the build, a Degraded
+            // one degrades with the documented string.
+            "live" => Some(Capability::Live),
+            "mixedIslands" | "mixed_islands" => Some(Capability::MixedIslands),
+            "resume" => Some(Capability::Resume),
+            "skew" => Some(Capability::Skew),
+            "deltaDeploy" | "delta_deploy" => Some(Capability::DeltaDeploy),
+            "rustFns" | "rust_fns" => Some(Capability::RustFns),
+            "search" => Some(Capability::Search),
+            "offline" => Some(Capability::Offline),
+            "brownout" => Some(Capability::Brownout),
+            "permissions" => Some(Capability::Permissions),
+            "attestation" => Some(Capability::Attestation),
             _ => None,
         };
         let unsupported = cap
@@ -845,12 +1072,15 @@ fn runtime_server_ts(target: Target, build_id: &str) -> String {
 /// Each rule is one section: the path pattern on its own line followed by two-space
 /// indented `Header: value` lines (header order = `BTreeMap` order, deterministic);
 /// sections are separated by a blank line.
+#[must_use]
 pub fn emit_headers(rules: &[(String, BTreeMap<String, String>)]) -> String {
     let mut sections: Vec<String> = Vec::new();
     for (path, headers) in rules {
         let mut section = format!("{path}\n");
         for (name, value) in headers {
-            section.push_str(&format!("  {name}: {value}\n"));
+            // `write!` (not `format!` + `push_str`): the section buffer is
+            // appended in place, no intermediate String per line.
+            let _ = writeln!(section, "  {name}: {value}");
         }
         sections.push(section);
     }
@@ -859,11 +1089,12 @@ pub fn emit_headers(rules: &[(String, BTreeMap<String, String>)]) -> String {
 
 /// `_redirects` emitter (static hosts): one `/from /to STATUS` line per rule;
 /// status `0` means "platform default" and is emitted as `301`.
+#[must_use]
 pub fn emit_redirects(rules: &[(String, String, u16)]) -> String {
     let mut out = String::new();
     for (from, to, status) in rules {
         let status = if *status == 0 { 301 } else { *status };
-        out.push_str(&format!("{from} {to} {status}\n"));
+        let _ = writeln!(out, "{from} {to} {status}");
     }
     out
 }
@@ -874,6 +1105,7 @@ pub fn emit_redirects(rules: &[(String, String, u16)]) -> String {
 /// `embed = true` bakes the client asset dist into the image (`ARG` + `COPY`),
 /// mirroring `adapter: 'binary', embed: true` (§18). The healthcheck invokes the
 /// server binary's `health` subcommand — distroless images ship no shell/curl.
+#[must_use]
 pub fn dockerfile(embed: bool) -> String {
     let embed_block = if embed {
         "\n# Assets baked into the image (embed: true, §18).\nARG OXIDE_EMBED=1\nCOPY --from=build /src/dist /app/dist\nENV OXIDE_EMBEDDED_ASSETS=/app/dist\n"
@@ -903,6 +1135,7 @@ pub fn dockerfile(embed: bool) -> String {
 
 /// Cloudflare Workers entry: WinterCG-compatible JS consuming the edge build (D18).
 /// Deterministic; interpolates the `build_id` into a provenance comment.
+#[must_use]
 pub fn cloudflare_worker_entry(build_id: &str) -> String {
     // Raw string + replace (not `\`-continuation): a `\` at end of line
     // strips the next line's leading whitespace, which silently un-indents the
@@ -922,9 +1155,13 @@ export default {
     tpl.replace("__BUILD_ID__", build_id)
 }
 
-/// Edge handler (`edge.js`) for the Cloudflare target (§18, §2 D18).
+/// The pure-JS fallback edge handler template (`edge.js` for the Cloudflare
+/// target, §18 §2 D18): the raw text [`edge_handler_js`] stamps the build id
+/// into. A module `const` (not an inline literal) keeps the function body to
+/// the stamping it actually does — and keeps the 169-line template out of
+/// the function's lint budget.
 ///
-/// WinterCG-compatible ESM: exports `default(req, env, ctx) => Response`.
+/// `WinterCG`-compatible ESM: exports `default(req, env, ctx) => Response`.
 /// Loads `./edge.wasm` when present; that module provides the accelerated
 /// `edge_cache_key`, `merge_head` and `encode_odf` functions compiled from
 /// `oxide-fw-core-wasm`. When the wasm module is absent, the pure-JS fallbacks
@@ -935,9 +1172,7 @@ export default {
 /// `oxide-fw-cache` L0 key and the `oxide-fw-core-wasm` export. The JS fallback
 /// carries a small BLAKE3 implementation so an edge deploy without the wasm
 /// module still produces the same key.
-pub fn edge_handler_js(build_id: &str) -> String {
-    // Format! with escaped braces is painful; use a raw string + replace.
-    let tpl = r#"// Oxide edge handler (spec §18, §2 D18). build_id: __BUILD_ID__
+const EDGE_FALLBACK_JS: &str = r#"// Oxide edge handler (spec §18, §2 D18). build_id: __BUILD_ID__
 // WinterCG-compatible: default export is (req, env, ctx) => Promise<Response>.
 // Loads ./edge.wasm when present; pure-JS fallbacks below are semantically
 // identical to the WASM path (spec D18).
@@ -1154,7 +1389,13 @@ async function handler(request, env, ctx) {
 export default { fetch: handler };
 export { cacheKey, mergeHead, encodeOdf };
 "#;
-    tpl.replace("__BUILD_ID__", build_id)
+
+/// `edge.js` for the Cloudflare target (§18, §2 D18): the stamped
+/// [`EDGE_FALLBACK_JS`] template — semantically identical with or without
+/// the optional wasm accelerator.
+#[must_use]
+pub fn edge_handler_js(build_id: &str) -> String {
+    EDGE_FALLBACK_JS.replace("__BUILD_ID__", build_id)
 }
 
 /// `vercel.json` variant that uses the newer `functions` layout (§18).
@@ -1164,6 +1405,7 @@ export { cacheKey, mergeHead, encodeOdf };
 /// `maxDuration` budget and lets Vercel route at the edge. Deploy with
 /// `vercel deploy --prebuilt`. Same handler file, same relative import
 /// — only the routing config differs.
+#[must_use]
 pub fn vercel_functions_json(build_id: &str) -> serde_json::Value {
     serde_json::json!({
         "version": 2,
@@ -1184,6 +1426,7 @@ pub fn vercel_functions_json(build_id: &str) -> serde_json::Value {
 /// `deno.json` for the Deno Deploy target (§18). Declares the deploy
 /// entrypoint so `deployctl deploy` / Git-linked projects pick up the
 /// server bundle without a manual `--entrypoint` flag.
+#[must_use]
 pub fn deno_deploy_config(build_id: &str) -> String {
     format!(
         "{{\n  \"name\": \"oxide-{build_id}\",\n  \"version\": \"0.1.0\",\n  \
@@ -1195,10 +1438,11 @@ pub fn deno_deploy_config(build_id: &str) -> String {
 /// convention (`pages_build_output_dir`) instead of `main =`, so
 /// `wrangler pages deploy <dir>` and Git-integrated Pages projects both
 /// pick up the emitted `_worker.js` automatically.
+#[must_use]
 pub fn cloudflare_pages_wrangler_toml(build_id: &str, has_wasm: bool) -> String {
     let mut s = String::new();
     s.push_str("# Oxide Cloudflare Pages target (§18). Generated by oxide-fw-adapters.\n");
-    s.push_str(&format!("name = \"oxide-{build_id}\"\n"));
+    let _ = writeln!(s, "name = \"oxide-{build_id}\"");
     s.push_str("pages_build_output_dir = \".\"\n");
     s.push_str("compatibility_date = \"2024-09-23\"\n");
     s.push_str("compatibility_flags = [\"nodejs_compat\"]\n");
@@ -1213,10 +1457,11 @@ pub fn cloudflare_pages_wrangler_toml(build_id: &str, has_wasm: bool) -> String 
 
 /// `wrangler.toml` for the Cloudflare target. Declares the wasm module
 /// binding when `edge.wasm` is present.
+#[must_use]
 pub fn cloudflare_wrangler_toml(build_id: &str, has_wasm: bool) -> String {
     let mut s = String::new();
     s.push_str("# Oxide Cloudflare Workers target (§18). Generated by oxide-fw-adapters.\n");
-    s.push_str(&format!("name = \"oxide-{build_id}\"\n"));
+    let _ = writeln!(s, "name = \"oxide-{build_id}\"");
     s.push_str("main = \"worker.js\"\n");
     s.push_str("compatibility_date = \"2024-09-23\"\n");
     s.push_str("compatibility_flags = [\"nodejs_compat\"]\n");
@@ -1229,11 +1474,12 @@ pub fn cloudflare_wrangler_toml(build_id: &str, has_wasm: bool) -> String {
     s
 }
 
-/// Node server entry for the `node` target (uses the NodeHost backend, §18).
+/// Node server entry for the `node` target (uses the `NodeHost` backend, §18).
 ///
 /// Dependency-free bridge: imports the server bundle export (`./server/index.js`,
 /// which must export the web-standard handler) and serves it over `node:http`,
 /// converting Node req/res to `Request`/`Response`.
+#[must_use]
 pub fn node_server_entry(build_id: &str) -> String {
     // Raw string + replace (not `\`-continuation): a trailing `\` strips the
     // next line's leading whitespace, which silently un-indents the emitted
