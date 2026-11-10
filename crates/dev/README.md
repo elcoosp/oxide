@@ -20,14 +20,16 @@ The design goal is a dev loop that never restarts the process. A source edit tri
 ## What it provides
 
 - **`Watcher`** — debounced, content-hash-confirmed watch of source, config, and content dirs (seeded boot baseline; OS-native `notify` backend with a poll fallback)
-- **`HmrHub`** — WebSocket fan-out with message kinds: `css-update`, `module-update`, `batch-module-update`, `route-data-update`, `server-module-swap`, `full-reload`, `error`, `connected`
+- **`HmrMessage` (schema v1)** — WebSocket frames behind a `{"v":1}` envelope: `update` (N `UpdateEntry`s — the §3.2 batch and the singular update are one shape), `full-reload`, `error`, `ox:data`, `connected`; `to_json`/`try_to_json` stamp the envelope, `from_json`/`try_from_json` enforce it (`HmrWireError::Schema` for a foreign version, the `DEV-HMR-003` story)
 - **`plan` / `Plan`** — the V2-E01 HMR boundary planner: a breadth-first walk-up over the module graph's importers that stops at self-accepting boundaries and falls back to a reasoned full reload (§V2-E01)
 - **`boundary::plan_classified` / `boundary::ClassifiedPlan`** — the phase-2 classified planner: the watcher's `ChangeKind` and the walk in one call, with the §13.3 CSS terminal — a stylesheet change plans `kind: 'css'` and never reloads (the swap owns the update)
-- **`boundary::UpdateKind` / `boundary::update_kind`** — the §13.3 wire discriminant (`js`/`css`/`data`) and the SPEC-14 bridge from the watcher's `ChangeKind`
+- **`boundary::UpdateKind` / `boundary::update_kind`** — the §13.3 wire discriminant (`js`/`css`/`data`, the serde spelling inside `UpdateEntry`) and the SPEC-14 bridge from the watcher's `ChangeKind`
 - **`source_self_accepts`** — the `import.meta.hot.accept` probe that feeds the planner's accepting set
 - **`boundary::css_self_accepts`** — the extension-level style-injection probe the harvest uses to mark stylesheets as boundaries
 - **`full_reload_diagnostic`** — the `DEV-HMR-001` warning carrying the fix help text the §13.4 overlay renders
 - **`boundary::css_orphan_diagnostic`** — the `DEV-HMR-002` warning for a stylesheet the module graph cannot see (the swap still runs; the fan-out never includes it)
+- **`boundary::schema_mismatch_diagnostic`** — the `DEV-HMR-003` warning for a frame speaking another schema version (stale tab or stale CLI)
+- **`UpdateEntry` / `unix_millis` / `content_hash`** — the v1 entry stamps: the kind/path/`acceptedPath`/timestamp/hash the fan-out publishes per changed surface
 - **`apply_proxy`** — longest-prefix proxy rule matching with optional path strip
 - **`WaterfallRecorder`** — per-request timing rows for the inspector
 - **`RouteTableInspector`** — the `/__oxide` route table snapshot
