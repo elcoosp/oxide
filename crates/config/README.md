@@ -22,11 +22,11 @@ The file is loaded by a Node worker (the "framework host") that imports the modu
 - **`load(dir, mode, cli_overrides)`** — full config load: layered resolution (`defaults → extends presets → oxide.config.{ts,json} → mode file → OXIDE_* env → CLI flags`) with typo-suggestion validation
 - **`load_with_env`** — the same layering with an injectable process-env map (the test seam)
 - **Static extraction** — `extract_static_config` fast-paths literal-object configs (D14); dynamic configs fall back to the framework host
-- **`OxideConfig`** — the typed view: `framework`, `routes`, `server`, `cache`, `security`, `i18n`, `plugins`, `modules`, `budgets`, `adapter`, …
+- **`OxideConfig`** — the typed view: `framework`, `routes`, `server`, `cache`, `security`, `i18n`, `plugins`, `modules`, `budgets`, `adapter`, `search` (V2-F09's surface), …
 - **`config_schema_pretty()`** — JSON Schema for editor autocomplete
 - **`parse_size`** — human-readable sizes (`"512mb"`, `"64kb"`) with overflow checks
 - **`parse_env_file`** — dotenv-compatible `.env` parsing
-- **`feature_report(facts)`** — the §18 config-key refusal mapping (V2-R02's config half): this config's keys plus the driver's `ProjectFacts` (live routes, `*.server.rs` presence, non-static routes) as the adapters crate's `ConfigFeatureReport`, so `check_config` can refuse what the target cannot honor
+- **`feature_report(facts)`** — the §18 config-key refusal mapping (V2-R02's config half): this config's keys plus the driver's `ProjectFacts` (live routes, `*.server.rs` presence, non-static routes) as the adapters crate's `ConfigFeatureReport`, so `check_config` can refuse what the target cannot honor. The config-KEY surfaces are `fonts.subset: ['used']` (C08) and `search.collections` (V2-F09 — `AST-SRC-001` on a target without the Search capability); see `examples/feature_report.rs` for the walkthrough
 
 ## Usage
 
