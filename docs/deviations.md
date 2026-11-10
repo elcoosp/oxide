@@ -1322,3 +1322,59 @@ rule over the new keys, and the `ALL` order stability.
 - The generated docs table (`doc_table_matches_matrix`, E11) — the
   docs-site generator does not consume the matrix yet; the README-level
   tables stay prose.
+
+## V2-R02 config-key refusal half — the seam, the live codes, and the F09-gated search arm (2026-11-11)
+
+**What the spec asks.** §2776's refusal rule: `check_config(cfg, t) →
+Vec<Diagnostic>` — for each enabled feature, an `Unsupported` cell returns
+an error diagnostic with the registry code (`live` → `AST-LIV-001`,
+rust functions present → `RFN-002`, `fonts.subset: 'used'` with dynamic
+routes → `AST-FNT-001`, `search` on edge → `AST-SRC-001`), a `Degraded`
+cell a warning with the documented degradation string.
+
+**What lands.** The dependency direction the V2-R02 record already ruled
+(config → adapters, never the reverse): `crates/adapters/src/refusal.rs`
+owns the seam — the `ConfigFeatureReport` trait (the feature surface the
+config layer reports) and `check_config(report, target)`, pure and
+infallible, every verdict re-stating `support(target, capability)` as a
+`Diagnostic` (the matrix stays the single source of truth — the seam is a
+consumer, never a second opinion). `crates/config/src/refusal.rs` maps the
+typed config into the report: `fonts.subset: ['used']` is the C08 key's
+spelling, and the three project facts (`ProjectFacts`: live routes,
+`*.server.rs` presence, non-static routes) ride verbatim from the driver —
+the CLI build computes them from the scanned route tree (`RouteEntry::live`,
+the effective §10.1 render modes) plus a `**/*.server.rs` source walk, and
+refuses before any deploy-artifact work. `oxide doctor`'s per-capability
+column and `oxide build --explain`'s matrix row land in the same diff (the
+R02 record's deferred presentation half), over `Capability::as_str()`
+kebab-case ids.
+
+**Spec deltas:**
+
+1. **`check_config` takes the feature report, not `&Config`.** The spec's
+   sketch signature hides two inputs no config key carries: route-level
+   `live` opt-ins (F05: per-`page.server.ts`, not per-config) and rust-fn
+   presence (F08: a project fact). The trait splits "what the config layer
+   owns" (keys) from "what only the driver can know" (facts) — the adapters
+   crate still never sees `oxide.config.ts`.
+2. **The fonts rule is target-independent in the landed reading.** The
+   registry row ("`fonts.subset: 'used'` with non-static routes") names no
+   target: glyph-usage subsetting needs all text known at build, so the
+   refusal fires on every target whenever a non-static route exists (C08
+   §1707: "allowed only when every route is `static`").
+3. **`AST-SRC-001` has no arm yet — the search key does not exist.** F09's
+   `search: { collections: … }` config key is the "search configured"
+   surface (§16.5's collection indexes are static JSON — the registry's own
+   remedy for unsupported targets, so they must NOT refuse). The trait
+   gains a `search_configured` method and `check_config` gains its arm
+   when F09 introduces the key — additive, the D39 rule applied to the
+   refusal seam. The `warns_degraded_search_on_node` pin rides with it.
+4. **Degraded warnings carry the refusal code at `Warning` severity**
+   (`AST-LIV-001` on serverless/edge), not a new code — the registry entry
+   ("`live: true` on a target without long-lived connections") already
+   covers the degraded case, and V2.K defines no warning-specific codes.
+
+**What would change it.** F09's key lands (`search_configured` + its arm +
+the spec's `warns_degraded_search_on_node` pin); F08's loader flips
+`rust_fns_present` from a walk to the real tooling-pool compile step
+without touching the refusal layer.
