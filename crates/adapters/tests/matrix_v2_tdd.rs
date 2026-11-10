@@ -106,9 +106,22 @@ fn v01_rows_are_byte_identical_to_the_pre_v2_table() {
 }
 
 /// The v0.2 rows, per the spec's §V2-R02 `support` match. These are NEW
-/// rows — written once here, never edited by a later capability.
+/// rows — written once here, never edited by a later capability. The spec
+/// table itself lives in [`v02_spec_checks`] (so the test stays a loop,
+/// not a 100-line literal).
 #[test]
 fn v02_rows_match_the_spec() {
+    for (cap, cells) in v02_spec_checks() {
+        for (targets, cell) in cells {
+            for t in targets {
+                assert_eq!(support(t, cap), cell, "{t:?} × {cap:?}");
+            }
+        }
+    }
+}
+
+/// The spec's §V2-R02 `support` table, transcribed.
+fn v02_spec_checks() -> Vec<SpecCheck> {
     use Capability as C;
     use FeatureSupport as S;
     let native = [Target::Binary, Target::Docker];
@@ -120,7 +133,7 @@ fn v02_rows_match_the_spec() {
         Target::VercelFunctions,
         Target::Netlify,
     ];
-    let checks: &[SpecCheck] = &[
+    let checks: Vec<SpecCheck> = vec![
         (
             C::MixedIslands,
             vec![
@@ -203,14 +216,10 @@ fn v02_rows_match_the_spec() {
             ],
         ),
         (C::Attestation, vec![(Target::ALL.to_vec(), S::Full)]),
-    ];
-    for (cap, cells) in checks {
-        for (targets, cell) in cells {
-            for t in targets {
-                assert_eq!(support(*t, *cap), *cell, "{t:?} × {cap:?}");
-            }
-        }
-    }
+    ]
+    .into_iter()
+    .collect();
+    checks
 }
 
 /// Every target's matrix carries ALL capabilities — no target falls back
@@ -314,4 +323,57 @@ fn the_refusal_rule_covers_the_v02_requires_keys() {
     let out = TempDir::new().unwrap();
     let (_d, a) = artifact_with(&serde_json::json!({ "attestation": true }));
     assert!(emit(Target::Static, &a, out.path()).is_ok());
+}
+
+// --------------------------- V2-R02 presentation half: the capability ids
+
+#[test]
+fn every_capability_has_a_kebab_case_id() {
+    // The doctor column and the `build --explain` row print these ids (and
+    // E11's generated table reuses them) — every variant must carry one,
+    // unique, kebab-case.
+    let ids: Vec<&str> = Capability::ALL.iter().map(Capability::as_str).collect();
+    assert_eq!(ids.len(), 18, "every capability carries an id");
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), ids.len(), "ids are unique: {ids:?}");
+    for id in &ids {
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+            "kebab-case only (digits allowed, e.g. l0-cache): {id}"
+        );
+        assert!(
+            !id.starts_with('-') && !id.ends_with('-'),
+            "no dangling hyphen: {id}"
+        );
+    }
+}
+
+#[test]
+fn v01_capability_ids_are_stable() {
+    // The v0.1 ids are load-bearing (docs + doctor output): pinned.
+    assert_eq!(Capability::L0Cache.as_str(), "l0-cache");
+    assert_eq!(Capability::Isr.as_str(), "isr");
+    assert_eq!(Capability::Sockets.as_str(), "sockets");
+    assert_eq!(Capability::ImageOptimization.as_str(), "image-optimization");
+    assert_eq!(Capability::NativeRules.as_str(), "native-rules");
+    assert_eq!(Capability::Snapshots.as_str(), "snapshots");
+    assert_eq!(Capability::Tls.as_str(), "tls");
+}
+
+#[test]
+fn v02_capability_ids_are_stable() {
+    assert_eq!(Capability::Live.as_str(), "live");
+    assert_eq!(Capability::MixedIslands.as_str(), "mixed-islands");
+    assert_eq!(Capability::Resume.as_str(), "resume");
+    assert_eq!(Capability::Skew.as_str(), "skew");
+    assert_eq!(Capability::DeltaDeploy.as_str(), "delta-deploy");
+    assert_eq!(Capability::RustFns.as_str(), "rust-fns");
+    assert_eq!(Capability::Search.as_str(), "search");
+    assert_eq!(Capability::Offline.as_str(), "offline");
+    assert_eq!(Capability::Brownout.as_str(), "brownout");
+    assert_eq!(Capability::Permissions.as_str(), "permissions");
+    assert_eq!(Capability::Attestation.as_str(), "attestation");
 }
