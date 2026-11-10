@@ -32,11 +32,22 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`); §V2-A07 prerender error-status sidecars (`static_status`: `StatusSidecars::scan` serve-start walk, `status_for`, `write_status_sidecar`, the `serve` 200-override) | §12, §17, D7, V2-F05, V2-F07, V2-F12, V2-A07 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic) and its phase-2 CSS boundary substrate (`plan_classified` — the `kind: 'js'|'css'|'data'` classification with the §13.3 CSS terminal, `css_self_accepts`, the `DEV-HMR-002` orphan-stylesheet warning) and its phase-4 state-preservation substrate (`state::Preservation` on the v1 `update` frame, the injectable `StatePolicy` seam, `update_frame`), inspector model (§13.4), prebundle keys | §13, V2-E01 |
-| `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02 |
+| `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys AND over the config keys — the `ConfigFeatureReport` seam + `check_config` the config layer maps and the CLI build consults) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`) | §19, §V2-F16, §V2-F18, §V2-F20 |
 ## What changed since 2026-10-12
+
+- **`adapters` + `config` + `cli`**: the §18 config-key refusal half of
+  V2-R02 — the `ConfigFeatureReport` trait + `check_config` (pure, matrix-
+  consulting: `AST-LIV-001` / `RFN-002` refusals and degradation warnings),
+  the `OxideConfig::feature_report` mapping (`fonts.subset: 'used'` is the
+  config half; live routes, `*.server.rs` and non-static routes are the
+  driver's `ProjectFacts`), the CLI build refusing before any deploy-
+  artifact work, plus the deferred presentation half: `oxide doctor`'s
+  per-capability column and `build --explain`'s matrix row over the
+  kebab-case `Capability::as_str()` ids. The `AST-SRC-001` arm rides with
+  F09's `search` key (`docs/deviations.md`).
 
 - **`dev` + `cli` + `packages/core`**: the state-preservation substrate
   (V2-E01 phase 4) — `dev::state` (`Preservation` — the `preserve`
