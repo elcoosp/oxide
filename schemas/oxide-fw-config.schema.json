@@ -670,6 +670,47 @@
       },
       "type": "array"
     },
+    "search": {
+      "additionalProperties": false,
+      "description": "V2-F09: the built-in search surface. Inert by default - with no collections configured nothing indexes and the §18 config-key refusal reports the surface as unconfigured. A non-empty collections list is the 'search configured' fact the refusal consults (AST-SRC-001 on a target without the Search capability); the F09 engine consumes the query knobs from this same key.",
+      "properties": {
+        "collections": {
+          "description": "The content collections (§16.5 names) the built-in search indexes. Empty = search not configured; a non-empty list is the §18 refusal's 'search configured' surface.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "fields": {
+          "additionalProperties": false,
+          "description": "Query-time field boosts (F09 defaults: title 3, body 1).",
+          "properties": {
+            "body": {
+              "description": "The body-field boost.",
+              "type": "number"
+            },
+            "title": {
+              "description": "The title-field boost; title matches outrank body matches.",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "languages": {
+          "description": "Index languages (F09 default: ['en']).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "snippet": {
+          "description": "Snippet length in characters (F09 default: 160).",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "security": {
       "additionalProperties": false,
       "properties": {
