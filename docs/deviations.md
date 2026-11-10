@@ -1061,3 +1061,73 @@ renders it without a reload).
   wiring (adapter-track work; the planner fan-out is framework-agnostic).
 - The Playwright CSS-state acceptance pins (edit a CSS file, no navigation
   event fires) against a real browser.
+
+
+## V2-E01 phase 3 — message-schema v1 wire flip — deltas and deferrals (substrate step)
+
+**What the spec asks.** The message schema (version 1), in
+`packages/oxide/src/client/hmr.ts` and `crates/dev`:
+`{ v: 1, type: 'update', updates: [{ kind: 'js'|'css'|'data', path,
+acceptedPath, timestamp, hash }] } | { type: 'full-reload', reason } |
+{ type: 'error', diagnostic } | { type: 'ox:data', route, data } |
+{ type: 'connected', build }`.
+
+**What lands.** `HmrMessage` restructured to the v1 variants behind a
+`{"v":1}` envelope (`to_json`/`try_to_json` stamp it; `try_from_json`
+enforces it with the typed `HmrWireError::Schema`), `UpdateEntry` +
+`UpdateEntry::stamped` (the fan-out's entry constructor: `unix_millis()`
+timestamp, `content_hash` blake3 prefix), `schema_mismatch_diagnostic`
+(`DEV-HMR-003` with the fix help text), the retired `from_json` `.ok()`
+swallow now warning through `tracing::warn!`, the CLI publish sites
+migrated to stamped entries (the §3.2 batch tail emits one `Update` frame
+with N entries), the TS client's one-code-path switch with the legacy
+read-compat normalizer (`normalizeLegacyFrame`), the worker socket in
+`hot.ts` riding `acceptedPath`, the criterion bench (`hmr_wire`), the
+`hmr_wire` walkthrough example, and 10 new client pins plus the rewritten
+Rust wire pins (1,750→1,756).
+
+**Spec deltas:**
+
+1. **`kind` is the client's update mechanism, not the changed file's
+   extension.** A `src/` stylesheet swaps through its `/@css/` module, so
+   its entry is `kind: 'css'` with `acceptedPath: '/@css/...'` — the
+   client re-imports the module (style injection, never a reload), which
+   is exactly the §13.3 "swaps the `<link>` or `<style data-ox-css=path>`
+   without reload" semantics; a stylesheet with no module owner (a static
+   `<link>`) carries `acceptedPath == path` and swaps the href.
+2. **`ox:data.data` rides as base64.** The JSON transport needs text; the
+   pushed ODF payload is base64 (the v0 field was `odf_b64`). A data
+   change WITHOUT a payload is not published as `ox:data` at all — it is
+   an `Update` entry with `kind: 'data'` (the client re-fetches
+   `/__data`), keeping the schema's two data flavors distinct.
+3. **The tailwind sheet's inline `code` payload is retired.** The v0
+   `CssUpdate{path, code}` carried the rebuilt CSS but no client read it
+   (`swapCss` swaps the href; the browser refetches). The v1 entry is not
+   file-backed (`hash: ""`) and the swap refetches through the
+   cache-busted URL.
+4. **`server-module-swap` is retired from the wire.** The frame was a
+   client no-op (the DOM stays put; the watcher's
+   `invalidate_framework_modules` bump owns the server-side swap), so the
+   server stops publishing it and the legacy normalizer maps it to an
+   empty `update` (the same no-op).
+5. **The v1 gate is strict on the Rust side, compat on the client side.**
+   `try_from_json` rejects v-less and foreign-version frames with
+   `HmrWireError::Schema` (the server never decodes client frames; the
+   gate pins the flip honestly); the TS client keeps a read-compat
+   normalizer because a stale tab across a CLI restart holds the previous
+   session's runtime against the current server's frames.
+6. **`UpdateKind` gains its serde spelling.** The phase-2 discriminant
+   enum now derives `Serialize`/`Deserialize` (lowercase) — `as_str`
+   remains the TS-switch contract; the derives make the enum the wire
+   type inside `UpdateEntry` directly.
+
+**What is deliberately deferred (the rest of E01):**
+
+- State preservation across boundary swaps (consumes `Plan`/
+  `ClassifiedPlan` unchanged) and the Vue/Solid refresh wiring — the
+  adapter-track work.
+- Retiring the client's legacy read-compat window once no stale tab can
+  plausibly exist (a future minor).
+- The Playwright HMR pins against a real browser with the v1 frames (the
+  spec spellings in `tests/playwright/` are updated; the runs still need
+  a toolchain + browser host).
