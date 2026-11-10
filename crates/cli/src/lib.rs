@@ -3498,7 +3498,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
         // diffs) can deliver Created + Modified for the same path when a
         // writeFileSync changes an already-existing file. The Created would route
         // to ConfigOrRoutes -> RestartSubsystems -> FullReload, racing the
-        // Modified's AdapterHmr -> ModuleUpdate. Drop a Created event when a
+        // Modified's AdapterHmr -> a v1 js entry. Drop a Created event when a
         // Modified for the same path is in the same batch: the file existed
         // before the batch, so it was not actually created.
         let events = {
@@ -3522,7 +3522,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             evs
         };
         // §3.2: accumulate AdapterHmr events across this batch. Publishing
-        // one BatchModuleUpdate at the end lets the client fan out the
+        // one v1 Update frame at the end lets the client fan out the
         // re-imports and run a single performReactRefresh() — necessary for
         // a `git checkout` burst (~50 distinct files, each currently a
         // separate refresh). Non-AdapterHmr events (Css/ServerLoader/
@@ -3575,9 +3575,18 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 bytes = css.len(),
                                 "tailwind HMR: rebuilt CSS"
                             );
-                            hub.publish(HmrMessage::CssUpdate {
-                                path: url,
-                                code: css,
+                            hub.publish(HmrMessage::Update {
+                                // The rebuilt sheet is served at `url` — the
+                                // v1 entry is not file-backed (the swap
+                                // refetches through the cache-busted URL;
+                                // the v0 inline `code` payload had no
+                                // client reader).
+                                updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                                    oxide_fw_dev::UpdateKind::Css,
+                                    url.clone(),
+                                    url,
+                                    None,
+                                )],
                             });
                         }
                         Ok(None) => {
@@ -3601,12 +3610,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         // ESM mode: a CSS file in `src/` is imported through a
                         // `/@css/<rel>` module (see `serve_css_module`) that
                         // self-accepts and replaces its `<style>` in place.
-                        // Publishing a `ModuleUpdate` with the module URL lets
+                        // Publishing an update entry with the module URL lets
                         // the client's `reloadModule` re-import it, which
                         // re-executes the module body and swaps the style tag.
                         //
                         // Non-`src/` CSS (or bundler mode) keeps the legacy
-                        // `CssUpdate` — a `<link>` href swap for the bundler-
+                        // a css entry — a `<link>` href swap for the bundler-
                         // emitted stylesheet.
                         let src_dir = rootp.join("src");
                         let in_src = path.starts_with(&src_dir);
@@ -3680,25 +3689,41 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             let rel_slash = rel.replace('\\', "/");
                             let trimmed = rel_slash.trim_start_matches('/');
                             if let Some(inner) = trimmed.strip_prefix("src/") {
-                                hub.publish(HmrMessage::ModuleUpdate {
-                                    path: pstr,
-                                    url: format!("/@css/{inner}"),
+                                // A src/ stylesheet swaps through its /@css/
+                                // module: the entry's acceptedPath is the
+                                // module URL the client re-imports (style
+                                // injection, never a reload — §13.3).
+                                hub.publish(HmrMessage::Update {
+                                    updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                                        oxide_fw_dev::UpdateKind::Css,
+                                        pstr.clone(),
+                                        format!("/@css/{inner}"),
+                                        Some(std::path::Path::new(&pstr)),
+                                    )],
                                 });
                             } else {
-                                hub.publish(HmrMessage::CssUpdate {
-                                    path: pstr,
-                                    code: String::new(),
+                                hub.publish(HmrMessage::Update {
+                                    updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                                        oxide_fw_dev::UpdateKind::Css,
+                                        pstr.clone(),
+                                        pstr.clone(),
+                                        Some(std::path::Path::new(&pstr)),
+                                    )],
                                 });
                             }
                         } else {
-                            hub.publish(HmrMessage::CssUpdate {
-                                path: pstr,
-                                code: String::new(),
+                            hub.publish(HmrMessage::Update {
+                                updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                                    oxide_fw_dev::UpdateKind::Css,
+                                    pstr.clone(),
+                                    pstr.clone(),
+                                    Some(std::path::Path::new(&pstr)),
+                                )],
                             });
                         }
                         // §1.4: a `.module.css` change also regenerates its
                         // pre-computed SSR map. The client's own update comes
-                        // from the ModuleUpdate published above (the /@css/
+                        // from the css entry published above (the /@css/
                         // reload re-injects the style; React Refresh is not
                         // needed for CSS). The SSR side reads the fresh
                         // `.oxide/css-modules/<rel>.mjs` on the next render.
@@ -3734,14 +3759,23 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         )
                         .await;
                         if route_pattern.is_empty() {
-                            hub.publish(HmrMessage::RouteDataUpdate {
-                                route: pstr,
-                                odf_b64: String::new(),
+                            // No route pattern resolved: the v0 wire passed
+                            // the FILE path as the route (the client's §1.3
+                            // pattern match then dropped it). The v1 entry
+                            // keeps the same conservative shape — a data
+                            // entry whose path the client pattern-matches.
+                            hub.publish(HmrMessage::Update {
+                                updates: vec![oxide_fw_dev::UpdateEntry::stamped(
+                                    oxide_fw_dev::UpdateKind::Data,
+                                    pstr.clone(),
+                                    String::new(),
+                                    Some(std::path::Path::new(&pstr)),
+                                )],
                             });
                         } else {
-                            hub.publish(HmrMessage::RouteDataUpdate {
+                            hub.publish(HmrMessage::OxData {
                                 route: route_pattern,
-                                odf_b64,
+                                data: odf_b64,
                             });
                         }
                     }
@@ -3753,7 +3787,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                             );
                             hub.publish(HmrMessage::Error { diagnostic: diag });
                         } else if cfg.dev.esm {
-                            tracing::info!("HMR: publishing ModuleUpdate for ESM file");
+                            tracing::info!("HMR: publishing update entries for ESM file");
                             let root_str = rootp.to_string_lossy();
                             let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
                             let rel_slash = rel.replace('\\', "/");
@@ -3788,7 +3822,7 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 //    keeps the skip: `performReactRefresh`
                                 //    patches the registered family directly,
                                 //    and fanning out would turn a singular
-                                //    ModuleUpdate into a redundant batch.
+                                //    the update frame into a redundant batch.
                                 let changed_is_component = {
                                     let lower = pstr.to_ascii_lowercase();
                                     lower.ends_with(".tsx")
@@ -3917,7 +3951,15 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                         }
                     }
                     HmrBehavior::ServerSwap => {
-                        hub.publish(HmrMessage::ServerModuleSwap { path: pstr })
+                        // The v1 wire retired `server-module-swap`: the frame
+                        // was a client no-op (the DOM stays put; the watcher's
+                        // `invalidate_framework_modules` bump already owns the
+                        // server-side swap), so the server stops publishing it
+                        // (docs/deviations.md, the phase-3 record).
+                        tracing::debug!(
+                            path = %pstr,
+                            "HMR: server module swap invalidated (no client frame)"
+                        );
                     }
                     HmrBehavior::RestartSubsystems => {
                         // WP-B (deviation 3): a route-file change re-scans the
@@ -4096,19 +4138,26 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                 }
             }
         }
-        // §3.2: publish the accumulated batch. Singular fallback for the
-        // common 1-file save; batch only when the watcher already collected
-        // multiple AdapterHmr events in this tick.
+        // §3.2: publish the accumulated batch — one v1 Update frame whether
+        // the tick saw one AdapterHmr event (the common 1-file save) or a
+        // burst of several.
         if let Some(hub) = started.hmr.as_ref() {
-            if adapter_hmr_batch.len() == 1 {
-                let (path, url) = adapter_hmr_batch.pop().unwrap();
-                hub.publish(oxide_fw_dev::HmrMessage::ModuleUpdate { path, url });
-            } else if adapter_hmr_batch.len() > 1 {
-                let items = adapter_hmr_batch
+            if !adapter_hmr_batch.is_empty() {
+                // §3.2: the v1 `updates` array is natively a batch — the
+                // singular/batch wire distinction dissolves into N entries:
+                // one frame, one serialization, one dispatch tick.
+                let updates = adapter_hmr_batch
                     .into_iter()
-                    .map(|(path, url)| oxide_fw_dev::BatchModuleItem { path, url })
+                    .map(|(path, url)| {
+                        oxide_fw_dev::UpdateEntry::stamped(
+                            oxide_fw_dev::UpdateKind::Js,
+                            path.clone(),
+                            url,
+                            Some(std::path::Path::new(&path)),
+                        )
+                    })
                     .collect();
-                hub.publish(oxide_fw_dev::HmrMessage::BatchModuleUpdate { items });
+                hub.publish(oxide_fw_dev::HmrMessage::Update { updates });
             }
         }
 
@@ -8802,7 +8851,7 @@ fn build_dispatch_swappable(
         // pool (Vue/Svelte SFCs, Solid tsx) go through the async
         // `serve_pool_compiled_module` — the pool compiles the CURRENT file
         // bytes per request, which is what lets a watcher-published
-        // ModuleUpdate serve fresh code with zero server-side cache
+        // update entries serve fresh code with zero server-side cache
         // management.
         if let Some(esm) = esm_state.as_ref() {
             match crate::esm_dev::handle_esm_request(esm, &req) {
