@@ -25,6 +25,13 @@ name = "perf_bisect"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F20: the attestation substrate benches behind the same `bench-util`
+# opt-in — plain `cargo test` never pays the criterion build.
+[[bench]]
+name = "attest"
+harness = false
+required-features = ["bench-util"]
+
 [dependencies]
 chrono = { workspace = true }
 oxc_resolver = { workspace = true }
@@ -78,6 +85,10 @@ opentelemetry = { workspace = true }
 
 futures = { workspace = true }
 ring = { workspace = true }
+# V2-F20: the subject digests and the provenance `dist-digest` are
+# SHA-256 — the cross-implementation identity the F06 patch base ids
+# already standardized on (the TS verifier hashes the same bytes).
+sha2 = { workspace = true }
 # V2-F18: the perf-bisect error taxonomy (PERF-* diagnostics).
 thiserror = { workspace = true }
 
