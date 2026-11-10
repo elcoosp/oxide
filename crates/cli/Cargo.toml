@@ -15,6 +15,16 @@ homepage.workspace = true
 name = "oxide"
 path = "src/main.rs"
 
+[features]
+# V2-F18: exposes the criterion bench harness for the perf-bisect engine
+# (the B09 pattern: plain `cargo test` never pays the criterion build).
+bench-util = []
+
+[[bench]]
+name = "perf_bisect"
+harness = false
+required-features = ["bench-util"]
+
 [dependencies]
 chrono = { workspace = true }
 oxc_resolver = { workspace = true }
@@ -68,9 +78,13 @@ opentelemetry = { workspace = true }
 
 futures = { workspace = true }
 ring = { workspace = true }
+# V2-F18: the perf-bisect error taxonomy (PERF-* diagnostics).
+thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# V2-F18: the perf-bisect engine benches (behind `bench-util`).
+criterion = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
