@@ -308,7 +308,7 @@ fn a_component_change_through_the_classified_planner_keeps_the_walk() {
 
 #[test]
 fn a_loader_change_classifies_as_data_and_walks_normally() {
-    // `ServerLoader` → `kind: 'data'` (the RouteDataUpdate track); the walk
+    // `ServerLoader` → `kind: 'data'` (the OxData / data-entry track); the walk
     // itself is unchanged — the planner still computes the surface for
     // consumers that fan out data updates through boundaries.
     let (imps, acc, ent) = graph(
