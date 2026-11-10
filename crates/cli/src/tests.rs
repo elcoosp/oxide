@@ -9304,6 +9304,55 @@ fn the_default_project_refuses_on_no_target() {
     }
 }
 
+#[test]
+fn the_search_key_refusal_rides_the_build_wire() {
+    // V2-F09's `search` key through the exact call shape the build path
+    // runs (`project_facts_from_tree` + `feature_report` + `check_config`):
+    // a configured `search.collections` on an Edge target is an AST-SRC-001
+    // refusal, a Degraded one warns, and the native cells ship untouched.
+    // No new facts plumbing — the key is config-only, the driver's facts
+    // are untouched (the §16.5 collection indexes stay the static-JSON
+    // remedy and never set the surface).
+    let mut cfg = OxideConfig::default();
+    cfg.search.collections = vec!["posts".into()];
+    let facts = crate::project_facts_from_tree(
+        &oxide_fw_router::RouteTree::new(),
+        &std::collections::BTreeSet::new(),
+    );
+    let findings_for = |t: oxide_fw_adapters::Target| {
+        oxide_fw_adapters::check_config(&cfg.feature_report(facts), t)
+    };
+
+    for t in [
+        oxide_fw_adapters::Target::Cloudflare,
+        oxide_fw_adapters::Target::CloudflarePages,
+    ] {
+        let findings = findings_for(t);
+        assert_eq!(findings.len(), 1, "on {}", t.as_str());
+        assert_eq!(findings[0].code, "AST-SRC-001");
+        assert_eq!(
+            findings[0].severity,
+            oxide_fw_diagnostics::Severity::Error,
+            "the build refuses on {}",
+            t.as_str()
+        );
+    }
+
+    let findings = findings_for(oxide_fw_adapters::Target::Node);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        findings[0].severity,
+        oxide_fw_diagnostics::Severity::Warning
+    );
+
+    for t in [
+        oxide_fw_adapters::Target::Binary,
+        oxide_fw_adapters::Target::Docker,
+    ] {
+        assert!(findings_for(t).is_empty(), "search on {} ships", t.as_str());
+    }
+}
+
 // --------------------- V2-R02 presentation half: doctor column + --explain
 
 #[test]
