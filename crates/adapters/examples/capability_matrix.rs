@@ -67,4 +67,10 @@ fn main() {
         "lambda × live = {lambda_live:?} — {}",
         reason.unwrap_or("no documented reason")
     );
+
+    // 5. The E11 docs table: the same matrix rendered as the markdown the
+    //    crate README embeds (`doc_table_matches_the_function` holds the
+    //    docs and this render together).
+    println!("\ncapability_markdown_table() (the README's embedded table):\n");
+    print!("{}", oxide_fw_adapters::capability_markdown_table());
 }
