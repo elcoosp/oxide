@@ -1713,7 +1713,8 @@ impl IncrementalWorker {
                 {
                     Ok(rt) => rt,
                     Err(e) => {
-                        eprintln!("oxide: incremental worker runtime: {e}");
+                        tracing::warn!(error = %e, "oxide: incremental worker runtime failed; \
+                             incremental rebuilds fall back to full scans");
                         return;
                     }
                 };
@@ -1729,7 +1730,8 @@ impl IncrementalWorker {
                 }) {
                     Ok(b) => b,
                     Err(e) => {
-                        eprintln!("oxide: incremental worker init: {e}");
+                        tracing::warn!(error = %e, "oxide: incremental worker init failed; \
+                             incremental rebuilds fall back to full scans");
                         return;
                     }
                 };
