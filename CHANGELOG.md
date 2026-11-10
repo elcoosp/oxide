@@ -8,6 +8,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.10.0] — 2026-11-10
+
+### Added
+
+- **dev**: The E01 CSS boundary substrate
+- **cli**: Route the style swap through the boundary planner
+- **dev**: The message-schema v1 wire substrate
+- **cli**: Publish the wire-v1 frames
+- **core**: Speak the message-schema v1
+
+### Chores
+
+- **release**: V0.10.0
+
+### Documentation
+
+- **dev**: The css boundary walkthrough example
+- Record the E01 phase-2 substrate and fix the v0.9.0 drift
+- **dev**: The wire walkthrough example
+- Record the E01 phase-3 substrate and fix the drift
+
+### Refactored
+
+- **dev**: Surface HMR wire errors; refresh stale rustdocs
+- **cli**: Tracing-warn the prebundle failures
+- **dev**: Refresh the retired wire spellings in rustdocs
+
+### Testing
+
+- **dev**: Pin the E01 CSS boundary contract
+- **dev**: The css-boundary criterion bench behind bench-util
+- **dev**: Pin the wire-v1 frame contract
+- **dev**: The wire criterion bench behind bench-util
+- **core**: Pin the wire-v1 client contract
+- **e2e**: Move the HMR pins to the wire-v1 frames
+
 ## [0.9.0] — 2026-11-10
 
 ### Added
