@@ -627,8 +627,13 @@ pub fn prebundle_cjs_deps(root: &Path, packages: &[String]) -> anyhow::Result<()
     // dep must not break the dev server for a project that has the rest.
     let result = oxide_fw_bundler::prebundle_cjs_to_esm(root, packages, &out_dir)?;
     for (name, err) in result.failures {
-        eprintln!(
-            "oxide dev (esm): cannot prebundle `{name}` — /@prebundle/{} will 404 ({err})",
+        // The dev loop is a tracing pipeline (the same class as the
+        // rolldown-worker / Watcher fallback fixes): a per-package
+        // prebundle failure is a warn, not a bare stderr print.
+        tracing::warn!(
+            package = %name,
+            error = %err,
+            "esm prebundle failed; /@prebundle/{} will 404",
             sanitized_filename(&name)
         );
     }
