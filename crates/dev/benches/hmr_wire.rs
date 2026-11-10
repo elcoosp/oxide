@@ -38,6 +38,7 @@ fn entry(i: usize) -> UpdateEntry {
 fn update_frame(n: usize) -> HmrMessage {
     HmrMessage::Update {
         updates: (0..n).map(entry).collect(),
+        preserve: oxide_fw_dev::Preservation::default(),
     }
 }
 
