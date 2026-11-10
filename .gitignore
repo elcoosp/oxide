@@ -59,3 +59,8 @@ ship.sh
 # .github/pr-body.md - the milestone PR body (agent-written, consumed by
 # ship.sh via gh pr create --body-file; machine-local like ship.sh)
 .github/pr-body.md
+
+# ship.toml — the declarative delivery manifest (branch, PR title/body and
+# the [[commit]] file groups) consumed by the ship tooling; machine-local
+# like ship.sh, and listed in its own [[commit]]-union rules.
+ship.toml
