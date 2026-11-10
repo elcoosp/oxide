@@ -452,6 +452,16 @@ pub enum HmrMessage {
     Update {
         /// One entry per changed surface, in the planner's batch order.
         updates: Vec<UpdateEntry>,
+        /// E01 phase 4: the state-preservation verdict the fan-out's
+        /// policy stamped for this plan ([`state::update_frame`] — the
+        /// single construction seam). `"keep"` lets the client
+        /// snapshot/restore DOM state around the swap (stash across a
+        /// fallback reload); `"clear"` carries the reload reason instead.
+        /// Absent on pre-substrate frames and decoded as
+        /// [`Preservation::Keep`] — the verdict those servers always
+        /// meant — so the field is additive, not a schema break.
+        #[serde(default)]
+        preserve: state::Preservation,
     },
     /// No boundary found on some path: reload the client. The reason is
     /// the spec's spelling and feeds [`full_reload_diagnostic`] for the
@@ -1290,6 +1300,12 @@ pub use dev_server::{
     network_url, open_browser, render_qr,
 };
 
+/// V2-E01 phase 4: the state-preservation substrate — the `preserve`
+/// verdict on the v1 `update` frame plus the injectable [`state::StatePolicy`]
+/// seam (§V2-E01).
+pub mod state;
+pub use state::{DefaultStatePolicy, Preservation, StatePolicy};
+
 #[cfg(test)]
 mod tests;
 
@@ -1304,7 +1320,7 @@ mod esm_module_update_tests {
         let raw = r#"{"v":1,"type":"update","updates":[{"kind":"js","path":"src/routes/foo/page.tsx","timestamp":0}]}"#;
         let m: HmrMessage = serde_json::from_str(raw).unwrap();
         match m {
-            HmrMessage::Update { updates } => {
+            HmrMessage::Update { updates, .. } => {
                 assert_eq!(updates.len(), 1);
                 assert_eq!(updates[0].path, "src/routes/foo/page.tsx");
                 assert_eq!(updates[0].accepted_path, "");
@@ -1324,6 +1340,7 @@ mod esm_module_update_tests {
                 timestamp: unix_millis(),
                 hash: String::new(),
             }],
+            preserve: Preservation::default(),
         };
         let j = m.to_json();
         assert!(j.contains("\"v\":1"), "{j}");
