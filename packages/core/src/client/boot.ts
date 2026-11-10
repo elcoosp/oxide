@@ -15,7 +15,7 @@ import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
-import { connectHmr } from './hmr.ts'
+import { connectHmr, scheduleStashRestore } from './hmr.ts'
 import { startReplay } from './replay.ts'
 import type { FrameworkAdapter } from '../types.ts'
 import { loadMessages, setMessageLocales } from './messages.ts'
@@ -405,6 +405,12 @@ export function bootWithRouter(
         }
       }
       if (isEsmDev) {
+        // V2-E01 phase 4: a `keep`-verdict update that fell back to a full
+        // reload stashed the DOM form state in `sessionStorage` before the
+        // page went away. Restore (and clear) it once the tree is up — only
+        // on the ESM dev path, where the stash can exist. Best-effort and
+        // silent: a failed restore is a degraded HMR, not a broken boot.
+        scheduleStashRestore(doc)
         try {
           connectHmr()
         } catch (e) {
