@@ -1,3 +1,95 @@
+# Handoff — V2-F09's `search` key + the §18 refusal's `AST-SRC-001` arm landed (the fourth and last open code of the config-key refusal rule is live; edge refuses, Node/serverless/static warn the documented string), and E11's docs-table seam realized (`capability_markdown_table` + the byte-identical README embed); both milestone crates are pedantic-clean
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/10 GB-disk
+sandbox, `CARGO_PROFILE_DEV_DEBUG=0`):**
+- `cargo fmt --all --check` clean; the CI bar
+  (`cargo clippy --workspace --all-targets --all-features -- -D warnings`)
+  ZERO findings; the pedantic sweep over the milestone crates
+  (`cargo clippy -p oxide-fw-adapters -p oxide-fw-config --all-targets
+  --all-features -- -D warnings -W clippy::pedantic`) ZERO findings.
+- Runtime suites green (all-features): `oxide-fw-adapters` 78 (26 lib +
+  16 config_refusal — the `refuses_search_on_edge` /
+  `warns_degraded_search_on_node` / `allows_search_on_native_targets`
+  pins, the search-aware order and matrix-agreement pins + 5 doc_table +
+  5 deploy_matrix + 2 integration + 4 live_matrix + 9 matrix_v2 +
+  6 snapshots + 2 doctests), `oxide-fw-config` 115 (24 lib + 10
+  refusal_surface — the `search_configured` mapping pins — + 7
+  schema_stability incl. `schema_declares_the_search_keys` + the six
+  suites + doctests), `oxide-fw-cli` 278 lib (0 failed, 12 ignored —
+  `the_search_key_refusal_rides_the_build_wire` included) and 25/25 in
+  `attest_tdd` (the repaired pre-existing pins).
+- The zero-`#[allow]` gate: `grep -rnE '#!\[(allow|expect)\(|cfg_attr\([^)]*_allow\('`
+  over `crates/ tests/ benches/ examples/ build.rs` — empty.
+- Benches compile and run under `cargo test --benches --all-features`
+  (`config_refusal` gains the `search_configured` split; new `doc_table`
+  group behind `bench-util`).
+- Doc-drift fixes IN this diff: `crates/config/README.md` (the
+  `feature_report` bullet names the config-KEY surfaces + the new
+  consumer example), `crates/adapters/README.md` (the generated
+  capability table + the AST-SRC-001 code), the spec's V2.O table (the
+  F09/E11 partial rows), `docs/architecture.md` (the adapters row + the
+  what-changed bullet), `docs/deviations.md` (the session record),
+  `README.md` (the badge re-measured 1,818→1,831 via
+  `scripts/count-tests.sh`), and `HANDOFF.md` (this header).
+
+## What landed
+
+**M1 — F09's `search` key + the `AST-SRC-001` arm**
+(`feat/search-key-refusal-arm`): the typed key over the full V2.L shape
+(`SearchConfig`/`SearchFieldsConfig` in `crates/config/src/lib.rs`,
+schema'd in `search_schema()` + the regenerated
+`schemas/oxide-fw-config.schema.json`, `KNOWN_KEYS` in
+`crates/config/src/layer.rs`), `ConfigFeatureReport::search_configured()`
+as a REQUIRED trait method (the compiler walks every impl — the config
+crate's mapping reads `search.collections` only; the §16.5 static-JSON
+collection indexes never refuse, the R02 reading unchanged) and the
+`check_config` search arm in capability declaration order (live → rust
+fns → search → the target-independent fonts rule): `Unsupported` (edge)
+→ the registry error + fix text ("Use static JSON search or a Binary or
+Docker target"), `Degraded` (node/serverless/static) → the warning with
+the documented string. The key is inert until F09's engine lands — the
+RFN-002 pattern (enforcement live from day one); the engine consumes the
+unchanged query knobs. Pins: 3 adapters + 3 config + 1 CLI + 1 schema.
+
+**M2 — the E11 docs-table seam** (`feat/matrix-doc-table`):
+`capability_markdown_table()` — the §18 matrix as a deterministic
+markdown table (rows = `Target::ALL`, columns = `Capability::ALL`, cells
+`F`/`D`/`U`), a fold of `support` like `capability_matrix`; the crate
+README embeds the exact output and
+`tests/doc_table_tdd.rs::doc_table_matches_the_function` fails when they
+drift (the E11 pin realized at the crate-docs level). The `doc_table`
+criterion bench behind `bench-util` and the extended `capability_matrix`
+walkthrough ride along.
+
+**Micro-debt / additive items retired (not milestone substitutes):**
+`crates/config` had ZERO examples — `examples/feature_report.rs` is the
+crate's first consumer example (typed config → `feature_report` →
+`check_config`, including the static-JSON-never-refuses subtlety); the
+config README's `feature_report` bullet now names both config-KEY
+surfaces; the schema test lists carry `search` (the BUG-11 drift guard);
+and two PRE-EXISTING breakages from the previous delivery snapshot were
+repaired (verified failing on the pristine base via stash):
+`crates/cli/src/attest.rs`'s `dist_subjects` walk emitted a duplicate
+`dist/build-id` subject, and `crates/cli/tests/attest_tdd.rs`'s
+`pem_public_key` helper wrapped the bare key instead of a real RFC 8410
+SPKI DER — `attest_tdd` is 25/25 green again.
+
+## Where to pick up, in one sentence
+
+F09's engine is the remaining half (`crates/search`: tantivy index,
+`/_oxide/search`, the static matcher — the typed key and the schema are
+already its contract); F08's loader flips `rust_fns_present` from the
+walk to the real compile step; the E01 remainder (Vue/Solid refresh
+wiring) is still the V8-host job it was; E11's docs-site generator
+(`capabilities.md` from the same function) supersedes the README embed.
+
+---
+
 # Handoff — V2-R02's config-key refusal half landed (the §18 refusal rule now consults the config layer: the `ConfigFeatureReport` seam + `check_config` refuse `AST-LIV-001`/`RFN-002`/`AST-FNT-001` before any deploy-artifact work, the config crate maps `fonts.subset: 'used'` and the driver's `ProjectFacts`, and the deferred presentation half — `oxide doctor`'s per-capability column + `build --explain`'s matrix row — rides the same diff); both milestone crates are pedantic-clean
 
 ## Where things stand
