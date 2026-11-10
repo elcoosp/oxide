@@ -1,7 +1,7 @@
 {
   "name": "@oxide-fw/cli",
-  "version": "0.6.0",
-  "description": "Prebuilt oxide CLI binary installer \u2014 downloads the platform binary from GitHub Releases and exposes it as `oxide`.",
+  "version": "0.6.1",
+  "description": "Prebuilt oxide CLI binary installer — downloads the platform binary from GitHub Releases and exposes it as `oxide`.",
   "type": "module",
   "bin": {
     "oxide": "./bin.js"
