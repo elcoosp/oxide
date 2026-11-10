@@ -26,6 +26,7 @@ fn config_schema_has_the_known_top_level_sections() {
         "og",
         "render",
         "routes",
+        "search",
         "security",
         "server",
         "stream",
@@ -116,5 +117,34 @@ fn checked_in_schema_matches_the_function() {
     assert_eq!(
         on_disk_value, generated_value,
         "schemas/oxide-fw-config.schema.json is stale (semantic diff -- field added, removed, or value changed). Regenerate with:\n  cargo run -p oxide-fw-config --bin oxide-schema -- > schemas/oxide-fw-config.schema.json"
+    );
+}
+
+#[test]
+fn schema_declares_the_search_keys() {
+    // V2-F09 (Appendix V2.L): the `search` key is typed and schema'd from
+    // day one — the refusal consults `collections` (the "search configured"
+    // surface), and the F09 engine consumes the query knobs without a
+    // second schema churn. BUG-11's rule: a key the typed config
+    // deserializes must appear in the schema, or editor tooling silently
+    // rejects a valid config.
+    let schema = oxide_fw_config::config_schema();
+    let search = &schema["properties"]["search"];
+    assert_eq!(search["type"], "object", "search is an object section");
+    let props = search
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .expect("search schema has a properties object");
+    for key in ["collections", "fields", "snippet", "languages"] {
+        assert!(props.contains_key(key), "search.{key} missing from schema");
+    }
+    assert!(
+        props["collections"].get("items").is_some(),
+        "search.collections is an array of strings"
+    );
+    assert!(
+        props["fields"]["properties"].get("title").is_some()
+            && props["fields"]["properties"].get("body").is_some(),
+        "search.fields carries the title/body boosts"
     );
 }
