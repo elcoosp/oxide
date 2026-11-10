@@ -27,6 +27,7 @@ struct FontSurface {
 struct Report {
     live_routes: bool,
     rust_fns: bool,
+    search: bool,
     fonts: FontSurface,
 }
 
@@ -38,6 +39,7 @@ impl Report {
         Self {
             live_routes: true,
             rust_fns: true,
+            search: true,
             fonts: FontSurface {
                 used: true,
                 dynamic_routes: true,
@@ -52,6 +54,9 @@ impl ConfigFeatureReport for Report {
     }
     fn rust_fns_present(&self) -> bool {
         self.rust_fns
+    }
+    fn search_configured(&self) -> bool {
+        self.search
     }
     fn font_subset_used(&self) -> bool {
         self.fonts.used
@@ -212,6 +217,95 @@ fn allows_rust_fns_on_native_targets() {
     }
 }
 
+// ------------------------------------------------------ search (AST-SRC-001)
+
+#[test]
+fn refuses_search_on_edge() {
+    // F09's `search` key on the Edge class is the registry's AST-SRC-001
+    // row: an error with the registry fix text (V2.K). The Edge class is
+    // the ONLY Unsupported cell in the Search row (V2-F09: "Unsupported on
+    // edge until a WASM build exists").
+    for t in [Target::Cloudflare, Target::CloudflarePages] {
+        let findings = check_config(
+            &Report {
+                search: true,
+                ..Report::none()
+            },
+            t,
+        );
+        assert_eq!(codes(&findings), vec!["AST-SRC-001"], "on {}", t.as_str());
+        let d = &findings[0];
+        assert_eq!(d.severity, Severity::Error, "on {}", t.as_str());
+        assert!(
+            d.message.contains(t.as_str()),
+            "AST-SRC-001 names the target `{}`: {}",
+            t.as_str(),
+            d.message
+        );
+        assert_eq!(
+            d.fix.as_deref(),
+            Some("Use static JSON search or a Binary or Docker target")
+        );
+    }
+}
+
+#[test]
+fn warns_degraded_search_on_node() {
+    // The spec's own red-first pin name (V2-R02): search on Node is
+    // Degraded (static JSON) — a warning carrying the documented
+    // degradation string, never a refusal. The same shape holds for every
+    // other Degraded cell in the Search row (NodeLike, Static, Serverless).
+    for t in [
+        Target::Node,
+        Target::Deno,
+        Target::Bun,
+        Target::Static,
+        Target::Lambda,
+        Target::Vercel,
+        Target::VercelFunctions,
+        Target::Netlify,
+    ] {
+        let findings = check_config(
+            &Report {
+                search: true,
+                ..Report::none()
+            },
+            t,
+        );
+        assert_eq!(codes(&findings), vec!["AST-SRC-001"], "on {}", t.as_str());
+        let d = &findings[0];
+        assert_eq!(d.severity, Severity::Warning, "degraded on {}", t.as_str());
+        let reason = degradation(t, oxide_fw_adapters::Capability::Search)
+            .expect("every Degraded Search cell documents its reason");
+        assert!(
+            d.message.contains(reason),
+            "warning carries the degradation string on {}: {}",
+            t.as_str(),
+            d.message
+        );
+    }
+}
+
+#[test]
+fn allows_search_on_native_targets() {
+    // The Search row is Full on the native classes: the configured key
+    // produces no finding at all — the refusal never fires on a Full cell.
+    for t in [Target::Binary, Target::Docker] {
+        let findings = check_config(
+            &Report {
+                search: true,
+                ..Report::none()
+            },
+            t,
+        );
+        assert!(
+            findings.is_empty(),
+            "search on {} must not be refused: {findings:?}",
+            t.as_str()
+        );
+    }
+}
+
 // ------------------------------------------------------- fonts (AST-FNT-001)
 
 #[test]
@@ -314,14 +408,14 @@ fn every_target_with_an_empty_report_has_no_findings() {
 
 #[test]
 fn finding_order_is_deterministic() {
-    // All surfaces firing on Static: live (capability declaration order)
-    // first, then rust fns, then the target-independent fonts rule. The
-    // order is part of the seam's contract (the build prints them in this
-    // order).
+    // All surfaces firing on Static: live, rust fns and search in
+    // capability declaration order (Live < RustFns < Search), then the
+    // target-independent fonts rule last. The order is part of the seam's
+    // contract (the build prints them in this order).
     let findings = check_config(&Report::all(), Target::Static);
     assert_eq!(
         codes(&findings),
-        vec!["AST-LIV-001", "RFN-002", "AST-FNT-001"],
+        vec!["AST-LIV-001", "RFN-002", "AST-SRC-001", "AST-FNT-001"],
         "order: {findings:?}"
     );
 }
@@ -342,7 +436,7 @@ fn severity_split_on_a_degraded_target() {
         .map(|d| d.code.as_str())
         .collect();
     assert_eq!(errors, vec!["RFN-002", "AST-FNT-001"]);
-    assert_eq!(warnings, vec!["AST-LIV-001"]);
+    assert_eq!(warnings, vec!["AST-LIV-001", "AST-SRC-001"]);
 }
 
 #[test]
@@ -354,12 +448,14 @@ fn the_seam_consults_the_matrix_not_a_private_table() {
         let report = Report {
             live_routes: true,
             rust_fns: true,
+            search: true,
             ..Report::none()
         };
         for d in check_config(&report, *t) {
             let expected = match d.code.as_str() {
                 "AST-LIV-001" => support(*t, oxide_fw_adapters::Capability::Live),
                 "RFN-002" => support(*t, oxide_fw_adapters::Capability::RustFns),
+                "AST-SRC-001" => support(*t, oxide_fw_adapters::Capability::Search),
                 other => panic!("unexpected code {other}"),
             };
             match d.severity {
