@@ -47,6 +47,14 @@ name = "boundary"
 harness = false
 required-features = ["bench-util"]
 
+# V2-E01 phase 3: criterion bench for the §13.3 message-schema v1 wire —
+# the frame encode/decode the fan-out and the endpoint run per publish
+# (batch shapes 1/16/64 plus the two non-entry controls).
+[[bench]]
+name = "hmr_wire"
+harness = false
+required-features = ["bench-util"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
