@@ -1,7 +1,8 @@
 //! The config-key refusal walkthrough (V2-R02's config half, spec §V2-R02):
 //! print the §18 verdicts `oxide build` produces per deploy target, watch
 //! the refusal consult the matrix (never a second opinion), and watch a
-//! Degraded cell warn instead of refuse.
+//! Degraded cell warn instead of refuse. F09's `search` key rides the same
+//! seam: configured search on an edge target refuses, on Node it degrades.
 //!
 //! Run with:
 //!
@@ -13,8 +14,8 @@ use oxide_fw_adapters::{ConfigFeatureReport, FeatureSupport, Target, check_confi
 use oxide_fw_diagnostics::Severity;
 
 /// A project with every surface the seam consults enabled: a live route
-/// (F05), `*.server.rs` functions (F08), `fonts.subset: ['used']` (C08)
-/// and a dynamic route.
+/// (F05), `*.server.rs` functions (F08), a configured `search` key (F09),
+/// `fonts.subset: ['used']` (C08) and a dynamic route.
 struct EverythingProject;
 
 impl ConfigFeatureReport for EverythingProject {
@@ -22,6 +23,9 @@ impl ConfigFeatureReport for EverythingProject {
         true
     }
     fn rust_fns_present(&self) -> bool {
+        true
+    }
+    fn search_configured(&self) -> bool {
         true
     }
     fn font_subset_used(&self) -> bool {
@@ -40,6 +44,9 @@ impl ConfigFeatureReport for DefaultProject {
         false
     }
     fn rust_fns_present(&self) -> bool {
+        false
+    }
+    fn search_configured(&self) -> bool {
         false
     }
     fn font_subset_used(&self) -> bool {
@@ -98,6 +105,7 @@ fn main() {
             let cell = match d.code.as_str() {
                 "AST-LIV-001" => support(*t, oxide_fw_adapters::Capability::Live),
                 "RFN-002" => support(*t, oxide_fw_adapters::Capability::RustFns),
+                "AST-SRC-001" => support(*t, oxide_fw_adapters::Capability::Search),
                 "AST-FNT-001" => continue, // target-independent (C08)
                 other => panic!("unexpected code {other}"),
             };
