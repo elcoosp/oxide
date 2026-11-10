@@ -578,17 +578,31 @@ install()
     socket.onmessage = (ev: { data: unknown }) => {
       try {
         const raw = typeof ev.data === 'string' ? ev.data : String(ev.data)
-        const msg = JSON.parse(raw) as { type?: string; url?: string; items?: Array<{ url?: string }> }
+        const msg = JSON.parse(raw) as {
+          type?: string
+          url?: string
+          items?: Array<{ url?: string }>
+          updates?: Array<{ kind?: string; acceptedPath?: string }>
+        }
         const hmr = g.__oxide_hmr__
         if (typeof hmr?.reloadModule !== 'function') return
         if (msg.type === 'module-update' && typeof msg.url === 'string' && msg.url) {
+          // Legacy v0 frame (read-compat; see normalizeLegacyFrame).
           void hmr.reloadModule(msg.url)
+        } else if (msg.type === 'update' && Array.isArray(msg.updates)) {
+          // §13.3 v1: module re-imports ride acceptedPath — the §3.2 batch
+          // is one frame with N entries.
+          for (const it of msg.updates) {
+            if (typeof it.acceptedPath === 'string' && it.acceptedPath) {
+              void hmr.reloadModule(it.acceptedPath)
+            }
+          }
         } else if (msg.type === 'batch-module-update' && Array.isArray(msg.items)) {
           for (const it of msg.items) {
             if (typeof it.url === 'string' && it.url) void hmr.reloadModule(it.url)
           }
         }
-        // full-reload / server-module-swap / error: worker has no DOM to
+        // full-reload / error / ox:data: worker has no DOM to
         // show an overlay and no page to reload — the main thread's own
         // WS handles those. Ignore here.
       } catch { /* malformed frame is not fatal */ }

@@ -1,18 +1,28 @@
-// HMR client runtime (spec §13.3). Connects to the dev server's `/_oxide/hmr`
-// WebSocket, applies each `HmrMessage`, and renders a diagnostic overlay on an
-// `Error` message.
+// HMR client runtime (spec §13.3, message schema **v1**). Connects to the
+// dev server's `/_oxide/hmr` WebSocket, applies each `HmrMessage`, and
+// renders a diagnostic overlay on an `Error` message.
 //
-// Message kinds (mirror `oxide_dev::HmrMessage`):
-//   - `css-update`        swap a <link> href to the new CSS
-//   - `route-data-update` re-fetch `/__data` for the current route (or decode
-//                         the pushed `odf_b64`) and dispatch `ox:data` with a
-//                         fresh ClientInput — `bootWithRouter` feeds it to
-//                         `adapter.update` so a loader edit re-renders in place
-//   - `module-update`     apply a component module (via the adapter's HMR hook)
-//   - `server-module-swap` a server module changed — full reload
+// Message kinds (mirror `oxide_dev::HmrMessage`, schema v1 — every frame
+// carries a `{ v: 1 }` envelope):
+//   - `update`            apply N update entries (`kind: 'js' | 'css' |
+//                         'data'`): a js entry re-imports `acceptedPath`
+//                         through the HMR runtime (adapter HMR applies it in
+//                         place), a css entry swaps the styles without
+//                         reload, a data entry re-fetches `/__data`
+//   - `ox:data`           re-fetch `/__data` for the current route (or decode
+//                         the pushed base64 ODF `data`) and dispatch `ox:data`
+//                         with a fresh ClientInput — `bootWithRouter` feeds it
+//                         to `adapter.update` so a loader edit re-renders in
+//                         place
 //   - `full-reload`       reload the page
 //   - `error`             show the diagnostic overlay
 //   - `connected`         the build id (informational)
+//
+// Read-compat: a stale tab (kept open across a CLI rebuild) still holds the
+// previous session's runtime, so the legacy v0 spellings (`module-update`,
+// `css-update`, `batch-module-update`, `route-data-update`,
+// `server-module-swap`) normalize into the v1 shapes instead of being
+// dropped silently — see `normalizeLegacyFrame` and docs/deviations.md.
 //
 // Fully guarded: a no-op outside the browser, so `@oxide/react` can re-export
 // it and the config loader can evaluate it in the Node worker.
@@ -40,6 +50,20 @@ export interface HmrOptions {
   reload?: () => void
   /** The overlay root element (created if absent). */
   overlayParent?: HTMLElement
+}
+
+/** One §13.3 v1 update entry (`updates[]` inside an `update` frame). */
+export interface HmrUpdateEntry {
+  /** The client update mechanism: `'js' | 'css' | 'data'`. */
+  kind?: string
+  /** The changed file (or, for `data`, the route the loader belongs to). */
+  path?: string
+  /** What the client re-imports or swaps (`acceptedPath` on the wire). */
+  acceptedPath?: string
+  /** Publish time, unix milliseconds. */
+  timestamp?: number
+  /** Content hash of the changed file (cache busting). */
+  hash?: string
 }
 
 /** Default WebSocket URL for the current page. */
@@ -210,7 +234,7 @@ async function refreshRouteData(route: string, odfB64: string): Promise<void> {
 
 /**
  * Remove the diagnostic overlay if present. Called when a subsequent
- * `module-update` (or successful re-import) proves the earlier diagnostic is
+ * `update` frame (or successful re-import) proves the earlier diagnostic is
  * stale — the user fixed the file and the next edit applied cleanly.
  */
 export function clearOverlay(parent?: HTMLElement): void {
@@ -221,97 +245,132 @@ export function clearOverlay(parent?: HTMLElement): void {
   if (el) el.remove()
 }
 
-/** Apply one HMR message. Returns true when handled. */
-export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean {
-  const doc = (globalThis as { document?: Document }).document
-  if (!doc) return false
+/**
+ * Read-compat (§13.3 v1 flip): normalize the retired v0 spellings into the
+ * v1 shapes so ONE code path applies both generations. A stale tab holds
+ * the previous session's runtime but receives the CURRENT server's frames —
+ * and vice versa during a CLI restart window — so the legacy frames must
+ * keep working until the schema-window compat is retired (tracked in
+ * docs/deviations.md).
+ */
+function normalizeLegacyFrame(msg: HmrMessage): HmrMessage {
   switch (msg.type) {
-    case 'css-update': {
-      const path = String(msg.path ?? '')
-      swapCss(doc, path)
-      opts.onCssUpdate?.(path)
-      return true
+    case 'module-update':
+      return {
+        type: 'update',
+        updates: [
+          {
+            kind: 'js',
+            path: String(msg.path ?? ''),
+            acceptedPath: typeof msg.url === 'string' ? msg.url : '',
+          },
+        ],
+      }
+    case 'css-update':
+      return {
+        type: 'update',
+        updates: [
+          { kind: 'css', path: String(msg.path ?? ''), acceptedPath: String(msg.path ?? '') },
+        ],
+      }
+    case 'batch-module-update': {
+      const rec = msg as unknown as { items?: unknown }
+      const items = Array.isArray(rec.items) ? (rec.items as Array<Record<string, unknown>>) : []
+      return {
+        type: 'update',
+        updates: items.map((it) => ({
+          kind: 'js',
+          path: String(it.path ?? ''),
+          acceptedPath: typeof it.url === 'string' ? it.url : '',
+        })),
+      }
     }
     case 'route-data-update': {
       const route = String(msg.route ?? '')
       const odf = String(msg.odf_b64 ?? '')
-      opts.onRouteData?.(route, odf)
-      // §13.3: re-fetch (or decode) the fresh loader data and re-dispatch it
-      // through the same event the boot machinery consumes. Async and
-      // silent — the message itself is handled synchronously. §1.3: the
-      // route is passed through so a foreign route's data is dropped
-      // instead of re-rendering the page (see refreshRouteData).
-      void refreshRouteData(route, odf)
-      return true
+      // A pushed payload rides as `ox:data`; a payload-less frame is a
+      // data entry the client re-fetches.
+      return odf
+        ? { type: 'ox:data', route, data: odf }
+        : { type: 'update', updates: [{ kind: 'data', path: route }] }
     }
-    case 'module-update': {
-      const path = String(msg.path ?? '')
-      const url = typeof msg.url === 'string' ? msg.url : ''
-      // A fresh module update supersedes any earlier diagnostic; the user
+    case 'server-module-swap':
+      // Retired on the v1 wire: the server-side invalidation owns the swap
+      // and the client arm was a no-op — an empty update is exactly that.
+      return { type: 'update', updates: [] }
+    default:
+      return msg
+  }
+}
+
+/** Apply one HMR message. Returns true when handled. */
+export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean {
+  const doc = (globalThis as { document?: Document }).document
+  if (!doc) return false
+  const frame = normalizeLegacyFrame(msg)
+  switch (frame.type) {
+    case 'update': {
+      const rec = frame as unknown as { updates?: unknown }
+      const updates = Array.isArray(rec.updates) ? (rec.updates as HmrUpdateEntry[]) : []
+      // A fresh update frame supersedes any earlier diagnostic; the user
       // fixed the file, the rebuild succeeded, the overlay is stale.
       clearOverlay(opts.overlayParent)
-      // ESM dev: `url` is the source URL the browser fetched, so route the
-      // reload through the HMR runtime's `reloadModule`. Phase 2 does a full
-      // page reload; Phase 3 upgrades that to React Refresh in place.
       const hmr = (globalThis as { __oxide_hmr__?: { reloadModule?: (u: string) => Promise<void> } }).__oxide_hmr__
-      if (url && typeof hmr?.reloadModule === 'function') {
-        void hmr.reloadModule(url)
-        return true
-      }
-      if (opts.onModuleUpdate) {
-        opts.onModuleUpdate(path)
-        return true
-      }
-      // No URL and no callback: fall back to a full reload.
       const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
-      reload?.()
-      return true
-    }
-    case 'batch-module-update': {
-      // §3.2: the server coalesces N distinct-file changes (git checkout,
-      // scripted burst) into ONE message. The client fans out the
-      // reloadModule calls; each triggers its own accept callback +
-      // performReactRefresh in the current hot.ts implementation. That's
-      // still better than N separate frames because (a) it's one
-      // serialization / one WebSocket frame, (b) the server already
-      // collapsed the watcher storm into one dispatch tick, (c) the
-      // client's COALESCE_MS prevents rapid same-URL re-imports when
-      // several items happen to point at the same URL.
-      //
-      // Coalescing the performReactRefresh calls themselves into one at
-      // the end would need reloadModule to accept a "suppress refresh"
-      // flag; that is a bigger refactor and not observable in the §3.2
-      // acceptance test (which counts wire frames). Deferred.
-      const msgRec = msg as unknown as { items?: unknown }
-      const items = Array.isArray(msgRec.items)
-        ? (msgRec.items as Array<Record<string, unknown>>)
-        : []
-      // A batch supersedes any prior diagnostic, same as singular.
-      clearOverlay(opts.overlayParent)
-      const hmr = (globalThis as { __oxide_hmr__?: { reloadModule?: (u: string) => Promise<void> } }).__oxide_hmr__
-      if (typeof hmr?.reloadModule === 'function') {
-        for (const item of items) {
-          const url = typeof item.url === 'string' ? item.url : ''
-          if (url) void hmr.reloadModule(url)
+      const fallbackUrls: string[] = []
+      let usedRuntime = false
+      for (const entry of updates) {
+        const path = typeof entry.path === 'string' ? entry.path : ''
+        const accepted = typeof entry.acceptedPath === 'string' ? entry.acceptedPath : ''
+        const kind = typeof entry.kind === 'string' ? entry.kind : 'js'
+        if (kind === 'css') {
+          // §13.3: a stylesheet swaps without reload. The mechanism follows
+          // acceptedPath: a module-owned swap re-imports the /@css/ module
+          // (style injection); a bare path swaps the <link> href
+          // (cache-busted).
+          if (accepted && accepted !== path && typeof hmr?.reloadModule === 'function') {
+            usedRuntime = true
+            void hmr.reloadModule(accepted)
+          } else {
+            swapCss(doc, accepted || path)
+          }
+          opts.onCssUpdate?.(accepted || path)
+        } else if (kind === 'data') {
+          opts.onRouteData?.(path, '')
+          // §13.3: re-fetch (or decode) the fresh loader data and re-dispatch
+          // it through the same event the boot machinery consumes. Async and
+          // silent — the message itself is handled synchronously. §1.3: the
+          // route is passed through so a foreign route's data is dropped
+          // instead of re-rendering the page (see refreshRouteData).
+          void refreshRouteData(path, '')
+        } else {
+          if (accepted && typeof hmr?.reloadModule === 'function') {
+            usedRuntime = true
+            void hmr.reloadModule(accepted)
+          } else if (accepted) {
+            fallbackUrls.push(accepted)
+          } else {
+            opts.onModuleUpdate?.(path)
+          }
         }
-        return true
       }
-      // No runtime (production host, or a broken dev boot): fall back.
-      const reload = opts.reload ?? (() => (globalThis as { location?: { reload(): void } }).location?.reload())
-      reload?.()
+      // Entries that could not ride the runtime fall back the way the
+      // singular module-update did: the callback when one exists, one page
+      // reload otherwise (never N reloads for one frame).
+      if (fallbackUrls.length > 0 && !usedRuntime) {
+        if (opts.onModuleUpdate) {
+          for (const url of fallbackUrls) opts.onModuleUpdate(url)
+        } else {
+          reload?.()
+        }
+      }
       return true
     }
-    case 'server-module-swap': {
-      // §1.5: a plain `.server.ts` body edit. The server's watcher already
-      // called `invalidate_framework_modules` (bumps the worker module
-      // generation → next call re-imports fresh code). The client's DOM
-      // stays put; when the user triggers a fresh call (button click, nav,
-      // form submit) the server fn returns fresh data. That's the correct
-      // behaviour — no reload.
-      //
-      // `full-reload` remains a genuine page-reload case (plugin
-      // `handleHotUpdate` returning `{ reload: true }`, or a config change
-      // that reshapes the module graph).
+    case 'ox:data': {
+      const route = String(frame.route ?? '')
+      const odf = String(frame.data ?? '')
+      opts.onRouteData?.(route, odf)
+      void refreshRouteData(route, odf)
       return true
     }
     case 'full-reload': {
@@ -320,7 +379,7 @@ export function applyHmrMessage(msg: HmrMessage, opts: HmrOptions = {}): boolean
       return true
     }
     case 'error': {
-      showOverlay((msg.diagnostic as { code?: string; message?: string; fix?: string }) ?? {}, opts.overlayParent)
+      showOverlay((frame.diagnostic as { code?: string; message?: string; fix?: string }) ?? {}, opts.overlayParent)
       return true
     }
     case 'connected':

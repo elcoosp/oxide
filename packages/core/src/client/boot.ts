@@ -222,7 +222,7 @@ export function bootWithRouter(
     location?: { pathname: string; search: string }
   }
 
-  // Component-HMR (Vue/Solid/Svelte): after a `module-update` re-imports a
+  // Component-HMR (Vue/Solid/Svelte): after an `update` entry re-imports a
   // module, the page must re-render with the FRESH component — there is no
   // React Refresh accept path to do it. The HMR runtime calls
   // `__oxide_on_module_updated(url)` after every completed `reloadModule`;
