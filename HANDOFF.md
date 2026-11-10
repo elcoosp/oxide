@@ -1,3 +1,92 @@
+# Handoff — V2-R02's config-key refusal half landed (the §18 refusal rule now consults the config layer: the `ConfigFeatureReport` seam + `check_config` refuse `AST-LIV-001`/`RFN-002`/`AST-FNT-001` before any deploy-artifact work, the config crate maps `fonts.subset: 'used'` and the driver's `ProjectFacts`, and the deferred presentation half — `oxide doctor`'s per-capability column + `build --explain`'s matrix row — rides the same diff); both milestone crates are pedantic-clean
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/10 GB-disk
+sandbox, `CARGO_PROFILE_DEV_DEBUG=0` — the debug rlibs do not fit the
+disk otherwise):**
+- `cargo fmt --all --check` clean; `cargo clippy --workspace
+  --all-targets --all-features -- -D warnings` (the CI bar) ZERO findings;
+  `cargo clippy -p oxide-fw-adapters -p oxide-fw-config --all-targets
+  --all-features -- -D warnings -W clippy::pedantic` ZERO findings. The
+  other four `[lints] workspace = true` crates (dispatch, render, router,
+  schema) show zero findings of their own under the same sweep (the
+  pre-existing server/cache/odf debt still prints, unchanged).
+- Runtime suites green (all-features): `oxide-fw-adapters` 65 (26 lib +
+  13 config_refusal + 5 deploy_matrix + 2 integration + 4 live_matrix +
+  9 matrix_v2 + 6 snapshots — the matrix_v2 file carries the 3
+  capability-id pins), `oxide-fw-config` 56 (24 lib + 6 refusal_surface +
+  the six suites), `oxide-fw-cli` 277 lib (0 failed, 12 ignored — the
+  facts/refusal/matrix-row pins included), `oxide-fw-dev` 84, server,
+  diagnostics, dispatch, render, router, schema, odf, graph, cache,
+  plugin, assets, compiler all green. bundler/jshost/core-wasm are
+  compile-verified only (the workspace check + clippy pass) — their test
+  binaries did not fit the sandbox disk, the A07-session precedent.
+- The `config_refusal` criterion group runs behind `bench-util` (measured:
+  2.47 µs for the all-surfaces sweep over the twelve targets, 95 ns for
+  the empty report) and the `config_refusal` walkthrough example prints
+  the per-target verdicts.
+- The zero-`#[allow]` gate: `grep -rnE '#!\[(allow|expect)\(|cfg_attr\([^)]*_allow\('`
+  over `crates/ tests/ benches/ examples/ build.rs` — empty.
+- Doc-drift fixes IN this diff: `crates/config/README.md` described a
+  `load(root, env, env_vars)` signature the crate never had (the real one
+  is `load(dir, mode, cli_overrides)`) and omitted the refusal mapping;
+  `crates/adapters/README.md` gains `check_config`/`as_str`; the spec's
+  V2.O table (R02's config half merged), `docs/architecture.md` (the
+  adapters row + the what-changed bullet), `docs/deviations.md` (the
+  config-half record), `README.md` (the badge re-measured 1,789→1,818 via
+  `scripts/count-tests.sh`), and `HANDOFF.md` (this header).
+
+## What landed
+
+**M1 — R02's config-key refusal half, the §18 seam** (`feat/
+config-key-refusal`): `crates/adapters/src/refusal.rs` — the
+`ConfigFeatureReport` trait (live routes, `*.server.rs` presence,
+`fonts.subset: 'used'`, non-static routes) + `check_config(report,
+target)`, pure and infallible, every verdict re-stating
+`support(target, capability)` as a `Diagnostic` so the matrix stays the
+single source of truth: `Unsupported` → registry-code errors with the
+V2.K fix text, `Degraded` → warnings carrying the documented degradation
+string, findings in a deterministic order. `crates/config/src/refusal.rs`
+— `ProjectFacts` (the driver's facts) + `OxideConfig::feature_report`
+(the key mapping). The CLI build computes the facts from the scanned
+route tree (`RouteEntry::live`, the effective §10.1 modes — the same rule
+the enriched manifest applies) plus a `**/*.server.rs` source walk and
+refuses BEFORE any deploy-artifact work; warnings print as `warn: [code]`
+with a `tracing::warn`. Pins: 13 adapters (`tests/config_refusal_tdd.rs`)
++ 6 config (`tests/refusal_surface.rs`) + 4 CLI. The dependency direction
+is the recorded V2-R02 ruling (config → adapters; the adapters crate
+still never sees `oxide.config.ts`); `AST-SRC-001` has no arm until F09
+introduces the `search` key (the deviation record explains why the
+collection indexes must NOT refuse).
+
+**M2 — the R02 presentation half** (`feat/doctor-capability-row`):
+`Capability::as_str()` kebab-case ids (pinned v0.1- and v0.2-stable),
+`capability_row_lines(target)` in the CLI, `oxide doctor`'s informational
+per-capability section and `oxide build --explain`'s end-of-build matrix
+row. 6 pins (3 adapters ids + 3 CLI rows/doctor).
+
+**Micro-debt retired (in-diff, additive — not milestone substitutes):**
+the adapters crate's remaining pedantic findings — the
+`capability_matrix` example's `print_literal`/uninlined-args, the
+102-line `v02_rows_match_the_spec` lifted over `too_many_lines` (the
+spec table extracted to `v02_spec_checks`), the bench-file
+`semicolon_if_nothing_returned`/`must_use` nits; plus the config
+README's signature drift.
+
+## Where to pick up, in one sentence
+
+F09's `search` key gains `search_configured()` + the `AST-SRC-001` arm +
+the spec's `warns_degraded_search_on_node` pin (the refusal seam is one
+method and one arm away); F08's loader flips `rust_fns_present` from the
+walk to the real compile step; the E01 remainder (Vue/Solid refresh
+wiring) is still the V8-host job it was.
+
+---
+
 # Handoff — V2-E01 phase-4 state preservation + V2-R02 capability-matrix v2 landed (the third HMR acceptance is a wire contract: the v1 `update` frame carries a `preserve` verdict, and the client snapshots/restores around the swap); both milestone crates are pedantic-clean under a command-line `-W clippy::pedantic` sweep
 
 ## Where things stand
