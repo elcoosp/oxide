@@ -8,6 +8,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.8.0] — 2026-11-10
+
+### Added
+
+- **dev**: The V2-E01 HMR boundary planner
+- **cli**: Route the adapter-HMR fan-out through the boundary planner
+
+### Chores
+
+- **release**: V0.8.0
+
+### Documentation
+
+- **dev**: The boundary walkthrough example
+- Fix the v0.7.0 drift and record the E01 substrate
+
+### Testing
+
+- **dev**: Pin the V2-E01 boundary contract
+- **dev**: The boundary-planner criterion bench behind bench-util
+
 ## [0.7.0] — 2026-11-10
 
 ### Added
