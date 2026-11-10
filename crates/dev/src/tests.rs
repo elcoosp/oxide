@@ -111,41 +111,9 @@ fn hmr_behavior_matches_spec_strategy_table() {
 }
 
 // ---------------- update boundary (§13.3) ----------------
-
-#[test]
-fn boundary_is_the_file_itself_when_it_is_a_boundary() {
-    // CSS files and *.server.ts files are boundaries regardless of importers.
-    assert_eq!(
-        update_boundary("app.css", &BTreeSet::from(["page.tsx".to_string()])),
-        "app.css"
-    );
-    assert_eq!(
-        update_boundary("data.server.ts", &BTreeSet::from(["page.tsx".to_string()])),
-        "data.server.ts"
-    );
-}
-
-#[test]
-fn boundary_walks_up_single_importer_chain() {
-    // util.ts ← page.server.ts: the single importer is a boundary → stop there.
-    let importers = BTreeSet::from(["page.server.ts".to_string()]);
-    assert_eq!(update_boundary("util.ts", &importers), "page.server.ts");
-
-    // Single non-boundary importer becomes the boundary itself (walk ends: the set
-    // gives no further candidates beyond the importer).
-    let importers = BTreeSet::from(["helper.ts".to_string()]);
-    assert_eq!(update_boundary("util.ts", &importers), "helper.ts");
-}
-
-#[test]
-fn boundary_multi_importer_and_empty_fall_back_to_the_file() {
-    // Documented simplification: with multiple importers the changed file is its own
-    // boundary (each importer subtree refreshes against it); a real graph walk-up
-    // belongs to the graph engine.
-    let importers = BTreeSet::from(["a.tsx".to_string(), "b.tsx".to_string()]);
-    assert_eq!(update_boundary("util.ts", &importers), "util.ts");
-    assert_eq!(update_boundary("util.ts", &BTreeSet::new()), "util.ts");
-}
+// The one-hop `update_boundary` simplification was retired by the V2-E01
+// boundary planner (spec §V2-E01, `crates/dev/src/boundary.rs`); the
+// walk-up contract it approximated now lives in `tests/boundary_tdd.rs`.
 
 // ---------------- HMR messages (§13.3) ----------------
 

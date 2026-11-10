@@ -19,13 +19,15 @@ The design goal is a dev loop that never restarts the process. A source edit tri
 
 ## What it provides
 
-- **`FileWatcher`** — debounced watch of source, config, and content dirs
-- **`HmrHub`** — WebSocket fan-out with message kinds: `css-update`, `module-update`, `route-data-update`, `server-module-swap`, `full-reload`, `error`
+- **`Watcher`** — debounced, content-hash-confirmed watch of source, config, and content dirs (seeded boot baseline; OS-native `notify` backend with a poll fallback)
+- **`HmrHub`** — WebSocket fan-out with message kinds: `css-update`, `module-update`, `batch-module-update`, `route-data-update`, `server-module-swap`, `full-reload`, `error`, `connected`
+- **`plan` / `Plan`** — the V2-E01 HMR boundary planner: a breadth-first walk-up over the module graph's importers that stops at self-accepting boundaries and falls back to a reasoned full reload (§V2-E01)
+- **`source_self_accepts`** — the `import.meta.hot.accept` probe that feeds the planner's accepting set
+- **`full_reload_diagnostic`** — the `DEV-HMR-001` warning carrying the fix help text the §13.4 overlay renders
 - **`apply_proxy`** — longest-prefix proxy rule matching with optional path strip
 - **`WaterfallRecorder`** — per-request timing rows for the inspector
 - **`RouteTableInspector`** — the `/__oxide` route table snapshot
-- **`classify_path`** — "is this a source file we should react to" predicate
-- **`wrap_dispatch_with_stale_guard`** — abort a mid-flight render if a file changed between dispatch entry and response completion
+- **`classify_path` / `classify_event`** — the §13.3 change-kind classification that selects the HMR behavior (path-only, or event-aware — prefer `classify_event` at call sites that have the event kind)
 
 ## Usage
 
@@ -38,11 +40,43 @@ hub.publish(HmrMessage::FullReload {
 });
 ```
 
-> **Tip:** The stale-guard exists to prevent a narrow race: a render started before a file edit but finishing after it. Without the guard, that render would serve output computed from pre-change source, which can confuse HMR's swap logic.
+The boundary planner is the other half of the contract — given the module
+graph (reverse deps, self-accepting set, entry set), it decides whether an
+edit updates a boundary set in place or falls back to a full reload:
+
+```rust
+use oxide_fw_dev::{Plan, plan, source_self_accepts};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+let changed = Path::new("src/lib/util.ts");
+let mut importers: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+importers.insert(
+    PathBuf::from("src/lib/util.ts"),
+    vec![PathBuf::from("src/routes/index/page.tsx")],
+);
+let accepting: HashSet<PathBuf> =
+    [PathBuf::from("src/routes/index/page.tsx")].into_iter().collect();
+let entries: HashSet<PathBuf> = HashSet::new();
+
+// The walk-up stops at the component boundary: the page re-imports, the
+// util is re-fetched through it.
+assert_eq!(
+    plan(changed, &importers, &accepting, &entries),
+    Plan::Update(vec![PathBuf::from("src/routes/index/page.tsx")]),
+);
+assert!(source_self_accepts("import.meta.hot.accept(() => {});"));
+```
+
+> **Tip:** The planner is pure — the same graph always produces the same
+> `Plan` (boundaries sorted and deduplicated). The dev loop's stale-guard
+> (`wrap_dispatch_with_stale_guard`, in `oxide-fw-cli`) sits one layer up:
+> it aborts a mid-flight render when a file changed between dispatch entry
+> and response completion.
 
 ## How it fits in Oxide
 
-`oxide-fw-cli`'s `cmd_dev` creates the `FileWatcher` and `HmrHub`, then loops: on each file event, it classifies the path, triggers the appropriate rebuild (Tailwind CSS, plugin `handleHotUpdate`, route re-scan), and publishes the HMR message. The production `cmd_serve` path does not touch this crate.
+`oxide-fw-cli`'s `cmd_dev` creates the `Watcher` and `HmrHub`, then loops: on each file event, it classifies the path, triggers the appropriate rebuild (Tailwind CSS, plugin `handleHotUpdate`, route re-scan), runs the V2-E01 boundary planner over the harvested module graph (`build_hmr_graph`), and publishes the HMR message batch. The production `cmd_serve` path does not touch this crate.
 
 ## See also
 
