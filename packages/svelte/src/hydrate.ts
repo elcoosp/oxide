@@ -171,7 +171,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
   let realRoot: RealPageRoot | undefined
   // Component-HMR: the component reference the current `realRoot` was built
   // from. `componentFor` resolves through the boot's fresh-aware loadChunk,
-  // so after an HMR `module-update` re-imported the page module it returns
+  // so after an HMR `update` entry re-imported the page module it returns
   // a DIFFERENT reference — that is the swap signal below.
   let realComponent: unknown = undefined
   let renderSeq = 0
@@ -249,7 +249,7 @@ function createClientRoot(root: OxElement, input: ClientInput, doc: OxDoc, opts:
         if (realRoot) {
           // Component-HMR (Vue/Solid/Svelte): a different component
           // reference means the route's component module was re-imported
-          // by an HMR `module-update` — dispose the stale root and mount
+          // by an HMR `update` entry — dispose the stale root and mount
           // the FRESH component below. A same-reference update stays on
           // the cheap remount-with-new-props path (navigation / loader
           // data change).
