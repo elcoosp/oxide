@@ -34,7 +34,10 @@ fn show(title: &str, changed: &Path, graph_plan: Plan) {
     println!("  changed: {}", changed.display());
     match &graph_plan {
         Plan::Update(boundaries) => {
-            println!("  plan    : update {} boundar(ies), in batch order:", boundaries.len());
+            println!(
+                "  plan    : update {} boundar(ies), in batch order:",
+                boundaries.len()
+            );
             for b in boundaries {
                 println!("    - {}", b.display());
             }
@@ -64,19 +67,13 @@ fn main() {
     importers.insert(p("lib/api.ts"), vec![p("routes/api/users/route.ts")]);
     importers.insert(p("lib/orphan.ts"), vec![]);
 
-    let accepting: HashSet<PathBuf> = [
-        p("routes/index/page.tsx"),
-        p("comp/a.tsx"),
-        p("comp/b.tsx"),
-    ]
-    .into_iter()
-    .collect();
-    let entries: HashSet<PathBuf> = [
-        p("routes/index/page.tsx"),
-        p("routes/api/users/route.ts"),
-    ]
-    .into_iter()
-    .collect();
+    let accepting: HashSet<PathBuf> =
+        [p("routes/index/page.tsx"), p("comp/a.tsx"), p("comp/b.tsx")]
+            .into_iter()
+            .collect();
+    let entries: HashSet<PathBuf> = [p("routes/index/page.tsx"), p("routes/api/users/route.ts")]
+        .into_iter()
+        .collect();
 
     // 1. The transitive chain: the planner walks PAST `util2.ts` (no
     //    boundary) and stops at the page boundary.
@@ -110,5 +107,8 @@ fn main() {
     // 5. The self-accepting scanner: what the adapter's compile step feeds
     //    into `accepting` alongside the framework plugin's component marks.
     let source = "if (import.meta.hot) { import.meta.hot.accept(mod => {}); }";
-    println!("5) source_self_accepts(page.tsx source with hot.accept) = {}", source_self_accepts(source));
+    println!(
+        "5) source_self_accepts(page.tsx source with hot.accept) = {}",
+        source_self_accepts(source)
+    );
 }

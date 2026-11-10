@@ -20,7 +20,10 @@ fn main() {
     let mut importers: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
     importers.insert(
         changed.to_path_buf(),
-        vec![PathBuf::from("src/comp/a.tsx"), PathBuf::from("src/comp/b.tsx")],
+        vec![
+            PathBuf::from("src/comp/a.tsx"),
+            PathBuf::from("src/comp/b.tsx"),
+        ],
     );
     let accepting: HashSet<PathBuf> = [
         PathBuf::from("src/comp/a.tsx"),
@@ -91,7 +94,11 @@ fn main() {
         Err(HmrWireError::Schema { found, expected }) => {
             println!("legacy frame rejected: found v{found}, expected v{expected}");
             let diag = schema_mismatch_diagnostic(found);
-            println!("DEV-HMR-003: {} — fix: {}", diag.message, diag.fix.unwrap_or_default());
+            println!(
+                "DEV-HMR-003: {} — fix: {}",
+                diag.message,
+                diag.fix.unwrap_or_default()
+            );
         }
         other => println!("unexpected: {other:?}"),
     }

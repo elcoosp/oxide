@@ -47,6 +47,14 @@ pub use page_renderer::{
 };
 pub mod session;
 pub use session::{Session, SessionCodec};
+// V2-A07: the prerender error-status sidecar substrate — the scan/status
+// seam (`StatusSidecars`) plus the write half of the contract the CLI's
+// prerender sites call (`write_status_sidecar`); the pure helpers live in
+// the `static_status` module.
+pub mod static_status;
+pub use static_status::{
+    StatusSidecars, is_status_sidecar, sidecar_path_for, write_status_sidecar,
+};
 pub mod trace_context;
 
 use bytes::Bytes;
@@ -319,6 +327,9 @@ impl Default for Limits {
 
 /// Static asset store (§12.1 step 3): immutable hashed assets, memory-mapped or
 /// embedded, pre-compressed (zstd, br, gzip), range + If-None-Match support.
+/// V2-A07: the store also owns the prerender error-status sidecars the same
+/// scan collects — [`StaticAssets::serve`] applies a sidecar status to the
+/// page it serves, so a prerendered error page is never served as a 200.
 #[derive(Debug)]
 pub struct StaticAssets {
     pub root: std::path::PathBuf,
@@ -327,6 +338,10 @@ pub struct StaticAssets {
     /// never range-scanned; the `BTreeMap`'s ordered layout bought nothing
     /// and cost more on lookup.
     pub index: std::collections::HashMap<String, AssetEntry>,
+    /// V2-A07: prerender error-status sidecars (`index.html.status` maps to
+    /// its `index.html`), scanned once here so [`StaticAssets::serve`] stays
+    /// per-request-I/O free. Empty for a dist without error pages.
+    pub status_sidecars: StatusSidecars,
 }
 
 #[derive(Debug, Clone)]
@@ -372,7 +387,15 @@ impl StaticAssets {
         }
         let mut index = std::collections::HashMap::new();
         walk_assets_filtered(&root, &root, &mut index, exclude_dirs)?;
-        Ok(Self { root, index })
+        // V2-A07: the serve-start scan also collects the prerender error-
+        // status sidecars — one extra pass over dist at startup, no per-
+        // request I/O afterwards (the spec's `StatusSidecars::scan`).
+        let status_sidecars = StatusSidecars::scan(&root);
+        Ok(Self {
+            root,
+            index,
+            status_sidecars,
+        })
     }
 
     /// Serve a request for an asset: 404/304/range/content-encoding negotiation.
@@ -457,6 +480,17 @@ impl StaticAssets {
             None
         };
         let entry = self.index.get(path).or(disk_entry_owned.as_ref())?;
+        // V2-A07 (defense in depth): a sidecar file is build-internal — it
+        // never enters the index (the walk skips `*.status`), so this only
+        // bites the dev disk-fallback path or a custom scan. 404, not 403:
+        // do not confirm existence (the SEC-STATIC shape).
+        if is_status_sidecar(&entry.path) {
+            return None;
+        }
+        // V2-A07: the sidecar status this file carries (None = the default
+        // 200). Applied to every 200 response `serve` builds below; the
+        // 304/206/416 semantics stay untouched.
+        let sidecar_status = self.status_sidecars.status_for(&entry.path);
         // Dev: recompute the etag from the FRESH file so a rebuilt chunk
         // gets a new etag AND the moka-body-cache and index-etag both
         // serve the current bytes. In prod, entry.etag is correct (assets
@@ -553,6 +587,11 @@ impl StaticAssets {
             // Range on a compressed variant → full 200 (no partial decode).
             let len = body.len().to_string();
             let mut resp = OxideResponse::new(200, body);
+            // V2-A07: a prerendered error page served through a precompressed
+            // variant still carries its sidecar status.
+            if let Some(code) = sidecar_status {
+                resp.status = code;
+            }
             resp = with_asset_headers(resp, entry, &etag_h, cache_ctl);
             resp.headers
                 .push(("Content-Encoding".into(), enc.to_string()));
@@ -565,6 +604,11 @@ impl StaticAssets {
 
         if req.method.eq_ignore_ascii_case("HEAD") {
             let mut resp = OxideResponse::new(200, Bytes::new());
+            // V2-A07: HEAD reports the same status the GET would return —
+            // a prerendered error page is a 500 to the HEAD probe too.
+            if let Some(code) = sidecar_status {
+                resp.status = code;
+            }
             resp = with_asset_headers(resp, entry, &etag_h, cache_ctl);
             resp.headers
                 .push(("Content-Length".into(), entry.size.to_string()));
@@ -583,6 +627,20 @@ impl StaticAssets {
             },
             None => OxideResponse::new(200, full.clone()),
         };
+        // V2-A07: the sidecar status applies to the plain-200 response —
+        // a prerendered error page is served as its real status. The 206
+        // partial and 416 unsatisfiable verdicts are range semantics and
+        // stay untouched.
+        if resp.status == 200
+            && let Some(code) = sidecar_status
+        {
+            tracing::debug!(
+                path,
+                status = code,
+                "static asset: prerender status sidecar applied"
+            );
+            resp.status = code;
+        }
         resp = with_asset_headers(resp, entry, &etag_h, cache_ctl);
         Some(resp)
     }
@@ -697,6 +755,13 @@ fn walk_assets_filtered(
             continue;
         }
         if !ft.is_file() {
+            continue;
+        }
+        // V2-A07: a prerender error-status sidecar is build-internal — it
+        // must never enter the asset index (it would download as octet-
+        // stream). `StaticAssets::serve` additionally hard-denies the path
+        // for defense in depth.
+        if is_status_sidecar(&path) {
             continue;
         }
         let content = match std::fs::read(&path) {

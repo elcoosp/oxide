@@ -1131,3 +1131,61 @@ Rust wire pins (1,750→1,756).
 - The Playwright HMR pins against a real browser with the v1 frames (the
   spec spellings in `tests/playwright/` are updated; the runs still need
   a toolchain + browser host).
+
+## V2-A07 prerender error-status sidecar — deltas and deferrals (substrate step)
+
+**What the spec asks.** In `write_prerender`, when the render status is not
+200, write `<route>/index.html.status` containing the decimal status. At
+serve start, scan `dist` once for `*.status` files into
+`StatusSidecars(HashMap<PathBuf, u16>)` (no per-request I/O) and have the
+static-asset responder apply the status.
+
+**What lands.** The full substrate across both crates the WP names:
+`server::static_status` — `StatusSidecars` (`scan`, the spec's stack walk,
+malformed content ignored, a missing root an empty map; `status_for`;
+`len`/`is_empty` for observability), `is_status_sidecar` (the exact
+`.status` extension probe), `parse_status` (trimmed `u16`), and
+`write_status_sidecar` — the write half of the contract, next to the read
+half so the spelling cannot drift: non-200 writes the decimal sidecar, a
+200 write REMOVES a stale sidecar. `StaticAssets` owns a
+`status_sidecars` map filled by the same `scan_filtered` call the CLI
+already made at serve start; `serve` applies the sidecar status to every
+200 response (identity, precompressed variant and HEAD) and hard-denies
+serving `*.status` files (the SEC-STATIC shape; the asset walk skips them
+too). The CLI calls `write_status_sidecar` at all four `write_prerender`
+emit paths (the two loader short-circuits, the two error bodies, and the
+final injected page) and both incremental-reuse branches — a status that
+flips to 200 across builds cannot keep serving the previous build's error
+status.
+
+**Spec deltas:**
+
+1. **The write half lives in `oxide-fw-server`, not the CLI.** The spec
+   puts the write inside `write_prerender` implicitly; landing it as a
+   server-crate function keeps the `.status` spelling, the trim rules and
+   the clear-on-200 contract in one place, and lets the two reuse branches
+   (which bypass `write_prerender`) share it.
+2. **The scan is wired through `StaticAssets::scan_filtered`, not a second
+   startup pass.** The spec's `StatusSidecars::scan` stays spec-verbatim
+   (its own walk); `scan_filtered` calls it once after the asset walk so
+   the CLI's existing `load_client_assets` site needs no change.
+3. **Sidecars are build-internal files.** The asset walk skips `*.status`
+   and `serve` hard-denies the path (404, not 403 — do not confirm
+   existence), so the status files can never download as octet-stream.
+4. **Only 200 responses take the sidecar status.** The 304/206/416
+   verdicts are conditional-request/range semantics and stay untouched;
+   the precompressed-variant and HEAD paths carry the sidecar status so a
+   HEAD probe and a compressed GET agree with the identity GET.
+5. **A missing root scans to an empty map** (the spec's `read_dir` guard
+   is honored literally): a half-built dist must not refuse to boot.
+
+**What is deliberately deferred:**
+
+- The Playwright acceptance run (build a smoke app with a prerenderable
+  `routes/boom` page and `curl -sI` it) — the in-sandbox evidence is the
+  9-pin TDD suite plus the `status_sidecars` walkthrough example, which
+  exercises the same scan→serve→500 contract against a tempfile dist; the
+  browser-run proof still belongs on a toolchain host.
+- `serve_og_endpoint`/`serve_image_endpoint` and the dispatch (L0/SSR)
+  paths are untouched: the L0 seed already carries the status for seeded
+  routes, so the sidecar covers only the disk-served paths it must.

@@ -22,10 +22,10 @@
 //! ```
 
 use oxide_fw_dev::ChangeKind;
+use oxide_fw_dev::Plan;
 use oxide_fw_dev::boundary::{
     ClassifiedPlan, UpdateKind, css_orphan_diagnostic, css_self_accepts, plan_classified,
 };
-use oxide_fw_dev::Plan;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -39,7 +39,10 @@ fn show(title: &str, changed: &Path, classified: &ClassifiedPlan) {
     println!("  kind    : {}", classified.kind.as_str());
     match &classified.plan {
         Plan::Update(boundaries) => {
-            println!("  plan    : update {} boundar(ies), in batch order:", boundaries.len());
+            println!(
+                "  plan    : update {} boundar(ies), in batch order:",
+                boundaries.len()
+            );
             for b in boundaries {
                 println!("    - {}", b.display());
             }
@@ -67,12 +70,9 @@ fn main() {
         vec![p("routes/blog/[slug]/page.tsx")],
     );
 
-    let accepting: HashSet<PathBuf> = [
-        p("routes/index/page.tsx"),
-        p("styles/main.css"),
-    ]
-    .into_iter()
-    .collect();
+    let accepting: HashSet<PathBuf> = [p("routes/index/page.tsx"), p("styles/main.css")]
+        .into_iter()
+        .collect();
     let entries: HashSet<PathBuf> = HashSet::new();
 
     // 1. The §13.3 CSS terminal, orphan shape: the stylesheet below has NO
@@ -81,7 +81,11 @@ fn main() {
     //    state is a DEV-HMR-002 warning, not user-visible noise.
     let orphan = p("styles/orphan.css");
     let classified = plan_classified(ChangeKind::Css, &orphan, &importers, &accepting, &entries);
-    show("1) styles/orphan.css edited (nothing imports it)", &orphan, &classified);
+    show(
+        "1) styles/orphan.css edited (nothing imports it)",
+        &orphan,
+        &classified,
+    );
     let diag = css_orphan_diagnostic(&orphan);
     println!("  overlay : [{}] {}", diag.code, diag.message);
     println!("    fix: {}", diag.fix.as_deref().unwrap_or_default());
@@ -92,27 +96,44 @@ fn main() {
     //    file itself — the same swap, no collapse needed.
     let edge = p("styles/main.css");
     let classified = plan_classified(ChangeKind::Css, &edge, &importers, &accepting, &entries);
-    show("2) styles/main.css edited (imported by page.tsx)", &edge, &classified);
+    show(
+        "2) styles/main.css edited (imported by page.tsx)",
+        &edge,
+        &classified,
+    );
 
     // 3. The Js control: a component change passes through the walk
     //    unchanged — the classified planner is a pure composition.
     let js = p("lib/util.ts");
     let classified = plan_classified(ChangeKind::Component, &js, &importers, &accepting, &entries);
-    show("3) lib/util.ts edited (imported by page.tsx)", &js, &classified);
+    show(
+        "3) lib/util.ts edited (imported by page.tsx)",
+        &js,
+        &classified,
+    );
 
     // 4. The Data control: a page loader change classifies `kind: 'data'`
     //    (the OxData / data-entry track); the walk stays available for consumers
     //    that fan data updates out through boundaries.
     let data = p("blog/[slug]/page.server.ts");
-    let classified =
-        plan_classified(ChangeKind::ServerLoader, &data, &importers, &accepting, &entries);
+    let classified = plan_classified(
+        ChangeKind::ServerLoader,
+        &data,
+        &importers,
+        &accepting,
+        &entries,
+    );
     show("4) blog/[slug]/page.server.ts edited", &data, &classified);
 
     // 5. The probe and the wire spellings: what the harvest feeds into
     //    `accepting`, and the exact strings the schema v1 `kind` field
     //    carries to the client.
     println!("5) css_self_accepts probes");
-    for candidate in ["src/styles/main.css", "src/routes/index/page.tsx", "src/lib/util.ts"] {
+    for candidate in [
+        "src/styles/main.css",
+        "src/routes/index/page.tsx",
+        "src/lib/util.ts",
+    ] {
         println!(
             "   css_self_accepts({candidate}) = {}",
             css_self_accepts(Path::new(candidate))

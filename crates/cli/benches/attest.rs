@@ -16,6 +16,9 @@
 
 use std::hint::black_box;
 use std::path::Path;
+// ring exposes `Ed25519KeyPair::public_key` only through its
+// `signature::KeyPair` trait.
+use ring::signature::KeyPair as _;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxide_fw_cli::attest::{
@@ -68,11 +71,19 @@ fn bench_canonical_json(c: &mut Criterion) {
 fn bench_sbom(c: &mut Criterion) {
     let mut group = c.benchmark_group("sbom");
     for n in [100_usize, 1000] {
-        let cargo: Vec<LockPackage> = (0..n).map(|i| LockPackage::new(&format!("crate-{i}"), "1.0.0")).collect();
-        let pnpm: Vec<LockPackage> = (0..n).map(|i| LockPackage::new(&format!("pkg-{i}"), "2.0.0")).collect();
-        group.bench_with_input(BenchmarkId::from_parameter(n), &(cargo, pnpm), |b, (cargo, pnpm)| {
-            b.iter(|| sbom_from_locks(black_box(cargo), black_box(pnpm), Some(1_700_000_000)))
-        });
+        let cargo: Vec<LockPackage> = (0..n)
+            .map(|i| LockPackage::new(&format!("crate-{i}"), "1.0.0"))
+            .collect();
+        let pnpm: Vec<LockPackage> = (0..n)
+            .map(|i| LockPackage::new(&format!("pkg-{i}"), "2.0.0"))
+            .collect();
+        group.bench_with_input(
+            BenchmarkId::from_parameter(n),
+            &(cargo, pnpm),
+            |b, (cargo, pnpm)| {
+                b.iter(|| sbom_from_locks(black_box(cargo), black_box(pnpm), Some(1_700_000_000)))
+            },
+        );
     }
     group.finish();
 }
@@ -120,7 +131,13 @@ fn bench_ed25519(c: &mut Criterion) {
     let envelope = sign_statement(&statement, &pair);
     let bytes = message.into_bytes();
     group.bench_function("verify_60k", |b| {
-        b.iter(|| verify_signature(black_box(&bytes), black_box(&envelope), pair.public_key().as_ref()))
+        b.iter(|| {
+            verify_signature(
+                black_box(&bytes),
+                black_box(&envelope),
+                pair.public_key().as_ref(),
+            )
+        })
     });
     group.finish();
 }

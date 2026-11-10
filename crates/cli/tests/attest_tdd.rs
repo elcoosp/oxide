@@ -23,13 +23,16 @@
 
 use std::fs;
 use std::path::Path;
+// ring exposes `Ed25519KeyPair::public_key` only through its
+// `signature::KeyPair` trait — in scope once for the whole suite.
+use ring::signature::KeyPair as _;
 
 use oxide_fw_cli::attest::{
-    BuildFacts, LockPackage, SignatureEnvelope, Subject, builder_id_from, canonical_json,
-    dist_subjects, ed25519_pubkey_from_pem, is_canonical, key_id, load_signing_key,
+    AttestError, BuildFacts, LockPackage, SignatureEnvelope, Subject, builder_id_from,
+    canonical_json, dist_subjects, ed25519_pubkey_from_pem, is_canonical, key_id, load_signing_key,
     parse_cargo_lock, parse_pnpm_lock_packages, provenance_statement, rfc3339_from_epoch,
     sbom_from_locks, seed_to_pkcs8, sha256_hex, sign_statement, subtree_digest, verify_signature,
-    verify_subjects, write_attestation, AttestError,
+    verify_subjects, write_attestation,
 };
 
 // ---------------------------------------------------------------------------
@@ -110,7 +113,11 @@ fn dist_fixture(root: &Path) -> std::path::PathBuf {
     fs::write(dist.join("server.manifest.json"), b"{\"routes\":{}}").unwrap();
     fs::write(dist.join("client/app.js"), b"export const app = 1;\n").unwrap();
     fs::write(dist.join("client/chunk-a.js"), b"export const a = 2;\n").unwrap();
-    fs::write(dist.join("server/ssr/index.js"), b"export const routes = {};\n").unwrap();
+    fs::write(
+        dist.join("server/ssr/index.js"),
+        b"export const routes = {};\n",
+    )
+    .unwrap();
     fs::write(dist.join("attest/sbom.cdx.json"), b"{}").unwrap();
     dist
 }
@@ -133,8 +140,7 @@ fn facts() -> BuildFacts {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cargo_lock_yields_every_package_sorted_deduped()
-{
+fn cargo_lock_yields_every_package_sorted_deduped() {
     let pkgs = parse_cargo_lock(CARGO_LOCK).expect("the fixture parses");
     assert_eq!(
         pkgs,
@@ -148,17 +154,18 @@ fn cargo_lock_yields_every_package_sorted_deduped()
 }
 
 #[test]
-fn cargo_lock_rejects_a_block_without_a_name()
-{
+fn cargo_lock_rejects_a_block_without_a_name() {
     let err = parse_cargo_lock("[[package]]\nversion = \"1.0.0\"\n")
         .expect_err("a nameless package block is unparseable");
-    assert!(matches!(err, AttestError::LockUnparseable { line: 1, .. }), "{err}");
+    assert!(
+        matches!(err, AttestError::LockUnparseable { line: 1, .. }),
+        "{err}"
+    );
     assert_eq!(err.code(), "ATT-LOCK");
 }
 
 #[test]
-fn pnpm_lock_yields_plain_scoped_and_peer_keys()
-{
+fn pnpm_lock_yields_plain_scoped_and_peer_keys() {
     let pkgs = parse_pnpm_lock_packages(PNPM_LOCK).expect("the fixture parses");
     assert_eq!(
         pkgs,
@@ -172,8 +179,7 @@ fn pnpm_lock_yields_plain_scoped_and_peer_keys()
 }
 
 #[test]
-fn pnpm_lock_without_a_packages_section_is_empty_not_an_error()
-{
+fn pnpm_lock_without_a_packages_section_is_empty_not_an_error() {
     let pkgs = parse_pnpm_lock_packages("lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n")
         .expect("no packages: section means no npm components");
     assert!(pkgs.is_empty());
@@ -184,12 +190,10 @@ fn pnpm_lock_without_a_packages_section_is_empty_not_an_error()
 // ---------------------------------------------------------------------------
 
 #[test]
-fn canonical_json_sorts_keys_at_every_depth()
-{
-    let v: serde_json::Value = serde_json::from_str(
-        r#"{"z": {"d": 3, "a": 1}, "a": [ {"b": 2, "c": 1} ], "m": 0}"#,
-    )
-    .unwrap();
+fn canonical_json_sorts_keys_at_every_depth() {
+    let v: serde_json::Value =
+        serde_json::from_str(r#"{"z": {"d": 3, "a": 1}, "a": [ {"b": 2, "c": 1} ], "m": 0}"#)
+            .unwrap();
     assert_eq!(
         canonical_json(&v),
         r#"{"a":[{"b":2,"c":1}],"m":0,"z":{"a":1,"d":3}}"#,
@@ -198,21 +202,33 @@ fn canonical_json_sorts_keys_at_every_depth()
 }
 
 #[test]
-fn is_canonical_accepts_canonical_bytes_and_rejects_whitespace_or_garbage()
-{
+fn is_canonical_accepts_canonical_bytes_and_rejects_whitespace_or_garbage() {
     let v: serde_json::Value = serde_json::from_str(r#"{"a":1}"#).unwrap();
     let bytes = canonical_json(&v).into_bytes();
     assert!(is_canonical(&bytes));
-    assert!(!is_canonical(b"{ \"a\": 1 }"), "whitespace is not canonical");
-    assert!(!is_canonical(b"{\"a\":1}\n"), "a trailing newline is not canonical");
+    assert!(
+        !is_canonical(b"{ \"a\": 1 }"),
+        "whitespace is not canonical"
+    );
+    assert!(
+        !is_canonical(b"{\"a\":1}\n"),
+        "a trailing newline is not canonical"
+    );
     assert!(!is_canonical(b"not json"));
 }
 
 #[test]
-fn rfc3339_is_utc_z_and_exact()
-{
-    assert_eq!(rfc3339_from_epoch(0), "1970-01-01T00:00:00Z");
-    assert_eq!(rfc3339_from_epoch(1_700_000_000), "2023-11-14T22:13:20Z");
+fn rfc3339_is_utc_z_and_exact() {
+    // `rfc3339_from_epoch` is fallible (a `u64` out of the chrono range is
+    // an `ATT-TS` error) — the pins unwrap the happy path.
+    assert_eq!(
+        rfc3339_from_epoch(0).expect("epoch 0 formats"),
+        "1970-01-01T00:00:00Z"
+    );
+    assert_eq!(
+        rfc3339_from_epoch(1_700_000_000).expect("a modern epoch formats"),
+        "2023-11-14T22:13:20Z"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -220,9 +236,11 @@ fn rfc3339_is_utc_z_and_exact()
 // ---------------------------------------------------------------------------
 
 #[test]
-fn sbom_contains_every_component_with_the_right_purl_scheme_and_is_sorted()
-{
-    let cargo = vec![LockPackage::new("serde", "1.0.229"), LockPackage::new("my-app", "0.1.0")];
+fn sbom_contains_every_component_with_the_right_purl_scheme_and_is_sorted() {
+    let cargo = vec![
+        LockPackage::new("serde", "1.0.229"),
+        LockPackage::new("my-app", "0.1.0"),
+    ];
     let pnpm = vec![LockPackage::new("react", "19.2.0")];
     let sbom = sbom_from_locks(&cargo, &pnpm, Some(1_700_000_000));
     assert_eq!(sbom["bomFormat"], "CycloneDX");
@@ -239,15 +257,13 @@ fn sbom_contains_every_component_with_the_right_purl_scheme_and_is_sorted()
         "sorted by purl; cargo + npm schemes distinguished"
     );
     assert_eq!(
-        sbom["metadata"]["timestamp"],
-        "2023-11-14T22:13:20Z",
+        sbom["metadata"]["timestamp"], "2023-11-14T22:13:20Z",
         "SOURCE_DATE_EPOCH feeds the only timestamp the artifact carries"
     );
 }
 
 #[test]
-fn sbom_without_source_date_epoch_carries_no_timestamp_at_all()
-{
+fn sbom_without_source_date_epoch_carries_no_timestamp_at_all() {
     let sbom = sbom_from_locks(&[], &[], None);
     assert!(
         sbom["metadata"].get("timestamp").is_none(),
@@ -256,8 +272,7 @@ fn sbom_without_source_date_epoch_carries_no_timestamp_at_all()
 }
 
 #[test]
-fn sbom_is_byte_identical_across_calls()
-{
+fn sbom_is_byte_identical_across_calls() {
     let cargo = vec![LockPackage::new("serde", "1.0.229")];
     let a = canonical_json(&sbom_from_locks(&cargo, &[], Some(0)));
     let b = canonical_json(&sbom_from_locks(&cargo, &[], Some(0)));
@@ -269,8 +284,7 @@ fn sbom_is_byte_identical_across_calls()
 // ---------------------------------------------------------------------------
 
 #[test]
-fn sha256_matches_the_known_vector()
-{
+fn sha256_matches_the_known_vector() {
     assert_eq!(
         sha256_hex(b"abc"),
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
@@ -282,8 +296,7 @@ fn sha256_matches_the_known_vector()
 }
 
 #[test]
-fn subtree_digest_is_identical_across_directories_and_moves_with_one_byte()
-{
+fn subtree_digest_is_identical_across_directories_and_moves_with_one_byte() {
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();
     let da = a.path().join("one");
@@ -298,12 +311,15 @@ fn subtree_digest_is_identical_across_directories_and_moves_with_one_byte()
     let hb = subtree_digest(&db).expect("walk");
     assert_eq!(ha, hb, "same bytes, different parent paths -> same digest");
     fs::write(db.join("y.js"), "TWO").unwrap();
-    assert_ne!(subtree_digest(&db).unwrap(), ha, "one changed byte -> new digest");
+    assert_ne!(
+        subtree_digest(&db).unwrap(),
+        ha,
+        "one changed byte -> new digest"
+    );
 }
 
 #[test]
-fn dist_subjects_cover_build_id_and_every_top_level_entry_but_not_attest()
-{
+fn dist_subjects_cover_build_id_and_every_top_level_entry_but_not_attest() {
     let tmp = tempfile::tempdir().unwrap();
     let dist = dist_fixture(tmp.path());
     let subjects = dist_subjects(&dist).expect("subjects");
@@ -329,8 +345,7 @@ fn dist_subjects_cover_build_id_and_every_top_level_entry_but_not_attest()
 }
 
 #[test]
-fn dist_subjects_require_dist_and_the_build_id()
-{
+fn dist_subjects_require_dist_and_the_build_id() {
     let tmp = tempfile::tempdir().unwrap();
     let err = dist_subjects(&tmp.path().join("dist")).expect_err("no dist");
     assert!(matches!(err, AttestError::DistMissing { .. }), "{err}");
@@ -346,11 +361,16 @@ fn dist_subjects_require_dist_and_the_build_id()
 // ---------------------------------------------------------------------------
 
 #[test]
-fn provenance_statement_carries_the_spec_shapes()
-{
+fn provenance_statement_carries_the_spec_shapes() {
     let subjects = vec![
-        Subject { name: "dist/build-id".to_string(), digest_sha256: "aa".repeat(32) },
-        Subject { name: "dist/client/".to_string(), digest_sha256: "bb".repeat(32) },
+        Subject {
+            name: "dist/build-id".to_string(),
+            digest_sha256: "aa".repeat(32),
+        },
+        Subject {
+            name: "dist/client/".to_string(),
+            digest_sha256: "bb".repeat(32),
+        },
     ];
     let st = provenance_statement(&subjects, &facts());
     assert_eq!(st["_type"], "https://in-toto.io/Statement/v1");
@@ -365,10 +385,12 @@ fn provenance_statement_carries_the_spec_shapes()
             "oxideVersion": "0.9.0",
         })
     );
-    assert_eq!(bd["internalParameters"]["sourceDateEpoch"], 1_700_000_000_u64);
     assert_eq!(
-        st["predicate"]["runDetails"]["builder"]["id"],
-        "local",
+        bd["internalParameters"]["sourceDateEpoch"],
+        1_700_000_000_u64
+    );
+    assert_eq!(
+        st["predicate"]["runDetails"]["builder"]["id"], "local",
         "OXIDE_BUILDER_ID or `local`"
     );
     assert_eq!(st["subject"][0]["name"], "dist/build-id");
@@ -376,14 +398,15 @@ fn provenance_statement_carries_the_spec_shapes()
 }
 
 #[test]
-fn provenance_internal_parameters_omit_the_epoch_when_unset()
-{
+fn provenance_internal_parameters_omit_the_epoch_when_unset() {
     let mut f = facts();
     f.source_date_epoch = None;
     let st = provenance_statement(&[], &f);
-    assert!(st["predicate"]["buildDefinition"]["internalParameters"]
-        .get("sourceDateEpoch")
-        .is_none());
+    assert!(
+        st["predicate"]["buildDefinition"]["internalParameters"]
+            .get("sourceDateEpoch")
+            .is_none()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -391,30 +414,33 @@ fn provenance_internal_parameters_omit_the_epoch_when_unset()
 // ---------------------------------------------------------------------------
 
 #[test]
-fn builder_id_falls_back_to_local()
-{
+fn builder_id_falls_back_to_local() {
     assert_eq!(builder_id_from(Some("ci-runner-7")), "ci-runner-7");
     assert_eq!(builder_id_from(Some("  ")), "local", "a blank id is no id");
     assert_eq!(builder_id_from(None), "local");
 }
 
 #[test]
-fn a_seed_mints_the_same_pkcs8_and_the_pem_loader_accepts_it()
-{
+fn a_seed_mints_the_same_pkcs8_and_the_pem_loader_accepts_it() {
     let der = seed_to_pkcs8(&SEED);
     assert_eq!(der.len(), 48, "ed25519 PKCS#8 is a fixed 48-byte shape");
     let again = seed_to_pkcs8(&SEED);
     assert_eq!(der, again, "deterministic: same seed, same key file bytes");
     let pem = pem_private_key(&der);
     let pair = load_signing_key(&pem).expect("PEM PKCS#8 loads");
-    assert_eq!(key_id(&pair).len(), 64, "the key id is the 32-byte public key, hex");
+    assert_eq!(
+        key_id(&pair).len(),
+        64,
+        "the key id is the 32-byte public key, hex"
+    );
 }
 
 #[test]
-fn load_signing_key_rejects_garbage()
-{
-    let err = load_signing_key("-----BEGIN PRIVATE KEY-----\n!!!not base64!!!\n-----END PRIVATE KEY-----\n")
-        .expect_err("bad base64");
+fn load_signing_key_rejects_garbage() {
+    let err = load_signing_key(
+        "-----BEGIN PRIVATE KEY-----\n!!!not base64!!!\n-----END PRIVATE KEY-----\n",
+    )
+    .expect_err("bad base64");
     assert!(matches!(err, AttestError::KeyMalformed { .. }), "{err}");
     let err = load_signing_key("-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n")
         .expect_err("a PUBLIC KEY block is not a private key");
@@ -422,30 +448,34 @@ fn load_signing_key_rejects_garbage()
 }
 
 #[test]
-fn pubkey_loader_accepts_spki_pem_and_raw_hex()
-{
+fn pubkey_loader_accepts_spki_pem_and_raw_hex() {
     let pair = load_signing_key(&pem_private_key(&seed_to_pkcs8(&SEED))).unwrap();
     let raw = pair.public_key().as_ref().to_vec();
     let from_spki = ed25519_pubkey_from_pem(&pem_public_key(&raw)).expect("SPKI PEM");
     assert_eq!(from_spki, raw);
     let hex: String = raw.iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(ed25519_pubkey_from_pem(&hex).unwrap(), raw, "raw 64-char hex");
+    assert_eq!(
+        ed25519_pubkey_from_pem(&hex).unwrap(),
+        raw,
+        "raw 64-char hex"
+    );
     assert!(ed25519_pubkey_from_pem("zz").is_err());
 }
 
 #[test]
-fn signature_round_trip_verifies_and_tampering_one_byte_fails()
-{
+fn signature_round_trip_verifies_and_tampering_one_byte_fails() {
     let pair = load_signing_key(&pem_private_key(&seed_to_pkcs8(&SEED))).unwrap();
     let st = provenance_statement(
-        &[Subject { name: "dist/build-id".to_string(), digest_sha256: "aa".repeat(32) }],
+        &[Subject {
+            name: "dist/build-id".to_string(),
+            digest_sha256: "aa".repeat(32),
+        }],
         &facts(),
     );
     let bytes = canonical_json(&st).into_bytes();
     let env: SignatureEnvelope = sign_statement(&st, &pair);
     assert_eq!(env.keyid, key_id(&pair));
-    verify_signature(&bytes, &env, pair.public_key().as_ref())
-        .expect("the round trip verifies");
+    verify_signature(&bytes, &env, pair.public_key().as_ref()).expect("the round trip verifies");
 
     let mut tampered = bytes.clone();
     let at = tampered.len() / 2;
@@ -463,8 +493,7 @@ fn signature_round_trip_verifies_and_tampering_one_byte_fails()
 // ---------------------------------------------------------------------------
 
 #[test]
-fn verify_subjects_passes_fresh_and_fails_tampered_or_missing_files()
-{
+fn verify_subjects_passes_fresh_and_fails_tampered_or_missing_files() {
     let tmp = tempfile::tempdir().unwrap();
     let dist = dist_fixture(tmp.path());
     let subjects = dist_subjects(&dist).unwrap();
@@ -478,8 +507,7 @@ fn verify_subjects_passes_fresh_and_fails_tampered_or_missing_files()
 }
 
 #[test]
-fn write_attestation_writes_three_files_and_the_round_trip_verifies()
-{
+fn write_attestation_writes_three_files_and_the_round_trip_verifies() {
     let tmp = tempfile::tempdir().unwrap();
     let dist = dist_fixture(tmp.path());
     let pair = load_signing_key(&pem_private_key(&seed_to_pkcs8(&SEED))).unwrap();
@@ -507,8 +535,7 @@ fn write_attestation_writes_three_files_and_the_round_trip_verifies()
 }
 
 #[test]
-fn write_attestation_is_reproducible_across_directories()
-{
+fn write_attestation_is_reproducible_across_directories() {
     // The §V2-F20 acceptance shape: two builds in different paths, same
     // bytes, same SOURCE_DATE_EPOCH, same facts -> byte-identical artifacts.
     let a = tempfile::tempdir().unwrap();
@@ -532,31 +559,40 @@ fn write_attestation_is_reproducible_across_directories()
 // ---------------------------------------------------------------------------
 
 #[test]
-fn every_attest_error_carries_a_code_and_a_fix_line()
-{
+fn every_attest_error_carries_a_code_and_a_fix_line() {
     let samples: Vec<AttestError> = vec![
         AttestError::KeyMissing,
         AttestError::KeyUnreadable {
             path: "/no/key".to_string(),
             detail: "permission denied".to_string(),
         },
-        AttestError::KeyMalformed { detail: "bad der".to_string() },
+        AttestError::KeyMalformed {
+            detail: "bad der".to_string(),
+        },
         AttestError::LockUnparseable {
             file: "Cargo.lock".to_string(),
             which: "cargo".to_string(),
             line: 7,
             detail: "no name".to_string(),
         },
-        AttestError::DistMissing { path: "dist".to_string() },
+        AttestError::DistMissing {
+            path: "dist".to_string(),
+        },
         AttestError::BuildIdMissing,
         AttestError::SubjectMismatch {
             name: "dist/build-id".to_string(),
             detail: "digest differs".to_string(),
         },
-        AttestError::NotCanonical { detail: "whitespace".to_string() },
+        AttestError::NotCanonical {
+            detail: "whitespace".to_string(),
+        },
         AttestError::SignatureMismatch,
-        AttestError::PubkeyMalformed { detail: "short".to_string() },
-        AttestError::Io { detail: "read_dir failed".to_string() },
+        AttestError::PubkeyMalformed {
+            detail: "short".to_string(),
+        },
+        AttestError::Io {
+            detail: "read_dir failed".to_string(),
+        },
     ];
     for e in samples {
         assert!(e.code().starts_with("ATT-"), "{e:?} has an ATT-* code");
