@@ -65,6 +65,7 @@ pub fn config_schema() -> Value {
             "live": live_schema(),
             "stream": stream_schema(),
             "brownout": brownout_schema(),
+            "search": search_schema(),
             "interactionReplay": {
                 "type": "boolean",
                 "default": true,
@@ -598,6 +599,44 @@ fn brownout_schema() -> Value {
     })
 }
 
+/// Schema fragment for the `search` section (V2-F09, Appendix V2.L).
+/// Extracted so [`config_schema`] stays legible; the JSON is identical to
+/// the inline literal it replaced.
+#[must_use]
+fn search_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "V2-F09: the built-in search surface. Inert by default - with no collections configured nothing indexes and the §18 config-key refusal reports the surface as unconfigured. A non-empty collections list is the 'search configured' fact the refusal consults (AST-SRC-001 on a target without the Search capability); the F09 engine consumes the query knobs from this same key.",
+        "properties": {
+            "collections": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "The content collections (§16.5 names) the built-in search indexes. Empty = search not configured; a non-empty list is the §18 refusal's 'search configured' surface."
+            },
+            "fields": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Query-time field boosts (F09 defaults: title 3, body 1).",
+                "properties": {
+                    "title": { "type": "number", "description": "The title-field boost; title matches outrank body matches." },
+                    "body": { "type": "number", "description": "The body-field boost." }
+                }
+            },
+            "snippet": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Snippet length in characters (F09 default: 160)."
+            },
+            "languages": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Index languages (F09 default: ['en'])."
+            }
+        }
+    })
+}
+
 /// Serialize the schema as pretty JSON with a trailing newline, ready to
 /// write to `.oxide/schema/config.json` or a project's committed schema file.
 /// The output re-parses as JSON and is deterministic (pinned by
@@ -665,6 +704,7 @@ mod tests {
             "static",
             "plugins",
             "modules",
+            "search",
         ] {
             assert!(props.contains_key(expected), "missing {expected}");
         }
