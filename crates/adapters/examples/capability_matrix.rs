@@ -27,10 +27,9 @@ fn main() {
             .collect();
         println!("{:>16}  {row}", t.as_str());
     }
+    // A plain literal header (no format args — clippy::print_literal).
     println!(
-        "{:>16}  {}",
-        "capability",
-        "L0 Is Sock Img Rules Snap Tls Live MI Res Skew Delta Rust Srch Off Brn Perm Att"
+        "             capability  L0 Is Sock Img Rules Snap Tls Live MI Res Skew Delta Rust Srch Off Brn Perm Att"
     );
 
     // 2. The map and the function cannot disagree (the fold guarantees it):
@@ -39,8 +38,7 @@ fn main() {
         .copied();
     assert_eq!(static_live, Some(FeatureSupport::Unsupported));
     println!(
-        "static × live = {:?} — the build refuses `live: true` on Static (§18 refusal rule)",
-        static_live
+        "static × live = {static_live:?} — the build refuses `live: true` on Static (§18 refusal rule)"
     );
 
     // 3. The refusal rule, live: a server manifest requiring `live` on the
