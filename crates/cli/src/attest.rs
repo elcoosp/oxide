@@ -661,6 +661,12 @@ pub fn dist_subjects(dist: &Path) -> Result<Vec<Subject>, AttestError> {
         if file_name == ATTEST_DIRNAME {
             continue;
         }
+        // The build-id is already the statement's first subject (pushed
+        // above — the A04 id closes the deferral); walking it again would
+        // emit a duplicate `dist/build-id` entry.
+        if file_name == BUILD_ID_FILE {
+            continue;
+        }
         if path.is_dir() {
             subjects.push(Subject {
                 name: format!("dist/{file_name}/"),
