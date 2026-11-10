@@ -366,6 +366,67 @@ pub fn capability_matrix(target: Target) -> BTreeMap<Capability, FeatureSupport>
         .collect()
 }
 
+/// The §18 capability matrix as a GitHub-flavored markdown table (E11's
+/// generated docs table, spec §v0.2-draft E11: "`capabilities.md` from
+/// `oxide_adapters::capability_matrix()`").
+///
+/// One row per target in [`Target::ALL`] order, one column per capability
+/// in [`Capability::ALL`] order, cells `F` (full) / `D` (degraded — the
+/// reason is in [`degradation`]) / `U` (unsupported — the §18 refusal
+/// covers it at build time). The output is deterministic: identical bytes
+/// on every call, so docs can embed it verbatim and a drift gate pin can
+/// hold them together — `tests/doc_table_tdd.rs::doc_table_matches_the_function`
+/// is that gate over the crate README (the E11 `doc_table_matches_matrix`
+/// pin, realized at the crate-docs level).
+///
+/// This is pure and infallible: a fold of [`support`] over the two `ALL`
+/// slices, no I/O, no allocation beyond the returned `String`.
+///
+/// # Examples
+///
+/// ```
+/// use oxide_fw_adapters::{Capability, Target, capability_markdown_table};
+///
+/// let table = capability_markdown_table();
+/// let header = table.lines().next().unwrap();
+/// assert!(header.starts_with("| target | l0-cache |"));
+/// assert!(header.contains("| search |"));
+/// // One row per target, plus the header and the GFM separator.
+/// assert_eq!(table.lines().count(), 2 + Target::ALL.len());
+/// // Every data row carries one cell per capability plus the target.
+/// for line in table.lines().skip(2) {
+///     let cells = line.trim_matches('|').split('|').count();
+///     assert_eq!(cells, Capability::ALL.len() + 1);
+/// }
+/// ```
+#[must_use]
+pub fn capability_markdown_table() -> String {
+    let mut out = String::new();
+    out.push_str("| target |");
+    for c in Capability::ALL {
+        let _ = write!(out, " {} |", c.as_str());
+    }
+    out.push('\n');
+    out.push('|');
+    for _ in 0..=Capability::ALL.len() {
+        out.push_str(" --- |");
+    }
+    out.push('\n');
+    for t in Target::ALL {
+        let _ = write!(out, "| {} |", t.as_str());
+        for c in Capability::ALL {
+            let cell = match support(*t, *c) {
+                FeatureSupport::Full => "F",
+                FeatureSupport::Degraded => "D",
+                FeatureSupport::Unsupported => "U",
+            };
+            let _ = write!(out, " {cell} |");
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// Why a [`FeatureSupport::Degraded`] cell degrades, or `None` for Full/Unsupported
 /// (absence is not degradation — the refusal rule §18 covers Unsupported at build
 /// time, and [`capability_matrix`] is the machine-readable source of truth).
