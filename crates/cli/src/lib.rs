@@ -1862,22 +1862,48 @@ async fn populate_dev_component_source(
     }
 }
 
-/// §1.3: build a reverse-dependency map over `src/**/*.{ts,tsx,js,jsx,mjs}`.
-/// Returns `target_abs_path -> { importer_abs_paths }`. Parses each file
-/// with the compiler's `scan_import_spans` and resolves relative imports
-/// against the filesystem. Rebuilt per watcher tick — cheap for a normal
-/// dev tree (~30 files), correct without needing to invalidate a cache on
-/// Created/Removed events.
-fn build_importers_map(
-    rootp: &std::path::Path,
-) -> std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeSet<std::path::PathBuf>>
-{
-    use std::collections::{BTreeMap, BTreeSet};
+/// V2-E01: the module-graph inputs of the HMR boundary planner, harvested
+/// in one walk over `src/**/*.{ts,tsx,js,jsx,mjs,vue,svelte}`.
+struct HmrModuleGraph {
+    /// Reverse deps: `module -> { importers }` over canonicalized paths.
+    /// Rebuilt per watcher tick — cheap for a normal dev tree (~30 files),
+    /// correct without needing to invalidate a cache on Created/Removed
+    /// events.
+    importers: std::collections::BTreeMap<
+        std::path::PathBuf,
+        std::collections::BTreeSet<std::path::PathBuf>,
+    >,
+    /// Self-accepting modules (§V2-E01): component files (the framework
+    /// plugin marks component modules as boundaries), sources registering
+    /// `import.meta.hot.accept` ([`oxide_fw_dev::source_self_accepts`]) and
+    /// the server modules the §13.3 behavior table swaps in place.
+    accepting: std::collections::HashSet<std::path::PathBuf>,
+    /// Route-structural modules: reaching one without a boundary is the
+    /// planner's full-reload arm ("... has no HMR boundary") — their
+    /// identity, not just their module body, is load-bearing (the same
+    /// prefix list `classify_event` treats as structural).
+    entries: std::collections::HashSet<std::path::PathBuf>,
+}
+
+/// V2-E01: build the HMR module graph (§V2-E01): the reverse-dependency map
+/// the old `build_importers_map` produced, plus the planner's
+/// `accepting`/`entries` sets harvested in the SAME walk (one read per
+/// file per tick — no second pass). Parses each file with the compiler's
+/// `scan_import_spans` and resolves relative imports against the
+/// filesystem.
+fn build_hmr_graph(rootp: &std::path::Path, routes_dir: &std::path::Path) -> HmrModuleGraph {
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
     use std::path::PathBuf;
-    let mut map: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+    let canonical_routes =
+        std::fs::canonicalize(routes_dir).unwrap_or_else(|_| routes_dir.to_path_buf());
+    let mut graph = HmrModuleGraph {
+        importers: BTreeMap::new(),
+        accepting: HashSet::new(),
+        entries: HashSet::new(),
+    };
     let src = rootp.join("src");
     let Ok(_) = std::fs::canonicalize(&src) else {
-        return map;
+        return graph;
     };
 
     fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
@@ -1912,6 +1938,38 @@ fn build_importers_map(
         let Ok(canon_file) = std::fs::canonicalize(&file) else {
             continue;
         };
+        // Boundary marks, harvested in the same pass that already reads the
+        // source: component files are boundaries by framework-plugin
+        // convention, `.server.*` files by the §13.3 behavior table, and a
+        // hot-accept registration self-accepts by the spec's definition.
+        let lower_name = canon_file.to_string_lossy().to_ascii_lowercase();
+        let is_component = lower_name.ends_with(".tsx")
+            || lower_name.ends_with(".jsx")
+            || lower_name.ends_with(".vue")
+            || lower_name.ends_with(".svelte");
+        let is_server = lower_name.ends_with(".server.ts") || lower_name.ends_with(".server.tsx");
+        if is_component || is_server || oxide_fw_dev::source_self_accepts(&content) {
+            graph.accepting.insert(canon_file.clone());
+        }
+        // Route-structural files are the planner's entries.
+        if canon_file.starts_with(&canonical_routes) {
+            let fname = lower_name.rsplit('/').next().unwrap_or("");
+            let structural = [
+                "page.",
+                "layout.",
+                "error.",
+                "not-found.",
+                "loading.",
+                "template.",
+                "route.",
+                "socket.",
+            ]
+            .iter()
+            .any(|prefix| fname.starts_with(prefix));
+            if structural {
+                graph.entries.insert(canon_file.clone());
+            }
+        }
         for span in oxide_fw_compiler::scan_import_spans(&content) {
             let spec = &span.specifier;
             if !(spec.starts_with("./") || spec.starts_with("../")) {
@@ -1923,10 +1981,10 @@ fn build_importers_map(
             let Ok(target) = std::fs::canonicalize(parent.join(spec)) else {
                 continue;
             };
-            map.entry(target).or_default().insert(canon_file.clone());
+            graph.importers.entry(target).or_default().insert(canon_file.clone());
         }
     }
-    map
+    graph
 }
 
 async fn build_client_bundle(
@@ -3625,46 +3683,102 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                 let react_refresh_owns_update =
                                     esm_framework == "react" && changed_is_component;
                                 if !react_refresh_owns_update {
-                                    let mut in_batch: std::collections::HashSet<String> =
-                                        std::collections::HashSet::new();
-                                    in_batch.insert(pstr.clone());
-                                    let importers = build_importers_map(&rootp);
-                                    if let Some(imps) = importers.get(std::path::Path::new(&pstr)) {
-                                        let root_str = rootp.to_string_lossy();
-                                        for imp in imps {
-                                            let imp_str = imp.to_string_lossy().to_string();
-                                            if !in_batch.insert(imp_str.clone()) {
-                                                continue;
+                                    // V2-E01: the fan-out is the boundary
+                                    // planner's decision (§V2-E01), not a
+                                    // one-hop walk. The changed file itself
+                                    // always re-imports (pushed to
+                                    // `adapter_hmr_batch` above); the planner
+                                    // supplies the boundary set to fan out
+                                    // to — walking PAST non-boundary
+                                    // importers, which the one-hop block this
+                                    // replaced left stale (a
+                                    // `util.ts <- util2.ts <- page.tsx`
+                                    // chain updated nothing but `util.ts`,
+                                    // so the page's import binding kept the
+                                    // old module bytes).
+                                    let changed_pb = std::fs::canonicalize(path)
+                                        .unwrap_or_else(|_| path.to_path_buf());
+                                    let graph =
+                                        build_hmr_graph(&rootp, &rootp.join(&cfg.routes.dir));
+                                    // An orphan (nothing imports the changed
+                                    // file) cannot reach any client — a
+                                    // reload would be user-visible noise for
+                                    // a no-op (the spec's `_ =>` arm is
+                                    // right for the pure function, the dev
+                                    // loop pre-filters it; see
+                                    // docs/deviations.md). The quiet
+                                    // self-update already in the batch is
+                                    // the whole plan.
+                                    let has_importers = graph
+                                        .importers
+                                        .get(&changed_pb)
+                                        .is_some_and(|imps| !imps.is_empty());
+                                    if has_importers {
+                                        let importers: std::collections::HashMap<
+                                            std::path::PathBuf,
+                                            Vec<std::path::PathBuf>,
+                                        > = graph
+                                            .importers
+                                            .into_iter()
+                                            .map(|(module, imps)| (module, imps.into_iter().collect()))
+                                            .collect();
+                                        match oxide_fw_dev::plan(
+                                            &changed_pb,
+                                            &importers,
+                                            &graph.accepting,
+                                            &graph.entries,
+                                        ) {
+                                            oxide_fw_dev::Plan::Update(boundaries) => {
+                                                tracing::debug!(
+                                                    changed = %pstr,
+                                                    boundaries = boundaries.len(),
+                                                    "V2-E01: boundary plan computed"
+                                                );
+                                                let root_str = rootp.to_string_lossy();
+                                                let mut in_batch: std::collections::HashSet<
+                                                    String,
+                                                > = std::collections::HashSet::new();
+                                                in_batch.insert(pstr.clone());
+                                                for b in boundaries {
+                                                    if b == changed_pb {
+                                                        continue;
+                                                    }
+                                                    let b_str = b.to_string_lossy().to_string();
+                                                    if !in_batch.insert(b_str.clone()) {
+                                                        continue;
+                                                    }
+                                                    let rel = b_str.strip_prefix(
+                                                        root_str.as_ref(),
+                                                    )
+                                                    .unwrap_or(&b_str);
+                                                    let rel_slash =
+                                                        rel.replace('\\', "/");
+                                                    let trimmed_imp =
+                                                        rel_slash.trim_start_matches('/');
+                                                    if trimmed_imp.starts_with("src/") {
+                                                        adapter_hmr_batch.push((
+                                                            b_str,
+                                                            format!("/{trimmed_imp}"),
+                                                        ));
+                                                    }
+                                                }
                                             }
-                                            // Only fan out to importers that
-                                            // are components — those are the
-                                            // ones whose rendered output
-                                            // depends on the util. `.tsx`
-                                            // /`.jsx` (React + Solid) and
-                                            // `.vue`/`.svelte` (SFC pages
-                                            // and components) all render;
-                                            // a util importing another util
-                                            // also benefits, but compiling
-                                            // it is unnecessary. React
-                                            // Refresh acts on component
-                                            // boundaries; the boot re-render
-                                            // acts on the page boundary.
-                                            let lower_imp = imp_str.to_ascii_lowercase();
-                                            let imp_is_component = lower_imp.ends_with(".tsx")
-                                                || lower_imp.ends_with(".jsx")
-                                                || lower_imp.ends_with(".vue")
-                                                || lower_imp.ends_with(".svelte");
-                                            if !imp_is_component {
-                                                continue;
-                                            }
-                                            let rel = imp.to_string_lossy();
-                                            let rel_str =
-                                                rel.strip_prefix(root_str.as_ref()).unwrap_or(&rel);
-                                            let rel_slash = rel_str.replace('\\', "/");
-                                            let trimmed_imp = rel_slash.trim_start_matches('/');
-                                            if trimmed_imp.starts_with("src/") {
-                                                adapter_hmr_batch
-                                                    .push((imp_str, format!("/{trimmed_imp}")));
+                                            oxide_fw_dev::Plan::FullReload(reason) => {
+                                                // §13.4: the reload reason is
+                                                // actionable — publish the
+                                                // DEV-HMR-001 diagnostic beside
+                                                // the frame so the overlay
+                                                // carries the fix line.
+                                                tracing::info!(
+                                                    changed = %pstr,
+                                                    %reason,
+                                                    "V2-E01: boundary walk fell back to a reload"
+                                                );
+                                                let diag = oxide_fw_dev::full_reload_diagnostic(&reason);
+                                                hub.publish(HmrMessage::Error {
+                                                    diagnostic: diag,
+                                                });
+                                                hub.publish(HmrMessage::FullReload { reason });
                                             }
                                         }
                                     }
