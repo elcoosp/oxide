@@ -678,6 +678,32 @@ pub struct Injector {
     /// slots exactly like live pages do). The fragment is trusted (built
     /// by the pipeline, `<`-escaped JSON inside).
     pub body_extra: String,
+    /// V2-E04 (SRI half): the client manifest's `integrity` map —
+    /// `sha384-<base64>` keyed by the client-dir-relative file name (the
+    /// same spelling `RouteBundle.entry_chunk` / `preload` / `css` use).
+    /// When a `preload`/`css_links` URL resolves to a key here, the emitted
+    /// `<link>` gains `integrity="…" crossorigin="anonymous"` — a CDN
+    /// serving a modified chunk fails closed instead of executing. Empty by
+    /// default: every link stays byte-identical to the pre-E04 shapes.
+    /// Attach with [`Injector::with_integrity`].
+    pub integrity: BTreeMap<String, String>,
+}
+
+/// The client-relative file name an asset URL names, for the V2-E04
+/// integrity lookup: the manifest keys the map by the client-dir-relative
+/// file (`index-abc.js`), while consumer URLs may be `/client/index-abc.js`,
+/// `client/index-abc.js` or the bare name. A URL outside those shapes
+/// (dev's `/@boot/…`, a vendored path with no manifest entry) yields `None`
+/// and the link emits without integrity attributes.
+#[must_use]
+fn integrity_file_for_url(url: &str) -> Option<&str> {
+    let file = url
+        .strip_prefix("/client/")
+        .or_else(|| url.strip_prefix("client/"))
+        .unwrap_or(url);
+    // Only a plain file name (no further `/`, no query) maps into the
+    // client dir; `vendor/x.js` is not a manifest key the bundler wrote.
+    (!file.contains('/') && !file.contains('?') && !file.contains('#')).then_some(file)
 }
 
 impl Injector {
@@ -694,6 +720,30 @@ impl Injector {
             live: false,
             interaction_replay: true,
             body_extra: String::new(),
+            integrity: BTreeMap::new(),
+        }
+    }
+
+    /// V2-E04 (SRI half): attach the client manifest's `integrity` map.
+    /// Chainable: `Injector::new(..).with_integrity(map)`. Links whose URL
+    /// resolves to a digest in the map emit `integrity` +
+    /// `crossorigin="anonymous"`; everything else is byte-identical.
+    #[must_use]
+    pub fn with_integrity(mut self, integrity: BTreeMap<String, String>) -> Self {
+        self.integrity = integrity;
+        self
+    }
+
+    /// V2-E04 (SRI half): the `integrity="…" crossorigin="anonymous"`
+    /// suffix for a link whose URL has a manifest digest — the empty string
+    /// when there is none (pre-E04 bytes).
+    fn sri_attrs(&self, url: &str) -> String {
+        match integrity_file_for_url(url).and_then(|f| self.integrity.get(f)) {
+            Some(digest) => format!(
+                " integrity=\"{}\" crossorigin=\"anonymous\"",
+                escape_attr(digest)
+            ),
+            None => String::new(),
         }
     }
 
@@ -730,15 +780,20 @@ impl Injector {
         for url in &self.preload {
             let _ = write!(
                 head,
-                "<link rel=\"modulepreload\" href=\"{}\">",
-                escape_attr(url)
+                // V2-E04: integrity + crossorigin land inside the tag (before
+                // the `>`) when the manifest has the digest; byte-identical
+                // when it does not.
+                "<link rel=\"modulepreload\" href=\"{}\"{}>",
+                escape_attr(url),
+                self.sri_attrs(url)
             );
         }
         for url in &self.css_links {
             let _ = write!(
                 head,
-                "<link rel=\"stylesheet\" href=\"{}\">",
-                escape_attr(url)
+                "<link rel=\"stylesheet\" href=\"{}\"{}>",
+                escape_attr(url),
+                self.sri_attrs(url)
             );
         }
         // The body fragment is the hydration bootstrap (when a payload is
