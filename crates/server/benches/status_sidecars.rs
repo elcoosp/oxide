@@ -13,18 +13,10 @@
 //! Run with: `cargo bench -p oxide-fw-server --features bench-util --bench status_sidecars`
 
 use std::hint::black_box;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, UNIX_EPOCH};
+use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxide_fw_server::StatusSidecars;
-
-/// A deterministic mtime (the asset walk reads metadata; the sidecar scan
-/// does not, but a uniform tree keeps the fixture reproducible).
-fn touch(path: &Path) {
-    let _ = std::fs::File::create(path)
-        .and_then(|f| f.set_modified(UNIX_EPOCH + Duration::from_secs(1_700_000_000)));
-}
 
 /// A synthetic dist: `routes` prerendered pages under `prerendered/`,
 /// every `err_every`-th one carrying a sidecar.
@@ -46,11 +38,9 @@ fn fixture_dist(routes: usize, err_every: usize) -> (tempfile::TempDir, Vec<Path
             format!("<!doctype html><html><body>page {i}</body></html>"),
         )
         .expect("write page");
-        touch(&page);
         if i % err_every == 0 {
             let sidecar = oxide_fw_server::sidecar_path_for(&page);
             std::fs::write(&sidecar, "500").expect("write sidecar");
-            touch(&sidecar);
         }
         pages.push(page);
     }
