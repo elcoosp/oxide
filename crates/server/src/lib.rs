@@ -1202,6 +1202,207 @@ pub fn csp_header(mode: &str, nonce: &str) -> String {
     }
 }
 
+/// V2-E04: the Trusted Types directives a policy gains when
+/// `security.trustedTypes` is `report` or `enforce` — `off` (and any
+/// unknown spelling; the config validator already rejects those at load
+/// time with `CFG-SEC`) yields the empty string and the header path never
+/// panics on one. The directive bytes are identical for both modes; only
+/// the header they land on differs (see [`csp_headers_for`]).
+#[must_use]
+pub fn tt_directives(trusted_types: &str) -> &'static str {
+    match trusted_types {
+        "report" | "enforce" => "; require-trusted-types-for 'script'; trusted-types oxide default",
+        _ => "",
+    }
+}
+
+/// V2-E04: the CSP headers a response carries for the resolved
+/// `security.csp` mode, the per-request nonce and the `security.trustedTypes`
+/// mode — one definition site for the whole report-only / Trusted Types
+/// matrix (the dispatcher applies these verbatim; the tests pin every cell).
+///
+/// - `strict`/`hash`: the enforced `Content-Security-Policy` ([`csp_header`]);
+///   `trustedTypes: "enforce"` appends the TT directives to it,
+///   `trustedTypes: "report"` keeps the enforced header byte-identical and
+///   rides the TT directives on an **additional**
+///   `Content-Security-Policy-Report-Only` header (violations reported,
+///   nothing blocked).
+/// - `report-only`: no enforced policy — the strict policy bytes plus
+///   `report-to` ride `Content-Security-Policy-Report-Only`, and the
+///   `Reporting-Endpoints` header names the `csp-endpoint` group backed by
+///   `POST /_oxide/csp-report`. `trustedTypes: "enforce"` adds a minimal
+///   enforced header carrying only the TT directives (the deployable
+///   observation posture: CSP reported, Trusted Types enforced);
+///   `trustedTypes: "report"` rides a second Report-Only header with the
+///   TT directives.
+/// - `off`: no policy — except `trustedTypes: "enforce"`, where the TT
+///   directives alone form the enforced header (a CSP-off deployment can
+///   still want Trusted Types).
+#[must_use]
+pub fn csp_headers_for(mode: &str, nonce: &str, trusted_types: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let tt = tt_directives(trusted_types);
+    match mode {
+        "strict" | "hash" => {
+            // `enforce` appends the TT directives to the enforced policy;
+            // `report` keeps the enforced header byte-identical (the TT
+            // directives ride the additional Report-Only header below).
+            let enforced_tt = if trusted_types == "enforce" { tt } else { "" };
+            let policy = format!("{}{enforced_tt}", csp_header(mode, nonce));
+            out.push(("Content-Security-Policy".into(), policy));
+            if trusted_types == "report" {
+                out.push((
+                    "Content-Security-Policy-Report-Only".into(),
+                    csp_header(mode, nonce)[..].to_string() + tt,
+                ));
+            }
+        }
+        "report-only" => {
+            let policy = format!("{}; report-to csp-endpoint", csp_header("strict", nonce));
+            out.push(("Content-Security-Policy-Report-Only".into(), policy));
+            out.push((
+                "Reporting-Endpoints".into(),
+                "csp-endpoint=\"/_oxide/csp-report\"".into(),
+            ));
+            if trusted_types == "enforce" {
+                out.push((
+                    "Content-Security-Policy".into(),
+                    tt_directives("enforce")
+                        .trim_start_matches(';')
+                        .trim()
+                        .to_string(),
+                ));
+            } else if trusted_types == "report" {
+                out.push((
+                    "Content-Security-Policy-Report-Only".into(),
+                    tt_directives("report")
+                        .trim_start_matches(';')
+                        .trim()
+                        .to_string(),
+                ));
+            }
+        }
+        _ => {
+            if trusted_types == "enforce" {
+                out.push((
+                    "Content-Security-Policy".into(),
+                    tt_directives("enforce")
+                        .trim_start_matches(';')
+                        .trim()
+                        .to_string(),
+                ));
+            } else if trusted_types == "report" {
+                out.push((
+                    "Content-Security-Policy-Report-Only".into(),
+                    tt_directives("report")
+                        .trim_start_matches(';')
+                        .trim()
+                        .to_string(),
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// The outcome of one `POST /_oxide/csp-report` request: the response
+/// status and, on a parsed report, the violation's `effectiveDirective`
+/// (normalized across both browser formats) for the structured log/metrics
+/// event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CspReportOutcome {
+    pub status: u16,
+    pub effective_directive: Option<String>,
+}
+
+/// V2-E04: the `/_oxide/csp-report` sink — browsers POST CSP violations in
+/// the classic form (`application/csp-report`, a `csp-report` object) or
+/// the Reporting API form (`application/reports+json`, an array of reports
+/// whose `body` carries the fields). The endpoint is unauthenticated and
+/// public, so it is hardened exactly like the OG endpoint:
+///
+/// - rate limited to 20/minute per IP (`limiter`, the trusted-proxy-aware
+///   `client_key` — a raw `X-Forwarded-For` is spoofable);
+/// - oversized bodies rejected (`413`) before parsing — a 64 KiB cap;
+/// - unrecognized content types rejected (`415`) — a browser always sends
+///   one of the two, everything else is not a violation report;
+/// - unparseable JSON rejected (`400`) — unlike the vitals beacon (whose
+///   malformed bodies yield a silent 204 because the browser never reads
+///   the response), a garbage report is an attacker or a broken client and
+///   should be visible;
+/// - non-POST is `405`;
+/// - a parsed report logs a structured `tracing` event with a whitelist of
+///   fields (`effectiveDirective`, `sourceFile`, `lineNumber`,
+///   `disposition`) and **no cookies and no raw body** — a violation
+///   report's document URL can carry query strings with sensitive values,
+///   so only the whitelisted fields survive.
+///
+/// Success is `204` (the browser does not read the response).
+pub fn csp_report_response(
+    limiter: &RateLimiter,
+    key: &str,
+    method: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> CspReportOutcome {
+    const CSP_REPORT_MAX_BODY: usize = 64 * 1024;
+    let deny = |status: u16| CspReportOutcome {
+        status,
+        effective_directive: None,
+    };
+    if !method.eq_ignore_ascii_case("POST") {
+        return deny(405);
+    }
+    // Rate limit first — the cheapest check, and it bounds everything below.
+    if !limiter.allow(key, 20, 60) {
+        return deny(429);
+    }
+    if body.len() > CSP_REPORT_MAX_BODY {
+        return deny(413);
+    }
+    let ct = content_type.unwrap_or("");
+    let recognized =
+        ct.starts_with("application/csp-report") || ct.starts_with("application/reports+json");
+    if !recognized {
+        return deny(415);
+    }
+    let v: serde_json::Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(_) => return deny(400),
+    };
+    // Normalize both formats to the first report's fields: the classic form
+    // wraps them in a `csp-report` object with kebab-case keys; the
+    // Reporting API form is an array of `{type, body}` objects with
+    // camelCase `body` keys.
+    let fields = v
+        .get("csp-report")
+        .cloned()
+        .or_else(|| v.get(0).and_then(|r| r.get("body").cloned()));
+    let field = |names: &[&str]| -> Option<String> {
+        let f = fields.as_ref()?;
+        names
+            .iter()
+            .find_map(|n| f.get(*n).and_then(|x| x.as_str()))
+            .map(String::from)
+    };
+    let directive = field(&["effective-directive", "effectiveDirective"]);
+    let source = field(&["source-file", "sourceFile"]);
+    let line = field(&["line-number", "lineNumber"]);
+    let disposition = field(&["disposition"]);
+    // Structured event, whitelisted fields, no cookies, no raw body.
+    tracing::info!(
+        directive = directive.as_deref().unwrap_or(""),
+        source_file = source.as_deref().unwrap_or(""),
+        line_number = line.as_deref().unwrap_or(""),
+        disposition = disposition.as_deref().unwrap_or(""),
+        "csp violation report"
+    );
+    CspReportOutcome {
+        status: 204,
+        effective_directive: directive,
+    }
+}
+
 /// CSRF checks (§17.1): POST-only actions/server-fns; Origin/Sec-Fetch-Site verification;
 /// SameSite cookies; optional double-submit token.
 ///
@@ -1843,6 +2044,10 @@ pub struct Pipeline {
     /// is CPU-bound and unauthenticated; without a limit one client can pin a
     /// core.
     pub og_rate_limiter: RateLimiter,
+    /// V2-E04: per-peer token bucket for `POST /_oxide/csp-report` — the
+    /// sink is unauthenticated and public, so it is rate limited exactly
+    /// like the OG endpoint (20/minute/IP, the spec's number).
+    pub csp_report_rate_limiter: RateLimiter,
     /// Max OG renders per peer per window. Default 10.
     pub og_rate_max: u32,
     /// The OG rate-limit window, seconds. Default 60.
@@ -2472,6 +2677,7 @@ impl Default for Pipeline {
             i18n: None,
             rate_limiter: std::sync::Arc::new(Default::default()),
             og_rate_limiter: RateLimiter::default(),
+            csp_report_rate_limiter: RateLimiter::default(),
             og_rate_max: 10,
             og_rate_window_secs: 60,
             health_path: String::new(),
@@ -2501,6 +2707,13 @@ impl Default for Pipeline {
 #[derive(Debug, Clone)]
 pub struct SecuritySettings {
     pub csp: String,
+    /// V2-E04: the Trusted Types mode — `off | report | enforce`. When
+    /// `report`/`enforce`, the emitted policy gains
+    /// `require-trusted-types-for 'script'; trusted-types oxide default`
+    /// (see [`csp_headers_for`] for the header matrix). The boot-side
+    /// `trustedTypes.createPolicy` wiring is the client half
+    /// (`docs/deviations.md`).
+    pub trusted_types: String,
     pub csrf: String,
     pub host_allow_list: Vec<String>,
     pub ssrf_allow_list: Vec<String>,
@@ -2521,6 +2734,9 @@ impl Default for SecuritySettings {
     fn default() -> Self {
         Self {
             csp: "strict".into(),
+            // V2-E04: Trusted Types off until a project opts in — it changes
+            // the CSP bytes, so the inert-defaults contract applies.
+            trusted_types: "off".into(),
             csrf: "origin".into(),
             host_allow_list: Vec::new(),
             ssrf_allow_list: Vec::new(),
@@ -3957,6 +4173,29 @@ impl Pipeline {
             return NativePrefix::Raw(OxideResponse::new(204, Bytes::new()));
         }
 
+        // (3a.1.5) CSP violation reports (V2-E04). Browsers POST the
+        // classic `application/csp-report` form or the Reporting API's
+        // `application/reports+json`; `csp_report_response` owns the
+        // contract (rate limit 20/min/IP on the trusted-proxy-aware peer
+        // key, the 64 KiB body cap, both formats, the structured
+        // no-cookies log event) and returns the status.
+        if req.method.eq_ignore_ascii_case("POST") && path == "/_oxide/csp-report" {
+            let peer = self.client_key(req);
+            let ct = req.header("content-type").map(str::to_string);
+            let out = csp_report_response(
+                &self.csp_report_rate_limiter,
+                &peer,
+                &req.method,
+                ct.as_deref(),
+                &req.body,
+            );
+            let mut resp = OxideResponse::new(out.status, Bytes::new());
+            if out.status == 429 {
+                resp = resp.with_header("retry-after", "60");
+            }
+            return NativePrefix::Raw(resp);
+        }
+
         // (3a.2) inspector endpoints (§13.4) — only when configured (dev only).
         if let Some(insp) = &self.inspector {
             let is_inspector = (req.method.eq_ignore_ascii_case("GET") && path == "/__oxide")
@@ -4347,16 +4586,22 @@ impl Pipeline {
         let nonce = nonce_for(request_id);
         let mut r = resp;
 
-        let csp_nonce = match self.security.csp.as_str() {
-            "off" => None,
-            "hash" => None, // hash policy appended explicitly below
-            _ => Some(nonce.as_str()),
-        };
-        for (k, v) in security_headers(self.tls, csp_nonce) {
+        // V2-E04: the CSP headers all come from `csp_headers_for` below —
+        // `with_header` appends (it does not replace), so letting
+        // `security_headers` also push the strict policy would emit two
+        // `Content-Security-Policy` headers. The non-CSP security headers
+        // keep coming from `security_headers`.
+        for (k, v) in security_headers(self.tls, None) {
             r = r.with_header(k.as_str(), v);
         }
-        if self.security.csp == "hash" {
-            r = r.with_header("Content-Security-Policy", csp_header("hash", &nonce));
+        // V2-E04: one definition site for the CSP/Trusted Types/report-only
+        // header matrix. `strict`/`hash` emit the enforced policy (with the
+        // TT directives appended when `trustedTypes: "enforce"`),
+        // `report-only` emits the Report-Only header + the
+        // `Reporting-Endpoints` group the `/_oxide/csp-report` sink backs,
+        // `off` emits nothing unless Trusted Types is on.
+        for (k, v) in csp_headers_for(&self.security.csp, &nonce, &self.security.trusted_types) {
+            r = r.with_header(k.as_str(), v);
         }
         for (k, v) in rule_headers {
             r = r.with_header(k.as_str(), v.clone());
