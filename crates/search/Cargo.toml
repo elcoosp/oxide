@@ -1,0 +1,46 @@
+[package]
+description = "The Oxide built-in search engine: the tantivy index build/query substrate behind the `search.collections` config (V2-F09)."
+keywords = ["search", "full-text", "tantivy", "static-site"]
+categories = ["text-processing", "web-programming"]
+authors.workspace = true
+name = "oxide-fw-search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+oxide-fw-diagnostics = { workspace = true }
+oxide-fw-config = { workspace = true }
+tantivy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# The walkthrough example initializes the workspace's observability stack.
+tracing-subscriber = { workspace = true }
+
+[features]
+# V2-B09: exposes the criterion bench harness (plain `cargo test` never
+# pays the criterion build).
+bench-util = []
+
+[dev-dependencies.criterion]
+workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "search"
+harness = false
+required-features = ["bench-util"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
