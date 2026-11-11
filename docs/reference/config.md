@@ -153,14 +153,16 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 ### `security`
 
 - `security.cookieKeys` — `string[]` — default —: SEC-05 / §16.6: cookie-signing keys (32+ bytes each, first signs). Empty = derive from `.oxide/secret`.
-- `security.csp` — `enum: `"strict"` \| `"hash"` \| `"off"`` — default —: §S-20: the Content-Security-Policy mode — `strict` (nonces), `hash`, `off`.
+- `security.csp` — `enum: `"strict"` \| `"hash"` \| `"off"` \| `"report-only"`` — default —: §S-20 / V2-E04: the Content-Security-Policy mode — `strict` (nonces), `hash`, `report-only` (the policy rides `Content-Security-Policy-Report-Only` with a `report-to` group the `/_oxide/csp-report` endpoint backs), `off`.
 - `security.csrf` — `enum: `"origin"` \| `"token"` \| `"off"`` — default —: §S-20: the CSRF protection mode — `origin`, `token`, `off`.
 - `security.exposeCacheHeader` — `boolean` — default —: S-21.3: emit the `x-oxide-fw-cache` status header. Default true.
 - `security.hostAllowList` — `string[]` — default —: §S-20: the hosts the server answers for; a request with another Host is a 421 misdirected request.
 - `security.sessionKeys` — `string[]` — default —: ≥32-byte base64 keys for the ChaCha20-Poly1305 session codec; first seals, all decrypt (rotation).
 - `security.sessionTtlSecs` — `integer` — default `1800`: §16.6: session cookie lifetime in seconds.
+- `security.sri` — `boolean` — default `true`: V2-E04: emit sha384 subresource-integrity digests for every emitted client JS/CSS chunk in `client.manifest.json` (`integrity`) and stamp the boot `<script type=module>` tag with `integrity` + `crossorigin`. Default true (production builds); dev output is unaffected (the `/@boot/` virtual module has no digest).
 - `security.ssrfAllowList` — `string[]` — default —: §S-20: the hosts server-side fetches (image endpoint, loaders) may reach.
 - `security.trustedProxies` — `string[]` — default —: SEC-05 / S-10: the CIDRs whose `X-Forwarded-For` is trusted for the client IP (rate-limit keying); empty trusts no proxy.
+- `security.trustedTypes` — `enum: `"off"` \| `"report"` \| `"enforce"`` — default `"off"`: V2-E04: the Trusted Types mode. `report`/`enforce` add `require-trusted-types-for 'script'; trusted-types oxide default` to the emitted CSP — `report` rides an additional Report-Only policy, `enforce` the enforced header. The boot-side policy creation is the client half (docs/deviations.md).
 ### `server`
 
 - `server.backend` — `enum: `"node"` \| `"v8"`` — default `"node"`: §12: the SSR backend — `node` (the supervised Node ≥ 24 worker pool, the production default) or `v8` (embedded V8, opt-in).
