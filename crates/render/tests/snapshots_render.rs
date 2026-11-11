@@ -146,3 +146,29 @@ fn snapshot_inject_into_html() {
         inj.inject_into_html(html).expect("inject")
     );
 }
+
+// ---------------------------------------------------------------- V2-E04 (SRI half)
+
+#[test]
+fn snapshot_inject_into_html_with_sri() {
+    let mut inj = Injector::new(
+        HeadTags::default(),
+        "NONCE4".to_string(),
+        "routes/index/page".to_string(),
+    );
+    inj.odf_payload_b64 = Some("T0RGMQAK".to_string());
+    inj.css_links = vec!["/client/app.css".to_string()];
+    inj.preload = vec!["/client/chunk.js".to_string()];
+    inj.integrity = [
+        ("chunk.js".to_string(), "sha384-preload".to_string()),
+        ("app.css".to_string(), "sha384-stylesheet".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    let html =
+        "<!doctype html><html><head><title>x</title></head><body><main>hi</main></body></html>";
+    insta::assert_snapshot!(
+        "inject_into_html_with_sri",
+        inj.inject_into_html(html).expect("inject")
+    );
+}
