@@ -11,6 +11,7 @@
 import { decodeOdf } from './odf-decode.ts'
 import { handleStale, withBuild } from './build.ts'
 import { layoutChunksFor, type ClientManifestLike } from './route-manifest.ts'
+import { navRouteHeaders } from './prefetch.ts'
 import type { ClientInput, ClientManifest, FrameworkAdapter } from '../types.ts'
 
 /** Minimal DOM surface the router needs (hand-rolled fakes in tests). */
@@ -209,13 +210,21 @@ export function createRouter(opts: RouterOptions): Router {
     }
   }
 
-  async function fetchRouteData(path: string, signal?: AbortSignal): Promise<unknown> {
+  async function fetchRouteData(path: string, signal?: AbortSignal, navigation = false): Promise<unknown> {
     // §V2-A04: the data-plane fetch advertises the build id this page was
     // rendered by; a stale generation answers 409 + stale marker and the
     // client reloads once (handleStale) instead of decoding a dead payload.
+    // §V2-F13: a NAVIGATION also stamps the two route-id headers the
+    // server's learned-prefetch graph observes (`x-oxide-nav-from`/-to,
+    // resolved against the route manifest — route ids, never URLs with
+    // params). Prefetches are not navigations and stay un-stamped.
+    let headers: Record<string, string> = { accept: 'application/oxide+odf, application/json' }
+    if (navigation) {
+      headers = { ...headers, ...navRouteHeaders(location.pathname, path, routeManifest) }
+    }
     const res = await doFetch(`/__data?route=${encodeURIComponent(path)}`, withBuild({
       signal,
-      headers: { accept: 'application/oxide+odf, application/json' },
+      headers,
     }))
     if (handleStale(res)) throw new Error(`router: stale build — reloading for ${path}`)
     if (!res.ok) throw new Error(`router: /__data responded ${res.status} for ${path}`)
@@ -398,7 +407,7 @@ export function createRouter(opts: RouterOptions): Router {
         console.warn?.('router: onNavigateStart threw', e)
       }
       try {
-        const decoded = await fetchRouteData(path)
+        const decoded = await fetchRouteData(path, undefined, true)
         if (navId !== navSeq) return // a newer navigation superseded this one
         input = normalizeInput(decoded, path)
         dataCachePut(path, input)
@@ -463,10 +472,11 @@ export function createRouter(opts: RouterOptions): Router {
       if (state.scroll) scrollTo(state.scroll.x, state.scroll.y)
       return
     }
-    // Unknown state (e.g. initial entry): fetch data for the current location.
+    // Unknown state (e.g. initial entry): fetch data for the current
+    // location. A popstate IS a navigation — the nav headers ride.
     const path = location.pathname + location.search
     const navId = ++navSeq
-    fetchRouteData(path)
+    fetchRouteData(path, undefined, true)
       .then((decoded) => {
         if (navId === navSeq) opts.adapter.update(normalizeInput(decoded, path))
       })
