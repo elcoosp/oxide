@@ -52,6 +52,19 @@ name = "sri"
 harness = false
 required-features = ["bench-util"]
 
+# V2-E04 tail: the head producer runs once per prerendered route and the
+# integrity verifier once per `oxide verify` — both must stay noise next
+# to the render and the verify flow they serve.
+[[bench]]
+name = "head"
+harness = false
+required-features = ["bench-util"]
+
+[[bench]]
+name = "integrity"
+harness = false
+required-features = ["bench-util"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
