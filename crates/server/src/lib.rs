@@ -18,6 +18,10 @@ pub mod loader;
 pub mod metrics;
 pub mod navgraph;
 pub mod page_renderer;
+// V2-F09: the built-in search endpoint behind the `search` feature (the
+// spec's default-off posture — plain dev builds never compile tantivy).
+#[cfg(feature = "search")]
+pub mod search_endpoint;
 pub mod stream_store;
 // V2-F12: the brownout-mode substrate at the crate root (the spec names
 // `Governor`; `Level`/`Signals`/`Thresholds`/`raw_level`/`next_level` and
@@ -65,6 +69,12 @@ pub use navgraph::{
     NAV_ENDPOINT_PATH, NAV_FROM_HEADER, NAV_TO_HEADER, NavEdge, NavGraph, NavGraphSettings,
     nav_observation, nav_response_from_query, sanitize_edge_route,
 };
+
+// V2-F09: the search endpoint's attached state (`search` feature) — the
+// read-only engine plus its L1. `SEARCH_ENDPOINT_PATH` itself lives in
+// `oxide_fw_search` (the engine crate owns the wire constants).
+#[cfg(feature = "search")]
+pub use search_endpoint::SearchEndpoint;
 
 pub mod trace_context;
 
@@ -2066,6 +2076,18 @@ pub struct Pipeline {
     /// default) disables both: the data plane and every response are
     /// byte-identical to the pre-F13 shapes.
     pub nav: Option<Arc<navgraph::NavGraph>>,
+    /// V2-F09 (feature `search`): the built-in search endpoint's attached
+    /// index — the read-only engine plus its L1 query cache. `Some` only
+    /// when `search.collections` is configured and `dist/search/index`
+    /// opened; `None` (the default) keeps `/_oxide/search` at the
+    /// documented not-configured 404.
+    #[cfg(feature = "search")]
+    pub search: Option<Arc<search_endpoint::SearchEndpoint>>,
+    /// V2-F09 (feature `search`): the search endpoint's own token bucket
+    /// (20 per 10 s per peer), never shared with the OG/csp-report
+    /// limiters (an OG-heavy client must not eat the search budget).
+    #[cfg(feature = "search")]
+    pub search_rate_limiter: RateLimiter,
     /// Max OG renders per peer per window. Default 10.
     pub og_rate_max: u32,
     /// The OG rate-limit window, seconds. Default 60.
@@ -2697,6 +2719,10 @@ impl Default for Pipeline {
             og_rate_limiter: RateLimiter::default(),
             csp_report_rate_limiter: RateLimiter::default(),
             nav: None,
+            #[cfg(feature = "search")]
+            search: None,
+            #[cfg(feature = "search")]
+            search_rate_limiter: RateLimiter::default(),
             og_rate_max: 10,
             og_rate_window_secs: 60,
             health_path: String::new(),
@@ -3864,6 +3890,16 @@ impl Pipeline {
         self
     }
 
+    /// V2-F09 (feature `search`): attach the search endpoint's state —
+    /// the read-only engine plus its L1. When `Some`, `GET
+    /// /_oxide/search` answers the corpus; when `None` (the default) the
+    /// endpoint 404s with the not-configured message. Chainable.
+    #[cfg(feature = "search")]
+    pub fn with_search(mut self, search: Arc<search_endpoint::SearchEndpoint>) -> Self {
+        self.search = Some(search);
+        self
+    }
+
     /// The attached page renderer, if any. Used by the inspector and by
     /// `serve_request` to decide the render path.
     pub fn page_renderer(&self) -> Option<&Arc<dyn crate::PageRenderer>> {
@@ -4286,6 +4322,49 @@ impl Pipeline {
             }
             let query = req.url.split_once('?').map_or("", |(_, q)| q);
             return NativePrefix::Raw(nav_response_from_query(nav, query));
+        }
+
+        // (3a.1.7) the built-in search (V2-F09, feature `search`). The
+        // same endpoint contract the nav endpoint follows: `None` (no
+        // index attached — `search.collections` unconfigured or the
+        // index not built) answers the not-configured 404, a non-GET
+        // verb a 405 with `allow: GET`, and the query itself is rate
+        // limited per trusted-proxy-aware peer before any engine work
+        // (the spec's 20 per 10 s — the token bucket is the endpoint's
+        // own, never shared with OG/csp-report).
+        #[cfg(feature = "search")]
+        if path == oxide_fw_search::SEARCH_ENDPOINT_PATH {
+            let Some(ep) = &self.search else {
+                return NativePrefix::Raw(
+                    OxideResponse::new(
+                        404,
+                        "search endpoint not configured (search.collections is empty or the index is not built)",
+                    )
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            };
+            if !req.method.eq_ignore_ascii_case("GET") {
+                return NativePrefix::Raw(
+                    OxideResponse::new(405, "the search endpoint answers GET")
+                        .with_header("allow", "GET")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+            let peer = self.client_key(req);
+            if !self.search_rate_limiter.allow(
+                &peer,
+                search_endpoint::SEARCH_RATE_MAX,
+                search_endpoint::SEARCH_RATE_WINDOW_SECS,
+            ) {
+                return NativePrefix::Raw(
+                    OxideResponse::new(429, "search rate limit exceeded").with_header(
+                        "retry-after",
+                        search_endpoint::SEARCH_RATE_WINDOW_SECS.to_string(),
+                    ),
+                );
+            }
+            let query = req.url.split_once('?').map_or("", |(_, q)| q);
+            return NativePrefix::Raw(search_endpoint::search_response(ep, query));
         }
 
         // (3b) health endpoint (§12.2).
