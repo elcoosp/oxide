@@ -1575,8 +1575,8 @@ modes as the fix).
 
 **Deltas and deferrals.**
 
-1. **The link-integrity seam is wired to the Injector, and the
-   prerender shells carry no modulepreload/stylesheet links yet.** The
+1. **The link-integrity seam is wired to the Injector — CLOSED since
+   (the head producer landed, see the V2-E04-tail section below).** The
    spec reads "the head injector adds integrity to `<script
    type=module>`, `<link rel=modulepreload>` and stylesheet links".
    The landed `Injector.preload`/`css_links` fields had no production
@@ -1585,10 +1585,12 @@ modes as the fix).
    seam is complete and pinned (the map attaches through
    `PrerenderArgs.manifest_integrity`, the links resolve
    `/client/<file>`, `client/<file>` and bare-name URLs and emit the
-   attributes byte-exactly), so the moment a shell producer fills
-   `preload`/`css_links` the digests ride along. Wiring an
-   adapter-level head producer to the manifest is the follow-up work,
-   not a re-design.
+   attributes byte-exactly). The adapter-level head producer
+   (`bundler::head::ManifestHeadProducer`, wired through the CLI's
+   prerender paths via `filter_head_links`) now fills
+   `preload`/`css_links`; modulepreload is producer-owned and the
+   adapter's own head emission stays authoritative (the filter dedupes
+   by href), so no shell link is emitted twice.
 2. **The boot-side Trusted Types policy is the client half.** The spec
    pins the `tt.createHTML` policy definition in `packages/oxide` and a
    lint test (`rg 'innerHTML' packages/oxide/src` matching only lines
@@ -1603,8 +1605,11 @@ modes as the fix).
    digests are computed from the same bytes the bundler just wrote (or
    read back), so a stale digest can only appear when the manifest and
    the chunk files disagree on disk — exactly the corrupted-deploy case
-   the feature exists to catch. `oxide verify` (F20) is the natural
-   place for a serve-side check; it does not walk `integrity` yet.
+   the feature exists to catch. `oxide verify` (F20) is that serve-side
+   check — CLOSED since (see the V2-E04-tail section below): the verify
+   walk re-digests the manifest's `integrity` map against the bytes on
+   disk and fails closed (`VRF-INTEGRITY`) on a mismatch, a missing
+   file or a corrupt manifest; a non-client build skips loudly.
 4. **`csp-report` rejections are strict where the vitals beacon is
    lenient.** The vitals beacon answers a malformed body with a silent
    204 (the browser never reads the response; a 4xx would only add
@@ -1612,3 +1617,52 @@ modes as the fix).
    unauthenticated and public, so a garbage body is an attacker or a
    broken client and should be visible in the logs, not silently
    drained.
+
+## V2-E04 tail — the adapter-level head producer + the verify integrity walk (2026-11-11)
+
+**What the spec asks.** The same §V2-E04 clause the parent section quotes:
+the head injector adds `integrity` to `<script type=module>`,
+`<link rel=modulepreload>` and stylesheet links — which needs something to
+actually produce those links — and "a mismatch case documented" (the parent
+section's deltas 1 and 3, both closed by this pass).
+
+**What lands.** The head half (`feat/head-producer-integrity-verify`):
+`crates/bundler/src/head.rs` — the `HeadProducer` seam (`name()` +
+`head_for(route)`, object-safe, the `PageRenderer`/`LoaderRunner` trait
+conventions) and `ManifestHeadProducer`, the manifest-driven implementation:
+the three-shape route-key resolution the CLI shim's `inject_route_css` uses
+(exact, `+ /page`, the `_param_` sanitized dynamic form), critical-first
+preload order preserved, first-seen-order dedup, URLs spelled
+`/client/<file>` so every one resolves to a digest in the
+`integrity` map. The CLI wire-up: `cmd_build` constructs the producer from
+the typed manifest (a pre-E04 manifest that fails the typed parse degrades
+to no links with a loud `tracing::warn!`, never a build failure), and every
+prerender path — `prerender_targets`'s generateParams arms plus the
+`Absent` arm's direct writes — fills the render `Injector`'s
+`preload`/`css_links` through `filter_head_links`, which dedupes against
+the hrefs the adapter's shell already carries. Division of labor (the
+design decision): modulepreload is producer-owned (nothing else emitted
+it), the adapter's own head emission stays authoritative for the
+stylesheets it renders, so the producer **completes** the shell's head
+instead of duplicating it; the no-renderer placeholder path (a project
+without `componentFor`) gets its manifest stylesheets for the first time.
+The verify half: `crates/bundler/src/sri.rs::verify_integrity_map` — the
+strict re-digest walk (`IntegrityReport`: checked / missing / mismatched,
+findings in manifest key order) — and the `oxide verify` step
+(`integrity_verdict`): a clean walk prints `integrity: N files verified
+(sha384)`, a mismatch/missing/corrupt manifest fails closed with the
+`VRF-INTEGRITY` registry row (the findings listed above the diagnostic), a
+non-client build or a pre-E04 manifest (no `integrity` key) skips loudly —
+the signature check's skip verdict, not a silent pass.
+
+**Status.** Closed for the server-side loop the parent section named. The
+remaining E04 work is the client Trusted Types half (`packages/oxide`'s
+`tt.createHTML` policy + the `rg` lint test) — TS work, unchanged.
+
+**Deltas and deferrals.** The live-SSR path still takes its head from the
+adapter stream (body-side tags ride `inject_before_close`); adopting
+`Injector::streaming()` for the live head is a follow-up slice, not
+scheduled here. The rolldown backend records `preload: vec![entry]` —
+manifest-fed prerender shells of rolldown-built projects carry one
+modulepreload until its manifest walk widens (tracked in the bundler, not
+the producer: the producer is a faithful projection by design).
