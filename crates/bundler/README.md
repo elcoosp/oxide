@@ -23,6 +23,8 @@ The JavaScript and TypeScript bundler Oxide uses for both client and server outp
 - **Per-chunk code splitting** — content-hashed filenames
 - **Sourcemaps** — `off` | `file` | `hidden`
 - **Rollup-style plugin compatibility** — via Rolldown's Rust ABI
+- **The V2-E04 SRI pass** — `sri::sri_digest` / `sri::integrity_map` record `sha384-` digests for every emitted JS chunk and CSS file in `client.manifest.json`'s `integrity` map (the chunk path digests the bytes in hand; the rolldown path reads the persisted files back); `sri::verify_integrity_map` is the strict re-digest walk `oxide verify` runs
+- **The adapter-level head producer** — `head::HeadProducer` + `head::ManifestHeadProducer` project a route bundle into the modulepreload/stylesheet URLs the render `Injector` emits (`/client/<file>`, critical-first order preserved), with `examples/head_producer.rs` as the walkthrough
 
 ## Usage
 
