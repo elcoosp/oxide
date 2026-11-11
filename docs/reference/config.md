@@ -127,6 +127,11 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 ### `plugins`
 
 - `plugins` — `object[]` — default —: §15: plugin entries (native, wasm, or js).
+### `prefetch`
+
+- `prefetch` — `object` — default —: V2-F13: the learned prefetcher. Default false: no nav graph is constructed, the data plane observes nothing and GET /_oxide/nav answers 404. true keeps the aggregate route-transition graph (route ids only, k-anonymity floor 20 observations, half-life 7 days, hourly snapshot to .oxide/nav-graph.json) and answers GET /_oxide/nav?from=<route> with the top edges as probabilities. A non-boolean value fails the load (DSP-115).
+- `prefetch.learned` — `boolean` — default `false`: V2-F13: the learned prefetcher. Default false: no nav graph is constructed, the data plane observes nothing and GET /_oxide/nav answers 404. true keeps the aggregate route-transition graph (route ids only, k-anonymity floor 20 observations, half-life 7 days, hourly snapshot to .oxide/nav-graph.json) and answers GET /_oxide/nav?from=<route> with the top edges as probabilities. A non-boolean value fails the load (DSP-115).
+- `prefetch.minProbability` — `number` — default `0.35`: V2-F13: the client prefetcher's threshold — an edge whose /_oxide/nav probability is at or above this value gets its chunks (and, for param-free route ids, its data) prefetched after idle. Out-of-range values fail the load (DSP-115).
 ### `render`
 
 - `render.default` — `enum: `"auto"` \| `"static"` \| `"isr"` \| `"dynamic"` \| `"spa"` \| `"islands"`` — default —: §10.1: the render mode routes inherit when `page.server.ts` exports none (`auto` infers per route).
