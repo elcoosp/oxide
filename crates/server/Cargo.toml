@@ -56,6 +56,14 @@ moka = { workspace = true }
 # `cargo test` never pays the criterion build).
 bench-util = []
 
+# V2-F13: criterion bench for the nav-graph substrate (observe / top /
+# decay / persist), behind the `bench-util` opt-in like every other
+# criterion bench in the workspace.
+[[bench]]
+name = "navgraph"
+harness = false
+required-features = ["bench-util"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
 # V2-F05: the runner/stream pins run under tokio's paused clock
