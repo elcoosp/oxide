@@ -16,6 +16,7 @@ pub mod governor;
 pub mod live;
 pub mod loader;
 pub mod metrics;
+pub mod navgraph;
 pub mod page_renderer;
 pub mod stream_store;
 // V2-F12: the brownout-mode substrate at the crate root (the spec names
@@ -47,6 +48,7 @@ pub use page_renderer::{
 };
 pub mod session;
 pub use session::{Session, SessionCodec};
+
 // V2-A07: the prerender error-status sidecar substrate — the scan/status
 // seam (`StatusSidecars`) plus the write half of the contract the CLI's
 // prerender sites call (`write_status_sidecar`); the pure helpers live in
@@ -55,6 +57,15 @@ pub mod static_status;
 pub use static_status::{
     StatusSidecars, is_status_sidecar, sidecar_path_for, write_status_sidecar,
 };
+
+// V2-F13: the learned-prefetch substrate — the aggregate route-transition
+// graph (`NavGraph`), the `/_oxide/nav` endpoint renderer and the
+// data-plane observation seam the pipeline's native prefix uses.
+pub use navgraph::{
+    NAV_ENDPOINT_PATH, NAV_FROM_HEADER, NAV_TO_HEADER, NavEdge, NavGraph, NavGraphSettings,
+    nav_observation, nav_response_from_query, sanitize_edge_route,
+};
+
 pub mod trace_context;
 
 use bytes::Bytes;
@@ -2048,6 +2059,13 @@ pub struct Pipeline {
     /// sink is unauthenticated and public, so it is rate limited exactly
     /// like the OG endpoint (20/minute/IP, the spec's number).
     pub csp_report_rate_limiter: RateLimiter,
+    /// V2-F13: the aggregate route-transition graph the learned prefetcher
+    /// consults. `Some` only when the config's `prefetch.learned` is on —
+    /// the native prefix then observes `x-oxide-nav-from`/`-to` edges on
+    /// `/__data` requests and answers `GET /_oxide/nav`. `None` (the
+    /// default) disables both: the data plane and every response are
+    /// byte-identical to the pre-F13 shapes.
+    pub nav: Option<Arc<navgraph::NavGraph>>,
     /// Max OG renders per peer per window. Default 10.
     pub og_rate_max: u32,
     /// The OG rate-limit window, seconds. Default 60.
@@ -2678,6 +2696,7 @@ impl Default for Pipeline {
             rate_limiter: std::sync::Arc::new(Default::default()),
             og_rate_limiter: RateLimiter::default(),
             csp_report_rate_limiter: RateLimiter::default(),
+            nav: None,
             og_rate_max: 10,
             og_rate_window_secs: 60,
             health_path: String::new(),
@@ -3835,6 +3854,16 @@ impl Pipeline {
         self
     }
 
+    /// V2-F13: attach the learned-prefetch nav graph. When `Some`, the
+    /// native prefix observes `x-oxide-nav-from`/`x-oxide-nav-to` edges on
+    /// `/__data` requests and answers `GET /_oxide/nav?from=<route>` with
+    /// the ranked edges; when `None` (the default) both behaviors are off
+    /// and the endpoint 404s. Chainable.
+    pub fn with_nav_graph(mut self, nav: Arc<navgraph::NavGraph>) -> Self {
+        self.nav = Some(nav);
+        self
+    }
+
     /// The attached page renderer, if any. Used by the inspector and by
     /// `serve_request` to decide the render path.
     pub fn page_renderer(&self) -> Option<&Arc<dyn crate::PageRenderer>> {
@@ -4218,6 +4247,45 @@ impl Pipeline {
                 }
                 return NativePrefix::Raw(OxideResponse::json(200, insp.state_json()));
             }
+        }
+
+        // (3a.1.6) learned prefetch (V2-F13). Two halves, gated on the
+        // attached nav graph (`prefetch.learned`):
+        // - the observation: a `GET /__data` carrying the client router's
+        //   `x-oxide-nav-from`/`x-oxide-nav-to` route-id headers records
+        //   one aggregate edge and FALLS THROUGH — the data dispatch is
+        //   never answered here, and a request without both sane headers
+        //   is byte-identical to the pre-F13 path;
+        // - the endpoint: `GET /_oxide/nav?from=<route>` answers the top
+        //   edges as JSON (the pure renderer in `navgraph`). A non-GET
+        //   verb is a 405 with the `allow` header, a missing/empty `from`
+        //   a 400. A pipeline WITHOUT a graph answers the metrics
+        //   endpoint's "not configured" 404 — off is a documented shape,
+        //   not an error.
+        if let Some(nav) = &self.nav
+            && let Some((from, to)) = nav_observation(req)
+        {
+            nav.observe(&from, &to);
+        }
+        if path == NAV_ENDPOINT_PATH {
+            let Some(nav) = &self.nav else {
+                return NativePrefix::Raw(
+                    OxideResponse::new(
+                        404,
+                        "nav endpoint not configured (prefetch.learned is off)",
+                    )
+                    .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            };
+            if !req.method.eq_ignore_ascii_case("GET") {
+                return NativePrefix::Raw(
+                    OxideResponse::new(405, "the nav endpoint answers GET")
+                        .with_header("allow", "GET")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+            let query = req.url.split_once('?').map_or("", |(_, q)| q);
+            return NativePrefix::Raw(nav_response_from_query(nav, query));
         }
 
         // (3b) health endpoint (§12.2).
