@@ -5,6 +5,7 @@
   "description": "Typed configuration for an Oxide project (spec §14).",
   "properties": {
     "adapter": {
+      "description": "§18: the deploy target the build emits for; the §18 capability matrix decides what that target honours (the config-key refusal refuses a build the target cannot serve).",
       "enum": [
         "binary",
         "node",
@@ -110,9 +111,11 @@
       "additionalProperties": false,
       "properties": {
         "clientJs": {
+          "description": "§21: the per-entry client JS budget (e.g. `170kb`); `oxide analyze` fails when the bundle exceeds it.",
           "type": "string"
         },
         "routeJs": {
+          "description": "§21: the per-route JS budget (e.g. `90kb`).",
           "type": "string"
         }
       },
@@ -138,6 +141,7 @@
           "type": "boolean"
         },
         "sourcemap": {
+          "description": "§6: the sourcemap mode the client bundle emits (`hidden` ships the map without linking it).",
           "enum": [
             "hidden",
             "inline",
@@ -147,12 +151,14 @@
           "type": "string"
         },
         "ssrExternals": {
+          "description": "§6: packages kept external in the SSR bundle and required at runtime (the CLI fills a framework default when unset).",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "target": {
+          "description": "§6: the browser target the client bundle compiles for (e.g. `baseline-widely-available`).",
           "type": "string"
         },
         "writeBranches": {
@@ -175,6 +181,7 @@
               "type": "string"
             },
             "type": {
+              "description": "§5.3: the L2 cache-handler backend the build wires (memory/disk are local; redis/s3/http are remote).",
               "enum": [
                 "memory",
                 "disk",
@@ -199,6 +206,7 @@
           "properties": {
             "maxSize": {
               "default": "512mb",
+              "description": "§5.3: the L0 in-process cache budget (`kb`/`mb`/`gb`); over-cap entries are GC'd (SPEC-5D).",
               "pattern": "^[0-9]+(kb|mb|gb)$",
               "type": "string"
             },
@@ -228,15 +236,18 @@
             "additionalProperties": false,
             "properties": {
               "dir": {
+                "description": "§16.5: the content directory (Markdown + typed frontmatter) the collection maps to.",
                 "type": "string"
               },
               "indexedFields": {
+                "description": "§16.5: the frontmatter fields the per-collection static JSON index includes.",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "name": {
+                "description": "§16.5: the collection name (also the static JSON index file's stem).",
                 "type": "string"
               }
             },
@@ -278,6 +289,7 @@
             "type": "array"
           },
           "sticky": {
+            "description": "V2-F04: how an eligible identity sticks to its variant — a cookie, a request header, or a hash of the peer IP.",
             "oneOf": [
               {
                 "additionalProperties": false,
@@ -365,24 +377,29 @@
             "additionalProperties": false,
             "properties": {
               "family": {
+                "description": "§16.2: the CSS family name the emitted @font-face declares.",
                 "type": "string"
               },
               "localPaths": {
+                "description": "§16.2: local font files used instead of a provider download.",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "provider": {
+                "description": "§16.2: the provider this family downloads from (one of `fonts.providers`).",
                 "type": "string"
               },
               "styles": {
+                "description": "§16.2: the styles to fetch (normal, italic).",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
               "weights": {
+                "description": "§16.2: the weights to fetch (e.g. 400, 700).",
                 "items": {
                   "type": "integer"
                 },
@@ -394,12 +411,14 @@
           "type": "array"
         },
         "providers": {
+          "description": "§16.2: the font providers families may reference.",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "subset": {
+          "description": "§16.2 / C08: the subsetting strategy — `latin`, `unicode-range`, or the glyph-usage spelling `used` (sound only when every route is `static`; otherwise the build refuses with AST-FNT-001).",
           "items": {
             "type": "string"
           },
@@ -412,6 +431,7 @@
       "additionalProperties": false,
       "properties": {
         "adapter": {
+          "description": "§7: the component dialect the adapter compiles (the loader in `page.server.ts` stays framework-neutral).",
           "enum": [
             "react",
             "vue",
@@ -421,6 +441,7 @@
           "type": "string"
         },
         "compiler": {
+          "description": "C01: the native compiler pass for the adapter. true prefers the native backend when its toolchain is healthy; the node backend is the fallback (C01 / `compilerBackend`).",
           "type": "boolean"
         },
         "islands": {
@@ -431,6 +452,7 @@
           "type": "object"
         },
         "name": {
+          "description": "§7: the framework adapter package the config exports (`@oxide-fw/react`, `@oxide-fw/vue`, ...).",
           "type": "string"
         }
       },
@@ -440,9 +462,11 @@
       "additionalProperties": false,
       "properties": {
         "default": {
+          "description": "§11: the default locale — no path prefix under `prefix-except-default`.",
           "type": "string"
         },
         "locales": {
+          "description": "§11: the locales the site serves (the route prefix follows `strategy`).",
           "items": {
             "type": "string"
           },
@@ -464,6 +488,7 @@
       "additionalProperties": false,
       "properties": {
         "formats": {
+          "description": "§16.1: the encodings `/_oxide/image` emits, in preference order (avif via ravif).",
           "items": {
             "enum": [
               "avif",
@@ -488,9 +513,11 @@
           "type": "integer"
         },
         "remotePatterns": {
+          "description": "§16.1: the remote image hosts the endpoint may fetch; a host not listed is refused.",
           "items": {
             "properties": {
               "host": {
+                "description": "§16.1: a remote host the image endpoint may fetch from (the SSRF allow-list for remote images).",
                 "type": "string"
               }
             },
@@ -577,6 +604,7 @@
       "properties": {
         "enabled": {
           "default": false,
+          "description": "S-09: opt in to the OG-image endpoint (`GET /_oxide/og`; off by default).",
           "type": "boolean"
         },
         "rateLimit": {
@@ -585,11 +613,13 @@
           "properties": {
             "max": {
               "default": 10,
+              "description": "A3: the images per window per peer before the bucket refills.",
               "minimum": 0,
               "type": "integer"
             },
             "windowSecs": {
               "default": 60,
+              "description": "A3: the rate-limit window length in seconds.",
               "minimum": 0,
               "type": "integer"
             }
@@ -611,6 +641,7 @@
       "additionalProperties": false,
       "properties": {
         "default": {
+          "description": "§10.1: the render mode routes inherit when `page.server.ts` exports none (`auto` infers per route).",
           "enum": [
             "auto",
             "static",
@@ -634,6 +665,7 @@
       "properties": {
         "dir": {
           "default": "src/routes",
+          "description": "§10.1: the route directory the scanner walks (file conventions decide the route tree).",
           "type": "string"
         }
       },
@@ -644,6 +676,7 @@
         "additionalProperties": true,
         "properties": {
           "destination": {
+            "description": "§10.4: the rewrite destination (evaluated natively before the route match).",
             "type": "string"
           },
           "priority": {
@@ -657,12 +690,15 @@
             "type": "string"
           },
           "redirect": {
+            "description": "§10.4: the redirect destination (mutually exclusive with `destination`).",
             "type": "string"
           },
           "source": {
+            "description": "§10.4: the path pattern the native rule matches.",
             "type": "string"
           },
           "status": {
+            "description": "§10.4: the redirect status (301/302/307/308).",
             "type": "integer"
           }
         },
@@ -715,12 +751,14 @@
       "additionalProperties": false,
       "properties": {
         "cookieKeys": {
+          "description": "SEC-05 / §16.6: cookie-signing keys (32+ bytes each, first signs). Empty = derive from `.oxide/secret`.",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "csp": {
+          "description": "§S-20: the Content-Security-Policy mode — `strict` (nonces), `hash`, `off`.",
           "enum": [
             "strict",
             "hash",
@@ -729,6 +767,7 @@
           "type": "string"
         },
         "csrf": {
+          "description": "§S-20: the CSRF protection mode — `origin`, `token`, `off`.",
           "enum": [
             "origin",
             "token",
@@ -741,6 +780,7 @@
           "type": "boolean"
         },
         "hostAllowList": {
+          "description": "§S-20: the hosts the server answers for; a request with another Host is a 421 misdirected request.",
           "items": {
             "type": "string"
           },
@@ -761,12 +801,14 @@
           "type": "integer"
         },
         "ssrfAllowList": {
+          "description": "§S-20: the hosts server-side fetches (image endpoint, loaders) may reach.",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "trustedProxies": {
+          "description": "SEC-05 / S-10: the CIDRs whose `X-Forwarded-For` is trusted for the client IP (rate-limit keying); empty trusts no proxy.",
           "items": {
             "type": "string"
           },
@@ -780,6 +822,7 @@
       "properties": {
         "backend": {
           "default": "node",
+          "description": "§12: the SSR backend — `node` (the supervised Node ≥ 24 worker pool, the production default) or `v8` (embedded V8, opt-in).",
           "enum": [
             "node",
             "v8"
@@ -787,6 +830,7 @@
           "type": "string"
         },
         "compression": {
+          "description": "§12.1 step 8: the precompressed static encodings in preference order (zstd preferred, then br, then gzip; negotiated per request).",
           "items": {
             "enum": [
               "zstd",
@@ -804,14 +848,17 @@
         },
         "host": {
           "default": "localhost",
+          "description": "§12: the bind address of the production server.",
           "type": "string"
         },
         "http3": {
           "default": false,
+          "description": "§12.1: serve HTTP/3 over QUIC alongside h1/h2 (opt-in; `h3Advertise` controls the Alt-Svc header).",
           "type": "boolean"
         },
         "port": {
           "default": 3000,
+          "description": "§12: the TCP port the production server binds (h1/h2; the QUIC listener follows §12.1).",
           "maximum": 65535,
           "minimum": 0,
           "type": "integer"
