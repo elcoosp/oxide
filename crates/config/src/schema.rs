@@ -335,7 +335,7 @@ fn security_schema() -> Value {
         "additionalProperties": false,
         "properties": {
                 "sessionTtlSecs": { "type": "integer", "minimum": 60, "default": 1800, "description": "§16.6: session cookie lifetime in seconds." },
-            "csp": { "type": "string", "enum": ["strict", "hash", "off"], "description": "§S-20: the Content-Security-Policy mode — `strict` (nonces), `hash`, `off`." },
+            "csp": { "type": "string", "enum": ["strict", "hash", "off", "report-only"], "description": "§S-20 / V2-E04: the Content-Security-Policy mode — `strict` (nonces), `hash`, `report-only` (the policy rides `Content-Security-Policy-Report-Only` with a `report-to` group the `/_oxide/csp-report` endpoint backs), `off`." },
             "csrf": { "type": "string", "enum": ["origin", "token", "off"], "description": "§S-20: the CSRF protection mode — `origin`, `token`, `off`." },
             "hostAllowList": { "type": "array", "items": { "type": "string" }, "description": "§S-20: the hosts the server answers for; a request with another Host is a 421 misdirected request." },
             "ssrfAllowList": { "type": "array", "items": { "type": "string" }, "description": "§S-20: the hosts server-side fetches (image endpoint, loaders) may reach." },
@@ -350,6 +350,17 @@ fn security_schema() -> Value {
             "exposeCacheHeader": {
                 "type": "boolean",
                 "description": "S-21.3: emit the `x-oxide-fw-cache` status header. Default true."
+            },
+            "sri": {
+                "type": "boolean",
+                "default": true,
+                "description": "V2-E04: emit sha384 subresource-integrity digests for every emitted client JS/CSS chunk in `client.manifest.json` (`integrity`) and stamp the boot `<script type=module>` tag with `integrity` + `crossorigin`. Default true (production builds); dev output is unaffected (the `/@boot/` virtual module has no digest)."
+            },
+            "trustedTypes": {
+                "type": "string",
+                "enum": ["off", "report", "enforce"],
+                "default": "off",
+                "description": "V2-E04: the Trusted Types mode. `report`/`enforce` add `require-trusted-types-for 'script'; trusted-types oxide default` to the emitted CSP — `report` rides an additional Report-Only policy, `enforce` the enforced header. The boot-side policy creation is the client half (docs/deviations.md)."
             }
         }
     })
