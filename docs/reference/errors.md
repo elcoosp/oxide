@@ -192,6 +192,12 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `SNAP-002` | top-level side effect | create connections lazily |
 | `SNP-FORMAT` | snapshot format {} is not supported (expected {}) | — |
 | `SNP-PANIC` | snapshot builder thread panicked | — |
+| `SRC-101` | failed to open the search index directory (missing, stale or corrupt meta.json) | run `oxide build` (the `search.collections` emitter writes dist/search/index), or clear search.collections |
+| `SRC-102` | failed to build or commit the search index (writer, commit or merge failure) | check the dist directory is writable and retry the build |
+| `SRC-103` | search document ingest refused: the entry has an empty `id` or `url` | every indexed entry needs the collection's stable key and a page URL |
+| `SRC-104` | the search query is empty or failed to execute | send `GET /_oxide/search?q=<text>`; a punctuation-only query answers an empty response |
+| `SRC-105` | the static search index failed to serialize or parse (dist/search/static.json) | rebuild (the export is written atomically); the shape is `{docs, postings}` |
+| `SRC-106` | search.collections names a collection content.collections does not have | add the collection to content.collections, or fix the search.collections spelling |
 | `SRV-408` | request body read timed out | — |
 | `SRV-413` | request body exceeds the limit of {} bytes | — |
 | `SRV-ASSET` | asset root {} is not a directory | — |
