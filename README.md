@@ -7,7 +7,7 @@
     <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
     <a href="https://crates.io/crates/oxide-fw-cli"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
     <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
-    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1831%20Rust%20%7C%20458%2F458%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1847%20Rust%20%7C%20458%2F458%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
   </p>
   <p>
     <a href="#install">Install</a> ·
