@@ -5479,6 +5479,10 @@ pub struct PrerenderTargetsArgs<'a> {
     /// a digest emits `integrity` + `crossorigin` (empty map = pre-E04
     /// bytes). Keyed by the client-dir-relative file name.
     pub manifest_integrity: &'a std::collections::BTreeMap<String, String>,
+    /// V2-E04 tail: the adapter-level head producer's links for this route
+    /// (modulepreload + stylesheet URLs the shell should carry). `None`
+    /// keeps the Injector's fields untouched — the pre-milestone bytes.
+    pub head_links: Option<&'a oxide_fw_bundler::head::RouteHeadLinks>,
     pub layout_ids: &'a [String],
     pub layout_modules: &'a [(String, std::path::PathBuf)],
     pub error_route: Option<&'a str>,
@@ -5512,6 +5516,7 @@ async fn prerender_targets(
         boot_script_url,
         boot_script_integrity,
         manifest_integrity,
+        head_links,
         layout_ids,
         layout_modules,
         error_route,
@@ -5584,6 +5589,7 @@ async fn prerender_targets(
                 boot_script_url,
                 boot_script_integrity,
                 manifest_integrity,
+                head_links,
                 layouts: layout_ids,
                 layout_module_paths: layout_modules,
                 error_route_id: error_route,
@@ -5628,10 +5634,30 @@ pub struct PrerenderArgs<'a> {
     /// V2-E04: the manifest's whole `integrity` map, attached to the
     /// Injector (see `PrerenderTargetsArgs.manifest_integrity`).
     pub manifest_integrity: &'a std::collections::BTreeMap<String, String>,
+    /// V2-E04 tail: the adapter-level head producer's links for this route
+    /// (see `PrerenderTargetsArgs.head_links`).
+    pub head_links: Option<&'a oxide_fw_bundler::head::RouteHeadLinks>,
     pub layouts: &'a [String],
     pub layout_module_paths: &'a [(String, std::path::PathBuf)],
     pub error_route_id: Option<&'a str>,
     pub plugin_head: &'a serde_json::Value,
+}
+
+/// V2-E04 tail: keep only the producer's links whose href the shell does
+/// not already carry. Matching is the literal `href="<url>"` the
+/// renderers emit — manifest URLs are `/client/<file>` and carry no
+/// quotes, so a plain substring test cannot false-positive on an
+/// attribute boundary. The order both lists keep is the manifest's
+/// (critical first for `preload`, §10.2 step 4).
+fn filter_head_links(
+    links: &oxide_fw_bundler::head::RouteHeadLinks,
+    shell: &str,
+) -> (Vec<String>, Vec<String>) {
+    let keep = |url: &String| !shell.contains(&format!("href=\"{url}\""));
+    (
+        links.preload.iter().filter(|u| keep(u)).cloned().collect(),
+        links.css.iter().filter(|u| keep(u)).cloned().collect(),
+    )
 }
 
 async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16)> {
@@ -5650,6 +5676,7 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
         boot_script_url,
         boot_script_integrity,
         manifest_integrity,
+        head_links,
         layouts,
         layout_module_paths,
         error_route_id,
@@ -5904,6 +5931,21 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
     // resolves to a digest emits `integrity` + `crossorigin`; an empty map
     // (no manifest entry, SRI off) is the pre-E04 bytes.
     .with_integrity(manifest_integrity.clone());
+    // V2-E04 tail: the adapter-level head producer's links — the
+    // manifest's critical-first modulepreload list and the route's
+    // stylesheet files, spelled `/client/<file>` so every URL resolves to
+    // a digest in the map above (`security.sri` gates the ATTRIBUTES, not
+    // the links: modulepreload is a §10.2 step 4 perf surface, not a
+    // security knob). The filter drops the hrefs the shell already
+    // carries — the adapter's own head emission (the shim's
+    // `inject_route_css` through the neutral model) stays authoritative
+    // for the stylesheets it renders, and the producer completes the head
+    // instead of duplicating it.
+    if let Some(links) = head_links {
+        let (preload, css) = filter_head_links(links, &shell);
+        injector.preload = preload;
+        injector.css_links = css;
+    }
     // PERF-01 / §9.5: embed the page's loader data as an ODF payload so the
     // client's hydration bootstrap has it without a second request. Empty
     // data still encodes (an empty object), matching the live path.
@@ -7468,6 +7510,24 @@ async fn cmd_build(
     } else {
         std::collections::BTreeMap::new()
     };
+    // V2-E04 tail: the adapter-level head producer — the manifest-driven
+    // projection of each route's modulepreload/stylesheet URLs (the seam
+    // the E04 record left wired-and-ready). The typed parse runs beside
+    // the JSON `Value` above (which stays authoritative for the locale
+    // stamp and the boot lookups); a manifest that fails the typed parse
+    // degrades to no producer — no links, the pre-milestone bytes — with
+    // a loud warning, never a build failure.
+    let head_producer: Option<oxide_fw_bundler::head::ManifestHeadProducer> =
+        match serde_json::from_value::<oxide_fw_bundler::ClientManifest>(client_manifest.clone()) {
+            Ok(typed) => Some(oxide_fw_bundler::head::ManifestHeadProducer::new(typed)),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "client.manifest.json does not type-parse; prerender shells carry no manifest head links"
+                );
+                None
+            }
+        };
     let mut server_manifest = read_json(&server_out.join("server.manifest.json"))
         .ok_or_else(|| anyhow::anyhow!("bundler did not write server.manifest.json"))?;
     let build_id = client_manifest
@@ -7644,6 +7704,12 @@ async fn cmd_build(
             &prerender_layout_modules,
             prerender_error_route_id.as_deref(),
         );
+        // V2-E04 tail: the route's manifest-derived head links, resolved
+        // once per entry (the head is route-shaped, not URL-shaped — the
+        // same reading the plugin head's comment carries). Both prerender
+        // arms below hand the same links to every target of the route.
+        use oxide_fw_bundler::head::HeadProducer as _;
+        let head_links = head_producer.as_ref().and_then(|p| p.head_for(&route_id));
         match gen_params {
             oxide_fw_compiler::GenerateParamsResult::Literal(params) => {
                 // Prerendered output exists → effective mode `static` for the
@@ -7690,6 +7756,7 @@ async fn cmd_build(
                     boot_script_url: boot_script_url.as_deref(),
                     boot_script_integrity: boot_script_integrity.as_deref(),
                     manifest_integrity: &manifest_integrity,
+                    head_links: head_links.as_ref(),
                     layout_ids: &layout_ids,
                     layout_modules: &prerender_layout_modules,
                     error_route: prerender_error_route_id.as_deref(),
@@ -7803,6 +7870,7 @@ async fn cmd_build(
                             boot_script_url: boot_script_url.as_deref(),
                             boot_script_integrity: boot_script_integrity.as_deref(),
                             manifest_integrity: &manifest_integrity,
+                            head_links: head_links.as_ref(),
                             layout_ids: &layout_ids,
                             layout_modules: &prerender_layout_modules,
                             error_route: prerender_error_route_id.as_deref(),
@@ -7944,6 +8012,7 @@ async fn cmd_build(
                                     boot_script_url: boot_script_url.as_deref(),
                                     boot_script_integrity: boot_script_integrity.as_deref(),
                                     manifest_integrity: &manifest_integrity,
+                                    head_links: head_links.as_ref(),
                                     layouts: &layout_ids,
                                     layout_module_paths: &prerender_layout_modules,
                                     error_route_id: prerender_error_route_id.as_deref(),
@@ -7968,6 +8037,7 @@ async fn cmd_build(
                                 boot_script_url: boot_script_url.as_deref(),
                                 boot_script_integrity: boot_script_integrity.as_deref(),
                                 manifest_integrity: &manifest_integrity,
+                                head_links: head_links.as_ref(),
                                 layouts: &layout_ids,
                                 layout_module_paths: &prerender_layout_modules,
                                 error_route_id: prerender_error_route_id.as_deref(),
@@ -14034,6 +14104,51 @@ async fn cmd_verify(
     let subject_count = statement["subject"].as_array().map_or(0, Vec::len);
     outln!(w, "subjects: {subject_count} verified against dist");
 
+    // V2-E04 tail: the manifest integrity walk — the mismatch-case loop
+    // the attestation subjects cannot cover (the subjects are signed at
+    // attest time over the dist they saw; this walk re-digests the client
+    // manifest's `integrity` map against whatever the dist carries at
+    // verify time). A clean walk prints the verified count; a missing
+    // manifest (a non-client build, a pre-E04 dist) is a loud skip; a
+    // dirty walk prints each finding and fails with `VRF-INTEGRITY` —
+    // the same fail-closed verdict the subjects carry.
+    match integrity_verdict(&dist) {
+        IntegrityVerdict::Skipped(reason) => {
+            outln!(w, "integrity: skipped ({reason})");
+        }
+        IntegrityVerdict::Corrupt => {
+            return Err(anyhow::Error::new(oxide_fw_diagnostics::OxideError::new(
+                "VRF-INTEGRITY",
+                "client manifest integrity verification failed: dist/client/client.manifest.json does not type-parse",
+            )));
+        }
+        IntegrityVerdict::Verified(checked) => {
+            outln!(w, "integrity: {checked} files verified (sha384)");
+        }
+        IntegrityVerdict::Failed(report) => {
+            for file in &report.missing {
+                outln!(w, "integrity: MISSING {file}");
+            }
+            for finding in &report.mismatched {
+                outln!(
+                    w,
+                    "integrity: MISMATCH {} (expected {}, got {})",
+                    finding.file,
+                    finding.expected,
+                    finding.actual.as_deref().unwrap_or("unreadable")
+                );
+            }
+            return Err(anyhow::Error::new(oxide_fw_diagnostics::OxideError::new(
+                "VRF-INTEGRITY",
+                format!(
+                    "client manifest integrity verification failed: {} missing, {} mismatched",
+                    report.missing.len(),
+                    report.mismatched.len()
+                ),
+            )));
+        }
+    }
+
     // The reproducibility check: rebuild in a scratch copy and compare.
     if rebuild {
         let (match_, detail) = rebuild_and_compare(&rootp).await?;
@@ -14052,6 +14167,60 @@ async fn cmd_verify(
         }
     }
     Ok(0)
+}
+
+/// The verify-time integrity verdict (the `VRF-INTEGRITY` step's shape).
+/// `Skipped` names the reason loudly — a non-client build or a pre-E04
+/// manifest (no `integrity` key) degrades to a skip rather than a failure,
+/// mirroring the signature check's "skipped" verdict. `Corrupt` is the
+/// fail-closed arm: a present-but-unparseable manifest is suspicious, not
+/// absent (a tampered dist could corrupt the file to dodge the walk).
+/// `Failed` carries the full finding list for the operator output.
+enum IntegrityVerdict {
+    Skipped(&'static str),
+    Corrupt,
+    Verified(usize),
+    Failed(oxide_fw_bundler::sri::IntegrityReport),
+}
+
+impl std::fmt::Debug for IntegrityVerdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Skipped(reason) => f.debug_tuple("Skipped").field(reason).finish(),
+            Self::Corrupt => f.write_str("Corrupt"),
+            Self::Verified(checked) => f.debug_tuple("Verified").field(checked).finish(),
+            Self::Failed(report) => f
+                .debug_struct("Failed")
+                .field("missing", &report.missing)
+                .field("mismatched", &report.mismatched)
+                .finish(),
+        }
+    }
+}
+
+/// The `oxide verify` integrity step's decision: read
+/// `dist/client/client.manifest.json`, type-parse it, and walk its
+/// `integrity` map against the bytes under `dist/client/`. Extracted as a
+/// pure (fs-only) decision so the verdict mapping is pinned without
+/// spawning the attestation flow around it.
+fn integrity_verdict(dist: &Path) -> IntegrityVerdict {
+    let manifest_path = dist.join("client/client.manifest.json");
+    let Ok(text) = std::fs::read_to_string(&manifest_path) else {
+        return IntegrityVerdict::Skipped("no client manifest");
+    };
+    let Ok(manifest) = serde_json::from_str::<oxide_fw_bundler::ClientManifest>(&text) else {
+        return IntegrityVerdict::Corrupt;
+    };
+    if manifest.integrity.is_empty() {
+        return IntegrityVerdict::Skipped("manifest carries no integrity map");
+    }
+    let report =
+        oxide_fw_bundler::sri::verify_integrity_map(&dist.join("client"), &manifest.integrity);
+    if report.is_clean() {
+        IntegrityVerdict::Verified(report.checked)
+    } else {
+        IntegrityVerdict::Failed(report)
+    }
 }
 
 /// The key id recorded in the signature envelope (printed when the
