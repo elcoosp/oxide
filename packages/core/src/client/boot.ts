@@ -10,6 +10,7 @@
 
 import { hydrateIslands, type IslandsOptions } from './islands.ts'
 import { createRouter } from './router.ts'
+import { prefetchAdvertised, startLearnedPrefetch } from './prefetch.ts'
 import { decodeOdf } from './odf-decode.ts'
 import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
@@ -489,6 +490,13 @@ export function bootWithRouter(
   let loadingOverlay: HTMLElement | undefined
 
   const onNavigateStart = (url: string): void => {
+    // V2-F13: a navigation starts — cancel the learned prefetcher's
+    // in-flight work first (the spec's cancel-on-navigation).
+    try {
+      navCancel?.()
+    } catch {
+      // a cancel hook must never break the navigation
+    }
     if (typeof adapter.renderLoading !== 'function') return
     const Component = findLoading(url)
     if (Component === undefined) return
@@ -596,8 +604,70 @@ export function bootWithRouter(
     ...(opts.manifest ? { manifest: opts.manifest } : {}),
   })
   const disposeRouter = router.attach()
+  // V2-F13: the learned prefetcher — only when the server advertised
+  // `prefetch:true` in the bootstrap (the typed `prefetch.learned` switch)
+  // and a route manifest is present (both the id resolution and the chunk
+  // warm-up read it). Everything it does is additive: without the
+  // advertisement the loop never starts and the page is byte-identical.
+  let disposePrefetch: (() => void) | undefined
+  let navCancel: (() => void) | undefined
+  const w2 = maybeWindow()
+  if (prefetchAdvertised() && opts.manifest && w2) {
+    const navigatorConn = (w2.navigator as { connection?: { saveData?: boolean; effectiveType?: string } })
+      .connection
+    const idle = (w2 as { requestIdleCallback?: (cb: () => void) => unknown }).requestIdleCallback
+    const pf = startLearnedPrefetch({
+      fetch: (input, init) => w2.fetch(input, init),
+      requestIdle: (cb) => {
+        if (idle) idle(cb)
+        else setTimeout(cb, 1)
+      },
+      setTimeout: (cb, ms) => setTimeout(cb, ms),
+      clearTimeout: (h) => clearTimeout(h as number),
+      conn: navigatorConn,
+      manifest: opts.manifest,
+      currentPath: () => w2.location.pathname,
+      loadChunk: (chunk) => {
+        const base = opts.clientBase ?? '/client/'
+        const url = chunk.startsWith('/') ? chunk : `${base}${chunk}`
+        void import(/* @vite-ignore */ url).catch(() => {})
+      },
+      fetchData: (dataPath) => {
+        void w2
+          .fetch(`/__data?route=${encodeURIComponent(dataPath)}`, {
+            headers: { accept: 'application/oxide+odf, application/json' },
+          })
+          .catch(() => {})
+      },
+      injectSpeculationRules: (url) => {
+        try {
+          const s = doc.createElement('script')
+          s.type = 'speculationrules'
+          s.textContent = JSON.stringify({
+            prefetch: [{ source: 'list', urls: [url], eagerness: 'moderate' }],
+          })
+          doc.head.append(s)
+        } catch {
+          // A hostile head is not the prefetcher's problem.
+        }
+      },
+      onCancelOnNavigate: (cancel) => {
+        // Cancel in-flight work when a navigation starts (the spec's
+        // "cancelled on navigation"). The router hook is a `const`, so the
+        // cancel rides the existing onNavigateStart wrapper: `bootWithRouter`
+        // passes the same function object into createRouter, and this
+        // wrapper decorates the `lastInput`-tracking adapter update that
+        // every navigation flows through (`onNavigateStart` fires before
+        // the fetch — exactly the cancel point the spec names).
+        navCancel = cancel
+      },
+      debug: (msg) => console.debug?.(`oxide: ${msg}`),
+    })
+    disposePrefetch = () => pf.dispose()
+  }
   return () => {
     disposeRouter()
+    disposePrefetch?.()
     doc.removeEventListener('ox:data', onData as EventListener)
     bootGlue?.dispose()
     bootGlue = undefined
