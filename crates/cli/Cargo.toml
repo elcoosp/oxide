@@ -32,6 +32,14 @@ name = "attest"
 harness = false
 required-features = ["bench-util"]
 
+# V2-E11: the docs-generator benches behind the same `bench-util` opt-in —
+# the four reference-page renders `oxide docs generate` (and `--check`)
+# perform.
+[[bench]]
+name = "docs"
+harness = false
+required-features = ["bench-util"]
+
 [dependencies]
 chrono = { workspace = true }
 oxc_resolver = { workspace = true }
