@@ -33,7 +33,7 @@ The commands:
 - **`oxide test`** — gate on build manifests
 - **`oxide audit`** — OSV advisory scan against package-lock.json
 - **`oxide perf bisect`** — hunt the commit that regressed a metric (build-ms / client-js-bytes / ttfb-ms)
-- **`oxide verify`** — check an attested build: canonical provenance, ed25519 signature (`--pubkey`), subject digests, `--rebuild`
+- **`oxide verify`** — check an attested build: canonical provenance, ed25519 signature (`--pubkey`), subject digests, the client-manifest integrity walk (`VRF-INTEGRITY`), `--rebuild`
 - **`oxide schema`** — print the JSON Schema for `oxide.config.ts`
 - **`oxide docs generate`** — write `docs/reference/` from the linked crates (§18 matrix, config schema, CLI tree, error registry); `--check` is the CI docs gate
 - **`oxide mcp`** — MCP server over stdio
@@ -48,7 +48,7 @@ The commands:
 oxide dev
 oxide build --attest
 oxide start --port 3000
-oxide check --strict
+OXIDE_CHECK_STRICT=1 oxide check
 ```
 
 Every command is also a public `cmd_*` function — tests and tooling can call them directly.
