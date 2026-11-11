@@ -22,6 +22,13 @@ use oxide_fw_server::ActionDispatchArgs;
 use oxide_fw_server::MiddlewareDispatchArgs;
 use std::path::PathBuf;
 
+/// V2-E04: an empty integrity map for the args structs — `static` (not
+/// `const`) so `&NO_MANIFEST_INTEGRITY` has the `'static` lifetime the
+/// returned args structs require (a `const` reference would be a fresh
+/// temporary at each use site).
+static NO_MANIFEST_INTEGRITY: std::collections::BTreeMap<String, String> =
+    std::collections::BTreeMap::new();
+
 // ------------------------------------------------------------------ helpers
 
 async fn run_ok(args: &[&str]) -> (i32, String) {
@@ -844,6 +851,8 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         loader_runner: Some(&loader_runner),
         module_path: Some(std::path::Path::new("/fake/page.server.ts")),
         boot_script_url: None,
+        boot_script_integrity: None,
+        manifest_integrity: &NO_MANIFEST_INTEGRITY,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -890,6 +899,8 @@ async fn write_prerender_without_loader_uses_empty_data() {
         loader_runner: None,
         module_path: None,
         boot_script_url: None,
+        boot_script_integrity: None,
+        manifest_integrity: &NO_MANIFEST_INTEGRITY,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -927,6 +938,8 @@ fn sidecar_args<'a>(
         loader_runner,
         module_path: Some(std::path::Path::new("/fake/page.server.ts")),
         boot_script_url: None,
+        boot_script_integrity: None,
+        manifest_integrity: &NO_MANIFEST_INTEGRITY,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -4459,6 +4472,8 @@ async fn write_prerender_carries_500_status_for_marker_body() {
         loader_runner: None,
         module_path: None,
         boot_script_url: None,
+        boot_script_integrity: None,
+        manifest_integrity: &NO_MANIFEST_INTEGRITY,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -4496,6 +4511,8 @@ async fn write_prerender_carries_200_status_for_clean_body() {
         loader_runner: None,
         module_path: None,
         boot_script_url: None,
+        boot_script_integrity: None,
+        manifest_integrity: &NO_MANIFEST_INTEGRITY,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -9423,4 +9440,63 @@ async fn doctor_prints_the_capability_matrix() {
     // pinned by `capability_row_lines_cover_every_capability_in_order`.
     assert!(out.contains("[full] rust-fns"), "{out}");
     assert!(out.contains("[full] attestation"), "{out}");
+}
+
+// ------------------------------------------------------------------ V2-E04 (SRI half)
+
+#[test]
+fn boot_script_tag_carries_integrity_attributes_when_the_manifest_has_a_digest() {
+    // V2-E04: with a manifest digest, the boot `<script type=module>` tag
+    // gains `integrity` + `crossorigin="anonymous"` — a CDN serving a
+    // modified chunk fails closed instead of executing.
+    let tag = boot_script_tag(
+        "client/__boot__-abc123.js",
+        "nonce-1",
+        Some("sha384-TaLTMFHfY6sTuqLLMg+Zm7Ev+NiiDsjI3P5a7fH6ztJDuNak4csE09KYeF784D3I"),
+    );
+    assert!(
+        tag.starts_with(r#"<script type="module" src="/client/__boot__-abc123.js""#),
+        "leading slash normalized: {tag}"
+    );
+    assert!(
+        tag.contains(
+            r#"integrity="sha384-TaLTMFHfY6sTuqLLMg+Zm7Ev+NiiDsjI3P5a7fH6ztJDuNak4csE09KYeF784D3I""#
+        ),
+        "{tag}"
+    );
+    assert!(tag.contains(r#"crossorigin="anonymous""#), "{tag}");
+    assert!(tag.contains(r#"nonce="nonce-1""#), "{tag}");
+}
+
+#[test]
+fn boot_script_tag_without_a_digest_is_byte_identical_to_the_pre_e04_shape() {
+    // Dev's `/@boot/` virtual module and `security.sri: false` both yield
+    // `None` — the emitted tag must stay exactly what pre-E04 builds wrote.
+    let tag = boot_script_tag("/@boot/boot.mjs", "nonce-1", None);
+    assert_eq!(
+        tag,
+        r#"<script type="module" src="/@boot/boot.mjs" nonce="nonce-1"></script>"#
+    );
+}
+
+#[test]
+fn manifest_integrity_lookup_names_the_client_relative_file() {
+    // The integrity map is keyed by the client-dir-relative file name (the
+    // same spelling entry_chunk uses); both the `client/`-prefixed and
+    // leading-slashed URL forms resolve, and a pre-E04 manifest (no
+    // `integrity` key) yields None.
+    let manifest = serde_json::json!({
+        "integrity": { "__boot__-abc.js": "sha384-digest" }
+    });
+    let node = manifest.get("integrity");
+    assert_eq!(
+        manifest_integrity_for(node, "client/__boot__-abc.js").as_deref(),
+        Some("sha384-digest")
+    );
+    assert_eq!(
+        manifest_integrity_for(node, "/client/__boot__-abc.js").as_deref(),
+        Some("sha384-digest")
+    );
+    assert_eq!(manifest_integrity_for(node, "/@boot/boot.mjs"), None);
+    assert_eq!(manifest_integrity_for(None, "client/__boot__-abc.js"), None);
 }
