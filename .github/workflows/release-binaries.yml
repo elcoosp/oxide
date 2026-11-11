@@ -65,11 +65,15 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p oxide-fw-cli
+        # V2-F09: release binaries carry the built-in search engine (the
+        # spec's `search` feature — default off in dev builds, on in
+        # release).
+        run: cross build --release --target ${{ matrix.target }} -p oxide-fw-cli --features search
 
       - name: Build (native)
         if: ${{ !matrix.cross }}
-        run: cargo build --release --target ${{ matrix.target }} -p oxide-fw-cli
+        # V2-F09: same — the release binary ships the search engine.
+        run: cargo build --release --target ${{ matrix.target }} -p oxide-fw-cli --features search
 
       - name: Stage binary
         shell: bash
