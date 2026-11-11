@@ -1007,9 +1007,14 @@ impl InjectStream {
     ///
     /// Panics if the output sink mutex is poisoned.
     pub fn finish(mut self) -> Result<Vec<u8>> {
-        let rewriter = self
+        // Take the rewriter out up front: the `Option` IS the finished
+        // state (the `stream already finished` error below), so the tail
+        // needs no second lookup whose safety would depend on the guard
+        // above — the old `take().unwrap()` here was safe only because of
+        // the remote `as_mut().ok_or_else`, which read like a landmine.
+        let mut rewriter = self
             .rewriter
-            .as_mut()
+            .take()
             .ok_or_else(|| err("RND-INJECT", "stream already finished"))?;
         if !self.head_checked && !self.pending.is_empty() {
             // Never decided: treat the remaining input as a whole document.
@@ -1023,7 +1028,6 @@ impl InjectStream {
                 .map_err(|e| err("RND-INJECT", format!("streaming injection failed: {e}")))?;
             self.pending.clear();
         }
-        let rewriter = self.rewriter.take().unwrap();
         rewriter.end().map_err(|e| {
             err(
                 "RND-INJECT",
