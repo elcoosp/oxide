@@ -1,3 +1,100 @@
+# Handoff — V2-F13's learned-prefetch substrate landed server-side and client-side (`feat/learned-prefetch-navgraph`: the `server::navgraph` graph + the `/_oxide/nav` endpoint + the data-plane observation arm; the typed `prefetch` key with `DSP-115`; the seventh `window.__oxide` field threaded through the CLI's prerender paths; the client prefetch loop behind the advertised flag); every file this session added or touched is pedantic-clean
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/8 GB-disk
+sandbox, `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`, nasm built
+from source into `~/.local` for rav1e):**
+- `cargo fmt --all --check` clean; the CI bar (`cargo clippy --workspace
+  --all-targets --all-features -- -D warnings`) ZERO findings; the
+  pedantic sweep over the milestone files — every file this session added
+  (`server/src/navgraph.rs`, the `navgraph_tdd` 22, the bench, the
+  example, `config/tests/prefetch_config.rs` 8, `render/tests/
+  prefetch_bootstrap_tdd.rs` 7, the two new TS modules/tests) and the
+  touched sites (`server/src/lib.rs`'s nav arms, the config layer/schema
+  edits, render's bootstrap chain, the CLI threading) print ZERO findings;
+  the pre-existing server/odf pedantic debt still prints under the sweep,
+  unchanged (those crates have not opted into `[lints] workspace = true`
+  yet — the documented hygiene-pass order).
+- Runtime suites green (all-features): `oxide-fw-server` 272 (56 lib +
+  18 csp + 18 governor + 21 inject + 27 live + the new `navgraph_tdd` 22
+  + 83 server_tdd + 9 status_sidecars + 18 stream + integration), and the
+  pre-F13 shapes pinned byte-identical by the untouched pins;
+  `oxide-fw-config` 129 (24 lib + the new `prefetch_config` 8 + the rest
+  unchanged; `checked_in_schema_matches_the_function` green after the
+  regenerated `schemas/oxide-fw-config.schema.json`), `oxide-fw-render`
+  88 (12 lib + the new `prefetch_bootstrap_tdd` 7 + 46 render_tdd + 13
+  snapshots — the additive bootstrap default keeps every existing pin
+  byte-identical).
+- Benches: the new `navgraph` groups (`nav_observe`/`nav_top`/`nav_decay`/
+  `nav_persist` behind `bench-util`) compile and run; the pre-existing
+  `status_sidecars` bench's fixture bug (the `touch()` helper used
+  `File::create`, truncating the just-written sidecar to empty, so the
+  fixture sanity assert failed) is fixed in this diff — `cargo test
+  --benches` green for the crate.
+- TS: `packages/core` `node --test test/*.test.ts` 342/342 (the new
+  `prefetch.test.ts` 14 + the router nav-header pins 3 included); the
+  README badge re-measured 1,904→1,941 Rust (the static attribute count)
+  and 458→475 TS (+17 core pins; the adapter-package suites need the pnpm
+  workspace's node_modules — not available in this sandbox, so their 133
+  rides the CI-measured baseline).
+- Doc-drift fixes IN this diff: `docs/errors.toml` (the `DSP-115` row),
+  the regenerated `docs/reference/{config,errors}.md` rows/section,
+  `docs/architecture.md` (the server row + the what-changed bullet),
+  `docs/deviations.md` (the F13 record: the two-header delta,
+  skip-not-fold, the param-free data prefetch, the lazy decay),
+  `docs/spec-v0.2-draft.md` (the V2.O F13 row), `crates/server/README.md`
+  (the NavGraph bullet), `README.md` (the re-measured badge), and
+  `HANDOFF.md` (this header).
+
+## What landed
+
+**M1 — the learned-prefetch server substrate** (`feat/learned-prefetch-navgraph`):
+`crates/server/src/navgraph.rs` — `NavGraph` (observe/decay/top with the
+spec's k-anonymity floor and half-life, `merge_from`/`persist` snapshot,
+`spawn_flusher`), `nav_observation` (the data-plane seam), the pipeline
+arms (`with_nav_graph`, the observation that falls through, the
+`/_oxide/nav` endpoint), the typed `prefetch` key (`PrefetchConfig` +
+`DSP-115` + the schema fragment), the seventh bootstrap field and the CLI
+wire-up (`start_server_inner_full` constructs the graph from
+`prefetch.learned`, merges the snapshot, spawns the flusher; the prerender
+args thread the advertisement). Pins: `navgraph_tdd` 22 + `prefetch_config`
+8 + `prefetch_bootstrap_tdd` 7 + the CLI wire-up pin. Bench:
+`crates/server/benches/navgraph.rs`. Example:
+`crates/server/examples/navgraph.rs`.
+
+**M2 — the client prefetch half** (same branch, gated on M1 green):
+`packages/core/src/client/prefetch.ts` — the pure policy
+(`connectionAllowsPrefetch`, `pickEdges`, `navRouteHeaders` over the route
+manifest, `edgeToDataPath`) and the runtime loop (idle-gated, 2s spacing,
+3 outstanding, cancel-on-navigation, chunk+data split per edge, the
+speculation-rules hint for the top param-free edge), the router's
+navigation header stamping, and the `boot.ts` wiring behind
+`prefetchAdvertised()`. Pins: `prefetch.test.ts` 14 + the router pins 3.
+
+**Micro-debt cleaned (found during the audit):** the `status_sidecars`
+bench's `touch()` helper truncated its own fixtures (`File::create` on an
+existing file), so the bench failed its fixture sanity assert on every
+run — the useless mtime touch is gone and the bench is green.
+
+**Additive in the same diff:** the doc-drift fixes listed above and the
+per-file conventional commit split in `ship.toml`.
+
+## Where to pick up, in one sentence
+
+F09's engine is still the remaining half (`crates/search`: tantivy index,
+`/_oxide/search`, the static matcher); the client Trusted Types half is
+the remaining E04 work (`packages/oxide`: the `tt.createHTML` policy, the
+`innerHTML` walk, the `rg` lint test); the live-SSR path still takes its
+head from the adapter stream (the producer's live adoption is the
+follow-up slice); the conformance-suite assertion for F13's wire (a
+Playwright spec driving a real learned prefetch) rides the R01 pass.
+
+---
+
 # Handoff — the V2-E04 tail landed server-side (`feat/head-producer-integrity-verify`: the adapter-level head producer — `bundler::head::HeadProducer` + `ManifestHeadProducer`, the manifest→modulepreload/stylesheet projection the CLI feeds into the render `Injector`'s `preload`/`css_links` on every prerender path through `filter_head_links`, deduped against the adapter's own head emission — and `oxide verify`'s integrity walk, `bundler::sri::verify_integrity_map` + the fail-closed `VRF-INTEGRITY` verdict); both milestone crates' new files are pedantic-clean
 
 ## Where things stand
