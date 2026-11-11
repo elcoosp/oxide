@@ -94,12 +94,12 @@ class FakeHistory {
   }
 }
 
-type FetchCall = { url: string; signal: AbortSignal | undefined }
+type FetchCall = { url: string; signal: AbortSignal | undefined; headers?: Record<string, string> }
 
 function makeFetch(routes: Record<string, unknown>) {
   const calls: FetchCall[] = []
-  const fetchImpl = (url: string, init?: { signal?: AbortSignal }): Promise<Response> => {
-    calls.push({ url, signal: init?.signal })
+  const fetchImpl = (url: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }): Promise<Response> => {
+    calls.push({ url, signal: init?.signal, headers: init?.headers })
     const route = new URL(url, 'http://x.test').searchParams.get('route') ?? ''
     if (route === '/hang') return new Promise<Response>(() => {}) // never resolves
     const payload = routes[route] ?? { route, params: {}, url: `http://x.test${route}`, data: { missing: true } }
@@ -313,4 +313,45 @@ test('router: dataCache bounded at 64 entries, oldest evicted (BUG-15)', async (
   assert.equal(calls.length, 70, 'most-recent entry still cached (no refetch)')
   await router.goto('/p0')
   assert.equal(calls.length, 71, 'oldest entry evicted (refetched)')
+})
+
+// ---- §V2-F13: the learned-prefetch navigation headers ----
+//
+// A NAVIGATION's /__data fetch carries `x-oxide-nav-from`/`x-oxide-nav-to`
+// resolved against the route manifest (route ids, never URLs with params);
+// a prefetch's fetch does not (it is not a navigation — stamping it would
+// pollute the aggregate graph the server learns from).
+
+const NAV_MANIFEST = {
+  routes: {
+    'routes/index/page': { preload: ['index.js'] },
+    'routes/about/page': { preload: ['about.js'] },
+  },
+}
+
+test('router: goto() stamps the nav route-id headers on the data fetch', async () => {
+  const { router, calls } = setup({ manifest: NAV_MANIFEST })
+  await router.goto('/about')
+  assert.equal(calls.length, 1)
+  const call = mustCall(calls, 0)
+  assert.equal(call.headers?.['x-oxide-nav-from'], 'routes/index/page')
+  assert.equal(call.headers?.['x-oxide-nav-to'], 'routes/about/page')
+})
+
+test('router: prefetch() does not stamp the nav headers', async () => {
+  const { router, calls } = setup({ manifest: NAV_MANIFEST })
+  router.prefetch('/about')
+  await settle()
+  assert.equal(calls.length, 1)
+  const call = mustCall(calls, 0)
+  assert.equal(call.headers?.['x-oxide-nav-from'], undefined)
+  assert.equal(call.headers?.['x-oxide-nav-to'], undefined)
+})
+
+test('router: goto() without a manifest stamps no nav headers', async () => {
+  const { router, calls } = setup({ manifest: { routes: {} } })
+  await router.goto('/about')
+  assert.equal(calls.length, 1)
+  const call = mustCall(calls, 0)
+  assert.equal(call.headers?.['x-oxide-nav-from'], undefined)
 })
