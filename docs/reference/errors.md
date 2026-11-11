@@ -201,6 +201,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `SRV-PROXY` | build request failed: {e} | — |
 | `SRV-TLS` | cert parse failed: {e} | — |
 | `SRV-WS` | the websocket handshake or a frame decode failed | — |
+| `VRF-INTEGRITY` | client manifest integrity verification failed: {detail} | Restore dist/client from a trusted copy or rebuild with `oxide build` |
 
 ## Spec-only codes
 
