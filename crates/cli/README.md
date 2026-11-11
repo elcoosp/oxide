@@ -35,6 +35,7 @@ The commands:
 - **`oxide perf bisect`** — hunt the commit that regressed a metric (build-ms / client-js-bytes / ttfb-ms)
 - **`oxide verify`** — check an attested build: canonical provenance, ed25519 signature (`--pubkey`), subject digests, `--rebuild`
 - **`oxide schema`** — print the JSON Schema for `oxide.config.ts`
+- **`oxide docs generate`** — write `docs/reference/` from the linked crates (§18 matrix, config schema, CLI tree, error registry); `--check` is the CI docs gate
 - **`oxide mcp`** — MCP server over stdio
 - **`oxide render`** — render one route to HTML, bypass the server
 - **`oxide config`** — print the loaded config as JSON
