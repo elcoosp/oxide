@@ -758,11 +758,12 @@
           "type": "array"
         },
         "csp": {
-          "description": "§S-20: the Content-Security-Policy mode — `strict` (nonces), `hash`, `off`.",
+          "description": "§S-20 / V2-E04: the Content-Security-Policy mode — `strict` (nonces), `hash`, `report-only` (the policy rides `Content-Security-Policy-Report-Only` with a `report-to` group the `/_oxide/csp-report` endpoint backs), `off`.",
           "enum": [
             "strict",
             "hash",
-            "off"
+            "off",
+            "report-only"
           ],
           "type": "string"
         },
@@ -800,6 +801,11 @@
           "minimum": 60,
           "type": "integer"
         },
+        "sri": {
+          "default": true,
+          "description": "V2-E04: emit sha384 subresource-integrity digests for every emitted client JS/CSS chunk in `client.manifest.json` (`integrity`) and stamp the boot `<script type=module>` tag with `integrity` + `crossorigin`. Default true (production builds); dev output is unaffected (the `/@boot/` virtual module has no digest).",
+          "type": "boolean"
+        },
         "ssrfAllowList": {
           "description": "§S-20: the hosts server-side fetches (image endpoint, loaders) may reach.",
           "items": {
@@ -813,6 +819,16 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "trustedTypes": {
+          "default": "off",
+          "description": "V2-E04: the Trusted Types mode. `report`/`enforce` add `require-trusted-types-for 'script'; trusted-types oxide default` to the emitted CSP — `report` rides an additional Report-Only policy, `enforce` the enforced header. The boot-side policy creation is the client half (docs/deviations.md).",
+          "enum": [
+            "off",
+            "report",
+            "enforce"
+          ],
+          "type": "string"
         }
       },
       "type": "object"
