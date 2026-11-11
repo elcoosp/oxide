@@ -1618,6 +1618,92 @@ modes as the fix).
    broken client and should be visible in the logs, not silently
    drained.
 
+## V2-F13 learned prefetch — the nav-graph substrate, the config key and the client half — deltas and deferrals (substrate step) (2026-11-11)
+
+**What the spec asks.** §V2-F13: the client router adds `x-oxide-nav-from:
+<route id>` to the `/__data` fetches it issues for navigations; the server
+keeps a `NavGraph` of aggregate transition weights (7-day half-life, the
+k-anonymity floor at 20 observations, edges are route ids — never URLs with
+params, no user identifiers), `GET /_oxide/nav?from=<route>` answers the top
+3, the graph flushes to `.oxide/nav-graph.json` hourly and loads at start,
+and the client prefetches data and chunks for the edges at or above
+`prefetch.minProbability` (default 0.35) after idle — max 3 outstanding, one
+new prefetch per 2 s, cancelled on navigation, plus a Chromium-only
+speculation-rules hint for the top edge.
+
+**What lands.** The server substrate end-to-end
+(`feat/learned-prefetch-navgraph`): `crates/server/src/navgraph.rs`
+(`NavGraph` — the `DashMap<(route id, route id), f64>` weight table with
+`observe`/`decay`/`top`, the throttled lazy decay, the 50k-edge cap,
+`sanitize_edge_route`'s skip-not-fold posture, `merge_from`/`persist` —
+the atomic tmp+rename snapshot, malformed content ignored — and
+`spawn_flusher`); the pipeline's native-prefix observation arm (the data
+dispatch is never answered by it) and the `/_oxide/nav` endpoint
+(`nav_response_from_query`: `{from, edges: [{to, probability}]}`, `?limit=`
+capped at 32, 400 on a missing/empty `from`, 405 + `allow` on a non-GET,
+and the metrics endpoint's "not configured" 404 when no graph is attached);
+the typed `prefetch` config key (`learned` default off — the inert-defaults
+contract the `live`/`stream`/`brownout` sections set — and `minProbability`
+default 0.35) schema'd with descriptions and load-time-validated
+(`DSP-115`, the DSP-110..114 successor — a quoted `"true"` or a
+`minProbability` outside 0.0–1.0 fails the load before the typed parse);
+the seventh `window.__oxide` field (`prefetch:true`,
+`hydration_bootstrap_with_prefetch` + `hydration_bootstrap_prefetch_no_build`
++ `Injector::with_prefetch` — `false`, the default, keeps every emitted
+byte identical), threaded from the typed config through the CLI's three
+prerender emit paths and the `oxide start` nav wiring (the graph is
+constructed, the snapshot merged at start, the flusher spawned); the
+client half (`packages/core/src/client/prefetch.ts` — the connection gate,
+`pickEdges`, the manifest-resolved route-id headers, `edgeToDataPath`, the
+idle-gated loop; the router stamps the nav headers on navigation
+`/__data` fetches and never on prefetches; `boot.ts` starts the loop when
+the bootstrap advertises `prefetch:true`). 22 server TDD pins + 8 config
+pins + 7 render bootstrap pins + 1 CLI wire-up pin + 14 TS pins; the
+`navgraph` criterion bench (`observe`/`top`/`decay`/`persist` behind
+`bench-util`) and the `navgraph.rs` walkthrough example ride along.
+
+**Deltas.**
+
+1. **Route ids ride two headers.** The spec's `observe(from, to)` says
+   edges are route ids, never URLs with params — but the `/__data?route=`
+   value is the concrete path (`/blog/a`), not the id
+   (`routes/blog/_slug_/page`). The client therefore stamps BOTH ids:
+   the spec's `x-oxide-nav-from` for the source and `x-oxide-nav-to` for
+   the target, resolved against the route manifest (`routeIdFor`); both
+   must be present and sane or nothing is observed. Storing the raw path
+   would fragment the graph per-instance (`/blog/a`, `/blog/b` — separate
+   edges that never clear the k-anonymity floor) and leak URL params into
+   the aggregate.
+2. **Garbage is skipped, not folded.** The vitals beacon folds a
+   malformed route label into `_other`; a nav edge must not — a folded
+   `_other` target would accumulate an artificial popular transition.
+   `sanitize_edge_route` refuses anything outside the route-id alphabet
+   (plus the dynamic-segment brackets) and the observation is dropped.
+3. **The data prefetch covers param-free edges only.** The spec reads
+   "prefetches data and chunks for edges with probability at least 0.35";
+   a param route id has no single concrete `/__data` path to fetch (the
+   id→path inversion is one-to-many), so `edgeToDataPath` inverts only
+   param-free ids (`routes/about/page` → `/about`, `routes/index/page` →
+   `/`) and param edges warm their chunk lists (which ARE id-addressable
+   through the manifest) without a data fetch. Closing the gap needs the
+   §8.3 typegen map on the wire — a follow-up slice, not scheduled here.
+4. **Decay is lazy, not timed.** The spec's `decay(now)` runs on access
+   (throttled to once per minute of wall clock on `observe`, always on
+   `top` and `persist`) instead of by a background timer — an idle
+   server's graph is cost-free, and the explicit `decay(now)` stays
+   testable with an injected instant. The hourly flush decay runs first,
+   so the snapshot carries current weights.
+5. **`minProbability` rides the module default on the client.** The
+   bootstrap advertises `prefetch:true` (the switch) but not the
+   per-project threshold; the client uses the spec's 0.35 until the
+   bootstrap carries `minProbability` too (a one-word addition when a
+   consumer asks for it).
+
+**Deferrals.** None F13-specific: the endpoint, the observation, the
+snapshot round trip and the client loop are all wired end-to-end. The
+conformance-suite assertion (the F-WP obligation) rides the same wire the
+Playwright smoke specs drive; adding a dedicated spec is the R01 pass.
+
 ## V2-E04 tail — the adapter-level head producer + the verify integrity walk (2026-11-11)
 
 **What the spec asks.** The same §V2-E04 clause the parent section quotes:
