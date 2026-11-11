@@ -693,3 +693,101 @@ fn script_placeholder_escapes_hostile_src_and_attrs() {
     assert!(out.contains("&quot;"), "{out}");
     assert!(out.contains("nonce=\"n&amp;&quot;\""), "{out}");
 }
+
+// ---------------------------------------------------------------- V2-E04 (SRI half)
+
+/// V2-E04: the manifest `integrity` digests ride the Injector — a
+/// modulepreload/stylesheet URL whose client-relative file has a digest
+/// carries `integrity` + `crossorigin="anonymous"` on the emitted link
+/// (a CDN serving a modified chunk fails closed instead of executing).
+#[test]
+fn injector_stamps_sri_attributes_on_links_with_a_digest() {
+    let mut inj = Injector::new(
+        HeadTags::default(),
+        "NONCE7".to_string(),
+        "routes/index/page".to_string(),
+    );
+    inj.preload = vec!["/client/index-abc.js".to_string()];
+    inj.css_links = vec!["/client/index-abc.css".to_string()];
+    inj.integrity = [
+        ("index-abc.js".to_string(), "sha384-JSW".to_string()),
+        ("index-abc.css".to_string(), "sha384-CSS".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    let html = "<!doctype html><html><head><title>x</title></head><body></body></html>";
+    let out = inj.inject_into_html(html).expect("inject");
+    assert!(
+        out.contains(r#"<link rel="modulepreload" href="/client/index-abc.js" integrity="sha384-JSW" crossorigin="anonymous">"#),
+        "{out}"
+    );
+    assert!(
+        out.contains(r#"<link rel="stylesheet" href="/client/index-abc.css" integrity="sha384-CSS" crossorigin="anonymous">"#),
+        "{out}"
+    );
+}
+
+/// The integrity map is keyed by the client-dir-relative file name (the
+/// manifest spelling); a bare-name URL resolves the same as a
+/// `/client/`-prefixed one, and a URL with no digest in the map emits
+/// byte-identical pre-E04 bytes (an unbundled/dev asset, or a file the
+/// bundler did not digest).
+#[test]
+fn injector_sri_lookup_takes_bare_names_and_skips_undigested_urls() {
+    let mut inj = Injector::new(
+        HeadTags::default(),
+        "NONCE8".to_string(),
+        "routes/index/page".to_string(),
+    );
+    inj.preload = vec![
+        "/client/with.js".to_string(),
+        "bare.js".to_string(),
+        "/vendor/no-digest.js".to_string(),
+    ];
+    inj.integrity = [
+        ("with.js".to_string(), "sha384-W".to_string()),
+        ("bare.js".to_string(), "sha384-B".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    let html = "<!doctype html><html><head></head><body></body></html>";
+    let out = inj.inject_into_html(html).expect("inject");
+    assert!(
+        out.contains(r#"href="/client/with.js" integrity="sha384-W""#),
+        "{out}"
+    );
+    assert!(
+        out.contains(r#"href="bare.js" integrity="sha384-B""#),
+        "{out}"
+    );
+    // No digest for `vendor/no-digest.js` → no attributes, pre-E04 bytes.
+    assert!(
+        out.contains(r#"<link rel="modulepreload" href="/vendor/no-digest.js">"#),
+        "{out}"
+    );
+}
+
+/// An empty map (no manifest, or `security.sri: false` upstream) keeps
+/// every link byte-identical to the pre-E04 shapes.
+#[test]
+fn injector_without_integrity_map_is_byte_identical_to_pre_e04() {
+    let mut inj = Injector::new(
+        HeadTags::default(),
+        "NONCE9".to_string(),
+        "routes/index/page".to_string(),
+    );
+    inj.preload = vec!["/chunk.js".to_string()];
+    inj.css_links = vec!["/app.css".to_string()];
+    let html = "<!doctype html><html><head></head><body></body></html>";
+    let out = inj.inject_into_html(html).expect("inject");
+    assert!(
+        out.contains(r#"<link rel="modulepreload" href="/chunk.js">"#),
+        "{out}"
+    );
+    assert!(
+        out.contains(r#"<link rel="stylesheet" href="/app.css">"#),
+        "{out}"
+    );
+    assert!(!out.contains("integrity="), "{out}");
+    assert!(!out.contains("crossorigin"), "{out}");
+}
