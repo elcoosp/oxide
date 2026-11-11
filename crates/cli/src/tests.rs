@@ -853,6 +853,7 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         boot_script_url: None,
         boot_script_integrity: None,
         manifest_integrity: &NO_MANIFEST_INTEGRITY,
+        head_links: None,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -901,6 +902,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
         boot_script_url: None,
         boot_script_integrity: None,
         manifest_integrity: &NO_MANIFEST_INTEGRITY,
+        head_links: None,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -940,6 +942,7 @@ fn sidecar_args<'a>(
         boot_script_url: None,
         boot_script_integrity: None,
         manifest_integrity: &NO_MANIFEST_INTEGRITY,
+        head_links: None,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -4474,6 +4477,7 @@ async fn write_prerender_carries_500_status_for_marker_body() {
         boot_script_url: None,
         boot_script_integrity: None,
         manifest_integrity: &NO_MANIFEST_INTEGRITY,
+        head_links: None,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -4513,6 +4517,7 @@ async fn write_prerender_carries_200_status_for_clean_body() {
         boot_script_url: None,
         boot_script_integrity: None,
         manifest_integrity: &NO_MANIFEST_INTEGRITY,
+        head_links: None,
         layouts: &[],
         layout_module_paths: &[],
         error_route_id: None,
@@ -9499,4 +9504,150 @@ fn manifest_integrity_lookup_names_the_client_relative_file() {
     );
     assert_eq!(manifest_integrity_for(node, "/@boot/boot.mjs"), None);
     assert_eq!(manifest_integrity_for(None, "client/__boot__-abc.js"), None);
+}
+
+// ------------------------------------------------------------------ V2-E04 tail (head producer + verify integrity)
+
+#[test]
+fn filter_head_links_dedupes_the_shell_stylesheet_and_keeps_modulepreload() {
+    // The adapter's shell already carries the stylesheet hrefs (the shim's
+    // `inject_route_css` through the neutral model); the producer's
+    // stylesheet entries must not double-link them. modulepreload is
+    // producer-owned — nothing else emits it, so it survives.
+    let links = oxide_fw_bundler::head::RouteHeadLinks {
+        preload: vec!["/client/index-a1.js".to_string()],
+        css: vec!["/client/index-c2.css".to_string()],
+    };
+    let shell = r#"<html><head><link rel="stylesheet" href="/client/index-c2.css"></head></html>"#;
+    let (preload, css) = filter_head_links(&links, shell);
+    assert_eq!(preload, vec!["/client/index-a1.js".to_string()]);
+    assert!(
+        css.is_empty(),
+        "the shell's stylesheet suppresses the duplicate"
+    );
+}
+
+#[test]
+fn filter_head_links_passes_everything_through_a_shell_without_links() {
+    // The no-renderer placeholder path (a project without `componentFor`)
+    // builds its head from the plugin/meta model only — the manifest links
+    // arrive untouched and unstyled pages get styled.
+    let links = oxide_fw_bundler::head::RouteHeadLinks {
+        preload: vec![
+            "/client/index-a1.js".to_string(),
+            "/client/shared-b2.js".to_string(),
+        ],
+        css: vec!["/client/index-c2.css".to_string()],
+    };
+    let shell = "<!doctype html><html><head><title>x</title></head><body></body></html>";
+    let (preload, css) = filter_head_links(&links, shell);
+    assert_eq!(preload.len(), 2);
+    assert_eq!(css, vec!["/client/index-c2.css".to_string()]);
+}
+
+fn integrity_manifest_fixture(dir: &std::path::Path, tamper: bool) {
+    std::fs::create_dir_all(dir.join("client")).unwrap();
+    let files = [
+        ("index-a1.js", "export const a = 1;\n"),
+        ("index-c2.css", ".a { color: rebeccapurple; }\n"),
+    ];
+    let mut integrity = std::collections::BTreeMap::new();
+    for (name, body) in files {
+        std::fs::write(dir.join("client").join(name), body).unwrap();
+        integrity.insert(
+            name.to_string(),
+            oxide_fw_bundler::sri::sri_digest(body.as_bytes()),
+        );
+    }
+    if tamper {
+        std::fs::write(
+            dir.join("client").join("index-a1.js"),
+            "export const a = 9;\n",
+        )
+        .unwrap();
+    }
+    let manifest = serde_json::json!({
+        "build_id": "fixture-build",
+        "routes": {},
+        "assets": {},
+        "integrity": integrity,
+    });
+    std::fs::write(
+        dir.join("client/client.manifest.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn integrity_verdict_verifies_a_clean_client_manifest() {
+    // The walk's verdict over intact bytes: every recorded file
+    // re-digested, nothing missing, nothing mismatched.
+    let dir = tempfile::tempdir().unwrap();
+    integrity_manifest_fixture(dir.path(), false);
+    match integrity_verdict(dir.path()) {
+        IntegrityVerdict::Verified(n) => assert_eq!(n, 2, "both files verified"),
+        other => panic!("expected Verified, got {other:?}"),
+    }
+}
+
+#[test]
+fn integrity_verdict_fails_a_tampered_client_file() {
+    // The E04 mismatch case, closed: a chunk modified after the build
+    // records its digest fails the verify walk with the finding list.
+    let dir = tempfile::tempdir().unwrap();
+    integrity_manifest_fixture(dir.path(), true);
+    match integrity_verdict(dir.path()) {
+        IntegrityVerdict::Failed(report) => {
+            assert_eq!(report.mismatched.len(), 1);
+            assert_eq!(report.mismatched[0].file, "index-a1.js");
+            assert!(report.missing.is_empty());
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+}
+
+#[test]
+fn integrity_verdict_skips_without_a_manifest_or_map() {
+    // A non-client build (no dist/client at all) and a pre-E04 manifest
+    // (no integrity key) both degrade to a loud skip, not a failure.
+    let dir = tempfile::tempdir().unwrap();
+    match integrity_verdict(dir.path()) {
+        IntegrityVerdict::Skipped(reason) => assert_eq!(reason, "no client manifest"),
+        other => panic!("expected Skipped, got {other:?}"),
+    }
+    let empty = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(empty.path().join("client")).unwrap();
+    std::fs::write(
+        empty.path().join("client/client.manifest.json"),
+        serde_json::json!({
+            "build_id": "fixture-build",
+            "routes": {},
+            "assets": {},
+            "integrity": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    match integrity_verdict(empty.path()) {
+        IntegrityVerdict::Skipped(reason) => {
+            assert_eq!(reason, "manifest carries no integrity map")
+        }
+        other => panic!("expected Skipped, got {other:?}"),
+    }
+}
+
+#[test]
+fn integrity_verdict_fails_closed_on_a_corrupt_manifest() {
+    // A present-but-unparseable manifest is suspicious, not absent: a
+    // tampered dist could corrupt the file to dodge the walk. Fail closed
+    // (the `Corrupt` verdict), unlike the loud skip for a manifest that is
+    // simply not there (a non-client build).
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("client")).unwrap();
+    std::fs::write(dir.path().join("client/client.manifest.json"), "{ not json").unwrap();
+    match integrity_verdict(dir.path()) {
+        IntegrityVerdict::Corrupt => {}
+        other => panic!("expected Corrupt, got {other:?}"),
+    }
 }
