@@ -400,6 +400,13 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     if let Some(v) = map.get("interactionReplay") {
         validate_interaction_replay(v)?;
     }
+    // V2-E04: the security surface's new enum spellings get the same
+    // load-time treatment — a bad `csp`/`trustedTypes` value is an authoring
+    // bug and gets the CFG-SEC diagnostic naming the valid modes, not a
+    // serde type error.
+    if let Some(v) = map.get("security") {
+        validate_security(v)?;
+    }
     if let Some(Value::Array(rules)) = map.get("rules") {
         for rule in rules {
             match rule.get("priority") {
@@ -693,6 +700,42 @@ fn dsp_114(msg: &str) -> OxideError {
          `false` skips the pre-hydration interaction capture"
             .into(),
     );
+    OxideError(Box::new(d))
+}
+
+/// V2-E04: the `security.csp` / `security.trustedTypes` spellings are
+/// validated at load time (the knob-validator pattern): a bad value is a
+/// config authoring bug and gets the `CFG-SEC` diagnostic — the message
+/// names the key and the valid spellings, the fix restates them — instead
+/// of a bare serde type error at the typed boundary.
+fn validate_security(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Ok(()); // not an object — the typed parse reports the shape
+    };
+    if let Some(csp) = map.get("csp").and_then(Value::as_str)
+        && !matches!(csp, "strict" | "hash" | "off" | "report-only")
+    {
+        return Err(cfg_sec(
+            "csp",
+            csp,
+            "`strict`, `hash`, `report-only`, `off`",
+        ));
+    }
+    if let Some(tt) = map.get("trustedTypes").and_then(Value::as_str)
+        && !matches!(tt, "off" | "report" | "enforce")
+    {
+        return Err(cfg_sec("trustedTypes", tt, "`off`, `report`, `enforce`"));
+    }
+    Ok(())
+}
+
+/// The `CFG-SEC` diagnostic for a bad `security.*` enum spelling (V2-E04).
+fn cfg_sec(key: &str, got: &str, valid: &str) -> OxideError {
+    let mut d = Diagnostic::error(
+        "CFG-SEC",
+        format!("`security.{key}` must be one of {valid} — got `{got}`"),
+    );
+    d.fix = Some(format!("set `security.{key}` to one of {valid}"));
     OxideError(Box::new(d))
 }
 
