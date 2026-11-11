@@ -1704,6 +1704,132 @@ snapshot round trip and the client loop are all wired end-to-end. The
 conformance-suite assertion (the F-WP obligation) rides the same wire the
 Playwright smoke specs drive; adding a dedicated spec is the R01 pass.
 
+## V2-F09 the built-in search engine — the engine, the serve arm and the build-side emission landed; the client matcher is the remaining half (2026-11-11)
+
+**What the spec asks.** §V2-F09: "`oxide build` indexes content
+collections; the server answers queries natively; static exports ship a
+compact JSON index with a tiny client matcher." Files
+`crates/search/{Cargo.toml,src/lib.rs,src/schema.rs,src/build.rs,src/query.rs}`
+(feature `search`, default off in dev builds, on in release),
+`packages/oxide/src/search.ts`, and the hook in `emit/search.rs`; index
+`title` with boost 3.0 and `body` with 1.0, fuzzy distance 1 on terms of
+length 5 or more, snippets via tantivy's snippet generator; the
+`/_oxide/search?q=&limit=&tag=&lang=` endpoint with the L1 (60 s, keyed by
+the normalized query) and the per-IP rate limit (20 per 10 s); the static
+fallback `dist/search/static.json` with prefix terms of length 2 to 4;
+CAS-cached by the content hash of the collection; the acceptance: a
+5,000-document corpus builds under 5 s and answers p99 under 5 ms.
+
+**What lands.**
+
+- **The engine crate** (`feat/search-engine-substrate`): `crates/search`
+  — `schema::build_schema` (the spec's six fields verbatim: `id`/`url`/
+  `tags`/`lang` stored strings, `title`/`body` stored text with
+  frequencies and positions, all indexed under the `en_stem` tokenizer),
+  `query::SearchDocument` (the ingest contract) +
+  `SearchEngineOptions::from_config` (the typed `SearchConfig` knobs:
+  `fields.title`/`fields.body` boosts default 3/1, `snippet` default 160,
+  `languages` default `["en"]`), `build::TantivyIndex`
+  (`build_in_ram`/`build_in_dir`/`open_read_only` — the serve side mmaps
+  the segments, no writer exists at runtime; `content_hash` the blake3
+  CAS key, order-insensitive), the query path (one should-clause per
+  token per field with the configured boosts; `FuzzyTermQuery` at
+  distance 1 for terms of length ≥ 5, exact term queries for the shorter
+  ones; the `tag`/`lang` filters as required term clauses; snippets via
+  tantivy's `SnippetGenerator` re-prefixed to `<mark>`/`</mark>`), the
+  object-safe `SearchIndex` seam (the Full engine +
+  `static_index::StaticMatcher`, the Degraded fallback) and
+  `endpoint::QueryCache` (60 s TTL keyed by the normalized query + the
+  two filters, cap-bounded LRU, injectable clock — the deterministic-tests
+  rule). Pins: `crates/search/tests/search_tdd.rs` 27 (schema shape,
+  ingest refusals, CAS hash, dir-build→reopen, title-beats-body, boost
+  inversion, empty-query refusal, fuzzy budget, tag/lang filters,
+  `<mark>` snippets, the static shape/round trip/matcher, the 20-query
+  top-3 parity, the cache TTL/cap/normalization). Bench:
+  `crates/search/benches/search.rs` (`search_build/{100,5000}`,
+  `search_query` ×4 shapes, `search_static_export/1000`). Example:
+  `crates/search/examples/search_engine.rs`.
+- **The serve arm** (`oxide-fw-server/search`): `server::search_endpoint`
+  — `SearchEndpoint` (the read-only engine + its L1; the cache key covers
+  the filters so a tag-narrowed answer is never served unfiltered) and
+  the pure `search_response` renderer; the pipeline's native-prefix arm
+  (`GET /_oxide/search`, the not-configured 404 naming the contract, the
+  405 + `allow: GET`, the 20-per-10-s token bucket — the endpoint's own,
+  never shared with OG/csp-report — and `limit` capped at 100). Pins:
+  `crates/server/tests/search_endpoint_tdd.rs` 8.
+- **The build-side emission** (`oxide-fw-cli/search`): the CLI's
+  `emit_search_engine_index` (each configured `search.collections` name →
+  the scanned collection's entries mapped by
+  `search_emit::collection_document` — id `<collection>/<slug>`, the
+  default `/<collection>/<slug>` URL shape, frontmatter title/tags/lang
+  with the `search.languages` fallback, the conservative
+  `strip_markdown`) into `dist/search/index` +
+  `dist/search/static.json`, the blake3 CAS marker (`.hash`) skipping an
+  unchanged corpus, and `SRC-106` failing the build on a typo'd
+  collection name; the serve-side `build_search_endpoint` wire-up in
+  `start_server_inner_full` (best-effort open — a missing or corrupt
+  index is a loud `tracing::warn` and the not-configured 404, never a
+  serve-start failure); the release binaries build `--features search`.
+  Pins: `crates/cli/src/tests.rs` 5 (the emission pin, the CAS-skip pin,
+  the SRC-106 refusal, the serve wire-up, plus the §16.5 projection
+  pinned byte-identical alongside).
+- **The registry**: `SRC-101`–`SRC-106` in `docs/errors.toml` + the
+  regenerated `docs/reference/errors.md` (the docs-check gate).
+
+**Spec deltas.**
+
+1. **The §16.5 content projection is NOT superseded away.** The spec
+   says the WP "supersedes" the `emit/search.rs` JSON index; the
+   projection is also the loader-side contract (`getCollection` reads
+   `dist/content/<name>.entries.json`), so the F09 index is additive and
+   the serve side prefers it — the built-in search UI hits
+   `/_oxide/search`, the loader surface keeps its files. (The spec's
+   `emit/search.rs` path is itself stale: the symbol is
+   `emit_content_search_indexes` in `crates/cli/src/lib.rs`.)
+2. **The analyzer set ships one stemmer.** `search.languages` is typed,
+   schema'd, threaded through `SearchEngineOptions` and filter-able via
+   the `lang` field, but the title/body analyzer is `en_stem` (simple →
+   length cap → lowercase → English stem). Per-language analyzers need
+   per-document field routing (a corpus-level change); German and other
+   non-ASCII text still matches through the lowercase layer, and the
+   degraded matcher is exact-term + prefix by construction.
+3. **The URL shape is the default collection-page form.** Content
+   collections carry no route template in the typed config, so the
+   indexed `url` is `/<collection>/<slug>`; the client/UI half maps ids
+   onto real routes when it lands (the static matcher never claims
+   otherwise — `url` is the hit's link target).
+4. **The CAS is a dist-local marker, not the TieredCache.** The corpus'
+   blake3 lives in `dist/search/.hash` next to the artifact (the A04
+   `dist/build-id` pattern): the L2 disk cache stores big blobs keyed by
+   build id, while the search rebuild decision is a 32-byte compare that
+   must survive `oxide dev` restarts without a cache open.
+5. **Fuzzy-only queries highlight nothing.** The snippet generator is
+   built from a plain term query over the query's tokens (tantivy's
+   `query_terms` walk does not reach through `BoostQuery`/
+   `FuzzyTermQuery`); a distance-1-only match still returns the doc with
+   the body's leading fragment, un-highlighted. The engine-side
+   `SRC-104` 400 and the punctuation-only empty response are pinned.
+
+**Deferrals.**
+
+- **The client matcher** (`packages/oxide/src/search.ts` — the
+  `search(q) => Promise<Hit[]>` import, the lazy `static.json` load, the
+  ten-line scorer, the `window.__oxide.search === 'server'` fork and the
+  TS-side parity suite) is the remaining half — the Rust-side parity
+  (`static_matcher_top3_matches_the_engine_on_twenty_queries`) pins the
+  export's self-sufficiency until it lands. The spec's Search matrix row
+  stays: Full on Binary/Docker (the engine), Degraded on
+  Node/serverless/static (the static export), and the TS matcher is what
+  ships the Degraded cells to browsers.
+- **The dev-watch re-emission.** `oxide build` emits the index;
+  `oxide dev` re-emits the §16.5 projection on content change but not
+  the F09 index yet (the running server holds the opened index — the
+  reload path is tantivy's `IndexReader::reload` behind the
+  `SearchIndex` seam, the follow-up slice).
+- The benchmark-acceptance numbers (`5 s`/`5 ms` at 5,000 docs) are
+  machine-relative; the criterion groups (`search_build`,
+  `search_query`) record the local baseline.
+
 ## V2-E04 tail — the adapter-level head producer + the verify integrity walk (2026-11-11)
 
 **What the spec asks.** The same §V2-E04 clause the parent section quotes:
