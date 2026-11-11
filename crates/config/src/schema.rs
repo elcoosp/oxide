@@ -42,7 +42,8 @@ pub fn config_schema() -> Value {
             "build": build_schema(),
             "adapter": {
                 "type": "string",
-                "enum": ["binary", "node", "static", "docker", "cloudflare", "lambda", "vercel", "netlify", "deno", "bun"]
+                "enum": ["binary", "node", "static", "docker", "cloudflare", "lambda", "vercel", "netlify", "deno", "bun"],
+                "description": "§18: the deploy target the build emits for; the §18 capability matrix decides what that target honours (the config-key refusal refuses a build the target cannot serve)."
             },
             "siteUrl": {
                 "type": "string",
@@ -121,12 +122,13 @@ fn framework_schema() -> Value {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-                "name": { "type": "string" },
+                "name": { "type": "string", "description": "§7: the framework adapter package the config exports (`@oxide-fw/react`, `@oxide-fw/vue`, ...)." },
                 "adapter": {
                     "type": "string",
-                    "enum": ["react", "vue", "svelte", "solid"]
+                    "enum": ["react", "vue", "svelte", "solid"],
+                    "description": "§7: the component dialect the adapter compiles (the loader in `page.server.ts` stays framework-neutral)."
                 },
-                "compiler": { "type": "boolean" },
+                "compiler": { "type": "boolean", "description": "C01: the native compiler pass for the adapter. true prefers the native backend when its toolchain is healthy; the node backend is the fallback (C01 / `compilerBackend`)." },
                 "islands": {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
@@ -145,7 +147,7 @@ fn routes_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "dir": { "type": "string", "default": "src/routes" }
+            "dir": { "type": "string", "default": "src/routes", "description": "§10.1: the route directory the scanner walks (file conventions decide the route tree)." }
         }
     })
 }
@@ -159,15 +161,16 @@ fn server_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "port": { "type": "integer", "minimum": 0, "maximum": 65535, "default": 3000 },
-            "host": { "type": "string", "default": "localhost" },
+            "port": { "type": "integer", "minimum": 0, "maximum": 65535, "default": 3000, "description": "§12: the TCP port the production server binds (h1/h2; the QUIC listener follows §12.1)." },
+            "host": { "type": "string", "default": "localhost", "description": "§12: the bind address of the production server." },
             "compression": {
                 "type": "array",
-                "items": { "type": "string", "enum": ["zstd", "br", "gzip"] }
+                "items": { "type": "string", "enum": ["zstd", "br", "gzip"] },
+                "description": "§12.1 step 8: the precompressed static encodings in preference order (zstd preferred, then br, then gzip; negotiated per request)."
             },
-            "http3": { "type": "boolean", "default": false },
+            "http3": { "type": "boolean", "default": false, "description": "§12.1: serve HTTP/3 over QUIC alongside h1/h2 (opt-in; `h3Advertise` controls the Alt-Svc header)." },
             "h3Advertise": { "type": "boolean", "default": true, "description": "§12.1 / C3: emit the `Alt-Svc: h3` header on the TLS listener. Default true when http3 is enabled; set false to keep the QUIC listener silent while browsers are not ready for it." },
-            "backend": { "type": "string", "enum": ["node", "v8"], "default": "node" }
+            "backend": { "type": "string", "enum": ["node", "v8"], "default": "node", "description": "§12: the SSR backend — `node` (the supervised Node ≥ 24 worker pool, the production default) or `v8` (embedded V8, opt-in)." }
         }
     })
 }
@@ -183,7 +186,8 @@ fn render_schema() -> Value {
         "properties": {
             "default": {
                 "type": "string",
-                "enum": ["auto", "static", "isr", "dynamic", "spa", "islands"]
+                "enum": ["auto", "static", "isr", "dynamic", "spa", "islands"],
+                "description": "§10.1: the render mode routes inherit when `page.server.ts` exports none (`auto` infers per route)."
             },
             "ppr": {
                 "type": "boolean",
@@ -206,7 +210,7 @@ fn cache_schema() -> Value {
             "handler": {
                 "type": "object",
                 "properties": {
-                    "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http"] },
+                    "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http"], "description": "§5.3: the L2 cache-handler backend the build wires (memory/disk are local; redis/s3/http are remote)." },
                     "url": { "type": "string", "description": "Remote base URL for `type: \"http\"` or `type: \"redis\"`." },
                     "bucket": { "type": "string", "description": "Bucket name for `type: \"s3\"`." }
                 },
@@ -216,7 +220,7 @@ fn cache_schema() -> Value {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                    "maxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb" },
+                    "maxSize": { "type": "string", "pattern": "^[0-9]+(kb|mb|gb)$", "default": "512mb", "description": "§5.3: the L0 in-process cache budget (`kb`/`mb`/`gb`); over-cap entries are GC'd (SPEC-5D)." },
                     "vary": {
                         "type": "array",
                         "items": { "type": "string" },
@@ -244,15 +248,17 @@ fn images_schema() -> Value {
         "properties": {
             "formats": {
                 "type": "array",
-                "items": { "type": "string", "enum": ["avif", "webp", "jpeg", "png"] }
+                "items": { "type": "string", "enum": ["avif", "webp", "jpeg", "png"] },
+                "description": "§16.1: the encodings `/_oxide/image` emits, in preference order (avif via ravif)."
             },
             "remotePatterns": {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "properties": { "host": { "type": "string" } },
+                    "properties": { "host": { "type": "string", "description": "§16.1: a remote host the image endpoint may fetch from (the SSRF allow-list for remote images)." } },
                     "required": ["host"]
-                }
+                },
+                "description": "§16.1: the remote image hosts the endpoint may fetch; a host not listed is refused."
             },
             "maxConcurrency": {
                 "type": "integer",
@@ -279,19 +285,19 @@ fn fonts_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "providers": { "type": "array", "items": { "type": "string" } },
-            "subset": { "type": "array", "items": { "type": "string" } },
+            "providers": { "type": "array", "items": { "type": "string" }, "description": "§16.2: the font providers families may reference." },
+            "subset": { "type": "array", "items": { "type": "string" }, "description": "§16.2 / C08: the subsetting strategy — `latin`, `unicode-range`, or the glyph-usage spelling `used` (sound only when every route is `static`; otherwise the build refuses with AST-FNT-001)." },
             "families": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                        "family": { "type": "string" },
-                        "provider": { "type": "string" },
-                        "weights": { "type": "array", "items": { "type": "integer" } },
-                        "styles": { "type": "array", "items": { "type": "string" } },
-                        "localPaths": { "type": "array", "items": { "type": "string" } }
+                        "family": { "type": "string", "description": "§16.2: the CSS family name the emitted @font-face declares." },
+                        "provider": { "type": "string", "description": "§16.2: the provider this family downloads from (one of `fonts.providers`)." },
+                        "weights": { "type": "array", "items": { "type": "integer" }, "description": "§16.2: the weights to fetch (e.g. 400, 700)." },
+                        "styles": { "type": "array", "items": { "type": "string" }, "description": "§16.2: the styles to fetch (normal, italic)." },
+                        "localPaths": { "type": "array", "items": { "type": "string" }, "description": "§16.2: local font files used instead of a provider download." }
                     }
                 }
             }
@@ -308,8 +314,8 @@ fn i18n_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "locales": { "type": "array", "items": { "type": "string" } },
-            "default": { "type": "string" },
+            "locales": { "type": "array", "items": { "type": "string" }, "description": "§11: the locales the site serves (the route prefix follows `strategy`)." },
+            "default": { "type": "string", "description": "§11: the default locale — no path prefix under `prefix-except-default`." },
             "strategy": {
                 "type": "string",
                 "enum": ["prefix", "prefix-except-default", "none"],
@@ -329,12 +335,12 @@ fn security_schema() -> Value {
         "additionalProperties": false,
         "properties": {
                 "sessionTtlSecs": { "type": "integer", "minimum": 60, "default": 1800, "description": "§16.6: session cookie lifetime in seconds." },
-            "csp": { "type": "string", "enum": ["strict", "hash", "off"] },
-            "csrf": { "type": "string", "enum": ["origin", "token", "off"] },
-            "hostAllowList": { "type": "array", "items": { "type": "string" } },
-            "ssrfAllowList": { "type": "array", "items": { "type": "string" } },
-            "trustedProxies": { "type": "array", "items": { "type": "string" } },
-            "cookieKeys": { "type": "array", "items": { "type": "string" } },
+            "csp": { "type": "string", "enum": ["strict", "hash", "off"], "description": "§S-20: the Content-Security-Policy mode — `strict` (nonces), `hash`, `off`." },
+            "csrf": { "type": "string", "enum": ["origin", "token", "off"], "description": "§S-20: the CSRF protection mode — `origin`, `token`, `off`." },
+            "hostAllowList": { "type": "array", "items": { "type": "string" }, "description": "§S-20: the hosts the server answers for; a request with another Host is a 421 misdirected request." },
+            "ssrfAllowList": { "type": "array", "items": { "type": "string" }, "description": "§S-20: the hosts server-side fetches (image endpoint, loaders) may reach." },
+            "trustedProxies": { "type": "array", "items": { "type": "string" }, "description": "SEC-05 / S-10: the CIDRs whose `X-Forwarded-For` is trusted for the client IP (rate-limit keying); empty trusts no proxy." },
+            "cookieKeys": { "type": "array", "items": { "type": "string" }, "description": "SEC-05 / §16.6: cookie-signing keys (32+ bytes each, first signs). Empty = derive from `.oxide/secret`." },
             "sessionKeys": {
                 "type": "array",
                 "items": { "type": "string" },
@@ -360,10 +366,10 @@ fn rules_schema() -> Value {
             "type": "object",
             "additionalProperties": true,
             "properties": {
-                "source": { "type": "string" },
-                "destination": { "type": "string" },
-                "redirect": { "type": "string" },
-                "status": { "type": "integer" },
+                "source": { "type": "string", "description": "§10.4: the path pattern the native rule matches." },
+                "destination": { "type": "string", "description": "§10.4: the rewrite destination (evaluated natively before the route match)." },
+                "redirect": { "type": "string", "description": "§10.4: the redirect destination (mutually exclusive with `destination`)." },
+                "status": { "type": "integer", "description": "§10.4: the redirect status (301/302/307/308)." },
                 "priority": { "type": "string", "enum": ["low", "normal", "critical"], "default": "normal", "description": "V2-F12: the route's overload priority; low-priority routes shed at brownout level Shed, everything but critical at Emergency (DSP-113 rejects other spellings)." }
             }
         }
@@ -379,8 +385,8 @@ fn budgets_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "clientJs": { "type": "string" },
-            "routeJs": { "type": "string" }
+            "clientJs": { "type": "string", "description": "§21: the per-entry client JS budget (e.g. `170kb`); `oxide analyze` fails when the bundle exceeds it." },
+            "routeJs": { "type": "string", "description": "§21: the per-route JS budget (e.g. `90kb`)." }
         }
     })
 }
@@ -394,9 +400,9 @@ fn build_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "target": { "type": "string" },
-            "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"] },
-            "ssrExternals": { "type": "array", "items": { "type": "string" } },
+            "target": { "type": "string", "description": "§6: the browser target the client bundle compiles for (e.g. `baseline-widely-available`)." },
+            "sourcemap": { "type": "string", "enum": ["hidden", "inline", "external", "off"], "description": "§6: the sourcemap mode the client bundle emits (`hidden` ships the map without linking it)." },
+            "ssrExternals": { "type": "array", "items": { "type": "string" }, "description": "§6: packages kept external in the SSR bundle and required at runtime (the CLI fills a framework default when unset)." },
             "edgeExternals": { "type": "array", "items": { "type": "string" }, "description": "§18 / D18: specifiers left external in the edge bundle. Empty by default — the Worker must be self-contained unless it declares a node-compat layer." },
             "remoteCache": { "type": "string", "description": "§5.4: remote build-cache URL (http://). Read-through on a local miss, write-back on store." },
             "writeBranches": { "type": "array", "items": { "type": "string" }, "description": "§5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set." },
@@ -431,14 +437,14 @@ fn og_schema() -> Value {
         "additionalProperties": true,
         "description": "S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true.",
         "properties": {
-            "enabled": { "type": "boolean", "default": false },
+            "enabled": { "type": "boolean", "default": false, "description": "S-09: opt in to the OG-image endpoint (`GET /_oxide/og`; off by default)." },
             "rateLimit": {
                 "type": "object",
                 "additionalProperties": false,
                 "description": "A3: per-peer token-bucket limit applied before rasterization.",
                 "properties": {
-                    "max": { "type": "integer", "minimum": 0, "default": 10 },
-                    "windowSecs": { "type": "integer", "minimum": 0, "default": 60 }
+                    "max": { "type": "integer", "minimum": 0, "default": 10, "description": "A3: the images per window per peer before the bucket refills." },
+                    "windowSecs": { "type": "integer", "minimum": 0, "default": 60, "description": "A3: the rate-limit window length in seconds." }
                 }
             }
         }
@@ -461,11 +467,12 @@ fn content_schema() -> Value {
                     "additionalProperties": false,
                     "required": ["name", "dir"],
                     "properties": {
-                        "name": { "type": "string" },
-                        "dir": { "type": "string" },
+                        "name": { "type": "string", "description": "§16.5: the collection name (also the static JSON index file's stem)." },
+                        "dir": { "type": "string", "description": "§16.5: the content directory (Markdown + typed frontmatter) the collection maps to." },
                         "indexedFields": {
                             "type": "array",
-                            "items": { "type": "string" }
+                            "items": { "type": "string" },
+                            "description": "§16.5: the frontmatter fields the per-collection static JSON index includes."
                         }
                     }
                 }
@@ -517,7 +524,8 @@ fn experiments_schema() -> Value {
                                 "sticky": { "const": "ip-hash" }
                             }
                         }
-                    ]
+                    ],
+                    "description": "V2-F04: how an eligible identity sticks to its variant — a cookie, a request header, or a hash of the peer IP."
                 },
                 "variants": { "type": "array", "minItems": 2, "items": { "type": "string" }, "description": "Variant names, in config order (DSP-110: at least two)." },
                 "routes": { "type": "array", "items": { "type": "string" }, "description": "URL-pattern prefixes the experiment applies to; empty = all routes." }
