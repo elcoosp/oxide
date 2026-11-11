@@ -190,6 +190,17 @@ pub struct OxideConfig {
     /// second schema churn.
     #[serde(default)]
     pub search: SearchConfig,
+    /// V2-F13 (Appendix V2.L): the learned-prefetch knobs. Inert by
+    /// default — with `learned: false` no nav graph is constructed, the
+    /// data plane observes nothing, `GET /_oxide/nav` answers 404, and the
+    /// hydration bootstrap stays byte-identical. When on, the server keeps
+    /// the aggregate route-transition graph (`server::navgraph`) and the
+    /// client prefetcher may consult it; `minProbability` is the client's
+    /// threshold for prefetching an edge. A bad spelling or an
+    /// out-of-range probability fails the load with `DSP-115` (the
+    /// raw-`Value` validation pass runs before the typed parse).
+    #[serde(default)]
+    pub prefetch: PrefetchConfig,
 }
 
 /// V2-F09 (Appendix V2.L): the `search` config key. The key shape is the
@@ -229,6 +240,33 @@ pub struct SearchFieldsConfig {
     /// The body-field boost.
     #[serde(default)]
     pub body: Option<f32>,
+}
+
+/// V2-F13 (Appendix V2.L): the `prefetch` config key. `learned` switches
+/// the server's nav-graph substrate on (off by default — the
+/// inert-defaults contract the `live`/`stream`/`brownout` sections set);
+/// `minProbability` is the client prefetcher's threshold on the
+/// `/_oxide/nav` probabilities (the spec's 0.35 default). Unknown keys are
+/// rejected (`deny_unknown_fields`) so a typo cannot silently disable the
+/// feature; bounds are validated at load (`DSP-115`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct PrefetchConfig {
+    /// Master switch. `false` (the default) means no `NavGraph` is
+    /// constructed — the request path reads nothing new.
+    pub learned: bool,
+    /// The client prefetches an edge only at or above this probability
+    /// (the spec's default 0.35). Validated to `0.0 ..= 1.0` at load.
+    pub min_probability: f64,
+}
+
+impl Default for PrefetchConfig {
+    fn default() -> Self {
+        Self {
+            learned: false,
+            min_probability: 0.35,
+        }
+    }
 }
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
@@ -400,6 +438,7 @@ impl Default for OxideConfig {
             brownout: BrownoutConfig::default(),
             interaction_replay: true,
             search: SearchConfig::default(),
+            prefetch: PrefetchConfig::default(),
         }
     }
 }
