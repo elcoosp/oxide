@@ -887,6 +887,24 @@ pub struct SecurityConfig {
     /// Default `true`; a strict deployment can set it `false` to avoid
     /// telling clients whether a response came from cache.
     pub expose_cache_header: bool,
+    /// V2-E04 (SRI): emit subresource-integrity digests (`sha384-<base64>`)
+    /// for every emitted client JS/CSS chunk in `client.manifest.json`
+    /// (`integrity`) and stamp the boot `<script type=module>` tag with
+    /// `integrity` + `crossorigin="anonymous"`. Default `true` — "default on
+    /// in production builds": the dev server's `/@boot/` virtual module has
+    /// no manifest digest, so dev output is byte-identical without a
+    /// dev/prod key split. The bundler always records the digests (cheap,
+    /// deterministic, useful to `oxide verify`); this flag gates the
+    /// head-tag injection.
+    pub sri: bool,
+    /// V2-E04: the Trusted Types mode — `off | report | enforce`. When
+    /// `report`/`enforce`, the emitted CSP gains
+    /// `require-trusted-types-for 'script'; trusted-types oxide default`;
+    /// with `report` the directives ride an additional Report-Only policy
+    /// (violations reported, nothing blocked) while `enforce` puts them on
+    /// the enforced header. The boot-side `trustedTypes.createPolicy`
+    /// wiring is the client half (see `docs/deviations.md`).
+    pub trusted_types: String,
 }
 impl Default for SecurityConfig {
     fn default() -> Self {
@@ -900,6 +918,8 @@ impl Default for SecurityConfig {
             session_keys: Vec::new(),
             session_ttl_secs: 1800,
             expose_cache_header: true,
+            sri: true,
+            trusted_types: "off".into(),
         }
     }
 }
