@@ -20,6 +20,10 @@ path = "src/main.rs"
 # (the B09 pattern: plain `cargo test` never pays the criterion build).
 bench-util = []
 
+# V2-F09: the built-in search engine + endpoint. Enables the server's
+# `/_oxide/search` arm alongside the build-side emission hook.
+search = ["dep:oxide-fw-search", "oxide-fw-server/search"]
+
 [[bench]]
 name = "perf_bisect"
 harness = false
@@ -66,6 +70,10 @@ oxide-fw-cache = { workspace = true, features = ["redis", "s3"] }
 dashmap = { workspace = true }
 oxide-fw-render = { workspace = true }
 oxide-fw-server = { workspace = true }
+# V2-F09: the built-in search engine — optional so the default dev build
+# stays lean (the spec's `search` feature; the release pipeline enables
+# it via `--features search`).
+oxide-fw-search = { workspace = true, optional = true }
 # PERF-L0 (readiness): segment-compressed cache entries (zstd frames, gzip
 # members) for the L0 hit path.
 zstd = { workspace = true }
