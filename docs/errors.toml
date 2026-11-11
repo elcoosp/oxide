@@ -220,6 +220,10 @@ message = "read {}: {e}"
 [CFG-SCHEMA]
 message = "serialize defaults: {e}"
 
+[CFG-SEC]
+message = "`security.{key}` must be one of {valid} — got `{got}`"
+fix = "Set `security.{key}` to one of the valid spellings"
+
 [CFG-SIZE]
 message = "invalid size `{s}`: empty string"
 
