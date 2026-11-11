@@ -1,3 +1,135 @@
+# Handoff — V2-E04's security surface landed in both halves (`feat/security-sri-manifest`: the bundler records `sha384-` digests for every emitted client JS/CSS file in `client.manifest.json`'s `integrity` map, the CLI stamps the boot `<script type=module>` tag and render's `Injector` carries the map for preload/stylesheet links, `security.sri` on by default; `feat/csp-report-endpoint`: `server::csp_headers_for` is the one definition site for the strict/hash/report-only × Trusted Types header matrix and `POST /_oxide/csp-report` is the rate-limited violation sink over both browser formats); the typed `security.sri`/`security.trustedTypes` keys are schema'd and `CFG-SEC`-validated; all seven new TDD files are pedantic-clean
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/10 GB-disk
+sandbox, `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`, nasm in
+`~/.local/bin` for rav1e, benches at dev profile — the release profile
+does not fit the disk, the A07/E11-session precedent):**
+- `cargo fmt --all --check` clean; the CI bar
+  (`cargo clippy --workspace --all-targets --all-features -- -D warnings`)
+  ZERO findings; the pedantic sweep over the milestone crates
+  (`cargo clippy -p oxide-fw-bundler -p oxide-fw-config -p
+  oxide-fw-render -p oxide-fw-server -p oxide-fw-cli --all-targets
+  --all-features -- -W clippy::pedantic`) — the two lints-opted crates
+  (`config`, `render`) print ZERO findings and every file this session
+  added (`bundler/src/sri.rs`, the bench, the example,
+  `config/tests/security_surface.rs`, `server/tests/csp_tdd.rs`, the
+  render TDD/snapshot files) prints ZERO findings; the pre-existing
+  bundler/server/cli pedantic debt still prints under the sweep,
+  unchanged (those crates have not opted into `[lints] workspace =
+  true` yet — the documented hygiene-pass order).
+- Runtime suites green (all-features): `oxide-fw-config` 169 (24 lib +
+  10 brownout + 7 experiments + 26 integration + 10 interaction_replay
+  + 10 live + 9 refusal + 5 schema_stability + the six new
+  `security_surface` pins + suites + doctests), `oxide-fw-render` 81
+  (12 lib + 5 live_tdd + 5 interaction_replay + 46 render_tdd — the
+  three new SRI injector pins — + 13 snapshots incl. the new
+  `inject_into_html_with_sri`), `oxide-fw-server` 250 (56 lib + 18
+  csp_tdd — the full V2-E04 CSP half matrix — + 18 server_tdd + 21
+  status_sidecars + 27 integration + 83 governor + 9 inject + 18
+  stream), `oxide-fw-bundler` 78 (31 lib incl. the four `sri` tests +
+  3 refusal + 3 jsx + 16 rolldown + 24 bundler_tdd + integration),
+  `oxide-fw-cli` 281 lib (0 failed, 12 ignored — the three new
+  `boot_script_tag`/`manifest_integrity` pins included); the
+  V2-E11 gates re-validated after the schema/registry growth:
+  `docs generate --check` over the regenerated `docs/reference/`
+  pages — "up to date (4 pages)" — and `errors_registry_tdd` 9 (the
+  coverage test holds against the new `CFG-SEC` row).
+- Downstream crates re-run green after the config/render/server
+  surface changes (all-features): diagnostics 5+2, schema 15, graph
+  27, router 79+1, odf 19+25+1+2, dispatch 26+16+5, adapters 48+56+14,
+  compiler 28+22, cache 129+9+3+11, dev 38+9+35, assets 54+21+7+2.
+- The zero-`#[allow]` gate: `grep -rnE '#!\[(allow|expect)\(|cfg_attr\([^\)]*_allow\('`
+  over `crates/ tests/ benches/ examples/` — empty.
+- Benches run under the dev profile (`--quick`): the new
+  `sri_digest/{4096,65536}` (~331 µs / ~5.1 ms) + `integrity_map/10`
+  (~15 ms, the rolldown read-back walk) in `crates/bundler/benches/sri.rs`
+  behind `bench-util`; `governor` and `bootstrap` re-run for the
+  touched crates. The cli benches compile-verified by the
+  `--all-targets` clippy check (their release-profile test binaries do
+  not fit the sandbox disk — the A07-session precedent).
+- Doc-drift fixes IN this diff: the spec's V2.O table (the E04 partial
+  row), `docs/architecture.md` (the bundler/render/server/cli rows +
+  the what-changed bullet), `docs/deviations.md` (the E04 record: the
+  link-integrity wiring state, the client TT half, the mismatch-case
+  documentation, the strict-vs-lenient rejection posture),
+  `docs/errors.toml` (the `CFG-SEC` row), the regenerated
+  `docs/reference/{config,errors}.md` pages, and `HANDOFF.md` (this
+  header). `README.md`'s badge re-measure is deferred to the next
+  session that runs `scripts/count-tests.sh` end-to-end (the sandbox
+  could not rebuild the docs site; the count is unchanged by the Rust
+  suites listed above).
+
+## What landed
+
+**M1 — the SRI manifest seam** (`feat/security-sri-manifest`):
+`crates/bundler/src/sri.rs` — `sri_digest` (the `sha384-<standard
+base64>` form, known-answer-pinned against an independent vector) and
+`integrity_map` (the rolldown path's read-back walk; a file that fails
+to read is skipped with a `tracing::warn!`). `ClientManifest.integrity`
+(`#[serde(default)]` keeps pre-E04 manifests parsing) rides both
+backends: the chunk bundler digests the bytes it already holds (no
+re-read, byte-exact with what was written), the rolldown backend reads
+the persisted files back. `oxide-fw-render`'s `Injector` gained the
+`integrity` map (`with_integrity`): modulepreload/stylesheet links
+whose URL resolves to a digest emit `integrity` + `crossorigin=
+"anonymous"`, everything else stays byte-identical (snapshot-pinned).
+The CLI's `boot_script_tag` is the one definition site for the boot
+tag on the prerender and live-SSR paths — with a manifest digest and
+`security.sri` on (the default) the tag gains `integrity` +
+`crossorigin`; the dev `/@boot/` virtual module and `sri: false` keep
+the pre-E04 bytes. Pins: `render_tdd` 3 + the snapshot, `cli/tests`
+3, `sri.rs` 4. Bench: `crates/bundler/benches/sri.rs`. Example:
+`crates/bundler/examples/sri_integrity.rs` (runs: known answer → a
+real §6.4-fixture bundle → the manifest's integrity map → an
+independent recompute).
+
+**M2 — the CSP report-only half** (`feat/csp-report-endpoint`):
+`server::tt_directives` + `server::csp_headers_for` — the one
+definition site for the whole header matrix: `strict`/`hash` emit the
+enforced policy (TT `enforce` appends the directives; TT `report`
+keeps the enforced header byte-identical and rides an additional
+Report-Only header); `report-only` sends the strict policy +
+`report-to` on `Content-Security-Policy-Report-Only` plus the
+`Reporting-Endpoints` group the sink backs (TT `enforce` adds the
+minimal enforced TT-only header; TT `report` a second Report-Only
+one); `off` emits nothing unless TT is on. `server::csp_report_response`
++ the `/_oxide/csp-report` dispatch arm: both browser formats
+(classic `application/csp-report` and Reporting API
+`application/reports+json`), rate limited 20/min/IP on the
+trusted-proxy-aware peer key (the pipeline's own
+`csp_report_rate_limiter`, never shared with the OG bucket), a 64 KiB
+body cap (413), 415 for unrecognized content types, 400 for
+unparseable JSON, 405 for non-POST, and the structured `tracing`
+event over a whitelist of fields — no cookies, no raw body. The typed
+`security.sri`/`security.trustedTypes` keys (config, with the
+`report-only` CSP spelling) are schema'd with descriptions (the E11
+DOC-001 gate) and load-time-validated (`CFG-SEC` names a bad spelling
+with the valid modes as the fix — the DSP-113 knob-validator pattern).
+
+**Additive in the same diff:** the `CFG-SEC` registry row
+(`docs/errors.toml`), the regenerated reference pages, the spec/arch/
+deviations doc updates listed above, and the 27-file conventional
+commit split in `ship.toml`.
+
+## Where to pick up, in one sentence
+
+The client Trusted Types half is the remaining E04 work (`packages/
+oxide`: the `tt.createHTML` policy, the `innerHTML` walk, the `rg`
+lint test — see `docs/deviations.md`); F09's engine is still the
+remaining half (`crates/search`: tantivy index, `/_oxide/search`, the
+static matcher); E11's remaining half is the docs-site app
+(`examples/docs` over `generate_all()`) plus `endpoints.md` (the V2.J
+table's open rows gate it) and the E05-dependent `plugin-compat.md`;
+an `oxide verify` walk of `integrity` would close the mismatch-case
+loop server-side; and the adapter-level head producer that fills
+`Injector.preload`/`css_links` turns the link-integrity seam from
+wired-and-ready to end-to-end.
+
 # Handoff — V2-E11's reference-docs generator + the error-code registry landed (`oxide docs generate` writes docs/reference/ from the linked crates with the `--check` CI gate; docs/errors.toml is the 197-entry V2.K registry the coverage test holds against every production code literal); both milestone crates are pedantic-clean
 
 ## Where things stand
