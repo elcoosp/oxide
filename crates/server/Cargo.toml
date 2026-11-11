@@ -18,6 +18,9 @@ oxide-fw-cache = { workspace = true }
 oxide-fw-router = { workspace = true }
 oxide-fw-render = { workspace = true }
 oxide-fw-config = { workspace = true }
+# V2-F09: the built-in search engine — optional so the default build
+# stays lean (the spec's `search` feature, default off in dev builds).
+oxide-fw-search = { workspace = true, optional = true }
 url = { workspace = true }
 base64 = { workspace = true }
 oxide-fw-odf = { workspace = true }
@@ -55,6 +58,12 @@ moka = { workspace = true }
 # V2-F05: exposes the criterion bench harness (the V2-B09 pattern — plain
 # `cargo test` never pays the criterion build).
 bench-util = []
+
+# V2-F09: the built-in search endpoint (`/_oxide/search`). Pulls the
+# tantivy engine; the CLI enables this for projects with
+# `search.collections` configured. Default off — the endpoint answers the
+# documented not-configured 404 without it.
+search = ["dep:oxide-fw-search"]
 
 # V2-F13: criterion bench for the nav-graph substrate (observe / top /
 # decay / persist), behind the `bench-util` opt-in like every other
