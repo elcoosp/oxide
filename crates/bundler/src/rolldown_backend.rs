@@ -619,6 +619,17 @@ fn convert(
             build_id: build_id.clone(),
             routes,
             assets: assets_map,
+            // V2-E04: sha384 digests for every emitted JS chunk and CSS
+            // asset. Rolldown persisted the files already, so the pass reads
+            // them back from `out_dir` — the same bytes the browser fetches,
+            // hashed exactly once.
+            integrity: crate::sri::integrity_map(
+                out_dir,
+                chunks
+                    .iter()
+                    .map(|c| c.file.as_str())
+                    .chain(chunks.iter().flat_map(|c| c.css.iter().map(String::as_str))),
+            ),
         };
         std::fs::write(
             out_dir.join("client.manifest.json"),
