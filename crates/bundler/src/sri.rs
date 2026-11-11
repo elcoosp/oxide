@@ -51,6 +51,83 @@ pub fn integrity_map(
     out
 }
 
+/// One verifier finding: a file whose recorded digest does not match the
+/// recomputed one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntegrityFinding {
+    /// The client-dir-relative file name (the manifest's `integrity` key).
+    pub file: String,
+    /// The digest the manifest records.
+    pub expected: String,
+    /// The digest of the bytes actually on disk. `None` is unreachable in
+    /// the current walk (a read failure is a *missing* finding, not a
+    /// mismatch) but keeps the type total for producers that verify
+    /// without a read.
+    pub actual: Option<String>,
+}
+
+/// The `verify` walk's verdict: every recorded file re-digested against
+/// the bytes under `out_dir`. Findings land in manifest key order
+/// (`BTreeMap` iteration), so the operator output is deterministic.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IntegrityReport {
+    /// Files whose bytes were read and digest recomputed (mismatched
+    /// files are counted here too — they were read, the digest just
+    /// disagrees).
+    pub checked: usize,
+    /// Recorded files that no longer exist under `out_dir`.
+    pub missing: Vec<String>,
+    /// Recorded files whose on-disk digest differs from the manifest's.
+    pub mismatched: Vec<IntegrityFinding>,
+}
+
+impl IntegrityReport {
+    /// `true` when every recorded file verified: nothing missing, nothing
+    /// mismatched. The CLI maps a dirty report to a failing exit (the
+    /// `VRF-INTEGRITY` diagnostic).
+    #[must_use]
+    pub fn is_clean(&self) -> bool {
+        self.missing.is_empty() && self.mismatched.is_empty()
+    }
+}
+
+/// The §V2-E04 mismatch-case walk (`oxide verify`'s integrity step):
+/// recompute every `integrity` digest over the persisted bytes under
+/// `out_dir` (the client dir the manifest's keys are relative to) and
+/// compare. Where [`integrity_map`] — the writer — is lenient by design
+/// (it only names files it just wrote, so a read miss is an environment
+/// failure to skip), the verifier is strict: a missing file is a finding,
+/// a digest that no longer matches is a finding, and both are the
+/// operator's verdict. The attestation subjects cannot cover this (they
+/// are signed at `--attest` time over the dist they saw); this walk
+/// checks the manifest against whatever the dist carries *at verify time*.
+#[must_use]
+pub fn verify_integrity_map(
+    out_dir: &Path,
+    integrity: &BTreeMap<String, String>,
+) -> IntegrityReport {
+    let mut report = IntegrityReport::default();
+    for (file, expected) in integrity {
+        match std::fs::read(out_dir.join(file)) {
+            Ok(body) => {
+                report.checked += 1;
+                let actual = sri_digest(&body);
+                if actual != *expected {
+                    report.mismatched.push(IntegrityFinding {
+                        file: file.clone(),
+                        expected: expected.clone(),
+                        actual: Some(actual),
+                    });
+                }
+            }
+            Err(_) => {
+                report.missing.push(file.clone());
+            }
+        }
+    }
+    report
+}
+
 #[cfg(test)]
 mod sri_tests {
     use super::*;
