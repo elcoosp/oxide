@@ -656,3 +656,7 @@ message = "cert parse failed: {e}"
 
 [SRV-WS]
 message = "the websocket handshake or a frame decode failed"
+
+[VRF-INTEGRITY]
+message = "client manifest integrity verification failed: {detail}"
+fix = "Restore dist/client from a trusted copy or rebuild with `oxide build`"
