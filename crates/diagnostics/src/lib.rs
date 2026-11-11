@@ -35,17 +35,6 @@ pub struct Location {
 }
 
 impl Location {
-    /// A location pointing nowhere (a diagnostic without source mapping).
-    #[must_use]
-    pub fn unknown() -> Self {
-        Self {
-            file: None,
-            line: 0,
-            column: 0,
-            offset: 0,
-            length: 0,
-        }
-    }
     pub fn file(file: impl Into<String>, line: u32, column: u32) -> Self {
         Self {
             file: Some(file.into()),
