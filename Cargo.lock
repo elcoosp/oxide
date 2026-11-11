@@ -4916,7 +4916,9 @@ version = "0.15.0"
 dependencies = [
  "anyhow",
  "arcstr",
+ "base64 0.23.1",
  "blake3",
+ "criterion",
  "oxc_resolver",
  "oxide-fw-compiler",
  "oxide-fw-diagnostics",
@@ -4926,6 +4928,7 @@ dependencies = [
  "rolldown_plugin",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
