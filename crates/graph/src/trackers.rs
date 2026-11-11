@@ -55,7 +55,11 @@ impl EnvTrackerImpl {
 impl EnvTracker for EnvTrackerImpl {
     /// Read an env var and record `Input::Env`.
     fn get(&mut self, key: &str) -> Option<String> {
-        self.vars.read().unwrap().get(key).cloned()
+        self.vars
+            .read()
+            .expect("tracker env lock poisoned")
+            .get(key)
+            .cloned()
     }
 }
 
@@ -74,7 +78,11 @@ impl ConfigTrackerImpl {
 impl ConfigTracker for ConfigTrackerImpl {
     /// Read a config key and record `Input::ConfigKey`.
     fn get(&mut self, key: &str) -> Option<Value> {
-        self.values.read().unwrap().get(key).cloned()
+        self.values
+            .read()
+            .expect("tracker values lock poisoned")
+            .get(key)
+            .cloned()
     }
 }
 
@@ -116,7 +124,9 @@ mod tests {
         let mut env = EnvTrackerImpl::new(vars.clone());
         assert_eq!(env.get("OX_A").as_deref(), Some("1"));
         assert_eq!(env.get("OX_MISSING"), None);
-        vars.write().unwrap().insert("OX_A".into(), "2".into());
+        vars.write()
+            .expect("tracker env lock poisoned")
+            .insert("OX_A".into(), "2".into());
         assert_eq!(
             env.get("OX_A").as_deref(),
             Some("2"),
