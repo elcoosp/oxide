@@ -429,7 +429,12 @@ pub struct MemoryRemoteCache {
 #[async_trait::async_trait]
 impl RemoteCache for MemoryRemoteCache {
     async fn fetch(&self, key: &CasKey) -> Result<Option<Vec<u8>>> {
-        Ok(self.entries.lock().unwrap().get(key).cloned())
+        Ok(self
+            .entries
+            .lock()
+            .expect("artifact index lock poisoned")
+            .get(key)
+            .cloned())
     }
     async fn store(&self, key: &CasKey, data: &[u8]) -> Result<()> {
         self.entries
@@ -496,7 +501,7 @@ mod spec04_tests {
                 }
                 let path = reqline.split_whitespace().nth(1).unwrap_or("").to_string();
                 let method = reqline.split_whitespace().next().unwrap_or("").to_string();
-                let mut store = store2.lock().unwrap();
+                let mut store = store2.lock().expect("artifact store lock poisoned");
                 if method == "PUT" {
                     store.insert(path, body);
                     let _ = s.write_all(
