@@ -27,9 +27,30 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+# V2-E04 (SRI): the sha384 subresource-integrity digests the client manifest
+# records (sha2) and their standard-base64 encoding (base64). Both are
+# workspace-pinned; sha2 is already the server's `patch base id` hash (D30).
+sha2 = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# V2-E04: the SRI benches (behind the `bench-util` opt-in — plain `cargo
+# test` never pays the criterion build, the A02/B09/F18/E11 pattern).
+criterion = { workspace = true }
+
+[features]
+# V2-E04: exposes the criterion bench harness for the SRI digest pass.
+bench-util = []
+
+# V2-E04: the sha384 digests ride every client build, so the bench
+# questions are (a) the per-chunk digest cost (`sri_digest` over chunk- and
+# asset-sized bodies — bytes already in hand) and (b) the rolldown path's
+# read-back cost (`integrity_map` over an emitted-file set).
+[[bench]]
+name = "sri"
+harness = false
+required-features = ["bench-util"]
 
 [package.metadata.docs.rs]
 all-features = true
