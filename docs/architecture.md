@@ -24,7 +24,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `config` | Typed config, layering (defaults→preset→file→mode→env→CLI), env files, `PUBLIC_` split, static extraction with V8 fallback flag, typo diagnostics, `live` transport knobs + DSP-111 (§V2-F05), `experiments` + DSP-110 (§V2-F04), `stream.resume` bounds + DSP-112 (§V2-F07), `brownout` thresholds + DSP-113 (§V2-F12), `interactionReplay` + DSP-114 (§V2-F03) | §14, D14, V2-F03, V2-F04, V2-F05, V2-F07, V2-F12 |
 | `cache` | L0/L1/L2 tiers, weighted LRU memory tier, redb disk tier, tags, TTL/SWR/stale-if-error, single-flight, build seeding, HTTP conditional semantics, canonical `build_id_of_dist` (A04) | §11, V2-A04 |
 | `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection, why-dynamic reason engine (`infer_reasons`, §V2-F16) | §6.2–6.4, §9, V2-F16 |
-| `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests; the V2-E04 SRI pass (`sri_digest`/`integrity_map` — the chunk path digests the bytes in hand, the rolldown path reads the persisted files back) recording `client.manifest.json`'s `integrity: { file: value }` | §6.4, V2-E04 |
+| `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests; the V2-E04 SRI pass (`sri_digest`/`integrity_map` — the chunk path digests the bytes in hand, the rolldown path reads the persisted files back) recording `client.manifest.json`'s `integrity: { file: value }`; the strict re-digest walk (`verify_integrity_map`) and the adapter-level head producer (`head::HeadProducer`/`ManifestHeadProducer`, the manifest→modulepreload/stylesheet projection) | §6.4, V2-E04 |
 | `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
 | `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04), build id + generations substrate (A04) with the live route on the data plane (`/__oxide/live` build query contract, §V2-F05) and the F07 reattach route (`/__oxide/stream/<id>` + `stream_resume_id`) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02, V2-A04, V2-F05, V2-F07 |
@@ -38,6 +38,22 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render/docs/verify; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`); `docs generate` is the V2-E11 reference-docs engine (the `ReferenceGenerator` registry over `docs/reference/`, `--check` is the docs gate); the V2-E04 SRI wiring (`boot_script_tag` stamps the boot `<script type=module>` with the manifest digest on both the prerender and the live-SSR paths, `security.sri`-gated) | §19, §V2-F16, §V2-F18, §V2-F20, §V2-E11, §V2-E04 |
 
 ## What changed since 2026-10-12
+
+- **`bundler` + `cli`**: the V2-E04 tail (`feat/head-producer-integrity-verify`).
+  The head half: `bundler::head::HeadProducer` (the `name()` + `head_for()`
+  seam, object-safe) + `ManifestHeadProducer` (the manifest-driven
+  implementation mirroring the shim's three-shape route-key resolution) and
+  the CLI wire-up — `cmd_build` constructs the producer from the typed
+  manifest, and every prerender path (`prerender_targets`'s two arms plus
+  the `Absent` arm's direct writes) fills the render `Injector`'s
+  `preload`/`css_links` through `filter_head_links`, which dedupes against
+  the hrefs the adapter's shell already carries (modulepreload is
+  producer-owned; the adapter stays authoritative for the stylesheets it
+  renders). The verify half: `bundler::sri::verify_integrity_map` re-digests
+  the manifest's `integrity` map against the bytes on disk and
+  `oxide verify` walks it (the `integrity:` verdict line) — a mismatch, a
+  missing file or a corrupt manifest is the fail-closed `VRF-INTEGRITY`
+  diagnostic. Deltas and deferrals — see `docs/deviations.md`.
 
 - **`bundler` + `config` + `render` + `server` + `cli`**: the V2-E04
   security surface (`feat/security-sri-manifest` + `feat/
