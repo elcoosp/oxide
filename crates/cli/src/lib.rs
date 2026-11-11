@@ -5338,7 +5338,12 @@ fn url_path_from_rel(rel: &str) -> String {
 /// Nonce-carrying if the shell already uses one; the boot chunk carries
 /// only static imports and a `registerAdapter` call, so it is a module
 /// script and inherits the document's script policy.
-fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String {
+fn inject_island_boot_script(
+    shell: &str,
+    boot_url: &str,
+    nonce: &str,
+    integrity: Option<&str>,
+) -> String {
     // §17.1: the CSP uses `strict-dynamic`, which requires a nonce on every
     // script tag — `'self'` alone is not enough. The prerender pass has the
     // build-time nonce (derived from build_id) in scope; the live server
@@ -5349,12 +5354,7 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
     // format!("/{boot_url}") produced `//@boot/boot.mjs`, which the
     // browser parses as a protocol-relative URL (`//user:pass@host/path`)
     // → `http://boot/boot.mjs` → ERR_NAME_NOT_RESOLVED.
-    let src = if boot_url.starts_with('/') {
-        boot_url.to_string()
-    } else {
-        format!("/{boot_url}")
-    };
-    let tag = format!(r#"<script type="module" src="{src}" nonce="{nonce}"></script>"#);
+    let tag = boot_script_tag(boot_url, nonce, integrity);
     if let Some(idx) = shell.rfind("</body>") {
         let mut out = String::with_capacity(shell.len() + tag.len() + 1);
         out.push_str(&shell[..idx]);
@@ -5364,6 +5364,46 @@ fn inject_island_boot_script(shell: &str, boot_url: &str, nonce: &str) -> String
     } else {
         format!("{shell}\n{tag}")
     }
+}
+
+/// The boot `<script type=module>` tag, shared by the prerender injector
+/// and the live SSR dispatch arm — one definition site for the attribute
+/// order (nonce, integrity, crossorigin).
+///
+/// V2-E04: when the client manifest carries an integrity digest for the
+/// boot chunk and `security.sri` is on, the tag gains `integrity` +
+/// `crossorigin="anonymous"` — a CDN serving a modified chunk then fails
+/// closed instead of executing. `None` (dev's `/@boot/` virtual module, or
+/// `security.sri: false`) keeps the pre-E04 bytes.
+fn boot_script_tag(boot_url: &str, nonce: &str, integrity: Option<&str>) -> String {
+    let src = if boot_url.starts_with('/') {
+        boot_url.to_string()
+    } else {
+        format!("/{boot_url}")
+    };
+    match integrity {
+        Some(digest) => format!(
+            r#"<script type="module" src="{src}" integrity="{digest}" crossorigin="anonymous" nonce="{nonce}"></script>"#
+        ),
+        None => format!(r#"<script type="module" src="{src}" nonce="{nonce}"></script>"#),
+    }
+}
+
+/// V2-E04: the manifest `integrity` digest for a boot URL of the form
+/// `client/<file>` (or `/client/<file>`). `integrity_node` is the
+/// manifest's top-level `integrity` object; a pre-E04 manifest (no key), a
+/// dev URL (`/@boot/…`) or an unbundled chunk yields `None`.
+fn manifest_integrity_for(
+    integrity_node: Option<&serde_json::Value>,
+    boot_url: &str,
+) -> Option<String> {
+    let file = boot_url
+        .strip_prefix("client/")
+        .or_else(|| boot_url.strip_prefix("/client/"))?;
+    integrity_node
+        .and_then(|i| i.get(file))
+        .and_then(|v| v.as_str())
+        .map(String::from)
 }
 
 /// P-20: one prerender target (a route + one `generateParams` entry).
@@ -5430,6 +5470,15 @@ pub struct PrerenderTargetsArgs<'a> {
     pub loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     pub module_path: Option<&'a Path>,
     pub boot_script_url: Option<&'a str>,
+    /// V2-E04: the manifest's `sha384-` digest for the boot chunk, when
+    /// `security.sri` is on and the manifest carries one. `None` keeps the
+    /// tag byte-identical (dev's `/@boot/` virtual module, SRI off).
+    pub boot_script_integrity: Option<&'a str>,
+    /// V2-E04: the manifest's whole `integrity` map, attached to the
+    /// Injector so any modulepreload/stylesheet link whose URL resolves to
+    /// a digest emits `integrity` + `crossorigin` (empty map = pre-E04
+    /// bytes). Keyed by the client-dir-relative file name.
+    pub manifest_integrity: &'a std::collections::BTreeMap<String, String>,
     pub layout_ids: &'a [String],
     pub layout_modules: &'a [(String, std::path::PathBuf)],
     pub error_route: Option<&'a str>,
@@ -5461,6 +5510,8 @@ async fn prerender_targets(
         loader_runner,
         module_path,
         boot_script_url,
+        boot_script_integrity,
+        manifest_integrity,
         layout_ids,
         layout_modules,
         error_route,
@@ -5531,6 +5582,8 @@ async fn prerender_targets(
                 loader_runner,
                 module_path,
                 boot_script_url,
+                boot_script_integrity,
+                manifest_integrity,
                 layouts: layout_ids,
                 layout_module_paths: layout_modules,
                 error_route_id: error_route,
@@ -5568,6 +5621,13 @@ pub struct PrerenderArgs<'a> {
     pub loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     pub module_path: Option<&'a Path>,
     pub boot_script_url: Option<&'a str>,
+    /// V2-E04: the manifest's `sha384-` digest for the boot chunk, when
+    /// `security.sri` is on and the manifest carries one. `None` keeps the
+    /// tag byte-identical (dev's `/@boot/` virtual module, SRI off).
+    pub boot_script_integrity: Option<&'a str>,
+    /// V2-E04: the manifest's whole `integrity` map, attached to the
+    /// Injector (see `PrerenderTargetsArgs.manifest_integrity`).
+    pub manifest_integrity: &'a std::collections::BTreeMap<String, String>,
     pub layouts: &'a [String],
     pub layout_module_paths: &'a [(String, std::path::PathBuf)],
     pub error_route_id: Option<&'a str>,
@@ -5588,6 +5648,8 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
         loader_runner,
         module_path,
         boot_script_url,
+        boot_script_integrity,
+        manifest_integrity,
         layouts,
         layout_module_paths,
         error_route_id,
@@ -5829,14 +5891,19 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
     let prerender_status: u16 = if str_signals_error(&shell) { 500 } else { 200 };
     let mut shell = shell;
     if let Some(url) = boot_script_url {
-        shell = inject_island_boot_script(&shell, url, nonce);
+        shell = inject_island_boot_script(&shell, url, nonce, boot_script_integrity);
     }
 
     let mut injector = oxide_fw_render::Injector::new(
         oxide_fw_render::HeadTags::default(),
         nonce.to_string(),
         route_id.to_string(),
-    );
+    )
+    // V2-E04: the manifest's integrity map rides the Injector — any
+    // modulepreload/stylesheet link a future shell carries whose URL
+    // resolves to a digest emits `integrity` + `crossorigin`; an empty map
+    // (no manifest entry, SRI off) is the pre-E04 bytes.
+    .with_integrity(manifest_integrity.clone());
     // PERF-01 / §9.5: embed the page's loader data as an ODF payload so the
     // client's hydration bootstrap has it without a second request. Empty
     // data still encodes (an empty object), matching the live path.
@@ -7371,6 +7438,36 @@ async fn cmd_build(
     } else {
         None
     };
+    // V2-E04: the manifest's integrity digest for the boot chunk, stamped
+    // onto the boot `<script type=module>` tag when `security.sri` is on
+    // (the default). A manifest written by a pre-E04 bundler carries no
+    // `integrity` map — the lookup returns `None` and the tag stays
+    // byte-identical, so an incremental rebuild cannot emit a digest that
+    // does not match the chunk it names.
+    let boot_script_integrity: Option<String> = if cfg.security.sri {
+        boot_script_url
+            .as_deref()
+            .and_then(|url| manifest_integrity_for(client_manifest.get("integrity"), url))
+    } else {
+        None
+    };
+    // V2-E04: the manifest's whole integrity map for the Injector (the
+    // prerendered shells attach it; a modulepreload/stylesheet link whose
+    // URL resolves to a digest emits `integrity` + `crossorigin`). Gated on
+    // `security.sri` like the boot tag — off keeps every link byte-identical.
+    let manifest_integrity: std::collections::BTreeMap<String, String> = if cfg.security.sri {
+        client_manifest
+            .get("integrity")
+            .and_then(|v| v.as_object())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        std::collections::BTreeMap::new()
+    };
     let mut server_manifest = read_json(&server_out.join("server.manifest.json"))
         .ok_or_else(|| anyhow::anyhow!("bundler did not write server.manifest.json"))?;
     let build_id = client_manifest
@@ -7591,6 +7688,8 @@ async fn cmd_build(
                     loader_runner: stack.loader_runner.as_ref(),
                     module_path: module_path.as_deref(),
                     boot_script_url: boot_script_url.as_deref(),
+                    boot_script_integrity: boot_script_integrity.as_deref(),
+                    manifest_integrity: &manifest_integrity,
                     layout_ids: &layout_ids,
                     layout_modules: &prerender_layout_modules,
                     error_route: prerender_error_route_id.as_deref(),
@@ -7702,6 +7801,8 @@ async fn cmd_build(
                             loader_runner: stack.loader_runner.as_ref(),
                             module_path: module_path.as_deref(),
                             boot_script_url: boot_script_url.as_deref(),
+                            boot_script_integrity: boot_script_integrity.as_deref(),
+                            manifest_integrity: &manifest_integrity,
                             layout_ids: &layout_ids,
                             layout_modules: &prerender_layout_modules,
                             error_route: prerender_error_route_id.as_deref(),
@@ -7841,6 +7942,8 @@ async fn cmd_build(
                                     loader_runner: stack.loader_runner.as_ref(),
                                     module_path: module_path.as_deref(),
                                     boot_script_url: boot_script_url.as_deref(),
+                                    boot_script_integrity: boot_script_integrity.as_deref(),
+                                    manifest_integrity: &manifest_integrity,
                                     layouts: &layout_ids,
                                     layout_module_paths: &prerender_layout_modules,
                                     error_route_id: prerender_error_route_id.as_deref(),
@@ -7863,6 +7966,8 @@ async fn cmd_build(
                                 loader_runner: stack.loader_runner.as_ref(),
                                 module_path: module_path.as_deref(),
                                 boot_script_url: boot_script_url.as_deref(),
+                                boot_script_integrity: boot_script_integrity.as_deref(),
+                                manifest_integrity: &manifest_integrity,
                                 layouts: &layout_ids,
                                 layout_module_paths: &prerender_layout_modules,
                                 error_route_id: prerender_error_route_id.as_deref(),
@@ -9007,6 +9112,8 @@ struct DispatchOpts {
     loader_runner: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     routes_root: std::path::PathBuf,
     boot_script_url: Option<String>,
+    /// V2-E04: the manifest's integrity digest for the boot chunk.
+    boot_script_integrity: Option<String>,
     l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
     actions: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
     archived: Option<std::sync::Arc<oxide_fw_router::ArchivedTree>>,
@@ -9034,6 +9141,7 @@ fn build_dispatch(
         loader_runner: opts.loader_runner,
         routes_root: opts.routes_root,
         boot_script_url: opts.boot_script_url,
+        boot_script_integrity: opts.boot_script_integrity,
         l0: opts.l0,
         actions: opts.actions,
         archived: opts.archived,
@@ -9090,6 +9198,9 @@ pub(crate) struct DispatchArgs {
     pub loader_runner: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     pub routes_root: std::path::PathBuf,
     pub boot_script_url: Option<String>,
+    /// V2-E04: the manifest's integrity digest for the boot chunk (None when
+    /// `security.sri` is off or the manifest predates the field).
+    pub boot_script_integrity: Option<String>,
     pub l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
     pub actions: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
     pub archived: Option<std::sync::Arc<oxide_fw_router::ArchivedTree>>,
@@ -9115,6 +9226,7 @@ fn build_dispatch_swappable(
         loader_runner,
         routes_root,
         boot_script_url,
+        boot_script_integrity,
         l0,
         actions,
         archived,
@@ -9130,6 +9242,7 @@ fn build_dispatch_swappable(
     } = args;
 
     let boot_script_url_for_render = boot_script_url.clone();
+    let boot_script_integrity_for_render = boot_script_integrity.clone();
     let ppr_for_render = ppr_shells.clone();
     let actions_for_dispatch = actions.clone();
     let endpoint_for_dispatch = endpoint_dispatcher.clone();
@@ -9520,6 +9633,7 @@ fn build_dispatch_swappable(
         // Shadow captured values that the async block consumes (an `Fn`
         // closure cannot surrender a captured variable — E0507).
         let boot_script_url_for_render = boot_script_url_for_render.clone();
+        let boot_script_integrity_for_render = boot_script_integrity_for_render.clone();
         // §8.1 route.ts / §10.2 step 7: same pattern for the endpoint
         // dispatcher — the async block below moves this per-call clone.
         let endpoint_for_dispatch = endpoint_for_dispatch.clone();
@@ -10897,22 +11011,21 @@ fn build_dispatch_swappable(
                         let hmr_tag = String::new(); // HMR is handled by bootWithRouter via connectHmr();
                         let body = match boot_script_url_for_render.as_deref() {
                             Some(url) => {
-                                // Normalize the leading slash. The bundler
-                                // path passes `client/__boot__.js` and the
-                                // native-ESM dev path passes
-                                // `/@boot/boot.mjs`; a blind format!("/{url}")
-                                // produced `//@boot/boot.mjs` on the ESM
-                                // path, which the browser parses as
-                                // `//user:pass@host/path` → `http://boot/…`
-                                // → ERR_NAME_NOT_RESOLVED. The boot script
-                                // never loaded, hydration/HMR never ran.
-                                let boot_src = if url.starts_with('/') {
-                                    url.to_string()
-                                } else {
-                                    format!("/{url}")
-                                };
+                                // The tag is built by the same helper the
+                                // prerender path uses — one definition site
+                                // for the attribute order. V2-E04: when the
+                                // manifest carries the boot chunk's digest
+                                // and `security.sri` is on, the tag gains
+                                // `integrity` + `crossorigin="anonymous"`;
+                                // the dev `/@boot/` URL has no digest and
+                                // stays byte-identical.
                                 let tag = format!(
-                                    r#"{odf_tag}{deferred_tag}{hmr_tag}<script type="module" src="{boot_src}" nonce="{nonce}"></script>"#,
+                                    "{odf_tag}{deferred_tag}{hmr_tag}{}",
+                                    boot_script_tag(
+                                        url,
+                                        &nonce,
+                                        boot_script_integrity_for_render.as_deref(),
+                                    ),
                                 );
                                 oxide_fw_server::inject_before_close(
                                     bridged,
@@ -12647,6 +12760,22 @@ async fn start_server_inner_full(
                 .map(|f| format!("client/{f}"))
         })
     };
+    // V2-E04: the boot chunk's manifest digest for the live SSR boot tag
+    // (the prerender path reads its own copy at build time). Gated on
+    // `security.sri`; a pre-E04 manifest or the dev `/@boot/` URL yields
+    // `None` and the tag stays byte-identical.
+    let boot_script_integrity: Option<String> = if cfg.security.sri {
+        boot_script_url.as_deref().and_then(|url| {
+            manifest_integrity_for(
+                client_manifest_json
+                    .as_ref()
+                    .and_then(|v| v.get("integrity")),
+                url,
+            )
+        })
+    } else {
+        None
+    };
     // §11 L0: a response cache for static/isr routes. The build id scopes
     // entries to this deployment, so a rebuild invalidates them; it comes from
     // the client manifest, falling back to a source-derived hash when no build
@@ -12702,6 +12831,10 @@ async fn start_server_inner_full(
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
         // the worst case without blocking a legitimate OG card.
         og_rate_limiter: oxide_fw_server::RateLimiter::default(),
+        // V2-E04: the csp-report sink's own bucket (20/min/IP), never
+        // shared with the OG limiter (an OG-heavy client must not eat
+        // the report budget or vice versa).
+        csp_report_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: cfg.og.rate_limit.max,
         og_rate_window_secs: cfg.og.rate_limit.window_secs,
 
@@ -12727,6 +12860,9 @@ async fn start_server_inner_full(
         },
         security: oxide_fw_server::SecuritySettings {
             csp: cfg.security.csp.clone(),
+            // V2-E04: the Trusted Types mode rides the same typed config —
+            // the header matrix (`csp_headers_for`) keys off it.
+            trusted_types: cfg.security.trusted_types.clone(),
             csrf: cfg.security.csrf.clone(),
             // SEC-05: populate the allow-lists from config — they were never
             // read, so a configured Host/SSRF list silently did nothing.
@@ -12998,6 +13134,7 @@ async fn start_server_inner_full(
         loader_runner: stack.loader_runner,
         routes_root,
         boot_script_url,
+        boot_script_integrity,
         l0,
         actions,
         archived,
