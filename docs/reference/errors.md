@@ -99,6 +99,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DSP-112` | invalid `stream.resume` section (ttlSecs below 1, maxBytesEach below 1 byte, or maxBytesTotal below maxBytesEach) | Fix the `stream.resume` section |
 | `DSP-113` | invalid overload priority spelling (rules[].priority accepts only `low`, `normal`, `critical`) | Use `low`, `normal` or `critical` |
 | `DSP-114` | invalid `interactionReplay` spelling (a non-boolean value) | Set `interactionReplay` to the unquoted boolean `true` or `false` |
+| `DSP-115` | invalid `prefetch` section (a non-boolean `learned`, or a `minProbability` outside 0.0-1.0) | Fix the `prefetch` section |
 | `EDGE-101` | routes manifest must be an array of route rows or {"routes": [...]} (router typegen §8.3) | — |
 | `FN-BAD-REQUEST` | the server-function envelope is malformed (the 400 dispatch class) | Send the envelope shape `/_oxide/fn/<id>` documents |
 | `FN-INTERNAL` | the server-function dispatch failed internally (the 500 dispatch class) | Inspect the server logs; the dispatch failed inside the host |
