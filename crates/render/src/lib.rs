@@ -564,6 +564,84 @@ pub fn hydration_bootstrap_with_replay(
     )
 }
 
+/// §V2-F13: the learned-prefetch-advertising hydration bootstrap — the
+/// F03 shape plus the `prefetch` field, the seventh `window.__oxide`
+/// field. `true` advertises `prefetch:true` so the client runtime's
+/// learned prefetcher may consult `GET /_oxide/nav?from=<route>` after
+/// idle; `false` — the default — keeps the emitted bytes identical to the
+/// pre-F13 spellings ([`hydration_bootstrap_with_replay`]), the same
+/// additive contract the `live` and `interactionReplay` fields set.
+///
+/// `prefetch:true` is inserted between the optional `interactionReplay`
+/// field and the `data` reference. Route ids and build ids ride
+/// [`sanitize_route_id`] like every other bootstrap variant.
+pub fn hydration_bootstrap_with_prefetch(
+    odf_b64: &str,
+    route_id: &str,
+    nonce: &str,
+    build_id: &str,
+    live: bool,
+    interaction_replay: bool,
+    prefetch: bool,
+) -> String {
+    if !prefetch {
+        // Flag absent = off: byte-identical to the pre-F13 shapes.
+        return hydration_bootstrap_with_replay(
+            odf_b64,
+            route_id,
+            nonce,
+            build_id,
+            live,
+            interaction_replay,
+        );
+    }
+    let n = escape_attr(nonce);
+    let live_field = if live { "live:true," } else { "" };
+    let replay_field = if interaction_replay {
+        ""
+    } else {
+        "interactionReplay:false,"
+    };
+    tracing::debug!(
+        route = %route_id,
+        "learned prefetch enabled by config; advertising prefetch:true"
+    );
+    format!(
+        "<script type='application/oxide-data' nonce='{n}'>{b64}</script>\
+<script nonce='{n}'>window.__oxide={{route:\"{route}\",build:\"{build}\",{live_field}{replay_field}prefetch:true,data:document.currentScript.previousElementSibling.textContent}}</script>",
+        b64 = odf_b64,
+        route = sanitize_route_id(route_id),
+        build = sanitize_route_id(build_id),
+    )
+}
+
+/// §V2-F13: the no-build-id prefetch advertisement — the placeholder path
+/// (a project whose bootstrap carries no A04 build id yet, the deferred
+/// A01-phase-3 wiring) gains the field between `route` and `data`.
+/// `prefetch: false` — the default — delegates to the plain three-field
+/// [`hydration_bootstrap`], byte-identical to the pre-F13 shapes.
+pub fn hydration_bootstrap_prefetch_no_build(
+    odf_b64: &str,
+    route_id: &str,
+    nonce: &str,
+    prefetch: bool,
+) -> String {
+    if !prefetch {
+        return hydration_bootstrap(odf_b64, route_id, nonce);
+    }
+    let n = escape_attr(nonce);
+    tracing::debug!(
+        route = %route_id,
+        "learned prefetch enabled by config; advertising prefetch:true (no build id)"
+    );
+    format!(
+        "<script type='application/oxide-data' nonce='{n}'>{b64}</script>\
+<script nonce='{n}'>window.__oxide={{route:\"{route}\",prefetch:true,data:document.currentScript.previousElementSibling.textContent}}</script>",
+        b64 = odf_b64,
+        route = sanitize_route_id(route_id),
+    )
+}
+
 /// Percent-encode every byte outside the route-id alphabet `[a-z0-9-/]`.
 fn sanitize_route_id(route_id: &str) -> String {
     let mut out = String::with_capacity(route_id.len());
@@ -671,6 +749,13 @@ pub struct Injector {
     /// advertises `interactionReplay:false` as the sixth `window.__oxide`
     /// field so the boot runtime skips `startReplay`.
     pub interaction_replay: bool,
+    /// V2-F13: the learned-prefetch advertisement. Defaults to `false`
+    /// (flag absent = off), which keeps the emitted bootstrap
+    /// byte-identical to the pre-F13 shapes; `true` — set via
+    /// [`Injector::with_prefetch`] from the typed config — advertises
+    /// `prefetch:true` as the seventh `window.__oxide` field so the
+    /// client's learned prefetcher may consult `GET /_oxide/nav`.
+    pub prefetch: bool,
     /// Extra HTML appended to the body injection fragment, AFTER the
     /// hydration bootstrap. The CLI uses it for the resolved-deferred
     /// `<script type="application/oxide-deferred">` on prerendered pages
@@ -719,6 +804,7 @@ impl Injector {
             build_id: None,
             live: false,
             interaction_replay: true,
+            prefetch: false,
             body_extra: String::new(),
             integrity: BTreeMap::new(),
         }
@@ -774,6 +860,17 @@ impl Injector {
         self
     }
 
+    /// Advertise the learned-prefetch capability as the seventh
+    /// `window.__oxide` field (§V2-F13). Chainable:
+    /// `Injector::new(..).with_prefetch(true)`. The default is `false`
+    /// (flag absent = off), which never changes the emitted bytes; only
+    /// `true` alters the bootstrap.
+    #[must_use]
+    pub fn with_prefetch(mut self, prefetch: bool) -> Self {
+        self.prefetch = prefetch;
+        self
+    }
+
     /// The head and body injection fragments (shared by the batch and streaming paths).
     fn injection_fragments(&self) -> (String, Option<String>) {
         let mut head = self.head.to_html(&self.nonce);
@@ -803,24 +900,34 @@ impl Injector {
             let mut body = String::new();
             if let Some(b64) = self.odf_payload_b64.as_ref() {
                 match self.build_id.as_ref() {
-                    // §V2-A04 + §V2-F05 + §V2-F03: with a build id the
-                    // bootstrap carries the fourth `build` field the client
-                    // echoes on the data plane; opted-in live routes add the
-                    // fifth `live:true` field the router connects from; and
-                    // `interaction_replay: false` adds the sixth
+                    // §V2-A04 + §V2-F05 + §V2-F03 + §V2-F13: with a build
+                    // id the bootstrap carries the fourth `build` field the
+                    // client echoes on the data plane; opted-in live routes
+                    // add the fifth `live:true` field the router connects
+                    // from; `interaction_replay: false` adds the sixth
                     // `interactionReplay:false` field boot's `!== false`
-                    // check reads. `true` keeps the pre-F03 bytes.
+                    // check reads; `prefetch: true` adds the seventh
+                    // `prefetch:true` field the learned prefetcher gates
+                    // on. The defaults keep the pre-F13 bytes.
                     Some(id) => {
-                        body.push_str(&hydration_bootstrap_with_replay(
+                        body.push_str(&hydration_bootstrap_with_prefetch(
                             b64,
                             &self.route_id,
                             &self.nonce,
                             id,
                             self.live,
                             self.interaction_replay,
+                            self.prefetch,
                         ));
                     }
-                    None => body.push_str(&hydration_bootstrap(b64, &self.route_id, &self.nonce)),
+                    None => {
+                        body.push_str(&hydration_bootstrap_prefetch_no_build(
+                            b64,
+                            &self.route_id,
+                            &self.nonce,
+                            self.prefetch,
+                        ));
+                    }
                 }
             }
             body.push_str(&self.body_extra);
