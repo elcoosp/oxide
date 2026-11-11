@@ -50,6 +50,7 @@ const KNOWN_KEYS: &[&str] = &[
     "brownout",
     "search",
     "interactionReplay",
+    "prefetch",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -407,6 +408,16 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     if let Some(v) = map.get("security") {
         validate_security(v)?;
     }
+    // V2-F13: the prefetch knobs carry their own load-time bounds
+    // (DSP-115) — a real boolean for `learned`, a fraction in 0.0..=1.0
+    // for `minProbability` (the client threshold; outside the range the
+    // feature prefetches everything or nothing). The raw-`Value` pass runs
+    // before the typed parse, so a quoted `"true"` or a `1.5` gets the
+    // DSP diagnostic — naming the key and carrying the fix hint — instead
+    // of a bare serde type error at the typed boundary.
+    if let Some(v) = map.get("prefetch") {
+        validate_prefetch(v)?;
+    }
     if let Some(Value::Array(rules)) = map.get("rules") {
         for rule in rules {
             match rule.get("priority") {
@@ -698,6 +709,52 @@ fn dsp_114(msg: &str) -> OxideError {
     d.fix = Some(
         "set `interactionReplay` to the unquoted boolean `true` or `false` — \
          `false` skips the pre-hydration interaction capture"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-F13: the `prefetch` knobs are bounds-validated at load (the
+/// DSP-110/111/112/113/114 pattern, next free code): `learned` must be a
+/// real boolean and `minProbability` a number in `0.0 ..= 1.0` — the
+/// client prefetches an edge at or above the probability, so an out-of-range
+/// value is nonsense (1.5 prefetches everything it ranks, -0.1 nothing).
+fn validate_prefetch(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Ok(()); // not an object — the typed parse reports the shape
+    };
+    if let Some(learned) = map.get("learned")
+        && !learned.is_boolean()
+    {
+        return Err(dsp_115(&format!(
+            "`prefetch.learned` must be a boolean (true or false) — got {learned}. The flag \
+             switches the server's nav-graph substrate on; quoting it (\"true\") or passing \
+             a number (0/1) does not"
+        )));
+    }
+    if let Some(min) = map.get("minProbability") {
+        let Some(n) = min.as_f64() else {
+            return Err(dsp_115(&format!(
+                "`prefetch.minProbability` must be a number between 0.0 and 1.0 — got {min}. \
+                 The client prefetches an edge only at or above this probability"
+            )));
+        };
+        if !n.is_finite() || !(0.0..=1.0).contains(&n) {
+            return Err(dsp_115(&format!(
+                "`prefetch.minProbability` must be between 0.0 and 1.0 — got {n}. \
+                 The spec's default is 0.35"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The `DSP-115` diagnostic for an invalid `prefetch` section (§V2-F13).
+fn dsp_115(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("DSP-115", msg);
+    d.fix = Some(
+        "fix the `prefetch` section — `learned` is the unquoted boolean master switch \
+         and `minProbability` a number between 0.0 and 1.0 (default 0.35)"
             .into(),
     );
     OxideError(Box::new(d))
