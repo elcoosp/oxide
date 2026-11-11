@@ -315,6 +315,10 @@ fix = "Use `low`, `normal` or `critical`"
 message = "invalid `interactionReplay` spelling (a non-boolean value)"
 fix = "Set `interactionReplay` to the unquoted boolean `true` or `false`"
 
+[DSP-115]
+message = "invalid `prefetch` section (a non-boolean `learned`, or a `minProbability` outside 0.0-1.0)"
+fix = "Fix the `prefetch` section"
+
 [EDGE-101]
 message = "routes manifest must be an array of route rows or {\"routes\": [...]} (router typegen §8.3)"
 
