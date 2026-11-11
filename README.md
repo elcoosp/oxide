@@ -7,7 +7,7 @@
     <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
     <a href="https://crates.io/crates/oxide-fw-cli"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
     <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
-    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1941%20Rust%20%7C%20475%2F475%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-1980%20Rust%20%7C%20475%2F475%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
   </p>
   <p>
     <a href="#install">Install</a> ·
@@ -85,7 +85,7 @@ Cached, redirected, rewritten and static answers **never enter a JavaScript runt
 | `MiddlewareDispatcher` | outer→inner; short-circuit, rewrite, or contribute `locals` |
 | `ActionDispatcher` | form POST routed to a named action |
 
-Nineteen Rust crates: `server` (hyper, static, compression, TLS), `render` (streaming SSR, HTML injection), `router` (tree, matcher, typegen), `cache` (three tiers), `odf` (wire format), `compiler` (Oxc passes), `bundler` (rolldown), `jshost` (V8 + Node), `graph` (incremental), `plugin` (Wasm), `adapters` (deploy), `cli`, `dispatch` (V8-free request orchestration), plus `assets`, `config`, `dev`, `diagnostics`, `schema`, `core-wasm`.
+Twenty Rust crates: `server` (hyper, static, compression, TLS), `render` (streaming SSR, HTML injection), `router` (tree, matcher, typegen), `cache` (three tiers), `odf` (wire format), `compiler` (Oxc passes), `bundler` (rolldown), `jshost` (V8 + Node), `graph` (incremental), `plugin` (Wasm), `adapters` (deploy), `cli`, `dispatch` (V8-free request orchestration), plus `assets`, `config`, `dev`, `diagnostics`, `schema`, `search` (the built-in tantivy engine, feature `search`), `core-wasm`.
 
 ## Framework adapters
 
@@ -160,7 +160,7 @@ oxide start --root examples/smoke-app-react --port 3100
 | --- | --- |
 | Spec compliance | **95 / 100** on a 21-section scorecard — [every finding public](docs/deviations.md) |
 | CI | 20 jobs on Linux, macOS, Windows — 17 per pull request; nightly Miri, the release-profile check and smoke-deploy run on schedule/main |
-| Rust | 1,904 test functions; clippy-clean at `-D warnings` with **zero** `#[allow(clippy::*)]` |
+| Rust | 1,980 test functions; clippy-clean at `-D warnings` with **zero** `#[allow(clippy::*)]` |
 | Security | `cargo audit` exits 0; one advisory suppressed with a [reachability analysis](.cargo/audit.toml) |
 
 `v0.2.0` through `v0.9.0` are tagged; the crates.io / npm publication step is still pending. Releases follow a **48-hour / 5-consecutive-green-CI** soak rule — see [PUBLISHING.md](PUBLISHING.md).
