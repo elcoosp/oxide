@@ -1,3 +1,121 @@
+# Handoff — the V2-E04 tail landed server-side (`feat/head-producer-integrity-verify`: the adapter-level head producer — `bundler::head::HeadProducer` + `ManifestHeadProducer`, the manifest→modulepreload/stylesheet projection the CLI feeds into the render `Injector`'s `preload`/`css_links` on every prerender path through `filter_head_links`, deduped against the adapter's own head emission — and `oxide verify`'s integrity walk, `bundler::sri::verify_integrity_map` + the fail-closed `VRF-INTEGRITY` verdict); both milestone crates' new files are pedantic-clean
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/8 GB-disk
+sandbox, `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`, nasm built
+from source into `~/.local` for rav1e):**
+- `cargo fmt --all --check` clean; the CI bar (`cargo clippy --workspace
+  --all-targets --all-features -- -D warnings`) ZERO findings; the
+  pedantic sweep over the milestone crates (`cargo clippy -p
+  oxide-fw-bundler -p oxide-fw-render -p oxide-fw-cache --all-targets
+  --all-features -- -W clippy::pedantic`) — every file this session
+  added or touched prints ZERO findings; the pre-existing
+  bundler/server/cli pedantic debt still prints under the sweep,
+  unchanged (those crates have not opted into `[lints] workspace =
+  true` yet — the documented hygiene-pass order).
+- Runtime suites green: `oxide-fw-bundler` 93 (31 lib incl. the extended
+  `sri` module + 3 refusal + 3 jsx + 16 rolldown + 24 bundler_tdd + the
+  new `head_tdd` 11 + the new `integrity_tdd` 5 + integration +
+  doctests), `oxide-fw-render` 81 (12 lib + 5 live_tdd + 5
+  interaction_replay + 46 render_tdd + 13 snapshots — the streaming
+  `finish` restructure is covered by the existing pins), `oxide-fw-cache`
+  81 (37 + 9 + 35 + suites — the `tiers.rs` disk-handle restructure is
+  covered by the existing pins), `oxide-fw-cli` lib 287 (0 failed,
+  12 ignored — the two `filter_head_links` pins and the three
+  `integrity_verdict` pins included).
+- Benches compile and run under `cargo test -p oxide-fw-bundler
+  --benches --features bench-util` (the new `head_for/{static,dynamic}`
+  and `integrity_verify/{10,100}` criterion groups join the existing
+  `sri_digest`/`integrity_map` groups).
+- The zero-`#[allow]` gate: `grep -rnE '#!\[(allow|expect)\(|cfg_attr\([^\)]*_allow\('`
+  over `crates/ tests/ benches/ examples/ build.rs` — empty.
+- Doc-drift fixes IN this diff: `docs/errors.toml` (the `VRF-INTEGRITY`
+  row), the regenerated `docs/reference/errors.md` page (via
+  `docs generate`), `docs/architecture.md` (the bundler row + the
+  what-changed bullet), `docs/deviations.md` (the E04-tail record + the
+  parent section's deltas 1 and 3 closed), `docs/spec-v0.2-draft.md`
+  (the V2.O E04 row), `docs/plan-esm-hmr.md` (the header's Tier-1
+  counts synced to the per-item STATUS markers: 32 of 33, 1.3 the only
+  open item), `README.md` (`oxide docs` joins the CLI list, the badge
+  re-measured 1,847→1,904 and the prose aligned — the badge was
+  stale at 1,847 against the static count), `crates/cli/
+  README.md` (`verify` names the integrity walk; the `check --strict`
+  drift replaced with the real `OXIDE_CHECK_STRICT` mechanism),
+  `crates/bundler/README.md` (the SRI pass + the head-producer bullets),
+  and `HANDOFF.md` (this header).
+
+## What landed
+
+**M1 — the adapter-level head producer** (`feat/head-producer-integrity-verify`):
+`crates/bundler/src/head.rs` — the `HeadProducer` trait (`name()` +
+`head_for(route) -> Option<RouteHeadLinks>`, object-safe, the
+`PageRenderer`/`LoaderRunner` conventions; `None` = "no bundle for this
+route", `Some(empty)` = "a bundle that carries no links") and
+`ManifestHeadProducer`, the manifest-driven implementation: the
+three-shape route-key resolution the shim's `inject_route_css` uses
+(exact, `+ /page`, the `_param_` sanitized dynamic form), critical-first
+preload order preserved, first-seen-order dedup, URLs spelled
+`/client/<file>` so each resolves to a digest in the `integrity` map
+(`with_base_url` reroutes for CDN prefixes). The CLI wire-up:
+`cmd_build` constructs the producer from the typed manifest (a manifest
+that fails the typed parse degrades to no producer with a loud
+`tracing::warn!`), `PrerenderTargetsArgs`/`PrerenderArgs` carry
+`head_links`, and all three prerender arms fill the Injector through
+`filter_head_links` — the href-dedupe keeps the adapter's own head
+emission authoritative (modulepreload is producer-owned; nothing else
+emitted it) and gives the no-renderer placeholder path its manifest
+stylesheets for the first time. Pins: `crates/bundler/tests/head_tdd.rs`
+11 + `crates/cli/src/tests.rs` 2. Bench:
+`crates/bundler/benches/head.rs` (`head_for/{static,dynamic}`). Example:
+`crates/bundler/examples/head_producer.rs`.
+
+**M2 — the verify integrity walk** (same branch, gated on M1 green):
+`crates/bundler/src/sri.rs::verify_integrity_map` — the strict
+re-digest walk (`IntegrityReport`: checked/missing/mismatched, findings
+in manifest key order; unlike the lenient writer, a missing file is a
+finding) + the `oxide verify` step (`integrity_verdict`): clean prints
+`integrity: N files verified (sha384)`, mismatch/missing/corrupt fails
+closed with the `VRF-INTEGRITY` registry row, a non-client build or a
+pre-E04 manifest (no `integrity` key) skips loudly. Pins:
+`crates/bundler/tests/integrity_tdd.rs` 5 + `crates/cli/src/tests.rs` 3
+(clean / tampered / corrupt / skips). Bench:
+`crates/bundler/benches/integrity.rs` (`integrity_verify/{10,100}`).
+Example: `crates/bundler/examples/integrity_verify.rs`.
+
+**Micro-debt cleaned (the audit found zero `todo!()`/`#[allow]` in the
+tree — the weak-error class is what remained):** `render`'s
+`InjectStream::finish` takes the rewriter up front instead of a guarded
+`take().unwrap()` whose safety depended on a remote `ok_or_else` (the
+existing streaming pins cover it), and `cache`'s `TieredCache::get`
+clones the disk handle per use site instead of re-unwrapping
+`self.disk` in the expired-delete arm (an `unwrap` that happened to be
+safe only because of the enclosing `if let`).
+
+**Additive in the same diff:** the doc-drift fixes listed above and the
+23-file conventional commit split in `ship.toml`.
+
+## Where to pick up, in one sentence
+
+The client Trusted Types half is the remaining E04 work (`packages/
+oxide`: the `tt.createHTML` policy, the `innerHTML` walk, the `rg` lint
+test); the live-SSR path still takes its head from the adapter stream —
+adopting `Injector::streaming()` for the live head (or a second
+`</head>`-anchored splice) would extend the producer to live responses;
+F09's engine is still the remaining half (`crates/search`: tantivy
+index, `/_oxide/search`, the static matcher); E11's remaining half is
+the docs-site app (`examples/docs` over `generate_all()`) plus
+`endpoints.md` (the V2.J table's open rows gate it) and the
+E05-dependent `plugin-compat.md`; F08's loader flips `rust_fns_present`
+from the walk to the real compile step; and the rolldown backend's
+`preload: vec![entry]` is the next manifest-widening the producer will
+project as-is.
+
+---
+
 # Handoff — V2-E04's security surface landed in both halves (`feat/security-sri-manifest`: the bundler records `sha384-` digests for every emitted client JS/CSS file in `client.manifest.json`'s `integrity` map, the CLI stamps the boot `<script type=module>` tag and render's `Injector` carries the map for preload/stylesheet links, `security.sri` on by default; `feat/csp-report-endpoint`: `server::csp_headers_for` is the one definition site for the strict/hash/report-only × Trusted Types header matrix and `POST /_oxide/csp-report` is the rate-limited violation sink over both browser formats); the typed `security.sri`/`security.trustedTypes` keys are schema'd and `CFG-SEC`-validated; all seven new TDD files are pedantic-clean
 
 ## Where things stand
