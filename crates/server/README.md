@@ -28,6 +28,7 @@ The pipeline:
 - **`StaticAssets::scan`** — index a directory by URL path
 - **`StaticAssets::status_sidecars`** — the V2-A07 prerender error-status sidecars the same scan collects (`StatusSidecars::scan`/`status_for`); `serve` applies a sidecar status to the page it serves so a prerendered error page is never a 200, and `write_status_sidecar` is the build-side half of the contract
 - **`Metrics`** — per-route latency histogram with cardinality bounded by the route pattern (never the resolved URL)
+- **`NavGraph`** — the V2-F13 learned-prefetch substrate: the aggregate route-transition graph the data plane observes (`x-oxide-nav-from`/`-to` on `/__data`, `prefetch.learned`-gated), `GET /_oxide/nav?from=<route>` answers the top edges as probabilities (k-anonymity floor 20, half-life 7 days), and the hourly snapshot (`.oxide/nav-graph.json`) survives restarts
 
 The dispatch surface (the seven `dyn` traits):
 
