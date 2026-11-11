@@ -1450,3 +1450,85 @@ key (the `collections` names must match `content.collections` entries at
 build time — the engine's validation, not the refusal's); E11's
 docs-site generator replaces the README embed with `capabilities.md`
 rendered from the same function.
+
+## V2-E11 the reference-docs generator + the error-code registry — `oxide docs generate` writes docs/reference/ from the linked crates; the V2.K call-site gate is a test (2026-11-11)
+
+**What the spec asks.** §V2-E11: "`oxide docs generate` writes
+`docs/reference/`: `config.md` from the JSON Schema, `errors.md` from
+the error code registry (Appendix V2.K, kept as `docs/errors.toml` and
+checked against `rg 'OxideError|err("' call sites by a test), `cli.md`
+from the `clap` command tree, `capabilities.md` from
+`oxide_adapters::capability_matrix()` ... CI job `docs-check`
+regenerates and fails on `git diff --exit-code`." Acceptance: "adding a
+config key without a schema description fails `docs-check`."
+
+**What lands.**
+
+- **M1 — the generator seam** (`feat/docs-generate-seam`):
+  `crates/cli/src/docs_gen.rs` owns the `ReferenceGenerator` trait (a
+  stable `path()` under `docs/reference/` and a deterministic
+  `render()`), the static registry (`generators()`), `generate_all()`
+  and the read-only `check()` that reports `DOC-003` findings the way
+  `check_config` reports refusals. Three pages: `capabilities.md` (a
+  fold of `capability_markdown_table` + the `degradation` reasons — the
+  matrix stays the single source of truth), `config.md` (a walk of
+  `config_schema()`, one bullet per flattened key, sorted — refusing
+  with `DOC-001` when any leaf lacks a description), `cli.md` (the live
+  clap tree: about lines, argument tables, value-enum variant rows).
+  `oxide docs generate` (`Command::Docs` + `DocsOp::Generate`) writes
+  the pages under `<root>/docs/reference` (root canonicalized at
+  entry, the CONVENTIONS rule); `--check` re-renders in memory and
+  exits 1 on drift. The committed pages are pinned by
+  `tests/docs_tdd.rs::check_passes_on_the_committed_pages`; the
+  `docs-check` CI job runs the same gate. The criterion bench
+  (`benches/docs.rs`, `bench-util`) and the `examples/docs_generate.rs`
+  walkthrough ride along.
+- **M2 — the registry seam** (`feat/errors-registry-page`):
+  `docs/errors.toml` at the repo root — 197 entries, one per stable
+  code: the message (authored from the call sites, format placeholders
+  kept verbatim), the documented `fix` where one exists, and
+  `spec_only = true` for the seven V2.K additions whose WPs have not
+  landed (`CMP-NAT-001`, `RFN-001`, `RPL-002/003`, `OX-SRC-001`,
+  `BLD-409`, `PRM-001`). `parse_registry` is a strict parser for the
+  spec's entry format (`DOC-002` names the offending line: unknown
+  keys, non-bare headers, keys outside tables, duplicates, missing
+  messages). `errors.md` renders the registry (landed codes first,
+  spec-only marked), and `tests/errors_registry_tdd.rs` is the V2.K
+  call-site gate: every code-shaped literal in production sources
+  (tests/benches/examples/fuzz excluded) must have a non-spec-only
+  registry row.
+
+**Spec deltas:**
+
+1. **The registry parser is hand-rolled, not the `toml` crate.** The
+   workspace has no TOML dependency (the config story is
+   static-extraction + serde; the deploy half writes wrangler.toml as a
+   string). The entry format the spec pins is a strict subset of TOML
+   (`[CODE]` bare-key tables + three keys), so a ~90-line strict parser
+   with `DOC-002` diagnostics keeps the tree dependency-free — the
+   CONVENTIONS rule ("prefer implementing it yourself") applied to the
+   registry. The file stays valid TOML.
+2. **`check` compares bytes, not `git diff`.** The spec's docs-check
+   regenerates and fails on `git diff --exit-code`; the landed shape is
+   `docs generate --check` — render in memory, compare against the
+   committed pages, exit 1 — so the gate needs no git and no dirty
+   worktree, and the CI job is one `cargo run`. Same failure mode, one
+   fewer moving part.
+3. **The registry is embedded via `include_str!`, not read at
+   runtime.** The pages stay pure (no `--root`-dependent render), and
+   the binary documents the registry of the exact crates it was built
+   from. Consequence: a packaged `oxide-fw-cli` crate must ship
+   `docs/errors.toml` (path `crates/cli/src/../../../docs/errors.toml`)
+   — moot until the crates.io publication step lands.
+4. **`endpoints.md` and `plugin-compat.md` are deferred.** The V2.J
+   endpoint map names future WP endpoints (`/_oxide/search`,
+   `/_oxide/nav`, `/_oxide/csp-report`, the E08 dev surfaces) — a page
+   generated today would pin half-invented rows. The E05-dependent
+   plugin-compat page waits for E05. The docs-site Oxide app
+   (`examples/docs`) stays the remaining E11 half.
+
+**What would change it.** The docs-site app consumes `generate_all()`
+directly (dogfooding F09's search over the pages); `endpoints.md` lands
+when the V2.J table's open rows do (F09's engine, E04's CSP report,
+E08's dev surfaces); the registry harvest widens to the spec's
+`rg`-shaped gate over TS call sites when the client gains its own codes.
