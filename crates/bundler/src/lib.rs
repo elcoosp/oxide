@@ -21,6 +21,7 @@
 mod minify;
 mod resolve;
 mod rolldown_backend;
+pub mod sri;
 pub mod svg_react;
 
 pub use resolve::normalize;
@@ -452,6 +453,15 @@ pub struct ClientManifest {
     pub build_id: String,
     pub routes: BTreeMap<String, RouteBundle>,
     pub assets: BTreeMap<String, String>,
+    /// V2-E04: sha384 subresource-integrity digests for every emitted JS
+    /// chunk and CSS file — `sha384-<standard base64>` keyed by the
+    /// client-dir-relative file name (the spelling `entry_chunk` / `preload`
+    /// / `css` already use). Always computed at client-bundle end (the bytes
+    /// are in hand; the cost is one hash pass per file); the head-tag
+    /// injection is gated by `security.sri`. `#[serde(default)]` keeps
+    /// older manifests (no field) parsing as an empty map.
+    #[serde(default)]
+    pub integrity: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -1053,6 +1063,9 @@ impl ChunkBundler {
 
         // ----------------------------------------------------- 5. emit chunk files
         std::fs::create_dir_all(&options.out_dir).map_err(|e| io_err("mkdir failed", e))?;
+        // V2-E04: the final CSS bytes per emitted file, collected here so the
+        // integrity pass below digests the exact bytes written (no re-read).
+        let mut css_bodies: BTreeMap<String, String> = BTreeMap::new();
         let mut bodies: BTreeMap<String, String> = BTreeMap::new();
         for b in &built {
             let mut body = String::new();
@@ -1131,8 +1144,9 @@ impl ChunkBundler {
                 } else {
                     src.clone()
                 };
-                std::fs::write(options.out_dir.join(css_file), css)
+                std::fs::write(options.out_dir.join(css_file), &css)
                     .map_err(|e| io_err("css write failed", e))?;
+                css_bodies.insert(css_file.clone(), css);
             }
         }
 
@@ -1264,6 +1278,19 @@ impl ChunkBundler {
                 build_id: build_id.clone(),
                 routes,
                 assets,
+                // V2-E04: the sha384 digests ride the manifest — the JS bytes
+                // are already in `bodies` and the CSS bytes in `css_bodies`,
+                // so the pass digests memory (no re-read) and stays
+                // byte-exact with what was just written.
+                integrity: bodies
+                    .iter()
+                    .map(|(f, b)| (f.clone(), sri::sri_digest(b.as_bytes())))
+                    .chain(
+                        css_bodies
+                            .iter()
+                            .map(|(f, b)| (f.clone(), sri::sri_digest(b.as_bytes()))),
+                    )
+                    .collect(),
             };
             std::fs::write(
                 options.out_dir.join("client.manifest.json"),
