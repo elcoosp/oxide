@@ -35,8 +35,19 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys AND over the config keys — the `ConfigFeatureReport` seam + `check_config` the config layer maps and the CLI build consults, with F09's `search` arm live) + the E11 generated docs table (`capability_markdown_table`) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02, V2-F09 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
-| `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`) | §19, §V2-F16, §V2-F18, §V2-F20 |
+| `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render/docs/verify; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`); `docs generate` is the V2-E11 reference-docs engine (the `ReferenceGenerator` registry over `docs/reference/`, `--check` is the docs gate) | §19, §V2-F16, §V2-F18, §V2-F20, §V2-E11 |
 ## What changed since 2026-10-12
+
+- **`cli`**: the E11 docs generator (`feat/docs-generate-seam` + `feat/
+  errors-registry-page`) — `oxide docs generate` writes `docs/reference/`
+  from the crates the binary links (capabilities.md from the §18 matrix
+  fold, config.md from `config_schema()` with the DOC-001
+  every-key-described refusal, cli.md from the live clap tree,
+  errors.md from the new `docs/errors.toml` registry), `--check` is the
+  gate the new CI `docs-check` job runs, and
+  `tests/errors_registry_tdd.rs` holds the registry against every
+  production code literal (the V2.K call-site gate). Deltas and
+  deferrals — see `docs/deviations.md`.
 
 - **`adapters` + `config` + `cli`**: F09's `search` config key + the §18
   refusal's `AST-SRC-001` arm — the fourth and last open code of the
