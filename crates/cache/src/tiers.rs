@@ -714,11 +714,15 @@ impl TieredCache {
         // run them on the blocking pool so a slow disk does not stall a
         // Tokio worker. `spawn_blocking` needs 'static: the disk tier is
         // behind an Arc; failures on the join handle become a miss (the
-        // panic path is a poisoned pool, not a correctness bug).
+        // panic path is a poisoned pool, not a correctness bug). The handle
+        // is cloned at each use site instead of being moved once, so the
+        // expired-delete arm below does not re-unwrap `self.disk`.
         if let Some(disk) = &self.disk {
-            let disk = Arc::clone(disk);
-            let k = key.to_string();
-            let hit = tokio::task::spawn_blocking(move || disk.get(&k)).await;
+            let hit = {
+                let disk = Arc::clone(disk);
+                let k = key.to_string();
+                tokio::task::spawn_blocking(move || disk.get(&k)).await
+            };
             let e = match hit {
                 Ok(Ok(Some(e))) => Some(e),
                 Ok(_) => None,
@@ -737,7 +741,7 @@ impl TieredCache {
                         return Ok(Some(Hit::Stale(Arc::new(e))));
                     }
                     Freshness::Expired => {
-                        let disk = Arc::clone(self.disk.as_ref().unwrap());
+                        let disk = Arc::clone(disk);
                         let k = key.to_string();
                         let _ = tokio::task::spawn_blocking(move || disk.delete(&k)).await;
                     }
