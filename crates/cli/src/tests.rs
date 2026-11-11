@@ -9663,3 +9663,275 @@ fn integrity_verdict_fails_closed_on_a_corrupt_manifest() {
         other => panic!("expected Corrupt, got {other:?}"),
     }
 }
+
+/// V2-F09: the search serve-side wire-up. `build_search_endpoint` is the
+/// `start_server_inner_full` seam: `None` when `search.collections` is
+/// unconfigured (nothing constructed, nothing opened), `None` + a loud
+/// warning when the build's index is missing (the not-configured 404
+/// contract), and a live endpoint when the engine built one — with the
+/// typed config's query-time knobs attached.
+#[cfg(feature = "search")]
+#[test]
+fn the_search_serve_wire_up_opens_the_built_index() {
+    let dir = tempfile::tempdir().unwrap();
+    // Unconfigured: plain None, no attempt to open anything.
+    assert!(
+        crate::build_search_endpoint(&oxide_fw_config::SearchConfig::default(), dir.path())
+            .is_none(),
+        "empty search.collections constructs nothing"
+    );
+    // Configured but not built: None (the warn path), not a serve-start failure.
+    let configured = oxide_fw_config::SearchConfig {
+        collections: vec!["posts".into()],
+        snippet: Some(80),
+        ..oxide_fw_config::SearchConfig::default()
+    };
+    assert!(
+        crate::build_search_endpoint(&configured, dir.path()).is_none(),
+        "a missing dist/search/index degrades to None"
+    );
+    // Built: the endpoint attaches with the config's knobs.
+    let docs = vec![oxide_fw_search::SearchDocument {
+        id: "posts/a".into(),
+        url: "/posts/a".into(),
+        title: "the rust guide".into(),
+        body: "rust is a systems language.".into(),
+        tags: vec!["guide".into()],
+        lang: "en".into(),
+    }];
+    let index_dir = dir
+        .path()
+        .join("dist")
+        .join("search")
+        .join(oxide_fw_search::SEARCH_INDEX_DIR);
+    oxide_fw_search::TantivyIndex::build_in_dir(
+        &docs,
+        &oxide_fw_search::SearchEngineOptions::default(),
+        &index_dir,
+    )
+    .unwrap();
+    let ep = crate::build_search_endpoint(&configured, dir.path()).expect("the endpoint attaches");
+    assert_eq!(ep.doc_count(), 1);
+}
+
+// ------------------------------------------------------- V2-F09 search engine emission
+
+#[tokio::test]
+async fn build_emits_the_search_engine_index_for_a_configured_collection() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let routes = root.join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    // A content collection the search engine indexes.
+    let posts = root.join("content/posts");
+    std::fs::create_dir_all(&posts).unwrap();
+    std::fs::write(
+        posts.join("hello.md"),
+        "---\ntitle: Hello World\ntags: [\"guide\"]\nlang: en\n---\n\nRust is **fast**.\n\n```rust\nlet x = 1;\n```\n\nA [link](https://example.com) in the body.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        posts.join("world.md"),
+        "---\ntitle: World Post\n---\n\nRust is safe.\n",
+    )
+    .unwrap();
+
+    write_config(
+        &root,
+        r#"{
+            "adapter": "static",
+            "content": {
+                "collections": [
+                    { "name": "posts", "dir": "content/posts", "indexedFields": ["title"] }
+                ]
+            },
+            "search": { "collections": ["posts"], "fields": { "title": 3, "body": 1 }, "snippet": 160, "languages": ["en"] }
+        }"#,
+    );
+
+    let mut buf = Vec::new();
+    let code = crate::run_with_writer(
+        Cli {
+            command: Command::Build {
+                root: root.to_str().unwrap().to_string(),
+                r#static: true,
+                explain: false,
+                mode: None,
+                offline_plugins: false,
+                attest: false,
+                key: None,
+            },
+        },
+        &mut buf,
+    )
+    .await
+    .unwrap();
+    let build_out = String::from_utf8_lossy(&buf);
+    assert_eq!(code, 0, "build output: {build_out}");
+
+    // The tantivy index directory was written (the serve side's artifact).
+    let index_dir = root.join("dist/search/index");
+    assert!(
+        index_dir.join("meta.json").is_file(),
+        "the tantivy index is in dist/search/index"
+    );
+    // The static fallback + the CAS marker.
+    let static_json = root.join("dist/search/static.json");
+    assert!(static_json.is_file(), "static.json missing");
+    let st: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&static_json).unwrap()).unwrap();
+    assert_eq!(st["docs"].as_array().unwrap().len(), 2);
+    let hello = st["docs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["id"] == "posts/hello")
+        .expect("the hello doc");
+    assert_eq!(
+        hello["url"], "/posts/hello",
+        "the default collection-page URL shape"
+    );
+    assert_eq!(hello["title"], "Hello World");
+    assert_eq!(hello["tags"], serde_json::json!(["guide"]));
+    let body = hello["excerpt"].as_str().unwrap();
+    assert!(body.contains("Rust is fast"), "markdown stripped: {body}");
+    assert!(!body.contains("```"), "fenced code stripped: {body}");
+    assert!(!body.contains("**"), "emphasis stripped: {body}");
+    assert!(
+        body.contains("A link in the body"),
+        "link target stripped: {body}"
+    );
+    assert!(st["postings"]["rust"].is_array(), "the corpus terms post");
+    // The build announced the index.
+    assert!(build_out.contains("search index:"), "{build_out}");
+    // The §16.5 content projection is untouched (the loader contract).
+    assert!(
+        root.join("dist/content/posts.index.json").is_file(),
+        "the §16.5 projection remains"
+    );
+}
+
+#[tokio::test]
+async fn build_skips_the_search_rebuild_when_the_corpus_is_unchanged() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let routes = root.join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default null;",
+    )
+    .unwrap();
+    let posts = root.join("content/posts");
+    std::fs::create_dir_all(&posts).unwrap();
+    std::fs::write(posts.join("a.md"), "---\ntitle: A\n---\n\nBody text.\n").unwrap();
+    write_config(
+        &root,
+        r#"{
+            "adapter": "static",
+            "content": { "collections": [ { "name": "posts", "dir": "content/posts" } ] },
+            "search": { "collections": ["posts"] }
+        }"#,
+    );
+    let build = || async {
+        let mut buf = Vec::new();
+        let code = crate::run_with_writer(
+            Cli {
+                command: Command::Build {
+                    root: root.to_str().unwrap().to_string(),
+                    r#static: true,
+                    explain: false,
+                    mode: None,
+                    offline_plugins: false,
+                    attest: false,
+                    key: None,
+                },
+            },
+            &mut buf,
+        )
+        .await
+        .unwrap();
+        (code, String::from_utf8_lossy(&buf).to_string())
+    };
+    let (code, out1) = build().await;
+    assert_eq!(code, 0, "{out1}");
+    assert!(
+        out1.contains("search index:"),
+        "first build writes the index: {out1}"
+    );
+    // Force a re-run by touching a tracked input that is NOT the corpus
+    // (the corpus itself must stay byte-identical for the CAS marker to
+    // hit); an all-unchanged build short-circuits before the emitter.
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default () => null;",
+    )
+    .unwrap();
+    let (code, out2) = build().await;
+    assert_eq!(code, 0, "{out2}");
+    assert!(
+        out2.contains("search index unchanged"),
+        "the CAS marker skips the rebuild: {out2}"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_search_collection_fails_the_build_with_src_106() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let routes = root.join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default null;",
+    )
+    .unwrap();
+    write_config(
+        &root,
+        r#"{
+            "adapter": "static",
+            "content": { "collections": [ { "name": "posts", "dir": "content/posts" } ] },
+            "search": { "collections": ["postt"] }
+        }"#,
+    );
+    let mut buf = Vec::new();
+    let result = crate::run_with_writer(
+        Cli {
+            command: Command::Build {
+                root: root.to_str().unwrap().to_string(),
+                r#static: true,
+                explain: false,
+                mode: None,
+                offline_plugins: false,
+                attest: false,
+                key: None,
+            },
+        },
+        &mut buf,
+    )
+    .await;
+    // The build fails loud: the coded diagnostic IS the failure (the
+    // CLI's build path propagates it as the command's error), naming the
+    // code and the fix.
+    let err = match result {
+        Err(e) => e,
+        Ok(code) => panic!("a typo'd search collection must fail the build; exit {code}"),
+    };
+    let rendered = format!("{err:#}");
+    assert!(
+        rendered.contains("SRC-106"),
+        "the refusal names the code: {rendered}"
+    );
+    assert!(
+        rendered.contains("posts"),
+        "the refusal names the valid collections: {rendered}"
+    );
+}
