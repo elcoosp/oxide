@@ -68,6 +68,24 @@ jobs:
       # then named in the summary, instead of burning the job's
       # `timeout-minutes` silently with a 0.0%-CPU hang and no test name.
       - run: cargo nextest run --workspace --no-fail-fast
+  docs-check:
+    # V2-E11: the generated reference docs (docs/reference/) must match the
+    # running binary. `docs generate --check` re-renders every page in
+    # memory and exits 1 on drift — a config key, capability cell, CLI
+    # command or error code that changed without a page regeneration is a
+    # red build (the E11 acceptance: "adding a config key without a schema
+    # description fails docs-check").
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install nasm (ravif's rav1e asm, same as the rust job)
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo run -p oxide-fw-cli --quiet -- docs generate --root . --check
   wasm32-edge:
     name: wasm32 edge bundle gate (P0-1c)
     runs-on: ubuntu-latest
