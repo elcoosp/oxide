@@ -18,6 +18,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod head;
 mod minify;
 mod resolve;
 mod rolldown_backend;
