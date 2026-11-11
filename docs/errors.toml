@@ -1,0 +1,654 @@
+# The Oxide error-code registry (Appendix V2.K).
+#
+# One table per stable diagnostic code: `message` is the human meaning,
+# `fix` the documented remedy when one exists, and `spec_only = true`
+# marks codes the spec defines for work packages that have not landed
+# yet (the coverage test only enforces the landed codes).
+#
+# Gates: docs/reference/errors.md renders this file (ErrorsPage), and
+# crates/cli/tests/errors_registry_tdd.rs fails when a production call
+# site raises a code this file does not carry.
+
+[ADP-CAP]
+message = "target `{}` does not support `{feature}`; remove the requirement or pick another target (§18 refusal rule)"
+
+[ADP-IO]
+message = "cannot create {}: {e}"
+
+[ADP-JSON]
+message = "serialize {name}: {e}"
+
+[ADP-STATIC-DYN]
+message = "route `{route}` is `dynamic` and has no prerendered output; static export requires prerendering or `static.fallback` (§10.5)"
+fix = "Prerender the route or set `static.fallback`"
+
+[AST-AVIF]
+message = "ravif encode failed: {e}"
+
+[AST-CSS]
+message = "lightningcss parse: {e}"
+
+[AST-DIR]
+message = "collection `{}` directory not found: {}"
+
+[AST-ENTRY]
+message = "failed to read {}: {e}"
+
+[AST-FNT-001]
+message = "`fonts.subset: 'used'` requires every route to be `static` (glyph-usage subsetting needs all text known at build), but the project has non-static routes"
+fix = "Use `latin` or `unicode-range`, or make all routes static"
+
+[AST-FONT]
+message = "skrifa parse failed: {e}"
+
+[AST-FRONT]
+message = "unclosed frontmatter in {} (missing closing `---`)"
+
+[AST-I18N]
+message = "MessageFormat parse failed: {}"
+
+[AST-I18N-ARG]
+message = "MessageFormat: a value is missing for a placeholder argument"
+fix = "Pass a `values` entry for every placeholder in the message template"
+
+[AST-I18N-TYPE]
+message = "MessageFormat: a placeholder value has the wrong type"
+fix = "Pass the value type the template expects (string, number or date)"
+
+[AST-IDX]
+message = "index serialization failed: {e}"
+
+[AST-IMG]
+message = "failed to decode source image: {e}"
+
+[AST-IMG-REQ]
+message = "`url` query parameter is empty"
+
+[AST-LIV-001]
+message = "a route opts into `live: true` but target `{}` does not support live loaders (§18 capability matrix)"
+fix = "Use `live.transport: 'poll'` or change target"
+
+[AST-OG]
+message = "usvg parse failed: {e}"
+
+[AST-QUERY]
+message = "asset specifier must be a non-empty path optionally followed by `?query`"
+
+[AST-REF]
+message = "collection `{}` entry `{}` links to `{target}` but no entry with slug `{stem}` exists"
+
+[AST-SCH]
+message = "collection `{}` entry `{}` has no frontmatter; external schema requires content"
+
+[AST-SRC-001]
+message = "`search` is configured but target `{}` does not support the built-in search capability (§18 capability matrix)"
+fix = "Use static JSON search or a Binary or Docker target"
+
+[AST-WEBP]
+message = "webp encode unavailable in this image build; emitted PNG instead: {e}"
+
+[ATT-CANON]
+message = "the provenance file is not canonical JSON (whitespace tamper)"
+fix = "Rewrite the provenance in canonical form; `oxide verify --rebuild` re-checks"
+
+[ATT-DIST]
+message = "the dist is missing, `dist/build-id` is absent, or a subject digest does not match the dist on disk"
+fix = "Run `oxide build --attest` first"
+
+[ATT-IO]
+message = "filesystem I/O failed while writing or verifying the attestation"
+
+[ATT-KEY]
+message = "no signing key on disk or in OXIDE_SIGNING_KEY, or the key file could not be read"
+fix = "Pass `--key <file>` or set `OXIDE_SIGNING_KEY`"
+
+[ATT-KEYFMT]
+message = "the signing key is not an ed25519 PKCS#8 private key"
+fix = "Pass an unencrypted ed25519 PKCS#8 key (`openssl pkey -keyform DER`)"
+
+[ATT-LOCK]
+message = "`{file}` is not a parseable cargo/pnpm lockfile"
+fix = "Regenerate the lockfile with the pinned toolchain"
+
+[ATT-PUBKEY]
+message = "the public key is not ed25519 (SPKI PEM, 64-char hex or 32-byte base64)"
+fix = "Pass the ed25519 public key that pairs with the signing key"
+
+[ATT-SIG]
+message = "the provenance signature does not verify over the statement"
+fix = "Re-attest with the matching signing key"
+
+[AUDIT-OFFLINE]
+message = "{msg}"
+
+[BLD-409]
+message = "Build header unknown or expired (surfaced client-side as a reload)"
+fix = "Reload the page"
+spec_only = true
+
+[BLD-CSS]
+message = "lightningcss failed for {path}: {}"
+
+[BLD-CYCLE]
+message = "import cycle detected: {chain}"
+fix = "break the cycle by extracting the shared code into its own module"
+
+[BLD-GUARD]
+message = "server-only module leaked into client graph"
+
+[BLD-IO]
+message = "mkdir {}: {e}"
+
+[BLD-JSON]
+message = "{e}"
+
+[BLD-PLUGIN]
+message = "plugin load({:?}) failed: {} {}"
+
+[BLD-RESOLVE]
+message = "entry module `{}` for route `{route}` not found"
+
+[BLD-ROLLDOWN]
+message = "tokio runtime: {e}"
+
+[BLD-SFC]
+message = "check the tooling-pool logs for the {ext} compile failure of {bare}; the build must not bundle raw framework SFC sources"
+
+[BLD-TAILWIND]
+message = "the @oxide-fw/tailwind plugin pass failed"
+fix = "Check the @oxide-fw/tailwind plugin config and the CSS entry"
+
+[BND-SVG]
+message = "`{path_for_errors}`: no <svg> element found"
+
+[CAC-BUILDID]
+message = "dist missing: {}"
+
+[CAC-DB]
+message = "redb: {e}"
+fix = "check disk space/permissions for the cache root"
+
+[CAC-DISK]
+message = "entry {raw_len} exceeds per-entry cap {}"
+
+[CAC-IO]
+message = "disk tier: {e}"
+
+[CAC-JSON]
+message = "index codec: {e}"
+
+[CAC-ZSTD]
+message = "compress: {e}"
+
+[CACHE-CODEC]
+message = "zstd: {e}"
+
+[CACHE-HTTP]
+message = "entry decode: {e}"
+
+[CACHE-REDIS]
+message = "open {redacted}: {e}"
+
+[CACHE-S3]
+message = "s3 client: {e}"
+
+[CAS-CORRUPT]
+message = "index entry {} has no blob file on disk"
+
+[CAS-DB]
+message = "open index: {e}"
+
+[CAS-IO]
+message = "create {}: {e}"
+
+[CAS-NO-ENTRY]
+message = "touch: key {} is not in the index"
+
+[CAS-REMOTE]
+message = "remote cache URL must be http:// ({url})"
+
+[CFG-001]
+message = "unknown config key `framwork`"
+fix = "did you mean `framework`?"
+
+[CFG-EXTENDS]
+message = "extends chain too deep at `{spec}` (cycle?)"
+
+[CFG-IO]
+message = "read {}: {e}"
+
+[CFG-SCHEMA]
+message = "serialize defaults: {e}"
+
+[CFG-SIZE]
+message = "invalid size `{s}`: empty string"
+
+[CFG-UNKNOWN-KEY]
+message = "config root must be an object"
+
+[CHECK-LINT]
+message = "`{bin}` reported errors"
+
+[CHECK-TS]
+message = "the typecheck binary reported errors"
+fix = "Fix the reported type errors, or narrow the `check` config"
+
+[CMP-CACHE]
+message = "'use cache' function has no binding name"
+
+[CMP-GUARD]
+message = "server-only `{ident}` from `{}` shipped into client chunk `{chunk}`"
+
+[CMP-NAT-001]
+message = "`compilerBackend: 'native'` but no healthy native compiler for the framework"
+fix = "Build with `--features native-<fw>` or set `compilerBackend` to `auto` or `node`"
+spec_only = true
+
+[CMP-PARSE]
+message = "fix the syntax error reported by the Oxc parser"
+fix = "Fix the syntax error the parser names"
+
+[CMP-SECRET]
+message = "`process.env.{name}` is read in client module `{}`;                          this would ship the secret to the browser. Move the                          read to a server module or rename to `PUBLIC_{name}`."
+
+[CONTENT-TYPEGEN]
+message = "mkdir {}: {e}"
+
+[DEV-BUNDLE]
+message = "rebuild failed for {pstr}: {err_msg}"
+
+[DEV-HMR-001]
+message = "HMR fell back to a full reload: {reason}"
+
+[DEV-HMR-002]
+message = "{} is not imported by any module"
+
+[DEV-HMR-003]
+message = "HMR frame speaks schema v{found}; this build speaks v{}"
+
+[DEV-NOTIFY]
+message = "create watcher: {e}"
+
+[DEV-QR]
+message = "QR generation failed: {e}"
+
+[DEV-TLS]
+message = "certificate params failed: {e}"
+
+[DOC-001]
+message = "config keys carry no schema description; the page refuses to render (E11 acceptance)"
+fix = "add a `description` in `crates/config/src/schema.rs`, then regenerate the pages"
+
+[DOC-002]
+message = "docs/errors.toml carries an entry the strict registry format rejects (the diagnostic names the line)"
+fix = "fix the entry the diagnostic names (the format is `[CODE]` + `message`/`fix`/`spec_only`)"
+
+[DOC-003]
+message = "a docs/reference page is missing or stale against the running binary"
+fix = "regenerate with `cargo run -p oxide-fw-cli -- docs generate`"
+
+[DSP-101]
+message = "a middleware staged a reserved locals key (`session`, `locale` or `experiments`)"
+fix = "Rename the key; reserved keys are owned by the core"
+
+[DSP-110]
+message = "invalid experiment definition (traffic outside 0-100, or fewer than two variants)"
+fix = "Fix the `experiments` entry"
+
+[DSP-111]
+message = "invalid `live` section (keepaliveSeconds/maxSubscribers/maxRerunsPerSecond below 1, or perIpMax above maxSubscribers)"
+fix = "Fix the `live` section"
+
+[DSP-112]
+message = "invalid `stream.resume` section (ttlSecs below 1, maxBytesEach below 1 byte, or maxBytesTotal below maxBytesEach)"
+fix = "Fix the `stream.resume` section"
+
+[DSP-113]
+message = "invalid overload priority spelling (rules[].priority accepts only `low`, `normal`, `critical`)"
+fix = "Use `low`, `normal` or `critical`"
+
+[DSP-114]
+message = "invalid `interactionReplay` spelling (a non-boolean value)"
+fix = "Set `interactionReplay` to the unquoted boolean `true` or `false`"
+
+[EDGE-101]
+message = "routes manifest must be an array of route rows or {\"routes\": [...]} (router typegen §8.3)"
+
+[FN-BAD-REQUEST]
+message = "the server-function envelope is malformed (the 400 dispatch class)"
+fix = "Send the envelope shape `/_oxide/fn/<id>` documents"
+
+[FN-INTERNAL]
+message = "the server-function dispatch failed internally (the 500 dispatch class)"
+fix = "Inspect the server logs; the dispatch failed inside the host"
+
+[FN-NOT-FOUND]
+message = "no server function with that id is registered in this build"
+fix = "Rebuild, or check the id the client posts to `/_oxide/fn/<id>`"
+
+[FN-THREW]
+message = "the server function threw; the envelope carries the function's own error message"
+
+[GRAPH-ARTIFACT]
+message = "rkyv serialize: {e}"
+
+[GRAPH-CANCEL]
+message = "computation cancelled: a newer change invalidated in-flight work"
+
+[GRAPH-CORRUPT]
+message = "artifact: truncated header"
+
+[GRAPH-CYCLE]
+message = "dependency cycle detected at node `{}`"
+
+[GRAPH-FS-IO]
+message = "read {}: {e}"
+
+[GRAPH-NO-COMPUTE]
+message = "node `{}` is not memoized and has no registered Compute"
+
+[GRAPH-S3]
+message = "s3 client (bucket {bucket}): {e}"
+
+[I18N-LOAD]
+message = "the locale catalog could not be read or parsed ({path}: {e})"
+fix = "Create the locales dir or fix the locale file's frontmatter"
+
+[IF-NONE-MATCH]
+message = "\\\"a\\\""
+
+[JSH-ABORT]
+message = "call aborted before completion"
+
+[JSH-ACTION]
+message = "ACT"
+
+[JSH-B64]
+message = "invalid base64 length/padding ({}) chars"
+
+[JSH-BOOM]
+message = "worker simulated failure for kind `{}`"
+
+[JSH-COMPILE]
+message = "plugin transform failed for {path}: {}"
+
+[JSH-CRASH]
+message = "worker simulated crash (kind `die`)"
+
+[JSH-DEADLINE]
+message = "chunked stream did not finish within 30s"
+
+[JSH-DRAIN]
+message = "pool is draining; no new calls are accepted (§12.2)"
+
+[JSH-ENDPOINT]
+message = "ENDPOINT"
+
+[JSH-FETCH]
+message = "the SSRF-guarded fetch the framework adapter issued failed"
+
+[JSH-FN]
+message = "server-fn:run returned invalid JSON: {e}"
+
+[JSH-FN-THREW]
+message = "the server function threw; the envelope carries the function's own error message"
+fix = "Fix the thrown error in the server function"
+
+[JSH-FRAME]
+message = "frame of {} bytes exceeds the 64 MiB protocol limit (§4.2)"
+
+[JSH-JSON]
+message = "failed to serialize worker message: {e}"
+
+[JSH-LOADER]
+message = "loader:run response missing numeric `status`"
+
+[JSH-NODE]
+message = "failed to spawn node worker `{node_bin}`: {e}"
+
+[JSH-NODESHIM]
+message = "crypto shim missing loud-throw for unsupported algorithms"
+
+[JSH-NOSCRIPT]
+message = "ScriptedHost has no handler registered; construct it via ScriptedHost::with_handler(..)"
+
+[JSH-OP]
+message = "cache_get requires a string `key`"
+
+[JSH-OVERFLOW]
+message = "chunked stream exceeded the {} MiB collect cap"
+
+[JSH-PARAMS]
+message = "generate-params:run returned invalid JSON: {e}"
+
+[JSH-POOL]
+message = "V8 pool has no workers"
+
+[JSH-SNAPVER]
+message = "snapshot at {} is not a versioned envelope (stale raw blob?); expected format {} / oxide {}"
+
+[JSH-SOCKET]
+message = "SOCKET"
+
+[JSH-TIMEOUT]
+message = "no response from worker within 10s for call id {id} (kind `{}`)"
+
+[JSH-TOOLING]
+message = "task join failed: {e}"
+
+[JSH-V8]
+message = "tokio rt: {e}"
+
+[JSH-V8KIND]
+message = "V8 backend incompatible with the server code (JSH-V8KIND)"
+
+[NOT-FOUND]
+message = "JSH-ACTION"
+
+[ODF-CYCLE]
+message = "reference expansion exceeds the {MAX_DEPTH}-level limit"
+
+[ODF-DEPTH]
+message = "value is nested deeper than the {MAX_DEPTH}-level limit"
+
+[ODF-KEY]
+message = "reserved object key `{k}` (§17.1: use a Map for data-level keys)"
+
+[ODF-MAGIC]
+message = "payload does not start with the b\\\"ODF1\\\" magic + version"
+
+[ODF-REF]
+message = "shared table has {n} entries, limit is {MAX_REFS}"
+
+[ODF-SIZE]
+message = "encoded payload is {} bytes, limit is {MAX_BYTES}"
+
+[ODF-TAG]
+message = "invalid BigInt decimal string `{s}` (expected `-?(0|[0-9]+)`)"
+
+[ODF-TRUNC]
+message = "payload ends prematurely: needed {n} more byte(s) at offset {}"
+
+[ODP-BASE]
+message = "the patch's base digest does not match the target document"
+
+[ODP-DEL]
+message = "del target is not an object key"
+
+[ODP-KEY]
+message = "reserved key {k:?} cannot appear in a patch path"
+
+[ODP-MAGIC]
+message = "patch payload does not start with the b\\\"ODP1\\\" magic"
+
+[ODP-OP]
+message = "unknown op code {other}"
+
+[ODP-PATH]
+message = "del path is empty"
+
+[ODP-SHAPE]
+message = "patch root is not an object"
+
+[ODP-SPLICE]
+message = "splice target is not an array"
+
+[OX-DYN]
+message = "route is dynamic; the attached reasons name the reads that force it (F16)"
+fix = "Run `oxide why <route> --fix`"
+
+[OX-PLUGIN]
+message = "plugins[{i}] (kind:\\\"native\\\") is missing a `name` field"
+
+[OX-SRC-001]
+message = "Search params failed `searchSchema` validation"
+fix = "Fix the URL or add defaults to the schema"
+spec_only = true
+
+[PERF-BUILD]
+message = "the candidate `oxide build` failed inside the bisect worktree"
+
+[PERF-GIT]
+message = "git is unavailable on PATH, or a git plumbing invocation (rev-list, worktree, rev-parse) failed"
+
+[PERF-METRIC]
+message = "PERF-THRESHOLD"
+
+[PERF-RANGE]
+message = "the bisect range is empty or `good` is not a first-parent ancestor of `bad`"
+fix = "Pass a range where `good` precedes `bad` on the first-parent chain"
+
+[PERF-RUNS]
+message = "`--runs` must be at least 1"
+fix = "Pass `--runs 1` or higher"
+
+[PLG-BRIDGE]
+message = "bridge runtime: {e}"
+
+[PLG-CALL]
+message = "plugin transform failed: {}"
+
+[PLG-CAP]
+message = "WASM plugin `{}` requests capability `{cap}` — allowed: fs, network, env, clock (§17.2 sandboxing)"
+
+[PLG-HOOK]
+message = "plugin `{}` declares hook `{}`, which the JS bridge does not support — see the compatibility table (§15.2/§15.3)"
+
+[PLG-HOOKS]
+message = "WASM plugin `{}` declares no hooks — nothing to dispatch (§15.2)"
+
+[PLG-LOAD]
+message = "plugin:load requires a `path`"
+
+[PLG-WASM]
+message = "wasmtime engine init failed: {e}"
+
+[PLG-WIT]
+message = "WASM plugin `{}` declares no `wit_world` — a stable WIT interface is required (§15.1 kind 2)"
+
+[PRM-001]
+message = "A route used a capability outside its declared permissions (F19)"
+fix = "Add it to `config.permissions` or remove the call"
+spec_only = true
+
+[RFN-001]
+message = "Rust function library ABI version mismatch"
+fix = "Rebuild the user crate with the matching `oxide-rustfn` version"
+spec_only = true
+
+[RFN-002]
+message = "`*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08)"
+fix = "Use Binary or Docker, or remove the Rust functions"
+
+[RND-INJECT]
+message = "html injection failed: {e}"
+
+[RND-PPR]
+message = "unterminated boundary tag"
+
+[RND-SCRIPT]
+message = "<Script> requires either a `src` or inline `content`"
+
+[RND-UTF8]
+message = "render stream was not UTF-8: {e}"
+
+[RPL-002]
+message = "Replay saw an outbound call that is not in the record"
+fix = "Re-record, or the code path changed"
+spec_only = true
+
+[RPL-003]
+message = "Record was made on an older build id"
+fix = "Replay continues; results may differ"
+spec_only = true
+
+[RTR-001]
+message = "routes directory not found: {}"
+
+[RTR-002]
+message = "invalid route directory `{name}`: {msg}"
+
+[RTR-100]
+message = "failed to serialize route archive: {e}"
+
+[RTR-101]
+message = "cannot open route archive {}: {e}"
+
+[RTR-102]
+message = "route archive is corrupt: {e}"
+
+[RTR-110]
+message = "rule #{n}: source `{}` must start with `/`"
+
+[RTR-200]
+message = "cannot create typegen directory {}: {e}"
+
+[SCHEMA-001]
+message = "SCHEMA-002"
+
+[SCHEMA-002]
+message = "the config module's value is not JSON (the schema crate's parse class)"
+fix = "Serve the module's value as JSON (the schema crate parses values, not TS)"
+
+[SEC-SESSION]
+message = "a session codec needs at least one key (security.sessionKeys)"
+
+[SNAP-002]
+message = "top-level side effect"
+fix = "create connections lazily"
+
+[SNP-FORMAT]
+message = "snapshot format {} is not supported (expected {})"
+
+[SNP-PANIC]
+message = "snapshot builder thread panicked"
+
+[SRV-408]
+message = "request body read timed out"
+
+[SRV-413]
+message = "request body exceeds the limit of {} bytes"
+
+[SRV-ASSET]
+message = "asset root {} is not a directory"
+
+[SRV-BIND]
+message = "cannot bind {addr}: {e}"
+
+[SRV-COMP]
+message = "gzip failed: {e}"
+
+[SRV-CSRF]
+message = "cross-origin request rejected by Origin/Sec-Fetch-Site verification"
+
+[SRV-NOENC]
+message = "unsupported content encoding `{other}`"
+
+[SRV-PROXY]
+message = "build request failed: {e}"
+
+[SRV-TLS]
+message = "cert parse failed: {e}"
+
+[SRV-WS]
+message = "the websocket handshake or a frame decode failed"
