@@ -73,6 +73,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CFG-EXTENDS` | extends chain too deep at `{spec}` (cycle?) | — |
 | `CFG-IO` | read {}: {e} | — |
 | `CFG-SCHEMA` | serialize defaults: {e} | — |
+| `CFG-SEC` | `security.{key}` must be one of {valid} — got `{got}` | Set `security.{key}` to one of the valid spellings |
 | `CFG-SIZE` | invalid size `{s}`: empty string | — |
 | `CFG-UNKNOWN-KEY` | config root must be an object | — |
 | `CHECK-LINT` | `{bin}` reported errors | — |
