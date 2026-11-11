@@ -211,14 +211,20 @@ impl DemandGraph {
     /// Point the graph at a mutable env-var map (testable; real deployments
     /// wire `std::env` here).
     pub fn set_env_source(&self, vars: Arc<RwLock<BTreeMap<String, String>>>) {
-        *self.env_factory.write().unwrap() = Some(Arc::new(move || {
+        *self
+            .env_factory
+            .write()
+            .expect("demand env factory lock poisoned") = Some(Arc::new(move || {
             Box::new(crate::EnvTrackerImpl { vars: vars.clone() })
         }));
     }
 
     /// Point the graph at a mutable config map.
     pub fn set_config_source(&self, values: Arc<RwLock<BTreeMap<String, serde_json::Value>>>) {
-        *self.config_factory.write().unwrap() = Some(Arc::new(move || {
+        *self
+            .config_factory
+            .write()
+            .expect("demand config factory lock poisoned") = Some(Arc::new(move || {
             Box::new(crate::ConfigTrackerImpl {
                 values: values.clone(),
             })
@@ -227,7 +233,10 @@ impl DemandGraph {
 
     /// Override the file-system tracker factory (defaults to real FS reads).
     pub fn set_fs_factory(&self, f: FsFactory) {
-        *self.fs_factory.write().unwrap() = Some(f);
+        *self
+            .fs_factory
+            .write()
+            .expect("demand fs factory lock poisoned") = Some(f);
     }
 
     /// Cancel the current build window: sets the token (so `get` returns
@@ -256,7 +265,7 @@ impl DemandGraph {
             dashmap::mapref::entry::Entry::Occupied(o) => {
                 let t: Arc<Task> = o.get().clone();
                 drop(o);
-                let mut guard = t.state.lock().unwrap();
+                let mut guard = t.state.lock().expect("demand task state lock poisoned");
                 loop {
                     match &*guard {
                         TaskState::Running => guard = t.cv.wait(guard).unwrap(),
@@ -285,7 +294,7 @@ impl DemandGraph {
         };
         let result = self.compute_and_memoize(&key, compute);
         {
-            let mut guard = task.state.lock().unwrap();
+            let mut guard = task.state.lock().expect("demand task state lock poisoned");
             *guard = TaskState::Done(Arc::new(clone_result(&result)));
             task.cv.notify_all();
         }
