@@ -858,6 +858,7 @@ async fn write_prerender_threads_loader_data_into_renderer() {
         layout_module_paths: &[],
         error_route_id: None,
         plugin_head: &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
+        prefetch: false, // the test injectors stay at the pre-F13 bytes
     })
     .await
     .expect("write_prerender ok");
@@ -907,6 +908,7 @@ async fn write_prerender_without_loader_uses_empty_data() {
         layout_module_paths: &[],
         error_route_id: None,
         plugin_head: &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
+        prefetch: false, // the test injectors stay at the pre-F13 bytes
     })
     .await
     .expect("write_prerender ok");
@@ -947,6 +949,7 @@ fn sidecar_args<'a>(
         layout_module_paths: &[],
         error_route_id: None,
         plugin_head,
+        prefetch: false, // the test injectors stay at the pre-F13 bytes
     }
 }
 
@@ -4482,6 +4485,7 @@ async fn write_prerender_carries_500_status_for_marker_body() {
         layout_module_paths: &[],
         error_route_id: None,
         plugin_head: &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
+        prefetch: false, // the test injectors stay at the pre-F13 bytes
     })
     .await
     .expect("write_prerender succeeds");
@@ -4502,7 +4506,7 @@ async fn write_prerender_carries_200_status_for_clean_body() {
     let renderer: std::sync::Arc<dyn oxide_fw_server::PageRenderer> =
         std::sync::Arc::new(CleanBodyRenderer);
     let params: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    let (_html, status) = crate::write_prerender(PrerenderArgs {
+    let (html, status) = crate::write_prerender(PrerenderArgs {
         dist: &dist,
         rel: "prerendered/index.html",
         route_id: "routes/index",
@@ -4522,10 +4526,18 @@ async fn write_prerender_carries_200_status_for_clean_body() {
         layout_module_paths: &[],
         error_route_id: None,
         plugin_head: &serde_json::json!({"meta":[],"link":[],"style":[],"script":[]}),
+        // V2-F13: this pin doubles as the wire-up proof — `prefetch: true`
+        // (what `prefetch.learned` threads) must reach the injector and
+        // advertise the seventh `window.__oxide` field in the emitted page.
+        prefetch: true,
     })
     .await
     .expect("write_prerender succeeds");
     assert_eq!(status, 200, "no marker → 200");
+    assert!(
+        html.contains("prefetch:true"),
+        "the learned-prefetch advertisement rides the prerendered bootstrap: {html}"
+    );
 }
 
 // ---- §8.5 middleware chain (outer→inner) ------------------------------
