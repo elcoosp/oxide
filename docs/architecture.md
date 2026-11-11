@@ -29,7 +29,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
 | `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04), build id + generations substrate (A04) with the live route on the data plane (`/__oxide/live` build query contract, §V2-F05) and the F07 reattach route (`/__oxide/stream/<id>` + `stream_resume_id`) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02, V2-A04, V2-F05, V2-F07 |
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery; the V2-E04 `Injector.integrity` map (modulepreload/stylesheet links whose URL resolves to a manifest digest emit `integrity` + `crossorigin="anonymous"`) | §7.1, §10, V2-A04, V2-E04 |
-| `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`); §V2-A07 prerender error-status sidecars (`static_status`: `StatusSidecars::scan` serve-start walk, `status_for`, `write_status_sidecar`, the `serve` 200-override); the V2-E04 CSP half (`csp_headers_for` — the one definition site for the strict/hash/report-only × Trusted Types header matrix — and `POST /_oxide/csp-report`, the rate-limited violation sink over both browser formats) | §12, §17, D7, V2-F05, V2-F07, V2-F12, V2-A07, V2-E04 |
+| `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`); §V2-A07 prerender error-status sidecars (`static_status`: `StatusSidecars::scan` serve-start walk, `status_for`, `write_status_sidecar`, the `serve` 200-override); the V2-E04 CSP half (`csp_headers_for` — the one definition site for the strict/hash/report-only × Trusted Types header matrix — and `POST /_oxide/csp-report`, the rate-limited violation sink over both browser formats); the V2-F13 learned-prefetch substrate (`navgraph::NavGraph` — the aggregate route-transition graph the native prefix observes off `x-oxide-nav-from`/`-to` on `/__data` when `prefetch.learned` is on, the `GET /_oxide/nav?from=<route>` top-edges endpoint (k-anonymity floor 20, 7-day half-life), the bounded edge cap, the `merge_from`/`persist` snapshot round trip and the flusher) | §12, §17, D7, V2-F05, V2-F07, V2-F12, V2-A07, V2-E04, V2-F13 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic) and its phase-2 CSS boundary substrate (`plan_classified` — the `kind: 'js'|'css'|'data'` classification with the §13.3 CSS terminal, `css_self_accepts`, the `DEV-HMR-002` orphan-stylesheet warning) and its phase-4 state-preservation substrate (`state::Preservation` on the v1 `update` frame, the injectable `StatePolicy` seam, `update_frame`), inspector model (§13.4), prebundle keys | §13, V2-E01 |
 | `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys AND over the config keys — the `ConfigFeatureReport` seam + `check_config` the config layer maps and the CLI build consults, with F09's `search` arm live) + the E11 generated docs table (`capability_markdown_table`) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02, V2-F09 |
@@ -38,6 +38,42 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render/docs/verify; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`); `docs generate` is the V2-E11 reference-docs engine (the `ReferenceGenerator` registry over `docs/reference/`, `--check` is the docs gate); the V2-E04 SRI wiring (`boot_script_tag` stamps the boot `<script type=module>` with the manifest digest on both the prerender and the live-SSR paths, `security.sri`-gated) | §19, §V2-F16, §V2-F18, §V2-F20, §V2-E11, §V2-E04 |
 
 ## What changed since 2026-10-12
+
+- **`server` + `config` + `render` + `cli` + `packages/core`**: the
+  learned-prefetch substrate (V2-F13, `feat/learned-prefetch-navgraph`).
+  The server half: `server::navgraph` — `NavGraph`, the aggregate
+  route-transition graph (`DashMap<(route id, route id), f64>`, weights
+  decayed with the spec's 7-day half-life, the k-anonymity floor of 20
+  observations hiding sparse edges, a 50k-edge cap bounding memory, the
+  skip-not-fold sanitization posture — garbage route ids observe nothing
+  instead of growing a `_other` junk magnet), `nav_observation` (the
+  data-plane seam: a `GET /__data` carrying the client router's
+  `x-oxide-nav-from`/`x-oxide-nav-to` route-id headers records one edge
+  and falls through), `nav_response_from_query` (the pure
+  `GET /_oxide/nav?from=<route>` renderer — `{from, edges: [{to,
+  probability}]}`, a missing/empty `from` is a 400, a non-GET a 405 with
+  `allow`, a graph-less pipeline the metrics endpoint's "not configured"
+  404), `merge_from`/`persist` (the `.oxide/nav-graph.json` snapshot
+  round trip — atomic tmp+rename write, malformed content ignored, the
+  A07 posture) and `spawn_flusher` (snapshot at spawn + every
+  `flush_secs`). The typed `prefetch` config key (`learned`, default off
+  — the inert-defaults contract; `minProbability`, default 0.35) is
+  schema'd with descriptions (the E11 DOC-001 gate) and load-time
+  validated (`DSP-115`, the DSP-110..114 successor). The bootstrap gains
+  the seventh `window.__oxide` field (`prefetch:true`,
+  `hydration_bootstrap_with_prefetch` + `Injector::with_prefetch`; the
+  default keeps every emitted byte identical), threaded from the typed
+  config through the CLI's prerender paths. The client half:
+  `packages/core/src/client/prefetch.ts` (the connection gate — Data
+  Saver and 2g opt out; `pickEdges` at or above `minProbability`; the
+  route-id header resolution against the route manifest; `edgeToDataPath`
+  — only param-free ids invert to a concrete `/__data` path, param edges
+  warm chunks only; the idle-gated loop with the 2s spacing, the
+  3-outstanding cap, cancel-on-navigation and the Chromium
+  speculation-rules hint), the router stamping the nav headers on
+  navigation `/__data` fetches (never on prefetches), and the boot wiring
+  behind the advertised `prefetch:true`. Deltas and deferrals — see
+  `docs/deviations.md`.
 
 - **`bundler` + `cli`**: the V2-E04 tail (`feat/head-producer-integrity-verify`).
   The head half: `bundler::head::HeadProducer` (the `name()` + `head_for()`
