@@ -1,3 +1,83 @@
+# Handoff — V2-E11's reference-docs generator + the error-code registry landed (`oxide docs generate` writes docs/reference/ from the linked crates with the `--check` CI gate; docs/errors.toml is the 197-entry V2.K registry the coverage test holds against every production code literal); both milestone crates are pedantic-clean
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/10 GB-disk
+sandbox, `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`, nasm built
+from source into `~/.local` for rav1e):**
+- `cargo fmt --all --check` clean; `cargo clippy --workspace
+  --all-targets --all-features -- -D warnings` (the CI bar) ZERO
+  findings; the pedantic sweep over the milestone crates
+  (`cargo clippy -p oxide-fw-cli -p oxide-fw-config --all-targets
+  --all-features -- -D warnings -W clippy::pedantic`) ZERO findings —
+  `docs_gen.rs` and the two TDD files included; the pre-existing
+  server/cache/odf pedantic debt still prints under the sweep,
+  unchanged.
+- Runtime suites green (all-features): `oxide-fw-cli` lib 278 (0
+  failed, 12 ignored) + `docs_tdd` 10 + `errors_registry_tdd` 6 (the
+  16 new pins) + `attest_tdd` 25 + `perf_bisect_tdd` + `integration`;
+  `oxide-fw-config` 115 (the 46 schema-description additions regenerate
+  `schemas/oxide-fw-config.schema.json`, `schema_stability` green);
+  adapters, dev, dispatch, render, router, schema, diagnostics, odf,
+  graph, cache, server, assets, compiler green; bundler/jshost/
+  core-wasm compile-verified only (their test binaries did not fit the
+  sandbox disk — the A07-session precedent).
+- The `docs_generate` criterion group (dev-profile numbers, the
+  sandbox's release profile did not fit the disk): capabilities 54 µs,
+  cli 667 µs, config 1.19 ms, errors 757 µs — a whole-page render is
+  milliseconds, the docs path's worst case.
+- The zero-`#[allow]` gate: `grep -rnE '#!\[(allow|expect)\(|cfg_attr\([^)]*_allow\('`
+  over `crates/ tests/ benches/ examples/` — empty.
+
+## What landed
+
+**M1 — the E11 generator seam** (`feat/docs-generate-seam`):
+`crates/cli/src/docs_gen.rs` — the `ReferenceGenerator` trait (stable
+`path()` + deterministic `render()`), the static registry
+(`generators()`), `generate_all()`, the read-only `check()` (`DOC-003`
+findings, the `check_config` shape applied to docs). Three pages:
+`capabilities.md` (a fold of `capability_markdown_table` + the
+`degradation` reasons — the matrix stays the single source of truth),
+`config.md` (a walk of `config_schema()`, refusing `DOC-001` when any
+leaf key lacks a description — the E11 acceptance, which retired the 46
+bare schema keys in `crates/config/src/schema.rs` + the regenerated
+`schemas/oxide-fw-config.schema.json`), `cli.md` (the live clap tree).
+`oxide docs generate` (`Command::Docs`/`DocsOp`) writes
+`<root>/docs/reference`; `--check` is the gate the new CI `docs-check`
+job runs. Pins: `tests/docs_tdd.rs` (10). Bench: `benches/docs.rs`
+behind `bench-util`. Example: `examples/docs_generate.rs`.
+
+**M2 — the registry seam** (`feat/errors-registry-page`):
+`docs/errors.toml` — 197 entries (one per stable code; messages
+authored from the call sites, `fix` where one exists, `spec_only` for
+the seven not-yet-landed V2.K additions), the strict
+`parse_registry` (`DOC-002` names the line), the `errors.md` page
+(landed first, spec-only marked), and
+`tests/errors_registry_tdd.rs::registry_covers_every_production_code_literal`
+— every code-shaped literal in production sources must have a registry
+row (the V2.K `rg` gate as a test; it caught `I18N-LOAD` and
+`ATT-KEYFMT` during bring-up). Pins: 6.
+
+**Additive / doc-drift retired in the same diff:** the 46 schema
+descriptions (above); `crates/cli/README.md` gains the `docs generate`
+bullet; `docs/architecture.md` the cli row + the what-changed bullet;
+the spec's V2.O E11 row; `README.md`'s badge re-measured 1,831→1,847
+via `scripts/count-tests.sh`; `HANDOFF.md` (this header).
+
+## Where to pick up, in one sentence
+
+F09's engine is still the remaining half (`crates/search`: tantivy
+index, `/_oxide/search`, the static matcher); E11's remaining half is
+the docs-site app (`examples/docs` over `generate_all()`) plus
+`endpoints.md` (the V2.J table's open rows gate it) and the
+E05-dependent `plugin-compat.md`; F08's loader flips `rust_fns_present`
+from the walk to the real compile step.
+
+---
+
 # Handoff — V2-F09's `search` key + the §18 refusal's `AST-SRC-001` arm landed (the fourth and last open code of the config-key refusal rule is live; edge refuses, Node/serverless/static warn the documented string), and E11's docs-table seam realized (`capability_markdown_table` + the byte-identical README embed); both milestone crates are pedantic-clean
 
 ## Where things stand
