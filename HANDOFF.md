@@ -1,3 +1,142 @@
+# Handoff — V2-F09's engine landed end-to-end server-side (`feat/search-engine-substrate`: the `crates/search` tantivy engine — the spec's six-field schema, the build/ingest/query contracts, the `SearchIndex` seam with the `StaticMatcher` degraded fallback, the static `{docs, postings}` export and the L1 query cache; the `/_oxide/search` arm behind `oxide-fw-server/search`; the CLI build emission + serve wire-up behind `oxide-fw-cli/search` — M2 in the same diff); every new file is pedantic-clean, zero `#[allow]`
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/8 GB-disk
+sandbox, `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`, nasm built
+from source into `~/.local` for rav1e):**
+- `cargo fmt --all --check` clean; the CI bar (`cargo clippy --workspace
+  --all-targets --all-features -- -D warnings`) ZERO findings; the
+  pedantic sweep over the milestone crates (`cargo clippy -p
+  oxide-fw-search -p oxide-fw-server --all-targets --all-features --
+  -W clippy::pedantic`) prints ZERO findings on every file this session
+  added or touched (`oxide-fw-search` opts into `[lints] workspace =
+  true` from day one — the seventh opt-in crate); the pre-existing
+  server/cli pedantic debt still prints under the sweep, unchanged (the
+  documented hygiene-pass order).
+- Runtime suites green: `oxide-fw-search` 27 (the engine pins incl. the
+  20-query top-3 parity and the injected-clock cache pins),
+  `oxide-fw-server --all-features` 280 (56 lib + the new
+  `search_endpoint_tdd` 8 + 83 server_tdd + 22 navgraph + 27 live +
+  18 csp + 18 governor + 21 inject + 18 stream + 9 sidecars — every
+  pre-F09 shape pinned byte-identical), `oxide-fw-cli --features
+  search` lib 291 (0 failed, 12 ignored — the search serve wire-up +
+  the 3 build-emission pins included; the §16.5 content projection
+  pins untouched), `errors_registry_tdd` 6 green with the six
+  `SRC-1xx` rows, `oxide-fw-diagnostics` + `oxide-fw-graph` green
+  after the micro-debt pass.
+- Benches: the `search` groups (`search_build/{100,5000}`,
+  `search_query` ×4, `search_static_export/1000`) compile and run
+  behind `bench-util`.
+- TS: untouched (`packages/*` — the client matcher is the remaining
+  half); the badge re-measured 1,941→1,980 Rust (+39: 27 engine pins +
+  8 server pins + 4 CLI pins).
+- Doc-drift fixes IN this diff: `docs/errors.toml` (the six `SRC-1xx`
+  rows) + the regenerated `docs/reference/errors.md`, the
+  regenerated `docs/reference/config.md` (a PRE-EXISTING drift the
+  regen exposed: the stale parent `prefetch` row the generator no
+  longer emits — `docs generate --check` is green on both pages now),
+  `docs/architecture.md` (the `search` crate row — twenty crates —
+  the `server` row's endpoint bullet, the `config` row's
+  `search`+`prefetch` keys, the what-changed bullet), `README.md`
+  (the badge re-measured, the status-table prose synced 1,904→1,980 —
+  the prose was stale by 37 against its own badge — and "Nineteen" →
+  "Twenty Rust crates" with `search` in the list),
+  `docs/spec-v0.2-draft.md` (the V2.O F09 row),
+  `docs/deviations.md` (the F09 record: the five deltas + the
+  client-matcher and dev-watch deferrals), `HANDOFF.md` (this
+  header), and `.github/workflows/benchmark.yml` (the oha step's
+  `examples/smoke-app` path — the bare directory never existed; it is
+  `examples/smoke-app-react`, so the step stopped failing whenever
+  oha installed).
+
+## What landed
+
+**M1 — the search engine + the serve arm** (`feat/search-engine-substrate`):
+`crates/search` — `schema::build_schema` (§V2-F09 verbatim), the
+`SearchDocument` ingest contract with the `SRC-103` refusals,
+`TantivyIndex::build_in_ram`/`build_in_dir`/`open_read_only` (mmap, no
+writer at runtime) + the order-insensitive blake3 `content_hash`, the
+query contracts (title/body boosts from the typed config, distance-1
+fuzzy on terms ≥ 5, the tag/lang filters, `<mark>` snippets),
+`SearchIndex` (the object-safe seam) + `StaticMatcher` (the Degraded
+fallback over `static_index::StaticIndex` — the spec's
+`{docs, postings}` export with 2-to-4-char prefix terms, top-3 parity
+with the engine pinned on 20 queries), `QueryCache` (60 s TTL, the
+normalized query + filters keyed, LRU cap, injectable clock), the
+`SRC-101`–`SRC-106` registry rows. The serve half: `server::search_endpoint`
+(`SearchEndpoint` + the pure renderer) and the pipeline arm (404/405/429
+contracts, 20-per-10-s bucket) behind `oxide-fw-server/search`; the CLI
+serve wire-up (`build_search_endpoint` in `start_server_inner_full`,
+best-effort open, the pre-F09 shape when absent) behind
+`oxide-fw-cli/search`. Pins: `search_tdd` 27 + `search_endpoint_tdd` 8 +
+the CLI wire-up pin. Bench: `crates/search/benches/search.rs`. Example:
+`crates/search/examples/search_engine.rs`.
+
+**M2 — the build-side emission** (same branch, gated on M1 green):
+`emit_search_engine_index` in the CLI build path — `search.collections`
+→ the scanned entries mapped by `search_emit::collection_document` (the
+conservative `strip_markdown`: fences, line markers, code spans, link/
+image targets, emphasis) into `dist/search/index` +
+`dist/search/static.json`, the `.hash` CAS marker skipping an unchanged
+corpus, `SRC-106` failing the build on a typo'd collection name, and the
+release binaries enabling `--features search`. Pins: the emission pin +
+the CAS-skip pin + the SRC-106 refusal. The §16.5 content projection is
+pinned byte-identical alongside (the loader contract — delta 1 in
+`docs/deviations.md`).
+
+**Micro-debt cleaned (the audit's two picks):** `diagnostics`' dead
+`Location::unknown()` (zero callers workspace-wide — deleted), and
+`graph`'s bare `.lock().unwrap()`/`.read().unwrap()`/`.write().unwrap()`
+sites (10 across `demand.rs`/`trackers.rs`/`lib.rs`) normalized to the
+documented poison-policy `.expect("<lock> poisoned")` convention —
+behavior-identical, the same posture `live.rs`/`stream_store.rs`/
+`metrics.rs` already document.
+
+**Additive in the same diff:** the doc-drift fixes listed above.
+
+## Sandbox notes for the next session
+
+All previous HANDOFF gotchas still apply (2-core budget,
+`CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`, nasm on PATH for
+rav1e, disk pressure: stale duplicate `.rlib`/`.rmeta` fingerprints in
+`target/debug/deps` from feature-permutation builds can hold >2 GB —
+delete older same-crate-hash artifacts when the link step bus-errors).
+Two additions:
+
+1. **tantivy 0.27 API specifics** (the next engine-side slice): pinned
+   as `tantivy = { version = "0.27.0", default-features = false,
+   features = ["mmap", "stemmer"] }` — there are NO per-language
+   features (the old 0.22-era spec sketch's `en` feature does not
+   exist; stemming is the default-on `stemmer` feature via frostem),
+   `TopDocs` needs `.order_by_score()` to become a Collector, `Index::
+   get_field` returns `Result`, `TantivyDocument::get_first` yields a
+   `CompactDocValue` whose string reads via `.as_value().as_str()`
+   (the `schema::Value` trait import), `token_stream` takes `&mut self`,
+   and `Snippet::set_snippet_prefix_postfix` is the clean `<mark>` path.
+2. **`cargo run -p oxide-fw-cli -- docs generate` must run with the
+   SAME feature set as the committed reference pages** — the pages are
+   feature-independent (config/errors render from the registry files),
+   but the CLI binary needs `--features search` only when it must LINK
+   the engine; the `--check` gate runs feature-clean.
+
+## Where to pick up, in one sentence
+
+The client matcher half (`packages/oxide/src/search.ts`: the `search(q)`
+import, the lazy `static.json` load, the ten-line scorer, the
+`window.__oxide.search === 'server'` fork, the TS-side parity suite)
+closes F09; the dev-watch re-emission + the `IndexReader::reload`
+serve-side refresh is the follow-up slice; E11's remaining halves are
+the docs-site app (`examples/docs`) and the E05-dependent
+`plugin-compat.md`; E04's remaining half is the client Trusted Types
+walk; and A01 (the `crates/cli/src/lib.rs` split, now ~17.6k lines)
+remains the spec-ordered refactor WP.
+
+---
+
 # Handoff — V2-F13's learned-prefetch substrate landed server-side and client-side (`feat/learned-prefetch-navgraph`: the `server::navgraph` graph + the `/_oxide/nav` endpoint + the data-plane observation arm; the typed `prefetch` key with `DSP-115`; the seventh `window.__oxide` field threaded through the CLI's prerender paths; the client prefetch loop behind the advertised flag); every file this session added or touched is pedantic-clean
 
 ## Where things stand
