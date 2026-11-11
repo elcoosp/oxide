@@ -73,8 +73,10 @@ jobs:
         run: |
           cargo install oha --locked || echo "oha unavailable; skipping"
           if command -v oha >/dev/null; then
-            (cd examples/smoke-app && ../../target/release/oxide build)
-            (cd examples/smoke-app && OXIDE_SKIP_DOWNLOAD=1 ../../target/release/oxide start --port 3999 &)
+            # The React smoke fixture (the workflow predated the per-framework
+            # `smoke-app-<fw>` rename — the bare `examples/smoke-app` never existed).
+            (cd examples/smoke-app-react && ../../target/release/oxide build)
+            (cd examples/smoke-app-react && OXIDE_SKIP_DOWNLOAD=1 ../../target/release/oxide start --port 3999 &)
             sleep 5
             oha -n 5000 -c 50 --no-tui http://localhost:3999/ | tee -a "$GITHUB_STEP_SUMMARY"
             pkill -f "target/release/oxide" || true
