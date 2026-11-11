@@ -13,6 +13,7 @@ members = [
     "crates/render",
     "crates/cache",
     "crates/odf",
+    "crates/search",
     "crates/assets",
     "crates/dev",
     "crates/plugin",
@@ -58,6 +59,7 @@ oxide-fw-dispatch = { path = "crates/dispatch" }
 oxide-fw-graph = { path = "crates/graph" }
 oxide-fw-config = { path = "crates/config" }
 oxide-fw-cache = { path = "crates/cache" }
+oxide-fw-search = { path = "crates/search" }
 oxide-fw-compiler = { path = "crates/compiler" }
 oxide-fw-bundler = { path = "crates/bundler" }
 oxide-fw-jshost = { path = "crates/jshost" }
@@ -122,6 +124,12 @@ criterion = { version = "0.8.2", default-features = false, features = ["cargo_be
 # V2-B09: heap-allocation budget tests (one dhat profiler per test binary).
 dhat = "0.3.3"
 
+# §16.5→V2-F09: the built-in search engine (`crates/search`). The spec
+# pins tantivy by name; `mmap` is the serve side's read-only open
+# (`Index::open_in_dir` mmaps the segments, no writer exists at runtime)
+# and `en` brings the English stemmer the `search.languages` default
+# (`["en"]`) indexes with.
+tantivy = { version = "0.27.0", default-features = false, features = ["mmap", "stemmer"] }
 # Transform / render / watch
 regex = "1.13.1"
 lol_html = "3.0.1"
