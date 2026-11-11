@@ -38,6 +38,7 @@ use std::path::{Path, PathBuf};
 
 pub mod attest;
 mod audit;
+pub mod docs_gen;
 pub mod mcp;
 mod native_plugins;
 pub mod perf_bisect;
@@ -301,6 +302,19 @@ pub enum Command {
         #[command(subcommand)]
         op: PerfOp,
     },
+    /// Generated reference docs (§V2-E11): `oxide docs generate` writes
+    /// `docs/reference/` from the crates the binary links — the §18
+    /// capability matrix, the config schema, the clap command tree —
+    /// and `--check` verifies the on-disk pages (the CI `docs-check`
+    /// gate).
+    Docs {
+        /// Project directory (default: cwd; the pages land under
+        /// `<root>/docs/reference`).
+        #[arg(long, default_value = ".")]
+        root: String,
+        #[command(subcommand)]
+        op: DocsOp,
+    },
     /// Verify an attested build (§V2-F20): the canonical form of the
     /// provenance, its ed25519 signature (with `--pubkey`) and every
     /// subject digest against the dist on disk. `--rebuild` re-runs the
@@ -362,6 +376,24 @@ pub enum PerfOp {
         /// Measurements per candidate; the median is what compares.
         #[arg(long, default_value_t = 3)]
         runs: usize,
+    },
+}
+
+/// `oxide docs` subcommands (§V2-E11).
+#[derive(Debug, Subcommand)]
+pub enum DocsOp {
+    /// Write `docs/reference/` from the generators in [`docs_gen`] — the
+    /// §18 capability matrix, the config schema, the clap command tree
+    /// (deterministic bytes; the committed pages are the gate). With
+    /// `--check` nothing is written: the on-disk pages are verified and
+    /// drift exits 1 — the gate the CI `docs-check` job runs.
+    Generate {
+        /// Output directory (default: `<root>/docs/reference`).
+        #[arg(long)]
+        out: Option<String>,
+        /// Verify the on-disk pages and exit 1 on drift, writing nothing.
+        #[arg(long, default_value_t = false)]
+        check: bool,
     },
 }
 
@@ -488,6 +520,7 @@ impl Command {
             | Command::Config { root, .. }
             | Command::Render { root, .. }
             | Command::Perf { root, .. }
+            | Command::Docs { root, .. }
             | Command::Verify { root, .. } => root.as_str(),
             Command::Schema => return None,
         })
@@ -658,6 +691,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
                 threshold,
                 runs,
             } => cmd_perf_bisect(&root, &good, &bad, metric, &threshold, runs, w).await,
+        },
+        Command::Docs { root, op } => match op {
+            DocsOp::Generate { out, check } => cmd_docs(&root, out.as_deref(), check, w),
         },
         Command::Verify {
             root,
@@ -14808,6 +14844,48 @@ fn cmd_schema(w: Writer<'_>) -> anyhow::Result<i32> {
     let json = oxide_fw_config::config_schema_pretty()
         .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
     outln!(w, "{json}");
+    Ok(0)
+}
+
+/// `oxide docs generate` (§V2-E11): render the reference pages via
+/// [`docs_gen`] and write them under `<root>/docs/reference` (or verify
+/// the on-disk bytes with `--check`, exit 1 on drift — the CI
+/// `docs-check` gate).
+///
+/// The `root` is canonicalized once at entry (the doubled-path rule in
+/// CONVENTIONS.md) before `docs/reference` is joined onto it.
+fn cmd_docs(root: &str, out: Option<&str>, check: bool, w: Writer<'_>) -> anyhow::Result<i32> {
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    let dir = match out {
+        Some(o) => PathBuf::from(o),
+        None => rootp.join("docs").join("reference"),
+    };
+    if check {
+        let findings = docs_gen::check(&dir)?;
+        if findings.is_empty() {
+            outln!(
+                w,
+                "docs/reference is up to date ({} pages)",
+                docs_gen::generators().len()
+            );
+            return Ok(0);
+        }
+        for finding in &findings {
+            outln!(w, "{finding}");
+        }
+        outln!(
+            w,
+            "{} page(s) stale; run `oxide docs generate` to regenerate",
+            findings.len()
+        );
+        return Ok(1);
+    }
+    for page in docs_gen::generate_all()? {
+        let path = dir.join(page.path);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(&path, page.content.as_bytes())?;
+        outln!(w, "wrote {} ({} bytes)", path.display(), page.content.len());
+    }
     Ok(0)
 }
 
