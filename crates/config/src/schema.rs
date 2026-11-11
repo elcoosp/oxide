@@ -67,6 +67,7 @@ pub fn config_schema() -> Value {
             "stream": stream_schema(),
             "brownout": brownout_schema(),
             "search": search_schema(),
+            "prefetch": prefetch_schema(),
             "interactionReplay": {
                 "type": "boolean",
                 "default": true,
@@ -361,6 +362,30 @@ fn security_schema() -> Value {
                 "enum": ["off", "report", "enforce"],
                 "default": "off",
                 "description": "V2-E04: the Trusted Types mode. `report`/`enforce` add `require-trusted-types-for 'script'; trusted-types oxide default` to the emitted CSP — `report` rides an additional Report-Only policy, `enforce` the enforced header. The boot-side policy creation is the client half (docs/deviations.md)."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `prefetch` section (V2-F13 — the learned
+/// prefetcher's knobs; extracted so [`config_schema`] stays legible).
+#[must_use]
+fn prefetch_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "learned": {
+                "type": "boolean",
+                "default": false,
+                "description": "V2-F13: the learned prefetcher. Default false: no nav graph is constructed, the data plane observes nothing and GET /_oxide/nav answers 404. true keeps the aggregate route-transition graph (route ids only, k-anonymity floor 20 observations, half-life 7 days, hourly snapshot to .oxide/nav-graph.json) and answers GET /_oxide/nav?from=<route> with the top edges as probabilities. A non-boolean value fails the load (DSP-115)."
+            },
+            "minProbability": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "default": 0.35,
+                "description": "V2-F13: the client prefetcher's threshold — an edge whose /_oxide/nav probability is at or above this value gets its chunks (and, for param-free route ids, its data) prefetched after idle. Out-of-range values fail the load (DSP-115)."
             }
         }
     })
