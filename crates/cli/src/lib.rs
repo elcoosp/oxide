@@ -5483,6 +5483,9 @@ pub struct PrerenderTargetsArgs<'a> {
     /// (modulepreload + stylesheet URLs the shell should carry). `None`
     /// keeps the Injector's fields untouched — the pre-milestone bytes.
     pub head_links: Option<&'a oxide_fw_bundler::head::RouteHeadLinks>,
+    /// V2-F13: the learned-prefetch advertisement (`prefetch.learned`)
+    /// passed through to every [`write_prerender`] call.
+    pub prefetch: bool,
     pub layout_ids: &'a [String],
     pub layout_modules: &'a [(String, std::path::PathBuf)],
     pub error_route: Option<&'a str>,
@@ -5517,6 +5520,7 @@ async fn prerender_targets(
         boot_script_integrity,
         manifest_integrity,
         head_links,
+        prefetch,
         layout_ids,
         layout_modules,
         error_route,
@@ -5590,6 +5594,7 @@ async fn prerender_targets(
                 boot_script_integrity,
                 manifest_integrity,
                 head_links,
+                prefetch,
                 layouts: layout_ids,
                 layout_module_paths: layout_modules,
                 error_route_id: error_route,
@@ -5641,6 +5646,13 @@ pub struct PrerenderArgs<'a> {
     pub layout_module_paths: &'a [(String, std::path::PathBuf)],
     pub error_route_id: Option<&'a str>,
     pub plugin_head: &'a serde_json::Value,
+    /// V2-F13: the learned-prefetch advertisement from the typed config
+    /// (`prefetch.learned`). `true` makes the injector's hydration
+    /// bootstrap advertise `prefetch:true` (the seventh `window.__oxide`
+    /// field) so the client's learned prefetcher may consult
+    /// `GET /_oxide/nav`; `false` — the default — keeps the bootstrap
+    /// byte-identical to the pre-F13 shapes.
+    pub prefetch: bool,
 }
 
 /// V2-E04 tail: keep only the producer's links whose href the shell does
@@ -5681,6 +5693,7 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
         layout_module_paths,
         error_route_id,
         plugin_head,
+        prefetch,
     } = args;
 
     // §9.1: run the loader for this route (if the module exists and a
@@ -5930,7 +5943,12 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
     // modulepreload/stylesheet link a future shell carries whose URL
     // resolves to a digest emits `integrity` + `crossorigin`; an empty map
     // (no manifest entry, SRI off) is the pre-E04 bytes.
-    .with_integrity(manifest_integrity.clone());
+    .with_integrity(manifest_integrity.clone())
+    // V2-F13: the learned-prefetch advertisement rides the typed config —
+    // `prefetch.learned: true` adds the seventh `window.__oxide` field so
+    // the client's prefetcher consults `GET /_oxide/nav`; `false` keeps
+    // the bootstrap byte-identical (the injector's additive contract).
+    .with_prefetch(prefetch);
     // V2-E04 tail: the adapter-level head producer's links — the
     // manifest's critical-first modulepreload list and the route's
     // stylesheet files, spelled `/client/<file>` so every URL resolves to
@@ -7763,6 +7781,7 @@ async fn cmd_build(
                     plugin_head: &plugin_head,
                     prev_prerenders: &prev_prerenders,
                     route_src_hash: &route_src_hash,
+                    prefetch: cfg.prefetch.learned,
                 })
                 .await?;
                 reused_prerender_count += reused;
@@ -7877,6 +7896,7 @@ async fn cmd_build(
                             plugin_head: &plugin_head,
                             prev_prerenders: &prev_prerenders,
                             route_src_hash: &route_src_hash,
+                            prefetch: cfg.prefetch.learned,
                         })
                         .await?;
                         reused_prerender_count += reused;
@@ -8017,6 +8037,7 @@ async fn cmd_build(
                                     layout_module_paths: &prerender_layout_modules,
                                     error_route_id: prerender_error_route_id.as_deref(),
                                     plugin_head: &plugin_head,
+                                    prefetch: cfg.prefetch.learned,
                                 })
                                 .await?
                             }
@@ -8042,6 +8063,7 @@ async fn cmd_build(
                                 layout_module_paths: &prerender_layout_modules,
                                 error_route_id: prerender_error_route_id.as_deref(),
                                 plugin_head: &plugin_head,
+                                prefetch: cfg.prefetch.learned,
                             })
                             .await?
                         }
@@ -12896,6 +12918,22 @@ async fn start_server_inner_full(
     let render_ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
         renderer_to_warm.is_none(),
     ));
+    // V2-F13: the learned-prefetch nav graph (`prefetch.learned`). The
+    // hourly snapshot is merged in at start (a restart keeps the graph it
+    // persisted), the flusher snapshots immediately and then every
+    // `NavGraphSettings::flush_secs`. `learned: false` (the default)
+    // constructs nothing — the request path reads nothing new and
+    // `GET /_oxide/nav` 404s (the image-endpoint contract).
+    let nav_graph: Option<std::sync::Arc<oxide_fw_server::NavGraph>> = if cfg.prefetch.learned {
+        let g = std::sync::Arc::new(oxide_fw_server::NavGraph::default());
+        g.merge_from(&rootp.join(".oxide").join("nav-graph.json"));
+        // The handle lives for the server's lifetime; aborting it is the
+        // process teardown's business, so the value is intentionally dropped.
+        let _flusher = g.spawn_flusher(rootp.join(".oxide").join("nav-graph.json"));
+        Some(g)
+    } else {
+        None
+    };
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -12905,6 +12943,10 @@ async fn start_server_inner_full(
         // shared with the OG limiter (an OG-heavy client must not eat
         // the report budget or vice versa).
         csp_report_rate_limiter: oxide_fw_server::RateLimiter::default(),
+        // V2-F13: the learned-prefetch graph — `Some` only when the typed
+        // config's `prefetch.learned` is on; `None` keeps the data plane
+        // and `/_oxide/nav` at the pre-F13 shapes.
+        nav: nav_graph,
         og_rate_max: cfg.og.rate_limit.max,
         og_rate_window_secs: cfg.og.rate_limit.window_secs,
 
