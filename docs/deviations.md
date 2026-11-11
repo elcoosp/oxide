@@ -1532,3 +1532,83 @@ directly (dogfooding F09's search over the pages); `endpoints.md` lands
 when the V2.J table's open rows do (F09's engine, E04's CSP report,
 E08's dev surfaces); the registry harvest widens to the spec's
 `rg`-shaped gate over TS call sites when the client gains its own codes.
+
+## V2-E04 SRI + Trusted Types + CSP report-only — the manifest digests, the header matrix and the violation sink (2026-11-11)
+
+**What the spec asks.** "At client bundle end, compute `sha384-<base64>`
+for every emitted JS and CSS chunk and store it in `client.manifest.json`
+as `integrity: { file: value }`. The head injector adds
+`integrity='...' crossorigin` to `<script type=module>`,
+`<link rel=modulepreload>` and stylesheet links for chunks (not for
+dev)." A mismatch case documented. Trusted Types (`off | report |
+enforce`) with the CSP directives and the client-side `tt.createHTML`
+policy; `security.csp: 'report-only'` sending
+`Content-Security-Policy-Report-Only` + `report-to` with a
+`POST /_oxide/csp-report` sink (both formats, 20/min/IP, structured
+no-cookie logging, 204).
+
+**What lands.** The SRI half end-to-end: `crates/bundler/src/sri.rs`
+(`sri_digest` over the exact emitted bytes — the chunk path digests
+memory it already holds, the rolldown path reads the persisted files
+back; a file that fails to read is skipped with a `tracing::warn!` and
+the manifest carries fewer entries), `ClientManifest.integrity`
+(`#[serde(default)]`, so a pre-E04 manifest parses), the boot-tag stamp
+in the CLI (`boot_script_tag`, one definition site for the prerender
+and live-SSR injectors, gated by `security.sri` — default on; the dev
+`/@boot/` virtual module has no digest, so dev output is byte-identical
+without a dev/prod key split), and `render`'s `Injector.integrity` map
+for the modulepreload/stylesheet links (snapshot-pinned; an empty map
+keeps every link byte-identical). The CSP half:
+`server::csp_headers_for` is the one definition site for the whole
+strict/hash/report-only × Trusted Types header matrix, and
+`POST /_oxide/csp-report` (`csp_report_response`) accepts both the
+classic `application/csp-report` form and the Reporting API's
+`application/reports+json`, rate limited 20/min/IP on the
+trusted-proxy-aware peer key, with a 64 KiB body cap (413), a 415 for
+unrecognized content types, a 400 for unparseable JSON, a 405 for
+non-POST and the structured `tracing` event over a whitelist of fields
+(`effectiveDirective`, `sourceFile`, `lineNumber`, `disposition`) — no
+cookies, no raw body. The typed `security.sri`/`security.trustedTypes`
+keys are schema'd with descriptions (the E11 DOC-001 gate) and
+load-time-validated (`CFG-SEC` names a bad spelling with the valid
+modes as the fix).
+
+**Deltas and deferrals.**
+
+1. **The link-integrity seam is wired to the Injector, and the
+   prerender shells carry no modulepreload/stylesheet links yet.** The
+   spec reads "the head injector adds integrity to `<script
+   type=module>`, `<link rel=modulepreload>` and stylesheet links".
+   The landed `Injector.preload`/`css_links` fields had no production
+   producer — the prerendered shells take their head from the adapter
+   (and the adapter's own `<link>` output is not manifest-aware). The
+   seam is complete and pinned (the map attaches through
+   `PrerenderArgs.manifest_integrity`, the links resolve
+   `/client/<file>`, `client/<file>` and bare-name URLs and emit the
+   attributes byte-exactly), so the moment a shell producer fills
+   `preload`/`css_links` the digests ride along. Wiring an
+   adapter-level head producer to the manifest is the follow-up work,
+   not a re-design.
+2. **The boot-side Trusted Types policy is the client half.** The spec
+   pins the `tt.createHTML` policy definition in `packages/oxide` and a
+   lint test (`rg 'innerHTML' packages/oxide/src` matching only lines
+   using `tt.`). That is TS work in the client runtime — the Rust half
+   (the typed mode, the schema, the CSP directives, the load-time
+   validation) is complete and inert until the client policy lands, the
+   same RFN-002 pattern the `search` key used.
+3. **The mismatch case.** A digest that does not match its chunk is a
+   client-side failure mode: the browser refuses to execute/load the
+   resource and reports it as a console error (net::ERR_… integrity
+   mismatch) — the failure is closed, not silent. Server-side, the
+   digests are computed from the same bytes the bundler just wrote (or
+   read back), so a stale digest can only appear when the manifest and
+   the chunk files disagree on disk — exactly the corrupted-deploy case
+   the feature exists to catch. `oxide verify` (F20) is the natural
+   place for a serve-side check; it does not walk `integrity` yet.
+4. **`csp-report` rejections are strict where the vitals beacon is
+   lenient.** The vitals beacon answers a malformed body with a silent
+   204 (the browser never reads the response; a 4xx would only add
+   noise). The CSP sink answers 415/400/413/429 — the endpoint is
+   unauthenticated and public, so a garbage body is an attacker or a
+   broken client and should be visible in the logs, not silently
+   drained.
