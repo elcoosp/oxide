@@ -42,6 +42,10 @@ pub mod docs_gen;
 pub mod mcp;
 mod native_plugins;
 pub mod perf_bisect;
+// V2-F09: the build-side search mapping (feature `search`) — the pure
+// entry→document helpers the `emit_search_engine_index` build step uses.
+#[cfg(feature = "search")]
+mod search_emit;
 
 mod build_cache;
 mod build_graph;
@@ -4467,6 +4471,109 @@ fn write_content_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// V2-F09 (feature `search`): the built-in search index emission — for
+/// every configured `search.collections` name, index the collection's
+/// entries into `dist/search/index` (the mmap-able tantivy index the
+/// serve side opens read-only) and export `dist/search/static.json`
+/// (the compact fallback the client matcher loads lazily). The §16.5
+/// `content/<name>.index.json` projection stays untouched — it is the
+/// loader-side contract (`getCollection`); the F09 index is the
+/// serve-side query surface the spec adds on top.
+///
+/// The rebuild is CAS-shaped (the spec: "the build is CAS-cached by the
+/// content hash of the collection"): the corpus' blake3
+/// (`TantivyIndex::content_hash`) is kept next to the artifact in
+/// `dist/search/.hash`; an unchanged hash skips the rebuild. An
+/// unknown collection name fails the build with `SRC-106` — a typo in
+/// `search.collections` must not ship an empty index.
+#[cfg(feature = "search")]
+fn emit_search_engine_index(
+    rootp: &Path,
+    cfg: &oxide_fw_config::OxideConfig,
+    dist: &Path,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    use oxide_fw_assets::scan_collection;
+    // The engine's doc_count is the SearchIndex trait method.
+    use oxide_fw_search::SearchIndex as _;
+    let search = &cfg.search;
+    if search.collections.is_empty() {
+        return Ok(());
+    }
+    let out_dir = dist.join("search");
+    std::fs::create_dir_all(&out_dir)?;
+    let mut docs: Vec<oxide_fw_search::SearchDocument> = Vec::new();
+    for name in &search.collections {
+        let coll = cfg
+            .content
+            .collections
+            .iter()
+            .find(|c| &c.name == name)
+            .ok_or_else(|| {
+                oxide_fw_diagnostics::OxideError(Box::new(
+                    oxide_fw_diagnostics::Diagnostic::error(
+                        "SRC-106",
+                        format!("search.collections names `{name}` but content.collections has no such collection"),
+                    )
+                    .with_fix(format!(
+                        "add the collection to content.collections, or change search.collections to one of: {}",
+                        cfg.content
+                            .collections
+                            .iter()
+                            .map(|c| c.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
+                ))
+            })?;
+        let dir = rootp.join(&coll.dir);
+        let coll_cfg = oxide_fw_assets::CollectionConfig {
+            name: coll.name.clone(),
+            dir,
+            schema: oxide_fw_assets::SchemaKind::Unchecked,
+            indexed_fields: coll.indexed_fields.clone(),
+        };
+        let scanned = scan_collection(&coll_cfg)
+            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
+        for entry in &scanned.entries {
+            docs.push(search_emit::collection_document(name, entry, search));
+        }
+    }
+    let hash = oxide_fw_search::TantivyIndex::content_hash(&docs);
+    let marker = out_dir.join(".hash");
+    if std::fs::read_to_string(&marker).is_ok_and(|h| h.trim() == hash) {
+        outln!(
+            w,
+            "search index unchanged ({} docs, hash {})",
+            docs.len(),
+            &hash[..12]
+        );
+        return Ok(());
+    }
+    // The engine owns a fresh directory (a stale index must never be
+    // committed onto), then the static fallback + the CAS marker.
+    let index_dir = out_dir.join(oxide_fw_search::SEARCH_INDEX_DIR);
+    if index_dir.exists() {
+        std::fs::remove_dir_all(&index_dir)?;
+    }
+    let opts = oxide_fw_search::SearchEngineOptions::from_config(search);
+    let idx = oxide_fw_search::TantivyIndex::build_in_dir(&docs, &opts, &index_dir)?;
+    let static_json = oxide_fw_search::StaticIndex::build(&docs).to_json()?;
+    write_content_atomic(
+        &out_dir.join(oxide_fw_search::SEARCH_STATIC_FILE),
+        static_json.as_bytes(),
+    )?;
+    write_content_atomic(&marker, hash.as_bytes())?;
+    outln!(
+        w,
+        "search index: {} docs (hash {}) + {}",
+        idx.doc_count(),
+        &hash[..12],
+        oxide_fw_search::SEARCH_STATIC_FILE
+    );
+    Ok(())
+}
+
 fn emit_content_search_indexes(
     root: &Path,
     cfg: &oxide_fw_config::OxideConfig,
@@ -6575,6 +6682,11 @@ async fn cmd_build(
     // `getCollection` must see the current build's data — not
     // the previous build's (or nothing, on a first build).
     emit_content_search_indexes(&rootp, &cfg, &dist, w)?;
+    // V2-F09: the built-in search engine index + static fallback (the
+    // `search.collections` corpus; a no-op when unconfigured or when the
+    // `search` feature is off — the pre-F09 shape).
+    #[cfg(feature = "search")]
+    emit_search_engine_index(&rootp, &cfg, &dist, w)?;
     // §15.2: `config` runs before the build uses the config; a plugin may
     // return a patch object. `configResolved` runs after, read-only. Both
     // need a pool, which the build has not built yet — so they fire through
@@ -12599,6 +12711,45 @@ fn resolve_bind_host(host: &str) -> std::net::IpAddr {
     std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
 }
 
+/// V2-F09 (feature `search`): construct the search endpoint's attached
+/// state from the typed `search` config and the project root. The index
+/// is the build's artifact (`dist/search/index`); the open is read-only
+/// mmap and best-effort — a missing or corrupt index logs a warning (the
+/// code and message of the engine's `SRC-101`) and returns `None`, so
+/// `/_oxide/search` answers the documented not-configured 404 instead of
+/// failing the serve start. Unconfigured `search.collections` is the
+/// plain `None` path (nothing is constructed, nothing logged).
+#[cfg(feature = "search")]
+fn build_search_endpoint(
+    search: &oxide_fw_config::SearchConfig,
+    rootp: &std::path::Path,
+) -> Option<std::sync::Arc<oxide_fw_server::SearchEndpoint>> {
+    if search.collections.is_empty() {
+        return None;
+    }
+    let dir = rootp
+        .join("dist")
+        .join("search")
+        .join(oxide_fw_search::SEARCH_INDEX_DIR);
+    match oxide_fw_search::TantivyIndex::open_read_only(&dir) {
+        Ok(idx) => {
+            let opts = oxide_fw_search::SearchEngineOptions::from_config(search);
+            Some(std::sync::Arc::new(oxide_fw_server::SearchEndpoint::new(
+                std::sync::Arc::new(idx.with_options(&opts)),
+            )))
+        }
+        Err(e) => {
+            tracing::warn!(
+                code = e.0.code,
+                message = %e.0.message,
+                dir = %dir.display(),
+                "search index not available; /_oxide/search answers the not-configured 404"
+            );
+            None
+        }
+    }
+}
+
 async fn start_server_inner_full(
     root: &str,
     bind: Option<(std::net::IpAddr, u16)>,
@@ -12934,6 +13085,16 @@ async fn start_server_inner_full(
     } else {
         None
     };
+    // V2-F09: the built-in search endpoint (`search.collections`). The
+    // index is the build's artifact (`dist/search/index`, the mmap-able
+    // read-only open the engine owns). Opening it is best-effort: a
+    // missing or corrupt index logs a warning and `/_oxide/search`
+    // answers the documented not-configured 404 — never a serve-start
+    // failure. Unconfigured (or a default build without the `search`
+    // feature) constructs nothing, byte-identical to the pre-F09 shape.
+    #[cfg(feature = "search")]
+    let search_endpoint: Option<std::sync::Arc<oxide_fw_server::SearchEndpoint>> =
+        build_search_endpoint(&cfg.search, &rootp);
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -12947,6 +13108,15 @@ async fn start_server_inner_full(
         // config's `prefetch.learned` is on; `None` keeps the data plane
         // and `/_oxide/nav` at the pre-F13 shapes.
         nav: nav_graph,
+        // V2-F09: the search endpoint's state — `Some` only when
+        // `search.collections` is configured AND the build's index
+        // opened (feature `search`; `None` keeps the pre-F09 shapes).
+        #[cfg(feature = "search")]
+        search: search_endpoint,
+        // V2-F09: the search endpoint's own token bucket (20 per 10 s
+        // per peer), never shared with the OG/csp-report limiters.
+        #[cfg(feature = "search")]
+        search_rate_limiter: oxide_fw_server::RateLimiter::default(),
         og_rate_max: cfg.og.rate_limit.max,
         og_rate_window_secs: cfg.og.rate_limit.window_secs,
 
