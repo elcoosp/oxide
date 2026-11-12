@@ -22,7 +22,9 @@
 use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
-use oxide_fw_search::{SearchDocument, SearchEngineOptions, TantivyIndex};
+use oxide_fw_search::{
+    ReloadOutcome, SearchDocument, SearchEngineOptions, SearchQuery, TantivyIndex,
+};
 use oxide_fw_server::{OxideRequest, Pipeline, SearchEndpoint};
 
 // ------------------------------------------------------------------ helpers
@@ -245,5 +247,60 @@ async fn the_endpoint_is_rate_limited_per_peer() {
     assert!(
         p.search_rate_limiter.allow("other-peer", 20, 10),
         "another peer has its own bucket"
+    );
+}
+
+// ------------------------------------------------- the hot-reload seam
+
+/// The dev-loop reload contract through the endpoint (the V2-F09
+/// follow-up): the same query text, answered after a swapped-in corpus,
+/// must not be served from the L1. The cache key partitions on the
+/// engine's `generation`, so a reload repartitions every key — a stale
+/// pre-reload hit can never survive a swap.
+#[tokio::test]
+async fn a_swapped_index_never_serves_stale_l1_hits() {
+    let dir = tempfile::tempdir().unwrap();
+    let index_dir = dir.path().join("index");
+    let rebuild = |docs: &[SearchDocument]| {
+        if index_dir.exists() {
+            std::fs::remove_dir_all(&index_dir).unwrap();
+        }
+        TantivyIndex::build_in_dir(docs, &SearchEngineOptions::default(), &index_dir)
+            .expect("the rebuild commits");
+    };
+    let doc = |body: &str| SearchDocument {
+        id: "posts/a".into(),
+        url: "/posts/a".into(),
+        title: "the reindexed guide".into(),
+        body: body.into(),
+        tags: vec!["guide".into()],
+        lang: "en".into(),
+    };
+    rebuild(std::slice::from_ref(&doc("alpha is the only marker here.")));
+    let hot = Arc::new(
+        oxide_fw_search::SwappableSearchIndex::open(&index_dir, &SearchEngineOptions::default())
+            .expect("the built index opens"),
+    );
+    let ep = SearchEndpoint::new(hot.clone());
+    let q = SearchQuery::new("alpha");
+    let v1 = ep.run(&q).expect("the query runs");
+    assert_eq!(v1.hits.len(), 1);
+    let cached = ep.run(&q).expect("the cached query runs");
+    assert_eq!(cached, v1, "the repeat run is served from the L1");
+
+    // The rebuild rewrites the SAME document (the query shape is
+    // identical, the corpus is not): only the generation partition
+    // stands between the caller and the stale snippet.
+    rebuild(std::slice::from_ref(&doc(
+        "alpha has been reindexed with new prose.",
+    )));
+    assert!(matches!(
+        hot.try_reload().expect("the reload opens the rebuild"),
+        ReloadOutcome::Swapped { docs: 1 }
+    ));
+    let v2 = ep.run(&q).expect("the post-swap query runs");
+    assert_ne!(
+        v2.hits[0].snippet, v1.hits[0].snippet,
+        "the swap repartitioned the L1: the new corpus answers"
     );
 }
