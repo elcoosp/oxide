@@ -16,6 +16,9 @@ oxide-fw-diagnostics = { workspace = true }
 oxide-fw-odf = { workspace = true }
 lol_html = { workspace = true }
 bytes = { workspace = true }
+# V2-B08 phase 2: the chunk-safe `NonceSplicer` (spec-verbatim) finds the
+# nonce across chunk boundaries with `memchr::memmem`.
+memchr = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
@@ -43,6 +46,14 @@ bench-util = []
 # pre-F03 shapes vs the replay-advertising one).
 [[bench]]
 name = "bootstrap"
+harness = false
+required-features = ["bench-util"]
+
+# V2-B08 phase 2: criterion bench for the streaming `NonceSplicer` —
+# 20 KB / 200 KB / 2 MB bodies spliced in 64 KB chunks against the
+# whole-document `str::replace` the CLI still runs.
+[[bench]]
+name = "splice"
 harness = false
 required-features = ["bench-util"]
 
