@@ -9675,21 +9675,19 @@ fn integrity_verdict_fails_closed_on_a_corrupt_manifest() {
 fn the_search_serve_wire_up_opens_the_built_index() {
     let dir = tempfile::tempdir().unwrap();
     // Unconfigured: plain None, no attempt to open anything.
-    assert!(
-        crate::build_search_endpoint(&oxide_fw_config::SearchConfig::default(), dir.path())
-            .is_none(),
-        "empty search.collections constructs nothing"
-    );
+    let (ep, hot) =
+        crate::build_search_endpoint(&oxide_fw_config::SearchConfig::default(), dir.path());
+    assert!(ep.is_none(), "empty search.collections constructs nothing");
+    assert!(hot.is_none(), "no endpoint means no reload handle either");
     // Configured but not built: None (the warn path), not a serve-start failure.
     let configured = oxide_fw_config::SearchConfig {
         collections: vec!["posts".into()],
         snippet: Some(80),
         ..oxide_fw_config::SearchConfig::default()
     };
-    assert!(
-        crate::build_search_endpoint(&configured, dir.path()).is_none(),
-        "a missing dist/search/index degrades to None"
-    );
+    let (ep, hot) = crate::build_search_endpoint(&configured, dir.path());
+    assert!(ep.is_none(), "a missing dist/search/index degrades to None");
+    assert!(hot.is_none(), "the handle stands or falls with the open");
     // Built: the endpoint attaches with the config's knobs.
     let docs = vec![oxide_fw_search::SearchDocument {
         id: "posts/a".into(),
@@ -9710,8 +9708,70 @@ fn the_search_serve_wire_up_opens_the_built_index() {
         &index_dir,
     )
     .unwrap();
-    let ep = crate::build_search_endpoint(&configured, dir.path()).expect("the endpoint attaches");
+    let (ep, hot) = crate::build_search_endpoint(&configured, dir.path());
+    let ep = ep.expect("the endpoint attaches");
+    assert!(hot.is_some(), "the reload handle attaches alongside");
     assert_eq!(ep.doc_count(), 1);
+}
+
+/// V2-F09 (the dev-loop follow-up): the refresh helper is the watcher's
+/// content-change branch in testable form — re-emit the F09 index, swap
+/// the serve side onto the rebuild, and keep the L1's generation
+/// partition honest (a CAS-skipped refresh moves nothing).
+#[cfg(feature = "search")]
+#[test]
+fn the_dev_search_refresh_swaps_the_serve_side_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let rootp = dir.path().to_path_buf();
+    let posts = rootp.join("content/posts");
+    std::fs::create_dir_all(&posts).unwrap();
+    std::fs::write(
+        posts.join("hello.md"),
+        "---\ntitle: Hello World\ntags: [\"guide\"]\nlang: en\n---\n\nRust is **fast**.\n",
+    )
+    .unwrap();
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
+        "content": { "collections": [ { "name": "posts", "dir": "content/posts" } ] },
+        "search": { "collections": ["posts"] }
+    }))
+    .unwrap();
+    let mut out: Vec<u8> = Vec::new();
+
+    // 1. The dev-boot shape: emit, then the serve side opens the built
+    //    index (the handle rides along).
+    crate::refresh_search_index(&rootp, &cfg, None, &mut out).unwrap();
+    let (ep, hot) = crate::build_search_endpoint(&cfg.search, &rootp);
+    let ep = ep.expect("the endpoint attaches");
+    let hot = hot.expect("the reload handle attaches");
+    assert_eq!(ep.doc_count(), 1);
+
+    // 2. A content change re-emits and swaps: the new document answers
+    //    through the SAME endpoint, no restart.
+    std::fs::write(
+        posts.join("second.md"),
+        "---\ntitle: Second Post\ntags: [\"guide\"]\nlang: en\n---\n\nBravo content for the reload.\n",
+    )
+    .unwrap();
+    crate::refresh_search_index(&rootp, &cfg, Some(&hot), &mut out).unwrap();
+    assert_eq!(
+        ep.doc_count(),
+        2,
+        "the swap is visible through the endpoint"
+    );
+    let resp = ep
+        .run(&oxide_fw_search::SearchQuery::new("bravo"))
+        .expect("the query runs");
+    assert_eq!(resp.hits.len(), 1);
+    assert_eq!(resp.hits[0].id, "posts/second");
+
+    // 3. A refresh with no content change is the CAS-skip no-op: the
+    //    generation (the L1's cache-key partition) does not move.
+    let gen_before = oxide_fw_search::SearchIndex::generation(hot.as_ref());
+    crate::refresh_search_index(&rootp, &cfg, Some(&hot), &mut out).unwrap();
+    assert_eq!(
+        oxide_fw_search::SearchIndex::generation(hot.as_ref()),
+        gen_before
+    );
 }
 
 // ------------------------------------------------------- V2-F09 search engine emission
