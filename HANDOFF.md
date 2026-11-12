@@ -1,3 +1,115 @@
+# Handoff — the object-store deploy target + the B08 nonce splicer landed (`feat/object-store-deploy-target`: the V2-F11 remaining store half — `crates/adapters/src/objstore.rs`, the second `DeployStore` impl over `object_store` behind the adapters `s3` feature with the conditional-put pointer swap; and the V2-B08 phase-2 streaming nonce splicer — `crates/render/src/splice.rs`, the spec-verbatim `NonceSplicer`; plus the drift/micro-debt pass — the PUBLISHING/CONVENTIONS/README-count fixes, the dead `og_cache_key` removal and the loud corrupt-tag-blob warn)
+
+## Where things stand
+
+**Branch:** `main` (uncommitted changes plus `ship.toml` /
+`.github/pr-body.md` at the repo root, both gitignored; `ship.toml`
+groups the diff into conventional commits — one per file,
+dependency-ordered). **Verified this session (rustc 1.99.1 stable,
+2-core, 9.9 GB-disk sandbox, `CARGO_INCREMENTAL=0`, fresh toolchain +
+`nasm` extracted to `tools/nasm/usr/bin` for ravif/rav1e):**
+
+- `cargo fmt --all --check` clean workspace-wide.
+- Scoped clippy GREEN: `cargo clippy -p oxide-fw-adapters -p
+  oxide-fw-render --all-targets --all-features -- -D warnings` (both
+  crates opt into `[lints] workspace = true`, so this holds them to
+  pedantic) — zero findings. The bare `-W pedantic` spelling applied
+  CLI-wide also drags in dependency crates: `crates/odf` (which never
+  opted into the workspace lints and which this session did not touch —
+  the crate-ownership rule stands) carries ~75 pre-existing pedantic
+  findings (`decode.rs`/`encode.rs` casts, missing `# Errors` docs,
+  match arms, literals). The repo's own CI gate
+  (`clippy --workspace --all-targets -- -D warnings`) is unaffected.
+  Fixing odf's pedantic debt is a dedicated hygiene pass for whoever
+  owns that crate.
+- `cargo test -p oxide-fw-adapters --features s3`: 98 passed across all
+  targets (10 new `object_store_tdd` pins + 2 in-module parser tests;
+  the 15 parent `delta_tdd` pins held unchanged through the
+  `parse_manifest`/`parse_pointer` helper refactor).
+- `cargo test -p oxide-fw-render --lib splice`: 7 passed (the spec's
+  three verbatim pins + the carry/adjacent/long-needle/empty pins).
+- `cargo test -p oxide-fw-assets`: 148 passed (after the
+  `og_cache_key` removal — it had zero callers).
+- `cargo test -p oxide-fw-cache --features s3`: 84 passed (after the
+  loud corrupt-tag-blob warn — behavior unchanged, corruption visible).
+- Benches: `cargo bench -p oxide-fw-adapters --features s3,bench-util
+  --bench object_store` (first-full ≈1.57 ms/200 files; idempotent
+  re-run; young prune) and `cargo bench -p oxide-fw-render --features
+  bench-util --bench splice` (20 KB/200 KB/2 MB: replace
+  8.1/80.5/826 µs vs splicer 9.2/90.3/1146 µs — the splicer trades
+  ~10–40% wall time for O(chunk) transient allocation, the B08 point).
+- Examples: `object_store_deploy` (mem:// walkthrough; a real
+  `s3://`/`r2://`/`file://` URL as argv[1] walks the same steps) and
+  `nonce_splice` (fill → serve round trip across mid-nonce chunk
+  boundaries, round-trip identical) both ran.
+- The allow-grep gate is EMPTY over crates/ tests/ benches/ examples/.
+- `docs/reference/errors.md` gained the `DEP-URL` row by hand (the
+  documented fallback when the V8-linked CLI cannot build); the CLI
+  `docs generate --root . --check` should re-run on a capable host to
+  confirm the page is byte-identical.
+- Not run: the full-workspace suites/benches — the 9.9 GB disk cannot
+  hold the V8-linked test binaries (the wasmtime/cranelift/v8 artifact
+  family was purged mid-session to stay under the ceiling); the touched
+  crates' full suites ARE green here, and the E11 docs-check +
+  `errors_registry_tdd` gates need the V8-linked CLI.
+
+## What landed
+
+**M1 — the object-store deploy target (§V2-F11 tail), complete.**
+`crates/adapters/src/objstore.rs`: `ObjectStoreStore`, the second
+`DeployStore` impl, behind the new adapters `s3` feature (the cache
+crate's feature shape; `object_store`/`futures`/`tokio` were already
+pinned workspace-wide). `deploy_target_from_url` parses
+`s3://bucket/prefix` (AWS env credentials, the cache handler's
+convention), `r2://bucket/prefix?endpoint=…` (endpoint mandatory at
+parse time — a target without one refuses `DEP-URL`, never at first
+use), and the network-free `file://`/`mem://` backends. The ledger, the
+objects and the pointer ride the `ObjectStore` trait through a
+current-thread tokio runtime the store owns. The pointer swap is the
+object-store atomicity contract: create-if-absent, then
+update-against-the-version-this-deploy-read — a lost race refuses
+`DEP-POINTER` and never flips `current` (`swap_pointer`/`pointer_version`
+expose the primitive the lost-race pin drives). The corrupt-state
+refusals are shared with `DirStore` via the new `pub(crate)`
+`parse_manifest`/`parse_pointer`/`validate_object_path`/`validate_build_id`
+helpers in `delta.rs` — byte-identical messages, the parent pins hold.
+`DEP-URL` is the new registry row. 10 TDD pins (URL table incl. the r2
+refusal, ledger/pointer round trips + corrupt bytes, the conditional
+swap, the full deploy layout through `list_keys`, the injected-failure
+pointer pin, idempotence + the <5% acceptance, prune/rollback parity,
+traversal refusals) + 2 in-module parser tests + the `object_store`
+criterion group + the `object_store_deploy` walkthrough example.
+
+**M2 — the B08 phase-2 streaming nonce splicer, complete (substrate).**
+`crates/render/src/splice.rs`: the spec-verbatim `NonceSplicer`
+(`new`/`push`/`finish`, `memchr::memmem`-backed `Finder<'static>`, the
+carry holds the last `from.len() - 1` bytes). The spec's three test
+pins land verbatim plus the carry-contract pins. `memchr = "2.8.3"`
+entered `[workspace.dependencies]` (the spec anticipated the pin). The
+`splice` criterion group and the `nonce_splice` example ride along. The
+CLI adoption (phase 1 + the three `.replace` deletions + the dhat
+acceptance) remains the A01-phase-3 slice, as scheduled.
+
+**Additive — the drift/micro-debt pass.** `PUBLISHING.md` 17→20 crates
+(two sites); `CONVENTIONS.md` machine-local spec path →
+`docs/spec-v0.1.md` and the stale "already installed" toolchain claim →
+the `rust-toolchain.toml` channel; README test-count badge 1,988 →
+2,034 (recounted); dead `pub fn og_cache_key` removed
+(`crates/assets/src/lib.rs`, zero callers audited); the corrupt
+tag-key blob in `crates/cache/src/s3_handler.rs::read_tag_keys` now
+warns loudly instead of a silent `unwrap_or_default` (behavior
+unchanged: empty set, self-heals on the next write).
+
+## Where to pick up, in one sentence
+
+The `oxide deploy` CLI command (F11's other half: `deploy_target_from_url`
++ `deploy_dir`/`prune`/`rollback` — no engine work gated on it) and the
+B08 CLI adoption (the three `.replace` deletions + the dhat acceptance)
+are both A01-phase-3 work on a V8-capable host; `crates/odf`'s ~75
+pedantic findings are the next crate-owned hygiene pass; the errors
+reference page should be regenerated via the CLI on a capable host to
+confirm the hand-inserted `DEP-URL` row.
+
 # Handoff — the V2-F11 delta-deploy engine landed (`feat/delta-deploy-engine`: the `crates/adapters/src/delta.rs` store-agnostic engine — the object-safe `DeployStore` seam, the spec-verbatim pure `plan`, `DirStore` as the `dir:` target, `deploy_dir`'s upload-then-pointer-last order of operations, `prune`'s skew window with the rollback-safety rule, `rollback`'s one-write pointer swap; six `DEP-*` registry rows, 15 TDD pins + 3 in-module, the `delta` criterion group and the `delta_deploy` walkthrough example ride along); every new file is pedantic-clean, zero `#[allow]`
 
 ## Where things stand
