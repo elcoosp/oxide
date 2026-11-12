@@ -5000,12 +5000,15 @@ version = "0.17.0"
 dependencies = [
  "blake3",
  "criterion",
+ "futures",
  "insta",
+ "object_store",
  "oxide-fw-diagnostics",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
 ]
 
@@ -5322,6 +5325,7 @@ dependencies = [
  "futures",
  "insta",
  "lol_html",
+ "memchr",
  "oxide-fw-config",
  "oxide-fw-diagnostics",
  "oxide-fw-odf",
