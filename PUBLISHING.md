@@ -42,7 +42,7 @@ consecutive runs across 48 hours before the tag.
 
 to print the topological sort (leaf first). The script reads
 `cargo metadata` — every crate appears after every crate it depends
-on. Current output has 17 crates; `oxide-fw-diagnostics` is the only
+on. Current output has 20 crates; `oxide-fw-diagnostics` is the only
 true leaf.
 
 ### 3a. Local packaging check — only the true leaf works pre-publish
@@ -157,7 +157,7 @@ matches):
 
 ### Configure trusted publishers (manual UI, once per package)
 
-**crates.io** — for each of the 17 crates, after the first publish:
+**crates.io** — for each of the 20 crates, after the first publish:
 1. Go to `https://crates.io/crates/<crate>/settings`
 2. Add a Trusted Publisher:
    - Repository owner: `elcoosp`
