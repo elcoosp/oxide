@@ -20,6 +20,16 @@ thiserror = { workspace = true }
 # V2-F11: the delta-deploy engine's plan/swap/prune steps are operator-visible
 # events (the observability convention the server and dev crates follow).
 tracing = { workspace = true }
+# V2-F11 remaining half: the `s3://`/`r2://` DeployStore impl rides
+# `object_store` (already pinned workspace-wide and compiled by the cache
+# crate's `s3` feature) behind the crate's `s3` feature — the cache crate's
+# feature shape, as the V2-F11 deviation record names it.
+object_store = { workspace = true, optional = true }
+# V2-F11 remaining half: the object-store seam bridges the sync `DeployStore`
+# trait to `object_store`'s async API over a dedicated current-thread runtime
+# (`block_on`); `futures` drives the list stream behind `list_keys`.
+futures = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }
@@ -35,11 +45,13 @@ workspace = true
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-# V2-R02 config half: exposes the criterion bench harness for the config-key
-# refusal seam (the B09 pattern: plain `cargo test` never pays the criterion
-# build).
 [features]
 bench-util = []
+# V2-F11 remaining half: the `s3://`/`r2://` object-store deploy target (the
+# cache crate's `s3` feature shape). Construction parses the URL and builds
+# the backend client without a network round trip; the TDD pins and the
+# walkthrough run over `object_store`'s `InMemory`/`LocalFileSystem` backends.
+s3 = ["dep:object_store", "dep:futures", "dep:tokio"]
 
 # V2-R02 config half: criterion bench for the §18 config-key refusal — the
 # `check_config` verdict the build path runs once per deploy (all 12 targets
@@ -57,6 +69,14 @@ name = "delta"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F11 remaining half: criterion bench for the object-store target — the
+# ledger/pointer round-trip and the full first deploy through the `InMemory`
+# backend (the same shapes the `delta` group runs through `DirStore`).
+[[bench]]
+name = "object_store"
+harness = false
+required-features = ["bench-util", "s3"]
+
 # E11: criterion bench for the generated capability-matrix docs table — the
 # deterministic markdown render `capability_markdown_table` produces and the
 # crate README embeds.
@@ -64,3 +84,10 @@ required-features = ["bench-util"]
 name = "doc_table"
 harness = false
 required-features = ["bench-util"]
+
+# V2-F11 remaining half: the object-store walkthrough (runs against the
+# network-free `mem://` backend by default; pass a real target URL as the
+# first argument to walk the same steps against `s3://`/`r2://`/`file://`).
+[[example]]
+name = "object_store_deploy"
+required-features = ["s3"]
