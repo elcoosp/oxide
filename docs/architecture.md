@@ -33,12 +33,45 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`); §V2-A07 prerender error-status sidecars (`static_status`: `StatusSidecars::scan` serve-start walk, `status_for`, `write_status_sidecar`, the `serve` 200-override); the V2-E04 CSP half (`csp_headers_for` — the one definition site for the strict/hash/report-only × Trusted Types header matrix — and `POST /_oxide/csp-report`, the rate-limited violation sink over both browser formats); the V2-F13 learned-prefetch substrate (`navgraph::NavGraph` — the aggregate route-transition graph the native prefix observes off `x-oxide-nav-from`/`-to` on `/__data` when `prefetch.learned` is on, the `GET /_oxide/nav?from=<route>` top-edges endpoint (k-anonymity floor 20, 7-day half-life), the bounded edge cap, the `merge_from`/`persist` snapshot round trip and the flusher); the V2-F09 search endpoint (`feature = "search"`: `search_endpoint::SearchEndpoint` — the read-only engine plus its L1 query cache — and `GET /_oxide/search?q=<text>&limit=&tag=&lang=`, the not-configured 404, the non-GET 405 and the 20-per-10-s token bucket) | §12, §17, D7, V2-F05, V2-F07, V2-F12, V2-A07, V2-E04, V2-F09, V2-F13 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic) and its phase-2 CSS boundary substrate (`plan_classified` — the `kind: 'js'|'css'|'data'` classification with the §13.3 CSS terminal, `css_self_accepts`, the `DEV-HMR-002` orphan-stylesheet warning) and its phase-4 state-preservation substrate (`state::Preservation` on the v1 `update` frame, the injectable `StatePolicy` seam, `update_frame`), inspector model (§13.4), prebundle keys | §13, V2-E01 |
-| `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys AND over the config keys — the `ConfigFeatureReport` seam + `check_config` the config layer maps and the CLI build consults, with F09's `search` arm live) + the E11 generated docs table (`capability_markdown_table`) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02, V2-F09 |
+| `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys AND over the config keys — the `ConfigFeatureReport` seam + `check_config` the config layer maps and the CLI build consults, with F09's `search` arm live) + the E11 generated docs table (`capability_markdown_table`) + the V2-F11 delta-deploy engine (`delta`: the object-safe `DeployStore` store seam, the spec-verbatim `plan`, `deploy_dir`'s upload-then-pointer-last order of operations, `prune`'s skew window with the rollback-safety rule, `rollback`'s one-write pointer swap, `DirStore` as the `dir:` target) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02, V2-F09, V2-F11 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render/docs/verify; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`); `docs generate` is the V2-E11 reference-docs engine (the `ReferenceGenerator` registry over `docs/reference/`, `--check` is the docs gate); the V2-E04 SRI wiring (`boot_script_tag` stamps the boot `<script type=module>` with the manifest digest on both the prerender and the live-SSR paths, `security.sri`-gated) | §19, §V2-F16, §V2-F18, §V2-F20, §V2-E11, §V2-E04 |
 
 ## What changed since 2026-10-12
+
+- **`adapters`**: the delta-deploy engine (§V2-F11, `feat/delta-deploy-engine`)
+  — the capability matrix's `DeltaDeploy` row now has its engine.
+  `crates/adapters/src/delta.rs`: the object-safe `DeployStore` seam (load/store
+  the upload ledger, object put/delete, the atomic `current` pointer read/write),
+  the spec-verbatim pure `plan` (`upload`/`keep`/`delete_later`/`bytes_up` over
+  blake3-hashed scans), `DirStore` (the `dir:` target over `std::fs` —
+  temp+rename pointer swap, traversal-guarded object keys), `deploy_dir`
+  (the §V2-F11 order of operations: changed immutable chunks at their rel path
+  first, every non-hashed file mirrored under `releases/<build-id>/` so a
+  release is self-contained, the ledger rewrite with earliest-mark pending
+  deletions, the pointer LAST — a failed upload never flips production),
+  `prune` (marks expire after the skew window — the F10 default 15 min — and
+  the release the pointer names is NEVER pruned, the rollback-safety rule) and
+  `rollback` (the pointer swap to `previous_build_id`). The `DEP-BUILDID`,
+  `DEP-IO`, `DEP-MANIFEST`, `DEP-POINTER`, `DEP-ROOT` and `DEP-ROLLBACK`
+  registry rows, 15 TDD pins, the `delta` criterion group and the
+  `delta_deploy` walkthrough example ride along. Deltas and deferrals
+  (the `s3://`/`r2://` object_store target, the `oxide deploy` CLI command) —
+  see `docs/deviations.md`.
+
+- **`dispatch`**: the skew-protection pool substrate (§V2-F10,
+  `feat/skew-generation-pool`) — the `AcceptedGenerations` trait (the
+  `accepts(id, now)` contract the §V2-A04 data-plane stage consumes,
+  implemented by the 1-deep `GenerationSet` AND the bounded
+  `GenerationPool`, blanket-implemented for `&T` so a boot-chosen source
+  can be `&dyn`) and `stage_check`, the stage generic over the seam with
+  the existing `stage_build_check` as its 1-deep specialization (no
+  signature changed; the set/pool verdict parity is pinned). Pool
+  semantics: per-demotion windows, promotes trim expired entries, the
+  oldest evicts first at capacity, re-promoting a demoted id is the
+  rollback path. Deltas and deferrals (the `deploy.skewWindow` config
+  key, the CLI adoption) — see `docs/deviations.md`.
 
 - **`search` + `server` + `cli`**: the search hot-reload seam (the
   V2-F09 dev-watch follow-up, `feat/search-hot-reload`). `crates/search`
