@@ -8,11 +8,12 @@
 //! behind the object-safe [`DeployStore`] trait. The pure [`plan`] and the
 //! orchestrators ([`deploy_dir`], [`prune`], [`rollback`]) never touch
 //! `std::fs` directly; [`DirStore`] is the `dir:/path` target's impl over
-//! `std::fs`, and a remote `s3://` / `r2://` impl (§V2-F11, reusing
-//! `object_store`) is the next consumer of the same trait. The trait keeps
-//! the whole engine testable against in-memory fakes — including the spec's
-//! "a failure mid-upload leaves `current` untouched" pin, which needs a
-//! store that can fail on demand.
+//! `std::fs`, and [`crate::objstore::ObjectStoreStore`] is the
+//! `s3://` / `r2://` target's impl over `object_store` — the second
+//! consumer of the same trait, behind the crate's `s3` feature. The trait
+//! keeps the whole engine testable against in-memory fakes — including the
+//! spec's "a failure mid-upload leaves `current` untouched" pin, which
+//! needs a store that can fail on demand.
 //!
 //! # The store layout
 //!
@@ -271,24 +272,7 @@ impl DeployStore for DirStore {
             }
             return Ok(None);
         };
-        let text = String::from_utf8(bytes)
-            .map_err(|e| err("DEP-MANIFEST", format!("{MANIFEST_NAME} is not UTF-8: {e}")))?;
-        let manifest: RemoteManifest = serde_json::from_str(&text).map_err(|e| {
-            err(
-                "DEP-MANIFEST",
-                format!("{MANIFEST_NAME} does not parse: {e}"),
-            )
-        })?;
-        if manifest.version != MANIFEST_VERSION {
-            return Err(err(
-                "DEP-MANIFEST",
-                format!(
-                    "{MANIFEST_NAME} carries version {} but this engine writes {MANIFEST_VERSION}",
-                    manifest.version
-                ),
-            ));
-        }
-        Ok(Some(manifest))
+        parse_manifest(&bytes).map(Some)
     }
 
     fn store_manifest(&self, manifest: &RemoteManifest) -> Result<(), OxideError> {
@@ -351,23 +335,57 @@ impl DeployStore for DirStore {
                 ));
             }
         };
-        let text = String::from_utf8(bytes)
-            .map_err(|e| err("DEP-POINTER", format!("{POINTER_NAME} is not UTF-8: {e}")))?;
-        let id = text.trim_end_matches(['\n', '\r']);
-        if id.is_empty() {
-            return Err(err(
-                "DEP-POINTER",
-                format!("{POINTER_NAME} is empty (torn write or truncation)"),
-            ));
-        }
-        validate_build_id(id).map_err(|_| {
-            err(
-                "DEP-POINTER",
-                format!("{POINTER_NAME} is corrupt: `{id}` is not a build id"),
-            )
-        })?;
-        Ok(Some(id.to_string()))
+        parse_pointer(&bytes).map(Some)
     }
+}
+
+/// Parse ledger bytes (§V2-F11's `manifest.json`): UTF-8 JSON of the
+/// schema version this engine writes — a UTF-8 failure, a parse failure
+/// or an unknown version is a [`DEP-MANIFEST`] refusal, never a
+/// best-effort parse (fail closed on an unknown future). The shared
+/// parser behind [`DirStore::load_manifest`] and the object-store target.
+pub(crate) fn parse_manifest(bytes: &[u8]) -> Result<RemoteManifest, OxideError> {
+    let text = String::from_utf8(bytes.to_vec())
+        .map_err(|e| err("DEP-MANIFEST", format!("{MANIFEST_NAME} is not UTF-8: {e}")))?;
+    let manifest: RemoteManifest = serde_json::from_str(&text).map_err(|e| {
+        err(
+            "DEP-MANIFEST",
+            format!("{MANIFEST_NAME} does not parse: {e}"),
+        )
+    })?;
+    if manifest.version != MANIFEST_VERSION {
+        return Err(err(
+            "DEP-MANIFEST",
+            format!(
+                "{MANIFEST_NAME} carries version {} but this engine writes {MANIFEST_VERSION}",
+                manifest.version
+            ),
+        ));
+    }
+    Ok(manifest)
+}
+
+/// Parse pointer bytes (§V2-F11's `current`): one build id, UTF-8,
+/// newline-terminated. An empty or non-build-id value is a
+/// [`DEP-POINTER`] refusal (torn write or truncation). The shared parser
+/// behind [`DirStore::read_pointer`] and the object-store target.
+pub(crate) fn parse_pointer(bytes: &[u8]) -> Result<String, OxideError> {
+    let text = String::from_utf8(bytes.to_vec())
+        .map_err(|e| err("DEP-POINTER", format!("{POINTER_NAME} is not UTF-8: {e}")))?;
+    let id = text.trim_end_matches(['\n', '\r']);
+    if id.is_empty() {
+        return Err(err(
+            "DEP-POINTER",
+            format!("{POINTER_NAME} is empty (torn write or truncation)"),
+        ));
+    }
+    validate_build_id(id).map_err(|_| {
+        err(
+            "DEP-POINTER",
+            format!("{POINTER_NAME} is corrupt: `{id}` is not a build id"),
+        )
+    })?;
+    Ok(id.to_string())
 }
 
 /// Walk `dist` and hash every regular file: rel path → blake3 digest +
@@ -729,8 +747,9 @@ pub fn rollback(store: &impl DeployStore) -> Result<String, OxideError> {
 }
 
 /// A build id must be non-empty lowercase hex (the A04 shape: `build_id_of_dist`
-/// digests truncate to 16 hex chars).
-fn validate_build_id(id: &str) -> Result<(), OxideError> {
+/// digests truncate to 16 hex chars). The shared validator behind both
+/// store targets' pointer writes.
+pub(crate) fn validate_build_id(id: &str) -> Result<(), OxideError> {
     let ok = !id.is_empty()
         && id.len() <= 64
         && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
@@ -746,8 +765,8 @@ fn validate_build_id(id: &str) -> Result<(), OxideError> {
 
 /// A store key must be a relative slash-separated path with no `.`/`..`
 /// segments — the traversal guard behind [`DirStore`]'s writes and
-/// deletes.
-fn validate_object_path(path: &str) -> Result<(), OxideError> {
+/// deletes and the object-store target's keys.
+pub(crate) fn validate_object_path(path: &str) -> Result<(), OxideError> {
     let bad = path.is_empty()
         || path.starts_with('/')
         || path.contains('\\')
