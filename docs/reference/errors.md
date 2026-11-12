@@ -83,6 +83,12 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CMP-PARSE` | fix the syntax error reported by the Oxc parser | Fix the syntax error the parser names |
 | `CMP-SECRET` | `process.env.{name}` is read in client module `{}`;                          this would ship the secret to the browser. Move the                          read to a server module or rename to `PUBLIC_{name}`. | — |
 | `CONTENT-TYPEGEN` | mkdir {}: {e} | — |
+| `DEP-BUILDID` | the deploy build id `{}` must be non-empty lowercase hex (the A04 shape) | — |
+| `DEP-IO` | deploy store operation failed on `{}`: {e} | — |
+| `DEP-MANIFEST` | the remote deploy manifest (manifest.json) is corrupt or from a future engine version: {e} | Re-run the deploy - a fresh deploy rewrites the ledger; inspect the store's manifest.json if this repeats |
+| `DEP-POINTER` | the deploy pointer (current) is corrupt: {detail} | — |
+| `DEP-ROOT` | dist root {} is not a directory | Pass the build's dist directory (the `oxide build` output) |
+| `DEP-ROLLBACK` | cannot roll back: no previous build id is recorded | Deploy first: every deploy records the pointer's previous value |
 | `DEV-BUNDLE` | rebuild failed for {pstr}: {err_msg} | — |
 | `DEV-HMR-001` | HMR fell back to a full reload: {reason} | — |
 | `DEV-HMR-002` | {} is not imported by any module | — |
