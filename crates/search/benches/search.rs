@@ -11,12 +11,17 @@
 //!   top of this, so an uncached query is the worst case).
 //! - `search_static_export`: the `static.json` build at 1,000 documents
 //!   (the build side's second output).
+//! - `search_hot_reload`: the dev loop's per-content-change reload price
+//!   — the unchanged fast path (one `meta.json` read + byte compare) and
+//!   the full rebuild-then-swap sequence (the rebuild cost itself is the
+//!   `search_build` group's question).
 
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxide_fw_search::{
-    SearchDocument, SearchEngineOptions, SearchIndex, SearchQuery, TantivyIndex,
+    SearchDocument, SearchEngineOptions, SearchIndex, SearchQuery, SwappableSearchIndex,
+    TantivyIndex,
 };
 
 /// A synthetic corpus: `docs` entries with a private title term, a
@@ -93,5 +98,44 @@ fn bench_static_export(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_build, bench_query, bench_static_export);
+fn bench_hot_reload(c: &mut Criterion) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let index_dir = dir.path().join("index");
+    let docs_vec = corpus(100);
+    TantivyIndex::build_in_dir(&docs_vec, &SearchEngineOptions::default(), &index_dir)
+        .expect("build");
+    let hot =
+        SwappableSearchIndex::open(&index_dir, &SearchEngineOptions::default()).expect("open");
+    let mut group = c.benchmark_group("search_hot_reload");
+    // The CAS-skip fast path: the directory is untouched, the reload is
+    // one small file read and a byte compare.
+    group.bench_function("unchanged_100", |b| {
+        b.iter(|| hot.try_reload().expect("reload"));
+    });
+    // The full dev-loop sequence per content change: wipe, re-commit,
+    // reload (the swap opens the rebuild and swaps it in).
+    group.bench_function("rebuild_100_then_reload", |b| {
+        b.iter(|| {
+            if index_dir.exists() {
+                std::fs::remove_dir_all(&index_dir).expect("wipe");
+            }
+            TantivyIndex::build_in_dir(
+                black_box(&docs_vec),
+                &SearchEngineOptions::default(),
+                &index_dir,
+            )
+            .expect("build");
+            hot.try_reload().expect("reload")
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_build,
+    bench_query,
+    bench_static_export,
+    bench_hot_reload
+);
 criterion_main!(benches);
