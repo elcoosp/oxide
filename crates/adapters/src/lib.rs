@@ -9,14 +9,21 @@
 //! how absent ones degrade; the build refuses a configuration that needs an unavailable
 //! feature rather than failing at runtime.
 
-use oxide_fw_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_diagnostics::Diagnostic;
+pub use oxide_fw_diagnostics::OxideError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+pub mod delta;
 mod refusal;
 
+pub use delta::{
+    DEFAULT_SKEW_WINDOW, DeployOptions, DeployStore, DirStore, FileEntry, IMMUTABLE_PREFIXES,
+    MANIFEST_NAME, MANIFEST_VERSION, POINTER_NAME, PendingDelete, Plan, PruneOptions, PruneReport,
+    RELEASE_ROOT, RemoteManifest, deploy_dir, is_immutable, plan, prune, rollback, scan_dist,
+};
 pub use refusal::{ConfigFeatureReport, check_config};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
