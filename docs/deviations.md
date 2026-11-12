@@ -1946,3 +1946,137 @@ and the TS-side parity suite.
    serve never re-emits, so the caveat is dev-only; a Windows dev host
    needs a restart per content change until the emitter learns
    swap-aside directories.
+
+## V2-F11 — the delta-deploy engine (2026-11-12)
+
+**What the WP asked.** "`oxide deploy` uploads only what changed and swaps
+atomically" — a pure `plan()` over local/remote hash maps, immutable assets
+never deleted during the skew window, uploads under `releases/<build-id>/`,
+the `current` pointer written last, prune after `deploy.skewWindow`, and the
+`<5%` acceptance for a one-line change (`feat/delta-deploy-engine`).
+
+**What lands.** The engine (`crates/adapters/src/delta.rs`, the crate the
+spec's sketch names): the object-safe `DeployStore` seam — load/store the
+upload ledger (`RemoteManifest`), object put/delete, the atomic `current`
+pointer read/write — so the `dir:` target and the future `s3://`/`r2://`
+targets differ exactly there and the whole engine tests against in-memory
+fakes (including the injected-failure pin); the spec-verbatim pure `plan`
+(`upload`/`keep`/`delete_later`/`bytes_up`, sorted, over `scan_dist`'s
+blake3-hashed `FileEntry` map — no I/O, no clock); `DirStore`, the `dir:`
+target over `std::fs` with the temp+rename pointer swap, traversal-guarded
+object keys and the fail-closed `DEP-MANIFEST`/`DEP-POINTER` refusals;
+`deploy_dir` executing the §V2-F11 order of operations (changed immutable
+chunks at their rel path first, every non-hashed file mirrored under
+`releases/<build-id>/`, the ledger rewrite, the pointer LAST); `prune`
+(marks expire after the skew window, the pointed release never prunes,
+earliest mark wins) and `rollback` (the pointer swap to
+`previous_build_id`). `deploy_dir` takes the build id and the clock as
+parameters (`DeployOptions`), so callers inject both — the A04 build id and
+a wall clock at the CLI layer. The `DEP-BUILDID`/`DEP-IO`/`DEP-MANIFEST`/
+`DEP-POINTER`/`DEP-ROOT`/`DEP-ROLLBACK` registry rows, 15 TDD pins + 3
+in-module tests, the `delta` criterion group and the `delta_deploy`
+walkthrough example ride along.
+
+**Status.** The engine is complete and green end-to-end (tests, bench,
+example). The remaining F11 halves are the `s3://`/`r2://` targets (the
+same `DeployStore` seam over `object_store` — the A10 `s3` feature shape
+the cache crate already uses) and the `oxide deploy` CLI command (the
+V8-linked CLI is outside this sandbox's compile budget; the command
+wraps `scan_dist` + `deploy_dir` + `prune` + `rollback` directly — no new
+engine work is gated on it).
+
+**Deltas.**
+
+1. **The ledger maps rel paths, not store paths.** The spec sketch's
+   remote map is rel → hash; non-hashed files live under
+   `releases/<build-id>/<rel>`, so the ledger keys stay stable across
+   builds and the release prefix is a pure execution detail (the executor
+   mirrors every non-hashed file — changed or not — into the fresh prefix,
+   which is what makes a release self-contained for the tabs reading the
+   new pointer; the plan's `keep` is the hash-delta view, exactly the
+   sketch's).
+2. **Pending deletions keep their EARLIEST mark.** A file superseded by
+   several deploys in an hour must not outlive its window by being
+   re-stamped; re-marks only ever lower the timestamp. The window runs
+   from the first supersession, not the last deploy.
+3. **`prune` reads the pointer and protects the release it names.** After
+   a rollback the pointer names an old release whose copies were marked
+   pending by the deploy that superseded it; a naive window prune would
+   delete the rollback target out from under the rollback. The
+   rollback-safety rule: a mark under `releases/<pointer-id>/` never
+   deletes.
+4. **The skew window is a parameter, not a config key (yet).**
+   `deploy.skewWindow` is F10's config surface; until that key lands the
+   window travels as `PruneOptions::window` (`DEFAULT_SKEW_WINDOW` = the
+   F10 default, 15 minutes). Adding the config key later is a wiring
+   change at the CLI layer, not an engine change — and it dodges the E11
+   config-reference regeneration this pass cannot run (the generator
+   lives in the V8-linked CLI).
+5. **The manifest schema is versioned and fail-closed.** `version != 1`
+   is a `DEP-MANIFEST` refusal, never a best-effort parse — a future
+   engine version must not silently misread an older ledger.
+
+**To unclose.** The `object_store`-backed `s3://`/`r2://` `DeployStore`
+impl (behind the adapters `s3` feature, the cache crate's feature shape)
+and the `oxide deploy` CLI command (`scan_dist` + `deploy_dir` +
+`prune`/`rollback` over the parsed target spelling) — both wire-only,
+no engine work gated on them.
+
+## V2-F10 — the skew-protection pool substrate (2026-11-12)
+
+**What the WP asked.** "After a deploy, tabs still on the old build keep
+working for a window, and rollback is instant" — routing by
+`x-oxide-build`, `deploy.skewWindow` (default 15m), `GenerationPools`,
+rollback via `.oxide/generations/<id>` (the deploy side of the rollback is
+F11's pointer swap, landed in the same pass — see the V2-F11 record).
+
+**What lands.** The pool substrate (`crates/dispatch/src/skew.rs`, the
+V8-free crate the A04 substrate lives in): the `AcceptedGenerations` trait
+— the `accepts(id, now) -> Option<Gen>` contract the data-plane stage
+consumes, implemented by the existing 1-deep `GenerationSet` AND by the
+bounded `GenerationPool`, blanket-implemented for `&T` so a boot-chosen
+source can be held as `&dyn` — and `stage_check`, the §V2-A04 stage
+generic over the seam. The existing `stage_build_check` is the 1-deep
+specialization delegating to it: no public signature changed, the A04
+pins hold unchanged, and `tests/skew_tdd.rs::the_stage_drives_set_and_
+pool_with_identical_verdicts` pins the set/pool verdict parity.
+`GenerationPool` semantics: each demotion carries its OWN demotion
+instant (the window runs from the demotion — two deploys ten minutes
+apart expire ten minutes apart); promotes trim the expired demotions (a
+deploy doubles as the housekeeping pass); the OLDEST demotion evicts
+first when the bounded pool is full (the A04 "bounded by config, not
+deploy frequency" rule generalized from depth 1 to depth N); re-promoting
+a demoted id is the rollback path and moves it back to current;
+promoting the current id is a no-op. 9 TDD pins, the `skew` criterion
+group and the `skew_pool` walkthrough example ride along.
+
+**Status.** The substrate is complete and green end-to-end. The
+remaining F10 halves are the `deploy.skewWindow` config key (the E11
+config-reference regeneration it requires needs the V8-linked generator),
+the CLI adoption (constructing the pool at serve boot, promoting it when
+`cmd_dev` reloads a build — the same A01-phase-3 wiring `GenerationSet`
+itself is deferred on) and the two-generation serving pools (`GenerationPools`
+serving the old build's HTML while the new one takes traffic — needs the
+serve-side artifact promotion F11's `releases/` layout already lays out).
+
+**Deltas.**
+
+1. **`accepts` is a pure lookup; reclamation is explicit.** The trait's
+   `accepts(&self)` matches `GenerationSet`'s shape (the stage holds the
+   source by `&`), so expired demotions are refused on read but reclaimed
+   only by `expire(&mut self)` or the next promote — a read never mutates,
+   which keeps the stage lock-free.
+2. **The window is per-demotion, not global.** The spec's
+   `deploy.skewWindow` text reads as one window for all builds; per-
+   demotion clocks are the same thing stated per build (each window
+   starts at its own demotion) and is what makes "deploys inside the
+   window keep their clients" true for the SECOND deploy too — a shared
+   clock would expire N-2 early.
+3. **Depth is a constructor parameter, not config (yet).** `capacity`
+   travels with `window` in `GenerationPool::new`; both come from the
+   same (deferred) config key set at the CLI layer. No engine work is
+   gated on the config surface.
+
+**To unclose.** The config key + CLI adoption (the A01-phase-3 wiring
+`GenerationSet` is already deferred on) and the two-generation serving
+pools.
