@@ -1878,3 +1878,71 @@ scheduled here. The rolldown backend records `preload: vec![entry]` —
 manifest-fed prerender shells of rolldown-built projects carry one
 modulepreload until its manifest walk widens (tracked in the bundler, not
 the producer: the producer is a faithful projection by design).
+
+## V2-F09 tail — the dev-watch re-emission + the hot-reload seam (2026-11-11)
+
+**What the deferral asked.** The parent F09 record deferred the dev-watch
+half: "`oxide build` emits the index; `oxide dev` re-emits the §16.5
+projection on content change but not the F09 index yet (the running
+server holds the opened index — the reload path is tantivy's
+`IndexReader::reload` behind the `SearchIndex` seam, the follow-up
+slice)." This pass closes it (`feat/search-hot-reload`).
+
+**What lands.** The engine half (`crates/search/src/hot.rs`):
+`SwappableSearchIndex` — the CLI's `SwappableRouteTree` snapshot-handle
+pattern plus the disk-driven reload. `try_reload` fingerprints the index
+directory's `meta.json` bytes: the emitter's CAS skip leaves the
+directory untouched, so an unchanged corpus is byte-identical and the
+reload is `Unchanged` (no mmap thrash, no cache churn); a rebuild
+commits fresh segment UUIDs, so the bytes differ and the rebuild is
+opened read-only and swapped in atomically (`Swapped { docs }`); a
+missing, mid-wipe or corrupt directory refuses with the engine's
+`SRC-101` and the previous snapshot keeps serving — a failed reload
+never degrades the running answers. The seam goes through the object
+surface: `SwappableSearchIndex` itself implements `SearchIndex`, and
+`SearchIndex` gains a defaulted `generation()` — the corpus identity the
+endpoint's L1 cache folds into its keys, so a swap repartitions every
+key (a pre-reload hit can never survive) while an unchanged corpus keeps
+every live entry valid (`TantivyIndex` and `StaticMatcher` inherit the
+0 default; they never replace their corpus in place). The wire half
+(`crates/cli`): `cmd_dev` emits the F09 index at boot (next to the
+§16.5 projection, so `/_oxide/search` answers without a prior
+`oxide build`), the watcher's content-change branch and the `--once`
+hook call `refresh_search_index` (re-emit, then best-effort reload — a
+failure is a loud `tracing::warn`, never a dev-loop failure), and
+`build_search_endpoint` returns the endpoint AND the hot handle, which
+rides `StartedServer` (`cmd_serve` never swaps — production reindexes
+by building and starting anew).
+
+**Status.** The deferral is closed server-side. The remaining F09 work
+is unchanged: the client matcher half (`packages/oxide/src/search.ts`)
+and the TS-side parity suite.
+
+**Deltas.**
+
+1. **The reload is a snapshot swap, not `IndexReader::reload`.** The
+   deferral's sketch assumed an in-place reader reload; the actual
+   emitter wipes `dist/search/index` before every rebuild (the engine's
+   own contract: a stale index is never committed onto), which unlinks
+   the mmap'd segments out from under any reader. A byte-fingerprint
+   swap keeps the zero-downtime property without fighting the emitter:
+   readers serve the old snapshot during the rebuild and the swap is one
+   pointer write under a lock.
+2. **The L1 cache keys gained a generation partition.** The spec's
+   "results cached in L1 for 60 s keyed by the normalized query" predates
+   any reload path; with one, a keyless cache would serve pre-reload
+   hits for up to 60 s after a reindex. The generation rides the key
+   instead (the spec's key text is unchanged for the fixed-corpus
+   engines — `generation()` defaults to 0).
+3. **A configured-but-missing index stays the not-configured 404 until
+   the next dev restart.** The boot emission makes this the rare path
+   (the index exists before the serve side opens it); the endpoint
+   cannot be attached to an already-started pipeline, so a corrupt
+   dist at boot still means a restart, documented rather than hidden.
+4. **Windows dev re-emission caveat.** The emitter's
+   `remove_dir_all(index_dir)` runs while the same process holds mmap'd
+   segment files; Linux and macOS (the dev-loop platforms) unlink open
+   files and keep the mapping alive, Windows fails the delete. Production
+   serve never re-emits, so the caveat is dev-only; a Windows dev host
+   needs a restart per content change until the emitter learns
+   swap-aside directories.
