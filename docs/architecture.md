@@ -27,7 +27,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests; the V2-E04 SRI pass (`sri_digest`/`integrity_map` — the chunk path digests the bytes in hand, the rolldown path reads the persisted files back) recording `client.manifest.json`'s `integrity: { file: value }`; the strict re-digest walk (`verify_integrity_map`) and the adapter-level head producer (`head::HeadProducer`/`ManifestHeadProducer`, the manifest→modulepreload/stylesheet projection) | §6.4, V2-E04 |
 | `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
-| `search` | The built-in search engine (V2-F09): the spec's six-field tantivy schema (`build_schema`), the `SearchDocument` ingest contract (typed frontmatter + Markdown-stripped body), `TantivyIndex` (build in RAM / into `dist/search/index`, read-only mmap open), the `SearchIndex` seam with the `StaticMatcher` degraded fallback, the `{docs, postings}` static export with 2-to-4-char prefix terms, the `SRC-1xx` codes, the `search` criterion bench and the walkthrough example | §16.5→§V2-F09 |
+| `search` | The built-in search engine (V2-F09): the spec's six-field tantivy schema (`build_schema`), the `SearchDocument` ingest contract (typed frontmatter + Markdown-stripped body), `TantivyIndex` (build in RAM / into `dist/search/index`, read-only mmap open), the `SearchIndex` seam with the `StaticMatcher` degraded fallback, the `SwappableSearchIndex` hot-reload handle (the serve side swaps a rebuilt index in without a restart; the L1 keys partition on `SearchIndex::generation`), the `{docs, postings}` static export with 2-to-4-char prefix terms, the `SRC-1xx` codes, the `search` criterion bench (`search_hot_reload` included) and the walkthrough examples | §16.5→§V2-F09 |
 | `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04), build id + generations substrate (A04) with the live route on the data plane (`/__oxide/live` build query contract, §V2-F05) and the F07 reattach route (`/__oxide/stream/<id>` + `stream_resume_id`) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02, V2-A04, V2-F05, V2-F07 |
 | `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery; the V2-E04 `Injector.integrity` map (modulepreload/stylesheet links whose URL resolves to a manifest digest emit `integrity` + `crossorigin="anonymous"`) | §7.1, §10, V2-A04, V2-E04 |
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`); §V2-A07 prerender error-status sidecars (`static_status`: `StatusSidecars::scan` serve-start walk, `status_for`, `write_status_sidecar`, the `serve` 200-override); the V2-E04 CSP half (`csp_headers_for` — the one definition site for the strict/hash/report-only × Trusted Types header matrix — and `POST /_oxide/csp-report`, the rate-limited violation sink over both browser formats); the V2-F13 learned-prefetch substrate (`navgraph::NavGraph` — the aggregate route-transition graph the native prefix observes off `x-oxide-nav-from`/`-to` on `/__data` when `prefetch.learned` is on, the `GET /_oxide/nav?from=<route>` top-edges endpoint (k-anonymity floor 20, 7-day half-life), the bounded edge cap, the `merge_from`/`persist` snapshot round trip and the flusher); the V2-F09 search endpoint (`feature = "search"`: `search_endpoint::SearchEndpoint` — the read-only engine plus its L1 query cache — and `GET /_oxide/search?q=<text>&limit=&tag=&lang=`, the not-configured 404, the non-GET 405 and the 20-per-10-s token bucket) | §12, §17, D7, V2-F05, V2-F07, V2-F12, V2-A07, V2-E04, V2-F09, V2-F13 |
@@ -40,6 +40,26 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 
 ## What changed since 2026-10-12
 
+- **`search` + `server` + `cli`**: the search hot-reload seam (the
+  V2-F09 dev-watch follow-up, `feat/search-hot-reload`). `crates/search`
+  grows `hot::SwappableSearchIndex` — the serve side's
+  `SwappableRouteTree`-style snapshot handle plus the disk-driven
+  `try_reload`: the fingerprint is the index directory's `meta.json`
+  bytes, so the emitter's CAS skip is a byte-identical `Unchanged` (the
+  live L1 entries stay valid) and a rebuild's fresh segment UUIDs are a
+  `Swapped { docs }` atomic swap; a missing, mid-wipe or corrupt
+  directory refuses with `SRC-101` and the previous snapshot keeps
+  serving. `SearchIndex` gains a defaulted `generation()` (the corpus
+  identity the endpoint's L1 cache partitions its keys on — a swap
+  repartitions every key, so a pre-reload hit can never survive;
+  `TantivyIndex`/`StaticMatcher` keep the 0 default). The CLI dev loop
+  re-emits the F09 index at boot and on every content change (the
+  watcher's branch, `refresh_search_index`) and swaps the serve side
+  onto the rebuild without a restart; `build_search_endpoint` hands back
+  the endpoint AND the hot handle on `StartedServer`. Two endpoint
+  hardenings ride along: `search_response`'s serialization fallback is a
+  loud 500 instead of a silent `200 {null}` body, and `query_param`
+  parses without a per-candidate `format!` allocation.
 - **`search` (new crate) + `server` + `cli`**: the built-in search engine
   (V2-F09, `feat/search-engine-substrate`). The engine half:
   `crates/search` — the spec's six-field tantivy schema (`build_schema`),
