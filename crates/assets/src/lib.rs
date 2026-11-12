@@ -734,14 +734,6 @@ pub trait OgBackend: Send + Sync {
     fn render(&self, tree: &serde_json::Value, width: u32, height: u32) -> Result<Vec<u8>>;
 }
 
-pub fn og_cache_key(tree: &serde_json::Value, width: u32, height: u32) -> String {
-    let mut h = Hasher::new();
-    h.update(serde_json::to_vec(tree).unwrap_or_default().as_slice());
-    h.update(&width.to_le_bytes());
-    h.update(&height.to_le_bytes());
-    h.finalize().to_hex().to_string()
-}
-
 // ---------------- Content (§16.5) ----------------
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
