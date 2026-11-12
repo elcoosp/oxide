@@ -22,6 +22,7 @@
 
 type RewriterFn = Box<dyn FnMut(&[u8])>;
 pub mod ppr;
+pub mod splice;
 
 use base64::Engine as _;
 use bytes::Bytes;
