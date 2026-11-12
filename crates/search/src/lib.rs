@@ -21,6 +21,10 @@
 //!   (`{docs, postings}`, prefix terms of length 2 to 4 included).
 //! - [`endpoint::QueryCache`]: the serve side's L1 (60 s TTL keyed by the
 //!   normalized query).
+//! - [`hot::SwappableSearchIndex`]: the hot-reload seam — the serve side
+//!   swaps a rebuilt index in without a restart (the dev-watch
+//!   follow-up), the L1 keys partition on
+//!   [`query::SearchIndex::generation`].
 //!
 //! Errors follow the workspace convention: [`OxideError`] with the
 //! `SRC-1xx` codes (registry: `docs/errors.toml`).
@@ -37,6 +41,7 @@
 
 pub mod build;
 pub mod endpoint;
+pub mod hot;
 pub mod query;
 pub mod schema;
 pub mod static_index;
@@ -76,6 +81,7 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 
 pub use build::TantivyIndex;
 pub use endpoint::QueryCache;
+pub use hot::{ReloadOutcome, SwappableSearchIndex};
 pub use query::{
     SearchDocument, SearchEngineOptions, SearchHit, SearchIndex, SearchQuery, SearchResponse,
 };
