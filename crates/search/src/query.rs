@@ -177,6 +177,23 @@ pub trait SearchIndex: Send + Sync {
     /// The number of documents in the index (the endpoint's readiness
     /// probe; 0 means the index built empty).
     fn doc_count(&self) -> u32;
+
+    /// The corpus identity the endpoint's L1 query cache partitions its
+    /// keys on. The default (0) is correct for any engine whose corpus
+    /// is fixed for the object's lifetime — [`TantivyIndex`] and
+    /// [`StaticMatcher`] both build or open one corpus and never change
+    /// it in place, so every answer the object will ever give was
+    /// computed against the corpus the cache entry was computed against.
+    ///
+    /// An implementation that CAN replace its corpus in place (the
+    /// hot-reload handle, `SwappableSearchIndex`) must bump the value on
+    /// every replacement: the endpoint folds the generation into the
+    /// cache key, so a swapped-in corpus repartitions every key and a
+    /// stale pre-swap hit can never survive. An unchanged corpus must
+    /// keep the value — the live cache entries stay valid.
+    fn generation(&self) -> u64 {
+        0
+    }
 }
 
 /// The shared guard: an empty (or whitespace-only) query text is refused
