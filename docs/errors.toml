@@ -258,6 +258,27 @@ message = "`process.env.{name}` is read in client module `{}`;                  
 [CONTENT-TYPEGEN]
 message = "mkdir {}: {e}"
 
+[DEP-BUILDID]
+message = "the deploy build id `{}` must be non-empty lowercase hex (the A04 shape)"
+
+[DEP-IO]
+message = "deploy store operation failed on `{}`: {e}"
+
+[DEP-MANIFEST]
+message = "the remote deploy manifest (manifest.json) is corrupt or from a future engine version: {e}"
+fix = "Re-run the deploy - a fresh deploy rewrites the ledger; inspect the store's manifest.json if this repeats"
+
+[DEP-POINTER]
+message = "the deploy pointer (current) is corrupt: {detail}"
+
+[DEP-ROOT]
+message = "dist root {} is not a directory"
+fix = "Pass the build's dist directory (the `oxide build` output)"
+
+[DEP-ROLLBACK]
+message = "cannot roll back: no previous build id is recorded"
+fix = "Deploy first: every deploy records the pointer's previous value"
+
 [DEV-BUNDLE]
 message = "rebuild failed for {pstr}: {err_msg}"
 
