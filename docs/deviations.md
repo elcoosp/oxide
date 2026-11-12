@@ -2080,3 +2080,134 @@ serve-side artifact promotion F11's `releases/` layout already lays out).
 **To unclose.** The config key + CLI adoption (the A01-phase-3 wiring
 `GenerationSet` is already deferred on) and the two-generation serving
 pools.
+
+## V2-F11 tail — the object-store deploy target (2026-11-12)
+
+**What the deferral asked.** The parent F11 record named the remaining
+halves: "the `s3://`/`r2://` targets (the same `DeployStore` seam over
+`object_store` — the A10 `s3` feature shape the cache crate already uses)
+and the `oxide deploy` CLI command". This pass closes the target half
+(`feat/object-store-deploy-target`).
+
+**What lands.** `crates/adapters/src/objstore.rs` — `ObjectStoreStore`,
+the second `DeployStore` impl, behind the crate's new `s3` feature (the
+cache crate's feature shape): `deploy_target_from_url` parses the target
+spellings — `s3://bucket/prefix` (credentials/region from the standard
+`AWS_*` environment, the cache handler's `from_env` convention),
+`r2://bucket/prefix?endpoint=…` (the S3 API against an endpoint override;
+an `r2` target without its endpoint refuses `DEP-URL`), `file://` and
+`mem://` (the network-free backends the pins, the bench and the
+walkthrough run over); the optional `endpoint=` query parameter also
+overrides the endpoint for self-hosted `s3://`. The ledger, the objects
+and the pointer ride the `object_store::ObjectStore` trait through a
+dedicated current-thread tokio runtime the store owns (the trait is sync;
+the engine and its pins are). The pointer swap is the object-store
+atomicity contract: create-if-absent (`PutMode::Create`) on a fresh
+store, then update-against-the-version-this-deploy-read
+(`PutMode::Update`) — a swap that loses the race refuses `DEP-POINTER`
+and never flips `current` (`swap_pointer`/`pointer_version` expose the
+conditional primitive the lost-race pin drives). Corrupt state refuses
+with the `dir:` target's codes through the now-shared
+`parse_manifest`/`parse_pointer`/`validate_object_path` helpers
+(`DirStore` delegates to the same parsers, byte-identical messages, the
+15 parent pins hold unchanged). The `DEP-URL` registry row rides along
+(`docs/errors.toml`, the errors reference page regenerated), 10 TDD pins
+(`tests/object_store_tdd.rs`: URL parsing incl. the `r2` endpoint
+refusal, ledger/pointer round trips, the conditional swap, the full
+deploy layout through `list_keys`, the injected-failure pointer pin, the
+idempotence + <5% acceptance, prune/rollback parity, traversal
+refusals), 2 in-module parser tests, the `object_store` criterion group
+(first-full vs idempotent re-deploy vs young prune over the in-memory
+backend, the `delta` group's shapes for comparison) and the
+`object_store_deploy` walkthrough example (network-free `mem://` by
+default; a real `s3://`/`r2://`/`file://` URL as the first argument walks
+the identical steps).
+
+**Status.** Green end-to-end: `cargo test -p oxide-fw-adapters --features s3`
+98 passed across the crate's targets, the bench group runs, the example
+runs. The delta-deploy engine itself is untouched — the new target is a
+consumer of the existing trait, exactly as the parent record sketched.
+
+**Deltas.**
+
+1. **The pointer swap is conditional-put, not rename.** `DirStore`'s
+   temp+rename is atomic within one filesystem; object stores have no
+   rename. The honest equivalent is the conditional put (create-if-absent,
+   update-against-the-read-version); a lost race refuses `DEP-POINTER`
+   instead of overwriting the concurrent deploy's pointer. The cache
+   crate's B-11 record documents the same platform reality from the
+   read side ("object stores have no compare-and-swap") — 0.14's
+   `PutMode::Update` provides the write-side primitive on the backends
+   that support etags, and the pin holds it for `InMemory`.
+2. **`r2://` rides the S3 API with a mandatory endpoint query
+   parameter** — R2 exposes the S3 API per-account endpoint; the
+   credentials still come from the standard `AWS_*` environment. An
+   `r2://` target without an endpoint refuses at parse time (`DEP-URL`,
+   the fix names the parameter), never at first use.
+3. **The bridge runtime is owned by the store.** `object_store` is async
+   and `DeployStore` is sync; `ObjectStoreStore` builds a current-thread
+   tokio runtime in its constructor and `block_on`s each operation.
+   Calling from inside an async runtime would panic (`block_on` forbids
+   it) — documented on the struct; the engine's callers are synchronous
+   (the CLI, the tests).
+4. **`mem://` is a first-class scheme.** The in-memory backend is not a
+   test-only shorthand but a parsed target (`mem://label`), because the
+   walkthrough, the bench and the CI pins need a network-free deploy
+   target with the exact `ObjectStore` semantics (etags, conditional
+   puts, `NotFound` shapes) the remote backends expose.
+
+**To unclose.** The `oxide deploy` CLI command (the V8-linked CLI
+remains outside this sandbox's compile budget; the command is a thin
+`deploy_target_from_url` + `deploy_dir`/`prune`/`rollback` wrapper — no
+engine work is gated on it), and `r2`'s account-id derivation from an
+environment variable once a real R2 deployment exercises the spelling.
+
+## V2-B08 phase 2 — the streaming nonce splicer (2026-11-12)
+
+**What the WP asked.** B08's phase 2: "a chunk-safe splicer for the live
+path, so neither the L0 fill nor the response path needs a full-document
+copy", with the spec carrying the `NonceSplicer` sketch and its test set
+verbatim (`crates/render/src/splice.rs` named in the spec). This pass
+lands the substrate (`feat/object-store-deploy-target`, riding the same
+session as the F11 object-store target).
+
+**What lands.** `crates/render/src/splice.rs` — the spec-verbatim
+`NonceSplicer`: `new(from, to)` owns an owned
+`memchr::memmem::Finder<'static>` plus the needle bytes; `push(chunk,
+&mut out)` splices every complete occurrence and holds back the last
+`from.len() - 1` bytes so a needle split across two chunks is still
+found; `finish` flushes the carry. The spec's three pins
+(`splits_at_every_position` — every possible cut, `no_match_passthrough`,
+`byte_at_a_time`) land verbatim, plus the carry-contract pins the live
+tee needs (empty input, finish idempotence, adjacent matches with no
+gaps, a needle longer than the chunks around its boundary). The `splice`
+criterion group benches 20 KB / 200 KB / 2 MB bodies fed in 64 KiB
+chunks against the whole-document `str::replace` baseline (8.1/80.5/826
+µs replace vs 9.2/90.3/1146 µs spliced — the splicer trades ~10–40% wall
+time for never holding a second copy of the document, the B08 point).
+`memchr = "2.8.3"` is pinned in `[workspace.dependencies]` (already in
+`Cargo.lock` transitively) and the `nonce_splice` walkthrough example
+runs the fill → serve round trip across deliberately mid-nonce chunk
+boundaries.
+
+**Status.** The substrate is green (tests, bench, example). The CLI
+adoption — phase 1's render-with-the-sentinel prerender and the three
+`html.replace(&nonce, …)` deletions, plus the dhat <1.1× peak-allocation
+acceptance — remains the A01-phase-3 slice on a V8-capable host, exactly
+as the Wave-B deferral record scheduled; the fill/serve sides call the
+splicer where the `.replace` calls sit today.
+
+**Deltas.**
+
+1. **The splicer owns its needle.** `Finder<'static>` + `from: Vec<u8>`
+   makes the splicer `Send` and self-contained (the tee task can hold
+   it); the spec sketch's `Finder<'static>` is produced via
+   `Finder::new(&f).into_owned()`.
+2. **`memchr` enters `[workspace.dependencies]`** at the lock-resolved
+   `2.8.3` — the spec anticipated this ("add memchr to
+   `[workspace.dependencies]` if absent; it is already in Cargo.lock").
+3. **The wall-time tradeoff is measured, not hidden.** At the benched
+   sizes the splicer is ~10–40% slower than `str::replace` — the
+   justification is the allocation profile (O(chunk) transient vs a
+   full second copy per document), which is what the B08 acceptance
+   gates on (dhat `max_bytes` at the CLI layer).
