@@ -64,3 +64,6 @@ ship.sh
 # the [[commit]] file groups) consumed by the ship tooling; machine-local
 # like ship.sh, and listed in its own [[commit]]-union rules.
 ship.toml
+# The ship manifest and the PR body are session artifacts, not repo content.
+/ship.toml
+/.github/pr-body.md
