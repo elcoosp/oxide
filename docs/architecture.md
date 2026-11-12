@@ -29,11 +29,11 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
 | `search` | The built-in search engine (V2-F09): the spec's six-field tantivy schema (`build_schema`), the `SearchDocument` ingest contract (typed frontmatter + Markdown-stripped body), `TantivyIndex` (build in RAM / into `dist/search/index`, read-only mmap open), the `SearchIndex` seam with the `StaticMatcher` degraded fallback, the `SwappableSearchIndex` hot-reload handle (the serve side swaps a rebuilt index in without a restart; the L1 keys partition on `SearchIndex::generation`), the `{docs, postings}` static export with 2-to-4-char prefix terms, the `SRC-1xx` codes, the `search` criterion bench (`search_hot_reload` included) and the walkthrough examples | §16.5→§V2-F09 |
 | `dispatch` | V8-free request orchestration: URL/query helpers, stage `Flow` protocol, §8.5 middleware chain + unified locals (A05), §9.2 parallel load graph (A06), §15.4 experiments assignment engine (F04), build id + generations substrate (A04) with the live route on the data plane (`/__oxide/live` build query contract, §V2-F05) and the F07 reattach route (`/__oxide/stream/<id>` + `stream_resume_id`) | §4.1, §8.4, §8.5, §9.2, §9.3, §15.4, V2-A02, V2-A04, V2-F05, V2-F07 |
-| `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery; the V2-E04 `Injector.integrity` map (modulepreload/stylesheet links whose URL resolves to a manifest digest emit `integrity` + `crossorigin="anonymous"`) | §7.1, §10, V2-A04, V2-E04 |
+| `render` | Streaming pipeline, head merge, HTML injection (lol_html), deferred-boundary protocol (§7.1), islands markup (§10.3), hydration bootstrap (+ the §V2-A04 `build` field), error recovery, the V2-B08 phase-2 streaming nonce splicer (`splice::NonceSplicer` — the chunk-safe `memchr::memmem` splice the L0 fill and cache-hit paths adopt instead of whole-document `str::replace` copies); the V2-E04 `Injector.integrity` map (modulepreload/stylesheet links whose URL resolves to a manifest digest emit `integrity` + `crossorigin="anonymous"`) | §7.1, §10, V2-A04, V2-B08, V2-E04 |
 | `server` | Hyper 1.x pipeline, static assets (range/304/precompressed), dynamic compression, security defaults (§17.1), CSRF/SSRF/host checks, rate limiting, cookies, RFC6455 codec, graceful shutdown; §V2-F05 live substrate: SSE framing, tag hub (`LiveHub`/`Sub`/`Guard`), snapshot stream, rerun runner, same-origin gate; §V2-F06 delta policy (`delta_payload`, per-connection patch base); §V2-F07 resumable-stream substrate (`stream_store`: `StreamBuf`/`StreamStore`, `read_from` replay, `stream_id`, Range parse, 206/200/410 reattach responses, `tee_stream`); §V2-F12 brownout substrate (`governor`: `Level`/`Signals`/`Thresholds`, `raw_level`/`next_level` hysteresis, `Governor` atomic, `serve_decision` × route `Priority`, `shed_response`, `ready_status`); §V2-A07 prerender error-status sidecars (`static_status`: `StatusSidecars::scan` serve-start walk, `status_for`, `write_status_sidecar`, the `serve` 200-override); the V2-E04 CSP half (`csp_headers_for` — the one definition site for the strict/hash/report-only × Trusted Types header matrix — and `POST /_oxide/csp-report`, the rate-limited violation sink over both browser formats); the V2-F13 learned-prefetch substrate (`navgraph::NavGraph` — the aggregate route-transition graph the native prefix observes off `x-oxide-nav-from`/`-to` on `/__data` when `prefetch.learned` is on, the `GET /_oxide/nav?from=<route>` top-edges endpoint (k-anonymity floor 20, 7-day half-life), the bounded edge cap, the `merge_from`/`persist` snapshot round trip and the flusher); the V2-F09 search endpoint (`feature = "search"`: `search_endpoint::SearchEndpoint` — the read-only engine plus its L1 query cache — and `GET /_oxide/search?q=<text>&limit=&tag=&lang=`, the not-configured 404, the non-GET 405 and the 20-per-10-s token bucket) | §12, §17, D7, V2-F05, V2-F07, V2-F12, V2-A07, V2-E04, V2-F09, V2-F13 |
 | `assets` | CSS pipeline (nesting/modules/minify/prefix), image backend (resize/encode/LQIP), font bundles, metadata/SEO, sitemap/robots, markdown/content, OG model | §6.6–6.7, §16, D19 |
 | `dev` | Hash-confirmed watcher (§5.5), HMR message protocol + per-kind behavior table (§13.3), the V2-E01 boundary planner (`plan`, the breadth-first walk-up over the module graph's importers, plus `source_self_accepts` and the `DEV-HMR-001` reload diagnostic) and its phase-2 CSS boundary substrate (`plan_classified` — the `kind: 'js'|'css'|'data'` classification with the §13.3 CSS terminal, `css_self_accepts`, the `DEV-HMR-002` orphan-stylesheet warning) and its phase-4 state-preservation substrate (`state::Preservation` on the v1 `update` frame, the injectable `StatePolicy` seam, `update_frame`), inspector model (§13.4), prebundle keys | §13, V2-E01 |
-| `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys AND over the config keys — the `ConfigFeatureReport` seam + `check_config` the config layer maps and the CLI build consults, with F09's `search` arm live) + the E11 generated docs table (`capability_markdown_table`) + the V2-F11 delta-deploy engine (`delta`: the object-safe `DeployStore` store seam, the spec-verbatim `plan`, `deploy_dir`'s upload-then-pointer-last order of operations, `prune`'s skew window with the rollback-safety rule, `rollback`'s one-write pointer swap, `DirStore` as the `dir:` target) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02, V2-F09, V2-F11 |
+| `adapters` | Deploy targets + the V2-R02 capability-matrix v2 (`support` as a total `(Class, Capability)` function, `Capability::ALL` with the v0.2 rows, the §18 refusal rule over the v0.2 `requires` keys AND over the config keys — the `ConfigFeatureReport` seam + `check_config` the config layer maps and the CLI build consults, with F09's `search` arm live) + the E11 generated docs table (`capability_markdown_table`) + the V2-F11 delta-deploy engine (`delta`: the object-safe `DeployStore` store seam, the spec-verbatim `plan`, `deploy_dir`'s upload-then-pointer-last order of operations, `prune`'s skew window with the rollback-safety rule, `rollback`'s one-write pointer swap, `DirStore` as the `dir:` target; `objstore::ObjectStoreStore` as the `s3://`/`r2://` target behind the `s3` feature — the conditional-put pointer swap over `object_store`) + `_headers`/`_redirects`, Dockerfile, Worker/node/serverless entries | §18, V2-R02, V2-F09, V2-F11 |
 | `core-wasm` | Edge subset: cache keys, head merge, ODF re-encode (D18) | §2 D18 |
 | `schema` | JSON Schema generation for `oxide.config.ts` — editor autocomplete (`$schema`), the `oxide schema` stdout surface, CI config-surface diffing | §14, §19.3 |
 | `cli` | All §19.1 commands: dev/build/start/preview/routes/analyze/check/why/doctor/secrets/add/generate/cache/audit/migrate/test/mcp/schema/config/render/docs/verify; `why --route` prints the V2-F16 OX-DYN reasons and `routes`/`build` write `.oxide/routes.reasons.json`; `perf bisect` is the V2-F18 performance-bisect engine (spec-verbatim search over git worktree candidates, shared `OXIDE_CACHE_DIR`); `build --attest` + `verify` are the V2-F20 attestation engine (CycloneDX SBOM, in-toto/SLSA provenance, ed25519 signatures, subject digests, `--rebuild`); `docs generate` is the V2-E11 reference-docs engine (the `ReferenceGenerator` registry over `docs/reference/`, `--check` is the docs gate); the V2-E04 SRI wiring (`boot_script_tag` stamps the boot `<script type=module>` with the manifest digest on both the prerender and the live-SSR paths, `security.sri`-gated) | §19, §V2-F16, §V2-F18, §V2-F20, §V2-E11, §V2-E04 |
@@ -59,6 +59,40 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   `delta_deploy` walkthrough example ride along. Deltas and deferrals
   (the `s3://`/`r2://` object_store target, the `oxide deploy` CLI command) —
   see `docs/deviations.md`.
+
+- **`adapters`**: the object-store deploy target (§V2-F11 tail,
+  `feat/object-store-deploy-target`) — the F11 record's remaining store
+  half closed. `crates/adapters/src/objstore.rs`: `ObjectStoreStore`, the
+  second `DeployStore` impl behind the crate's `s3` feature (the cache
+  crate's feature shape) — `deploy_target_from_url` parses
+  `s3://bucket/prefix`, `r2://bucket/prefix?endpoint=…` (the S3 API
+  against an endpoint override; no endpoint refuses `DEP-URL`) and the
+  network-free `file://`/`mem://` backends; ledger, objects and pointer
+  ride the `object_store::ObjectStore` trait through the store's own
+  current-thread runtime; the pointer swap is a conditional put (create
+  on a fresh store, update against the version this deploy read — a lost
+  race refuses `DEP-POINTER`, `current` never flips); the corrupt-state
+  refusals share `delta.rs`'s new `parse_manifest`/`parse_pointer`
+  helpers (the `dir:` target delegates — byte-identical messages, the 15
+  parent pins hold). The `DEP-URL` registry row, 10 TDD pins, the
+  `object_store` criterion group and the `object_store_deploy`
+  walkthrough example ride along. The `oxide deploy` CLI command remains
+  the F11 tail — see `docs/deviations.md`.
+
+- **`render`**: the B08 phase-2 streaming nonce splicer
+  (`feat/object-store-deploy-target`, V2-B08) — `crates/render/src/splice.rs`:
+  the spec-verbatim `NonceSplicer` (`new`/`push`/`finish`), a
+  `memchr::memmem`-backed chunk-safe splice whose carry holds the last
+  `from.len() - 1` bytes so a needle split across chunk boundaries is
+  still found. The L0 fill runs `NonceSplicer::new(&nonce,
+  NONCE_SENTINEL)` and the cache-hit side the inverse — neither holds a
+  second copy of the document (the whole-document `html.replace` copies
+  the B08 evidence rows name). The spec's three test pins, the
+  carry/adjacent/long-needle pins, the `splice` criterion group
+  (20 KB / 200 KB / 2 MB in 64 KB chunks against `str::replace`) and the
+  `nonce_splice` walkthrough example ride along. The CLI adoption (the
+  three `.replace` deletions, the dhat acceptance) stays the A01-phase-3
+  slice — see `docs/deviations.md`.
 
 - **`dispatch`**: the skew-protection pool substrate (§V2-F10,
   `feat/skew-generation-pool`) — the `AcceptedGenerations` trait (the
