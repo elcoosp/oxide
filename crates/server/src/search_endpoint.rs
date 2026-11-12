@@ -41,7 +41,11 @@ pub const MAX_RESULT_LIMIT: usize = 100;
 
 /// The endpoint's attached state: the read-only engine plus its L1. The
 /// cache key covers the filters too — `?tag=` narrows the same text
-/// query, and a tag answer must never be served to an unfiltered one.
+/// query, and a tag answer must never be served to an unfiltered one —
+/// and the engine's corpus generation, so a hot-reloaded index (the
+/// `SwappableSearchIndex` seam) repartitions every key on a swap: a
+/// stale pre-reload hit can never survive, while an unchanged corpus
+/// keeps every live entry valid.
 pub struct SearchEndpoint {
     index: Arc<dyn SearchIndex>,
     cache: oxide_fw_search::QueryCache,
@@ -64,10 +68,13 @@ impl SearchEndpoint {
         self.index.doc_count()
     }
 
-    /// The cache key: the normalized query text plus the two filters.
+    /// The cache key: the normalized query text, the two filters, and
+    /// the engine's corpus generation (a reloaded index changes the
+    /// generation — the L1 can never serve a pre-reload hit).
     fn cache_key(&self, q: &SearchQuery) -> String {
         format!(
-            "{}\u{1}{}\u{1}{}",
+            "{}\u{1}{}\u{1}{}\u{1}{}",
+            self.index.generation(),
             self.cache.key_for(&q.text),
             q.tag.as_deref().unwrap_or(""),
             q.lang.as_deref().unwrap_or(""),
@@ -95,12 +102,14 @@ impl std::fmt::Debug for SearchEndpoint {
 }
 
 /// One percent-decoded query-string parameter (`q`, `limit`, `tag`,
-/// `lang` — the renderer's own parse, the nav renderer's shape).
+/// `lang` — the renderer's own parse, the nav renderer's shape). The
+/// name compare is allocation-free (a `format!` prefix per candidate
+/// key-value pair was paid on every request before).
 fn query_param(query: &str, name: &str) -> Option<String> {
-    query
-        .split('&')
-        .find_map(|kv| kv.strip_prefix(&format!("{name}=")))
-        .map(percent_decode)
+    query.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == name).then(|| percent_decode(v))
+    })
 }
 
 /// The pure `GET /_oxide/search` renderer: parse the params, run the
@@ -131,10 +140,17 @@ pub fn search_response(ep: &SearchEndpoint, query: &str) -> OxideResponse {
         );
     }
     match ep.run(&parsed) {
-        Ok(resp) => {
-            let body = serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null);
-            OxideResponse::json(200, body)
-        }
+        Ok(resp) => match serde_json::to_value(&resp) {
+            Ok(body) => OxideResponse::json(200, body),
+            // The response shape is plain strings and integers — a
+            // serialization failure means the endpoint's own contract is
+            // broken, and a silent `200 {null}` body would be a worse
+            // lie than a loud 500 (the plain-text error spelling).
+            Err(e) => {
+                tracing::error!(error = %e, "search response serialization failed");
+                search_error_response(500, "search response serialization failed")
+            }
+        },
         Err(e) => {
             if e.0.code == "SRC-104" {
                 search_error_response(400, &e.0.message)
