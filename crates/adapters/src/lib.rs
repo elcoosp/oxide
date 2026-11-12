@@ -8,6 +8,17 @@
 //! deno/bun. A published capability matrix states per target which features work and
 //! how absent ones degrade; the build refuses a configuration that needs an unavailable
 //! feature rather than failing at runtime.
+//!
+//! The crate's inventory:
+//!
+//! - [`delta`]: the V2-F11 delta-deploy engine — the object-safe
+//!   [`DeployStore`] store seam (the `dir:` target's [`DirStore`] and, behind
+//!   the `s3` feature, [`objstore::ObjectStoreStore`], the `s3://`/`r2://`
+//!   target over `object_store`), the spec-verbatim pure [`delta::plan`], the
+//!   [`delta::deploy_dir`] / [`delta::prune`] / [`delta::rollback`]
+//!   orchestrators. Errors follow the workspace convention: [`OxideError`]
+//!   with the `DEP-*` codes (registry: `docs/errors.toml`).
+//! - [`refusal`]: the §18 build-time refusal rule and its config-key report.
 
 use oxide_fw_diagnostics::Diagnostic;
 pub use oxide_fw_diagnostics::OxideError;
@@ -17,6 +28,9 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub mod delta;
+#[cfg(feature = "s3")]
+#[cfg_attr(docsrs, doc(cfg(feature = "s3")))]
+pub mod objstore;
 mod refusal;
 
 pub use delta::{
@@ -24,6 +38,8 @@ pub use delta::{
     MANIFEST_NAME, MANIFEST_VERSION, POINTER_NAME, PendingDelete, Plan, PruneOptions, PruneReport,
     RELEASE_ROOT, RemoteManifest, deploy_dir, is_immutable, plan, prune, rollback, scan_dist,
 };
+#[cfg(feature = "s3")]
+pub use objstore::{ObjectStoreStore, deploy_target_from_url};
 pub use refusal::{ConfigFeatureReport, check_config};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
