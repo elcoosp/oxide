@@ -88,7 +88,16 @@ impl S3CacheHandler {
             },
             _ => return Ok(Vec::new()),
         };
-        Ok(serde_json::from_slice::<Vec<String>>(&bytes).unwrap_or_default())
+        match serde_json::from_slice::<Vec<String>>(&bytes) {
+            Ok(keys) => Ok(keys),
+            Err(e) => {
+                // A corrupt tag-key blob is a data bug, not a miss: serve
+                // the empty set (the tag set re-materializes on the next
+                // write) but say so — silent `unwrap_or_default` hid it.
+                tracing::warn!(tag, error = %e, "corrupt tag-key blob in L2; treating as empty");
+                Ok(Vec::new())
+            }
+        }
     }
 }
 
