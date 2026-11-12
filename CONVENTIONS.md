@@ -1,7 +1,7 @@
 # Oxide Contributor Conventions (agents MUST read this)
 
-Spec: `/home/z/my-project/upload/Oxide Technical Specification v0.1.md` — section references (§) point there.
-Repo: `/home/z/my-project/oxide/` (git). Toolchain: Rust 1.99 stable (already installed; `. "$HOME/.cargo/env"` first).
+Spec: `docs/spec-v0.1.md` (repo-relative) — section references (§) point there.
+Repo: `/home/z/my-project/oxide/` (git). Toolchain: Rust stable (the channel `rust-toolchain.toml` tracks).
 
 ## Ground rules
 
