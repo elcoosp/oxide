@@ -17,11 +17,19 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
+# V2-F11: the delta-deploy engine's plan/swap/prune steps are operator-visible
+# events (the observability convention the server and dev crates follow).
+tracing = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
 tempfile = { workspace = true }
 criterion = { workspace = true }
+
+# V2-F11: the delta-deploy engine lands with the workspace lint policy
+# (the V2-A02 pattern: pedantic via the workspace, no per-crate overrides).
+[lints]
+workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
@@ -38,6 +46,14 @@ bench-util = []
 # with a fully-featured report, the empty report, the single-surface splits).
 [[bench]]
 name = "config_refusal"
+harness = false
+required-features = ["bench-util"]
+
+# V2-F11: criterion bench for the delta-deploy engine — the pure plan diff,
+# the full first deploy and the delta re-deploy through DirStore, and the
+# steady-state prune walk.
+[[bench]]
+name = "delta"
 harness = false
 required-features = ["bench-util"]
 
