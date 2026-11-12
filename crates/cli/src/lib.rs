@@ -2758,6 +2758,12 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
     // §16.5: emit content entries before the server starts so a dev loader's
     // first `getCollection` call works without a prior `oxide build`.
     emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
+    // V2-F09: emit the built-in search index at boot too, so
+    // `/_oxide/search` answers without a prior `oxide build` — the same
+    // posture the projection's boot emission documents (the CAS marker
+    // keeps a warm restart a no-op).
+    #[cfg(feature = "search")]
+    emit_search_engine_index(&rootp, &cfg, &rootp.join("dist"), w)?;
     // Prebundle decision (§6.5): key by lockfile hash.
     let lockfile = [
         "package-lock.json",
@@ -3254,6 +3260,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?;
         if content_source_changed(&rootp, &cfg, &events) {
             emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
+            #[cfg(feature = "search")]
+            refresh_search_index(&rootp, &cfg, started.hot_search.as_ref(), w)?;
         }
         // §15.2: `handleHotUpdate` gets every changed file and may return
         // `{reload: bool}`. A plugin that wants a full reload (a config
@@ -3391,6 +3399,11 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
             // `dist`, which the filter above ignores to avoid a notify loop.
             if content_source_changed(&rootp, &cfg, &events) {
                 emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
+                // V2-F09: the search index rides the same content-change
+                // branch — re-emit (CAS skip when unchanged) and swap the
+                // serve side onto the rebuild without a restart.
+                #[cfg(feature = "search")]
+                refresh_search_index(&rootp, &cfg, started.hot_search.as_ref(), w)?;
                 if let Some(hub) = started.hmr.as_ref() {
                     hub.publish(oxide_fw_dev::HmrMessage::FullReload {
                         reason: "content collection changed".to_string(),
@@ -4571,6 +4584,42 @@ fn emit_search_engine_index(
         &hash[..12],
         oxide_fw_search::SEARCH_STATIC_FILE
     );
+    Ok(())
+}
+
+/// V2-F09 (feature `search`): the dev loop's post-change refresh —
+/// re-emit the F09 index (the CAS marker makes an unchanged corpus a
+/// no-op) and swap the serve side onto the rebuild. The reload is
+/// best-effort exactly like the wire-up's open: a failure (a mid-rebuild
+/// wipe, a corrupt dist) is a loud warning and the previous snapshot
+/// keeps serving `/_oxide/search` — never a dev-loop failure. Called
+/// after the §16.5 projection's re-emission in the watcher's
+/// content-change branch (and once in the `--once` hook), with the
+/// handle `start_server_inner_full` attached to [`StartedServer`].
+#[cfg(feature = "search")]
+fn refresh_search_index(
+    rootp: &Path,
+    cfg: &oxide_fw_config::OxideConfig,
+    hot: Option<&std::sync::Arc<oxide_fw_search::SwappableSearchIndex>>,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    emit_search_engine_index(rootp, cfg, &rootp.join("dist"), w)?;
+    let Some(hot) = hot else {
+        return Ok(());
+    };
+    match hot.try_reload() {
+        Ok(oxide_fw_search::ReloadOutcome::Swapped { docs }) => {
+            outln!(w, "search index reloaded ({docs} docs)");
+        }
+        Ok(oxide_fw_search::ReloadOutcome::Unchanged) => {}
+        Err(e) => {
+            tracing::warn!(
+                code = e.0.code,
+                message = %e.0.message,
+                "search index reload skipped; the previous index keeps serving"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -8970,6 +9019,13 @@ pub struct StartedServer {
     /// WP-B: the route tree the dispatch reads through. The dev watcher
     /// stores a fresh tree here after re-scanning; `cmd_serve` never swaps.
     pub(crate) swappable_tree: SwappableRouteTree,
+    /// V2-F09 (feature `search`): the hot-reload handle for the search
+    /// index the serve side opened. The dev watcher swaps a rebuilt
+    /// index in after re-emitting the corpus (the zero-downtime posture
+    /// `refresh_search_index` documents); `cmd_serve` never swaps —
+    /// production reindexes by building and starting anew.
+    #[cfg(feature = "search")]
+    pub(crate) hot_search: Option<std::sync::Arc<oxide_fw_search::SwappableSearchIndex>>,
 }
 
 /// Boxed dispatch future. Structurally identical to `futures::future::BoxFuture<_,
@@ -12719,24 +12775,35 @@ fn resolve_bind_host(host: &str) -> std::net::IpAddr {
 /// `/_oxide/search` answers the documented not-configured 404 instead of
 /// failing the serve start. Unconfigured `search.collections` is the
 /// plain `None` path (nothing is constructed, nothing logged).
+///
+/// Returns the endpoint AND the hot-reload handle (the dev watcher's
+/// swap target): the handle is `Some` exactly when the endpoint is —
+/// both stand or fall with the open — and the endpoint serves THROUGH
+/// the handle, so a dev-loop swap is visible to `/_oxide/search` without
+/// any further wiring.
 #[cfg(feature = "search")]
 fn build_search_endpoint(
     search: &oxide_fw_config::SearchConfig,
     rootp: &std::path::Path,
-) -> Option<std::sync::Arc<oxide_fw_server::SearchEndpoint>> {
+) -> (
+    Option<std::sync::Arc<oxide_fw_server::SearchEndpoint>>,
+    Option<std::sync::Arc<oxide_fw_search::SwappableSearchIndex>>,
+) {
     if search.collections.is_empty() {
-        return None;
+        return (None, None);
     }
     let dir = rootp
         .join("dist")
         .join("search")
         .join(oxide_fw_search::SEARCH_INDEX_DIR);
-    match oxide_fw_search::TantivyIndex::open_read_only(&dir) {
-        Ok(idx) => {
-            let opts = oxide_fw_search::SearchEngineOptions::from_config(search);
-            Some(std::sync::Arc::new(oxide_fw_server::SearchEndpoint::new(
-                std::sync::Arc::new(idx.with_options(&opts)),
-            )))
+    match oxide_fw_search::SwappableSearchIndex::open(
+        &dir,
+        &oxide_fw_search::SearchEngineOptions::from_config(search),
+    ) {
+        Ok(hot) => {
+            let hot = std::sync::Arc::new(hot);
+            let endpoint = std::sync::Arc::new(oxide_fw_server::SearchEndpoint::new(hot.clone()));
+            (Some(endpoint), Some(hot))
         }
         Err(e) => {
             tracing::warn!(
@@ -12745,7 +12812,7 @@ fn build_search_endpoint(
                 dir = %dir.display(),
                 "search index not available; /_oxide/search answers the not-configured 404"
             );
-            None
+            (None, None)
         }
     }
 }
@@ -13093,8 +13160,7 @@ async fn start_server_inner_full(
     // failure. Unconfigured (or a default build without the `search`
     // feature) constructs nothing, byte-identical to the pre-F09 shape.
     #[cfg(feature = "search")]
-    let search_endpoint: Option<std::sync::Arc<oxide_fw_server::SearchEndpoint>> =
-        build_search_endpoint(&cfg.search, &rootp);
+    let (search_endpoint, hot_search) = build_search_endpoint(&cfg.search, &rootp);
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -13534,6 +13600,8 @@ async fn start_server_inner_full(
         hmr,
         ppr_shells,
         swappable_tree,
+        #[cfg(feature = "search")]
+        hot_search,
     })
 }
 
