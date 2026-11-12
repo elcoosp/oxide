@@ -1,3 +1,114 @@
+# Handoff — the V2-F11 delta-deploy engine landed (`feat/delta-deploy-engine`: the `crates/adapters/src/delta.rs` store-agnostic engine — the object-safe `DeployStore` seam, the spec-verbatim pure `plan`, `DirStore` as the `dir:` target, `deploy_dir`'s upload-then-pointer-last order of operations, `prune`'s skew window with the rollback-safety rule, `rollback`'s one-write pointer swap; six `DEP-*` registry rows, 15 TDD pins + 3 in-module, the `delta` criterion group and the `delta_deploy` walkthrough example ride along); every new file is pedantic-clean, zero `#[allow]`
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/8 GB-disk
+sandbox, `CARGO_INCREMENTAL=0`, fresh toolchain install):**
+- `cargo fmt --all` applied and `--check` clean; the clippy gate
+  (`cargo clippy -p oxide-fw-adapters --all-targets --all-features --
+  -D warnings -W clippy::pedantic`) ZERO findings on the touched crate —
+  adapters opts into `[lints] workspace = true` with this pass (the
+  V2-A02/search pattern). The `-W pedantic` bare spelling is a
+  deprecated lint name on rustc 1.99 (it fails `-D warnings` builds);
+  the qualified `-W clippy::pedantic` is the working form of the same
+  gate. The allow-grep gate
+  (`grep -rnE '#!?\[(allow|expect)\(|cfg_attr\([^\)]*_allow\('`)
+  is EMPTY over crates/ tests/ benches/ examples/.
+- `cargo test -p oxide-fw-adapters --all-features` green end-to-end:
+  the 15 `delta_tdd` pins + 3 in-module `delta` tests + every
+  pre-existing adapters suite (29 lib, 16 config_refusal_tdd, 5
+  deploy_matrix, 5 doc_table_tdd, 7 integration, 2 doctests) — the
+  README's pinned capability table is byte-identical.
+- Benches: the `delta` group (`plan_500_files_all_keep`,
+  `plan_500_files_one_change`, `deploy_first_full_200_files`,
+  `deploy_delta_one_change_200_files`, `prune_young_marks`) compiles
+  and runs behind `bench-util` alongside the existing adapters groups.
+- Example: `cargo run -p oxide-fw-adapters --example delta_deploy`
+  walks the full story (full deploy → one-chunk delta → rollback →
+  young prune keeps → late prune deletes the expired v1 release copy →
+  the store layout).
+- The registry grew six `DEP-*` rows (`docs/errors.toml` +
+  `docs/reference/errors.md`, sorted between `CONTENT-TYPEGEN` and
+  `DEV-BUNDLE`); the coverage gate (`tests/errors_registry_tdd.rs`)
+  runs in the V8-linked CLI target, which this sandbox cannot build —
+  the rows follow the strict format (sorted, `[CODE]` + `message`,
+  `fix` only where a fix exists) and the page rows mirror the registry
+  exactly.
+- Not run in this sandbox: the full-workspace suites (the V8-linked
+  crates and the heavy deploys — 8 GB disk cannot hold the workspace's
+  integration binaries; see the session below for the standing 10 GB
+  recipe). The touched crate's full suite IS green here.
+
+## What landed
+
+**M1 — the delta-deploy engine (§V2-F11), complete.** The capability
+matrix's `DeltaDeploy` row has its engine: `crates/adapters/src/delta.rs`.
+The seam is object-safe by design — `DeployStore` (ledger load/store,
+object put/delete, atomic pointer read/write) is the ONLY I/O the engine
+does, so `DirStore` (the `dir:` target) and the future `s3://`/`r2://`
+targets differ exactly there, and the engine tests against in-memory
+fakes (the spec's injected-error pin is a `Mutex`-counted fake store).
+`plan` is the spec-verbatim pure diff (no I/O, no clock, sorted);
+`deploy_dir` executes the order of operations (immutable at rel paths →
+non-hashed mirrored under `releases/<build-id>/` → the ledger → the
+pointer LAST); `prune` enforces the skew window with the
+rollback-safety rule (the release the pointer names never prunes) and
+earliest-mark-wins semantics; `rollback` is the one-write pointer swap.
+`scan_dist` hashes with blake3 (the D6 rule) into a `BTreeMap` —
+deterministic scans, deterministic plans. Errors are the crate's
+`OxideError` with six new `DEP-*` registry codes; observability is
+`tracing::info!` on the plan execution, the pointer swap, the prune and
+the rollback. `adapters` opts into workspace lints with this pass.
+
+**M2 — the F10 skew-protection pool substrate (`feat/skew-generation-pool`
+), landed gated on M1 green.** `crates/dispatch/src/skew.rs`: the
+`AcceptedGenerations` trait (the `accepts(id, now) -> Option<Gen>`
+contract `stage_build_check` already consumes — implemented by the
+existing `GenerationSet` AND by the new bounded `GenerationPool`),
+`GenerationPool` (N demoted generations, each with its own demotion
+instant and window; expired demotions evict; the oldest evicts first
+when the pool is full; `promote` is the deploy-time demotion), the
+generic `stage_check` the existing stage delegates to (no public
+signature changed), plus the TDD pins, the `skew` criterion bench and
+the `skew_pool` walkthrough example. The `deploy.skewWindow` config key
+stays deferred with F10's config surface (see deviations).
+
+## Sandbox notes for the next session
+
+- **Toolchain:** the sandbox starts with NO Rust install;
+  `rustup-init --profile minimal` (stable 1.99.1 + clippy/rustfmt) is
+  step zero. Disk is the binding constraint again: `cargo check -p
+  oxide-fw-dispatch` costs ~54 s and ~1 GB of target metadata; the
+  adapters crate (the milestone crate) compiles and tests in seconds
+  with a tiny dep tree. The V8-linked crates (cli, jshost, bundler)
+  remain out of budget.
+- **Deprecated lint spelling:** `-W pedantic` (bare) errors under
+  `-D warnings` on rustc 1.99 ("lint name pedantic is deprecated");
+  use `-W clippy::pedantic`.
+- The pedantic sweep found exactly five lint families in the new code
+  (duration_suboptimal_units wants `Duration::from_mins`, doc_markdown
+  on `snake_case`, assigning_clones, assert_is_empty on message-less
+  asserts, cast_precision_loss on the acceptance-ratio float math — the
+  integer `bytes_up * 20 < total` spelling replaces it).
+
+## Where to pick up, in one sentence
+
+The F09 client matcher (`packages/oxide/src/search.ts`) still closes F09;
+F11's remaining halves are wire-only (the `object_store`-backed
+`s3://`/`r2://` `DeployStore` impl behind an adapters `s3` feature, and
+the `oxide deploy` CLI command over `scan_dist`/`deploy_dir`/`prune`/
+`rollback` — on a host that can link the V8 CLI); F10's pool substrate
+awaits its `deploy.skewWindow` config key and CLI adoption; E11's
+remaining halves are the docs-site app (`examples/docs`) and the
+E05-dependent `plugin-compat.md`; E04's remaining half is the client
+Trusted Types walk; and A01 (the `crates/cli/src/lib.rs` split) remains
+the spec-ordered refactor WP.
+
+---
+
 # Handoff — the F09 dev-watch deferral closed server-side (`feat/search-hot-reload`: the `crates/search` hot-reload seam — `SwappableSearchIndex`, the `meta.json` byte-fingerprint reload, the `SearchIndex::generation` L1 partition; the CLI dev loop emitting the F09 index at boot and on content change and swapping the serve side without a restart; the endpoint's 200-null serialization fallback hardened to a loud 500); every new file is pedantic-clean, zero `#[allow]`
 
 ## Where things stand
