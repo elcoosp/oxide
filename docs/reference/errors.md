@@ -89,6 +89,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DEP-POINTER` | the deploy pointer (current) is corrupt: {detail} | — |
 | `DEP-ROOT` | dist root {} is not a directory | Pass the build's dist directory (the `oxide build` output) |
 | `DEP-ROLLBACK` | cannot roll back: no previous build id is recorded | Deploy first: every deploy records the pointer's previous value |
+| `DEP-URL` | `https://example` is not a deploy target URL: known schemes are s3, r2, file and mem | Use s3://bucket/prefix, r2://bucket/prefix?endpoint=... (the endpoint query parameter is required for r2), file:///path or mem://label |
 | `DEV-BUNDLE` | rebuild failed for {pstr}: {err_msg} | — |
 | `DEV-HMR-001` | HMR fell back to a full reload: {reason} | — |
 | `DEV-HMR-002` | {} is not imported by any module | — |
