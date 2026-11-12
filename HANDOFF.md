@@ -1,3 +1,121 @@
+# Handoff — the F09 dev-watch deferral closed server-side (`feat/search-hot-reload`: the `crates/search` hot-reload seam — `SwappableSearchIndex`, the `meta.json` byte-fingerprint reload, the `SearchIndex::generation` L1 partition; the CLI dev loop emitting the F09 index at boot and on content change and swapping the serve side without a restart; the endpoint's 200-null serialization fallback hardened to a loud 500); every new file is pedantic-clean, zero `#[allow]`
+
+## Where things stand
+
+**Branch:** `main` (the milestone ships as uncommitted changes plus
+`ship.toml` / `.github/pr-body.md` at the repo root, both gitignored;
+`ship.toml` groups the diff into conventional commits — one per file).
+**Verified this session (rustc 1.99.1 stable, 2-core/4 GB/10 GB-disk
+sandbox, `CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`, nasm 2.16
+on PATH for rav1e):**
+- `cargo fmt --all --check` clean; the CI bar (`cargo clippy
+  --workspace --all-targets --all-features -- -D warnings`) ZERO
+  findings; the pedantic sweep (`-W clippy::pedantic`) prints ZERO
+  findings on every file this session added or touched and across the
+  workspace except the pre-existing `odf`/`compiler` debt (the
+  documented hygiene-pass order — neither crate is touched by this
+  diff); the allow-grep gate
+  (`rg -nE '#!?\[(allow|expect)\(|cfg_attr\([^)]*_allow\('`) is
+  EMPTY over src/ crates/ tests/ benches/ examples/ build.rs.
+- Runtime suites green: the unified workspace pass
+  (`cargo test --workspace --all-features --lib`) 946 / 0 failed;
+  integration batches — the nine leaf crates 555 / 0, `oxide-fw-server
+  --all-features` 281 / 0 (56 lib + the new
+  `a_swapped_index_never_serves_stale_l1_hits` pin + every pre-existing
+  suite byte-identical), `oxide-fw-cli --features search` lib 292 / 0
+  (0 failed, 12 ignored — the new `the_dev_search_refresh_swaps_the_
+  serve_side_index` pin included) + its integration targets (25 + 10 +
+  6), `oxide-fw-search` 27 + the new `hot_reload_tdd` 6.
+- Benches: the `search_hot_reload` group (`unchanged_100`,
+  `rebuild_100_then_reload`) compiles and runs behind `bench-util`;
+  criterion test-mode run green.
+- Example: `cargo run -p oxide-fw-search --example hot_reload`
+  walks the full loop (open → Unchanged → Swapped → refused reload with
+  the snapshot still serving).
+- The 10 GB sandbox cannot hold every integration suite's binaries at
+  once; the suites not re-run in THIS sandbox lifetime were green
+  earlier in the same working tree (adapters/dev/compiler/plugin/
+  bundler/render 0 failed; jshost 78 lib + 26 integration) and none of
+  their crates are touched by this diff.
+
+## What landed
+
+**M1 — the hot-reload seam** (`feat/search-hot-reload`):
+`crates/search/src/hot.rs` — `ReloadOutcome::{Unchanged, Swapped}`,
+`SwappableSearchIndex::open/load/try_reload` (the object-safe seam
+itself; tiny critical sections, the poison policy `endpoint.rs`
+documents), the `meta.json` byte fingerprint (the CAS skip's guarantee
+makes unchanged corpora byte-identical; rebuilds carry fresh segment
+UUIDs), `SearchIndex::generation()` (defaulted 0; the swappable bumps on
+a swap and only on a swap), the server side's generation-partitioned
+cache key. Pins: `crates/search/tests/hot_reload_tdd.rs` 6 (object-safe
+open, rebuild swap, unchanged no-op, failed-reload-keeps-serving,
+generation discipline, the stale-shape end-to-end) +
+`crates/server/tests/search_endpoint_tdd.rs` 1 (the L1 partition:
+a swapped corpus never serves a stale snippet). Bench:
+`crates/search/benches/search.rs` `search_hot_reload`. Example:
+`crates/search/examples/hot_reload.rs`.
+
+**M2 — the dev-loop wire-up** (same branch, gated on M1 green):
+`cmd_dev` boots with the F09 index emitted (the projection's posture),
+the content-change branch and `--once` hook call `refresh_search_index`
+(re-emit + best-effort swap, the loud-warn-never-fail posture),
+`build_search_endpoint` returns the endpoint AND the handle on
+`StartedServer` (`hot_search`; `cmd_serve` never swaps). Pins:
+`crates/cli/src/tests.rs` 1 (the refresh helper swaps the serve side,
+the CAS skip leaves the generation alone) + the updated wire-up pin
+(the handle attaches alongside the endpoint, both None when the open
+fails).
+
+**Micro-debt cleaned (the audit's two picks, both in
+`crates/server/src/search_endpoint.rs`):** the `search_response`
+serialization fallback — `unwrap_or(Value::Null)` answered a silent
+`200 {"total":null,...}` body on an impossible-in-theory serialization
+failure; now a loud `tracing::error!` + the 500 plain-text shape (no
+new code: the wire error spelling is code-free by design). And
+`query_param`'s per-candidate `format!("{name}=")` allocation on every
+request replaced with an allocation-free `split_once` compare.
+
+**Additive in the same diff:** the doc-drift fixes — `README.md` (the
+badge re-measured 1,980→1,988, the status-table row synced),
+`docs/architecture.md` (the `search` row's hot-reload seam, the
+what-changed bullet), `docs/deviations.md` (the F09-tail record: the
+closed deferral, the four deltas — the snapshot-swap-instead-of-
+`IndexReader::reload` reasoning, the generation partition, the
+configured-but-missing 404, the Windows caveat), `HANDOFF.md` (this
+header).
+
+## Sandbox notes for the next session
+
+All previous HANDOFF gotchas still apply (2-core budget,
+`CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0`, nasm on PATH for
+rav1e — this lifetime installed nasm 2.16.03 from the Debian pool into
+`~/.local/bin`, `nasm.us` was unreachable). One addition:
+
+3. **Disk is the binding constraint, not time.** The 10 GB rootfs
+   cannot hold the `--all-features` workspace's rlibs (~6.5 GB) plus
+   every test binary at once. The working recipe: ONE unified feature
+   set for the whole session (`--workspace --all-features` — per-crate
+   `-p` batches create per-batch feature unions and churn duplicate
+   rlibs), `cargo test --workspace --all-features --lib --no-run` fits,
+   then delete `target/debug/deps` executables between integration
+   batches, and dedupe same-name different-hash rlibs (keep newest)
+   when the link step bus-errors.
+
+## Where to pick up, in one sentence
+
+The client matcher half (`packages/oxide/src/search.ts`) still closes
+F09; the next search-side slices are the static-export re-emission
+parity for the degraded matcher and the `IndexReader`-warm serve
+refresh if a same-directory commit path ever replaces the wipe-and-
+rebuild emitter; E11's remaining halves are the docs-site app
+(`examples/docs`) and the E05-dependent `plugin-compat.md`; E04's
+remaining half is the client Trusted Types walk; and A01 (the
+`crates/cli/src/lib.rs` split, now ~17.5k lines) remains the
+spec-ordered refactor WP.
+
+---
+
 # Handoff — V2-F09's engine landed end-to-end server-side (`feat/search-engine-substrate`: the `crates/search` tantivy engine — the spec's six-field schema, the build/ingest/query contracts, the `SearchIndex` seam with the `StaticMatcher` degraded fallback, the static `{docs, postings}` export and the L1 query cache; the `/_oxide/search` arm behind `oxide-fw-server/search`; the CLI build emission + serve wire-up behind `oxide-fw-cli/search` — M2 in the same diff); every new file is pedantic-clean, zero `#[allow]`
 
 ## Where things stand
