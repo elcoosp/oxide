@@ -26,7 +26,6 @@
 
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
 use oxide_fw_server::OxideResponse;
 
 use crate::flow::Flow;
@@ -146,15 +145,6 @@ pub fn stream_resume_id(path: &str) -> Option<&str> {
     Some(id)
 }
 
-/// Case-insensitive header lookup over the request's `(name, value)` list
-/// (B-06: names compare case-insensitively, values are byte-exact).
-fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(name))
-        .map(|(_, v)| v.as_str())
-}
-
 /// The §V2-A04 stage: check `x-oxide-build` on the data plane.
 ///
 /// - Non-data-plane path: always [`Flow::Continue`] (HTML navigations are
@@ -166,6 +156,11 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a s
 /// - Accepted id (current or previous-within-window): [`Flow::Continue`].
 /// - Unaccepted id: [`Flow::Respond`] with [`STALE_STATUS`], the
 ///   `x-oxide-build-stale: true` marker and an empty body.
+///
+/// The 1-deep specialization of [`crate::skew::stage_check`] — the §V2-A04
+/// signature the existing call sites and pins hold; the F10 pool drives
+/// the generic stage through the same [`crate::skew::AcceptedGenerations`]
+/// seam with identical verdicts.
 #[must_use]
 pub fn stage_build_check(
     path: &str,
@@ -173,43 +168,7 @@ pub fn stage_build_check(
     gens: &GenerationSet,
     now: Instant,
 ) -> Flow {
-    let (path_only, query) = match path.split_once(['?', '#']) {
-        Some((p, q)) => (p, Some(q)),
-        None => (path, None),
-    };
-    if !is_data_plane_path(path_only) {
-        return Flow::Continue;
-    }
-    let id = header_value(headers, BUILD_HEADER).or_else(|| {
-        // The query fallback is the live route's contract only: /__data
-        // has no `build` query parameter, and a stale id there must
-        // travel in the header.
-        if path_only == "/__oxide/live" {
-            query.and_then(query_build)
-        } else {
-            None
-        }
-    });
-    let Some(id) = id else {
-        return Flow::Continue;
-    };
-    if gens.accepts(id, now).is_some() {
-        return Flow::Continue;
-    }
-    let mut resp = OxideResponse::new(STALE_STATUS, Bytes::new());
-    resp.headers
-        .push((STALE_HEADER.to_string(), "true".to_string()));
-    Flow::Respond(resp)
-}
-
-/// The `build` query parameter (the live route's header-less spelling).
-/// Build ids are 16-hex (§V2-A04), so no percent-decoding is needed; the
-/// value is taken byte-exact.
-fn query_build(query: &str) -> Option<&str> {
-    query
-        .split('&')
-        .find_map(|kv| kv.strip_prefix("build="))
-        .filter(|v| !v.is_empty())
+    crate::skew::stage_check(path, headers, gens, now)
 }
 
 /// Append `x-oxide-build: <current>` to a data-plane response.
@@ -242,7 +201,7 @@ mod tests {
     #[test]
     fn header_value_matches_names_case_insensitively() {
         let hs = vec![("X-Oxide-Build".to_string(), "v".to_string())];
-        assert_eq!(header_value(&hs, "x-oxide-build"), Some("v"));
-        assert_eq!(header_value(&hs, "x-other"), None);
+        assert_eq!(crate::skew::header_value(&hs, "x-oxide-build"), Some("v"));
+        assert_eq!(crate::skew::header_value(&hs, "x-other"), None);
     }
 }
