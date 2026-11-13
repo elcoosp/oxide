@@ -19,6 +19,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `AST-DIR` | collection `{}` directory not found: {} | — |
 | `AST-ENTRY` | failed to read {}: {e} | — |
 | `AST-FNT-001` | `fonts.subset: 'used'` requires every route to be `static` (glyph-usage subsetting needs all text known at build), but the project has non-static routes | Use `latin` or `unicode-range`, or make all routes static |
+| `AST-FNT-002` | `fonts.subset: 'used'` requires the `subset` feature, which is not compiled into this build of oxide-fw-assets | rebuild with `--features subset`, or drop `used` from `fonts.subset` |
 | `AST-FONT` | skrifa parse failed: {e} | — |
 | `AST-FRONT` | unclosed frontmatter in {} (missing closing `---`) | — |
 | `AST-I18N` | MessageFormat parse failed: {} | — |
