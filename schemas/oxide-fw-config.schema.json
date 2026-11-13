@@ -444,6 +444,15 @@
           "description": "C01: the native compiler pass for the adapter. true prefers the native backend when its toolchain is healthy; the node backend is the fallback (C01 / `compilerBackend`).",
           "type": "boolean"
         },
+        "compilerBackend": {
+          "description": "V2-C01 (D26): the compiler backend the precompile pass consults per file. `auto` (the default) picks a native compiler when one is compiled in and healthy and uses the Node tooling pool otherwise; `native` requires the native path and refuses with CMP-NAT-001 when no healthy backend is available; `node` always uses the pool. Overridable via `OXIDE_COMPILER_BACKEND`.",
+          "enum": [
+            "auto",
+            "native",
+            "node"
+          ],
+          "type": "string"
+        },
         "islands": {
           "additionalProperties": {
             "type": "string"
@@ -487,6 +496,13 @@
     "images": {
       "additionalProperties": false,
       "properties": {
+        "avifSpeed": {
+          "default": 6,
+          "description": "V2-C09: the AVIF encoder speed (ravif's `with_speed`, 1..=10 — higher is faster at lower quality; the default is 6, the documented middle rate). Validated at load (`CFG-AVIF`).",
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer"
+        },
         "formats": {
           "description": "§16.1: the encodings `/_oxide/image` emits, in preference order (avif via ravif).",
           "items": {
