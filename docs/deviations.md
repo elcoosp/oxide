@@ -2379,3 +2379,118 @@ the `oha -c 64` acceptance run against a live server — is an A01-phase-3
 slice on a V8-capable host. The assets crate's own pedantic adoption (the
 crate is not yet in `[lints] workspace = true`) is the next crate-owned
 hygiene pass; the new module is held to the same standard by hand.
+
+## V2-C07 — the SVG optimizer seam (2026-11-13)
+
+**What landed.** `crates/assets/src/svg.rs` — the §V2-C07 substrate: the
+`SvgOptimizer` trait (string in, string out — no DOM type crosses the
+boundary, the C01 shape; `id()`/`version()` are the D40 key dimensions),
+`IdentitySvg` (the always-available byte-identical passthrough),
+`OxvgSvg` behind the crate's `svg-oxvg` feature (`oxvg_optimiser` 0.0.9
+with `oxvg_ast` 0.0.9, pinned in `[workspace.dependencies]`; spike-passed
+per the C-series rule — the crate builds and the safe preset preserves
+the WP's three named fixtures), the preservation rules enforced on every
+optimizer output by `assert_preserved` (the source's `viewBox` value
+verbatim, every referenced id from `<use href>`/`xlink:href`,
+`url(#…)` and `aria-labelledby`/`aria-describedby`, and the output
+parsing back as well-formed XML through `roxmltree` — a violation is
+`AST-SVG-001`, the source kept), `AST-SVG-003` for a backend's own
+parse/jobs failure and `AST-SVG-002` refusing `svg.optimize: true`
+without the feature (the `CMP-NAT-001` shape); the
+`svg:{id}@{version}:{blake3-16hex}` CAS key; the `svg.optimize` config
+surface (typed `SvgConfig`, schema'd per the DOC-001 gate, default off,
+the `CFG-UNKNOWN-KEY` top-level allowlist updated, the checked-in
+`schemas/oxide-fw-config.schema.json` regenerated); `optimize_for_build`
+as the single call site the import pipeline uses (knob-off is
+byte-identical; every refusal warns its diagnostic code and keeps the
+source, so a misbehaving optimizer degrades to "unoptimized" instead of
+breaking the build); the cli `svg-oxvg` forwarding feature and the
+`.svg?react` wire. 16 TDD pins (the rules driven through FAKES so they
+hold against any `SvgOptimizer`, the three named fixtures plus the ≥15%
+total-shrink acceptance through the real one), the `svg_optimizer`
+criterion group and the `svg_optimizer` walkthrough example ride along.
+
+**Spec deltas (recorded, not silent).**
+
+1. **The config key is `svg.optimize`, not `assets.svg.optimize`.** The
+   spec writes `assets.svg: { optimize: true }`, but the tree's config
+   groups are top-level pipeline concerns (`images.*`, `fonts.*`,
+   `og.*`); there is no `assets` group. `svg` lands as a top-level group
+   with the same shape. Renaming later is a one-line schema move.
+2. **The rules are enforced on the wrapper level, not trusted to the
+   optimizer.** `assert_preserved` takes `(source, optimized)` and is
+   public — the pins drive it through rule-breaking fakes, so the
+   contract holds for a third-party `SvgOptimizer` too (the spec's
+   "rules the wrapper enforces" reading).
+3. **`roxmltree` rides every assets build (non-optional); the OXVG pair
+   is feature-gated.** The well-formedness parse-back is a rule, and the
+   rules must hold even when `svg-oxvg` is not compiled in (an injected
+   backend can still produce garbage). `roxmltree` 0.21.2 is the parser
+   `oxvg_ast` 0.0.9 itself uses, so no new version dimension enters the
+   lockfile.
+4. **The bundled backend runs `Jobs::safe()`, not `Jobs::default()`.**
+   The correctness preset is documented by OXVG as "less likely to
+   visually change the document" — the only honest default for a build
+   pipeline whose wrapper refuses rule-breaking output. The ≥15%
+   shrink acceptance holds under it on the named fixtures.
+
+**To unclose.** The `?url` / `?raw` / `?inline` import variants the WP's
+hook step lists do not exist in the tree (only `.svg?react` does — the
+crate's §6.7 asset-query model parses the spellings, but no pipeline
+stage consumes them); wiring them is the A01-phase-3 import-pipeline
+slice, at which point each site calls `optimize_for_build` the way the
+`.svg?react` site already does. The assets crate is still not in
+`[lints] workspace = true` (the C09 note's next crate-owned hygiene
+pass); the new module is held to that standard by hand.
+
+## V2-E02 — the typed-search-params typegen substrate (2026-11-13)
+
+**What landed.** `crates/router/src/typegen.rs` — the §V2-E02 Rust
+substrate: the public `declares_search_schema` scanner (token-safe: a
+`export const searchSchema` with an initializer or a type annotation
+marks the route; a `function` export is not a Standard Schema value; a
+longer binding like `searchSchemaV2` is a different identifier), and
+typegen's **delegated inference** emission — the WP's core design (the
+generator cannot infer a Standard Schema's output, so the emitted
+`routes.d.ts` imports the value and references
+`S.InferOutput<typeof searchSchema>`, letting `tsc` do the inference at
+check time): the `StandardSchemaV1 as S` header import, the per-route
+`import type { searchSchema as s_<sanitized-pattern> }` from an
+extensionless relative path resolved from `.oxide/types`, the
+`LoaderEvent.search` dimension (the raw `searchParams` record stays on
+every route — the record is what the request hands over, the typed
+`search` is what the schema validated), the `RouteSearch` map + the
+`Search<R>` module augmentation (the tree's `RouteParams`/`RouteData`
+pattern standing in for the sketch's single `RouteMap`), and the
+per-route `href` opts overload. `routes.json` carries `hasSearchSchema`
+from the same scan. 8 TDD pins, the `typegen_search` criterion group and
+the `typed_search` walkthrough example ride along.
+
+**Spec deltas (recorded, not silent).**
+
+1. **No single `RouteMap` — the tree's named maps.** The sketch emits
+   one `RouteMap` interface; the tree's typegen already ships
+   `OxideRoutes`/`RouteParams`/`RouteData`/`LoaderEvent` maps and a
+   module augmentation, and the pins hold those shapes. The search
+   dimension lands as `RouteSearch` + `Search<R>` in the same idiom.
+2. **The typed `search` field is additive.** `LoaderEvent` keeps
+   `searchParams` on every route and gains `search` only where a schema
+   is declared — the delegation imports, the map and the augmentation
+   only emit when at least one route declares, so a schema-less
+   project's generated bytes are unchanged.
+3. **`href` search options are an additional overload.** The sketch
+   folds params + opts into one signature; the tree already emits
+   per-route overloads (including the i18n locale-last form). The opts
+   overload is added alongside — existing call sites (including
+   `href(route, params, locale)`) still compile.
+4. **The scan requires a routes root.** `typegen` (no root) reads no
+   server modules, so the delegation activates only under
+   `typegen_with_root` / `typegen_with_root_and_i18n` — the CLI build
+   path, which is the only caller that has the root.
+
+**To unclose.** The client half — the per-adapter `Link`/`goto` generic
+types (`packages/react|vue|svelte|solid`), the runtime `parseSearch`
+(`schema['~standard'].validate`, issues as a 400 page / redirect-to-
+corrected) and the F16 `SearchParamRead` interplay (a declared schema
+satisfies the why-dynamic search-param read) — is the packages-side
+slice; the Rust substrate above is its contract.
