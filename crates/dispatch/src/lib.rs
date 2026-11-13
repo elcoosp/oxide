@@ -33,6 +33,18 @@
 //!   `x-oxide-build` advertise step) — the keystone the F10/F11/F13/F14
 //!   skew/deploy features grow from (V2-A04; CLI adoption deferred, see
 //!   `docs/deviations.md`).
+//! - [`skew`]: the skew-protection pool (V2-F10) — the
+//!   `AcceptedGenerations` seam the data-plane stage consumes (both the
+//!   1-deep set and the bounded id pool drive `stage_check` with
+//!   identical verdicts).
+//! - [`pools`]: the two-generation serving pools (V2-F10 design steps 1-3)
+//!   — [`GenerationPools`] stores a serving handle per generation and
+//!   routes a request's build id to the pool booted for it (HTML and
+//!   header-less requests always route current), the per-demotion window
+//!   expiry drops the old handles, and the brownout early-drop returns
+//!   the evicted handle for graceful shutdown; it implements the
+//!   [`skew::AcceptedGenerations`] seam, so `stage_check` drives it with
+//!   the same verdicts (CLI adoption deferred, see `docs/deviations.md`).
 //!
 //! Acceptance (spec V2-A02): `cargo test -p oxide-fw-dispatch` finishes in
 //! under 20 seconds after dependencies are built, and
@@ -44,5 +56,6 @@ pub mod experiments;
 pub mod flow;
 pub mod loads;
 pub mod locals;
+pub mod pools;
 pub mod skew;
 pub mod url;
