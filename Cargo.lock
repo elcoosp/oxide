@@ -4967,7 +4967,10 @@ version = "0.17.0"
 dependencies = [
  "blake3",
  "comrak",
+ "criterion",
+ "dashmap 6.2.1",
  "formatjs_icu_messageformat",
+ "futures",
  "icu_locale_core",
  "image",
  "lightningcss",
@@ -4983,6 +4986,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tiny-skia",
+ "tokio",
+ "tracing",
  "usvg",
 ]
 
@@ -5099,7 +5104,7 @@ name = "oxide-fw-compiler"
 version = "0.17.0"
 dependencies = [
  "blake3",
- "oxc",
+ "criterion",
  "oxc_allocator",
  "oxc_ast",
  "oxc_codegen",
@@ -5109,7 +5114,6 @@ dependencies = [
  "oxc_span",
  "oxc_transformer",
  "oxide-fw-diagnostics",
- "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
