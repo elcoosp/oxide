@@ -30,6 +30,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
+# V2-C07: the SVG optimizer seam. `roxmltree` is the well-formedness
+# parse-back the preservation rules run on every optimizer output
+# (non-optional — the rules hold without the feature); the OXVG backend
+# and its AST are opt-in via `svg-oxvg` so the default build stays lean.
+roxmltree = { workspace = true }
+oxvg_ast = { workspace = true, optional = true }
+oxvg_optimiser = { workspace = true, optional = true }
 # V2-C09: the image job model — the bounded lanes (tokio), the single-flight
 # map (dashmap), the shared outcomes (futures) and the job-span events
 # (tracing, the house observability convention).
@@ -49,6 +56,12 @@ criterion = { workspace = true }
 
 [features]
 subset = ["dep:subsetter"]
+# V2-C07: the OXVG SVG optimizer backend (the `OxvgSvg` impl and its
+# `oxvg_ast`/`oxvg_optimiser` dependency pair). Default off — the seam
+# (`SvgOptimizer`, `IdentitySvg`, the rules, the CAS key) compiles
+# without it, so a host that never optimizes SVG does not pay for the
+# optimizer's tree.
+svg-oxvg = ["dep:oxvg_optimiser", "dep:oxvg_ast"]
 # V2-C09: exposes the criterion bench harness for the image job model.
 bench-util = []
 
@@ -56,6 +69,15 @@ bench-util = []
 name = "image_jobs"
 harness = false
 required-features = ["bench-util"]
+
+[[bench]]
+name = "svg_optimizer"
+harness = false
+required-features = ["bench-util"]
+
+[[example]]
+name = "svg_optimizer"
+required-features = ["svg-oxvg"]
 
 [package.metadata.docs.rs]
 all-features = true
