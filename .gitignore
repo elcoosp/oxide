@@ -67,3 +67,7 @@ ship.toml
 # The ship manifest and the PR body are session artifacts, not repo content.
 /ship.toml
 /.github/pr-body.md
+
+# Ship ceremony artifacts (local-only)
+ship.toml
+.github/pr-body.md

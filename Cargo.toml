@@ -75,6 +75,13 @@ tokio = { version = "1.52.3", features = ["full"] }
 # feature-gated in oxide-fw-cache so the default build stays lean)
 redis = { version = "1.8.0", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
 object_store = { version = "0.14", features = ["aws"] }
+# V2-C07: the SVG optimizer backend (feature-gated in oxide-fw-assets as
+# `svg-oxvg` — the seam and the preservation rules compile without it;
+# `roxmltree` is the well-formedness parse-back the rules run on every
+# optimizer output, so it rides every assets build at its tiny size).
+roxmltree = "0.21.2"
+oxvg_ast = { version = "0.0.9", features = ["parse", "serialize", "roxmltree"] }
+oxvg_optimiser = "0.0.9"
 hyper = { version = "1.12.0", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.21", features = ["tokio", "server", "http1", "http2", "client-legacy"] }
 http-body-util = "0.1.5"
