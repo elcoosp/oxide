@@ -26,6 +26,7 @@ const KNOWN_KEYS: &[&str] = &[
     "cache",
     "images",
     "fonts",
+    "svg",
     "i18n",
     "security",
     "rules",
