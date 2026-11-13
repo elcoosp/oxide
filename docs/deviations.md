@@ -2494,3 +2494,112 @@ types (`packages/react|vue|svelte|solid`), the runtime `parseSearch`
 corrected) and the F16 `SearchParamRead` interplay (a declared schema
 satisfies the why-dynamic search-param read) — is the packages-side
 slice; the Rust substrate above is its contract.
+
+## V2-C08 — the glyph-usage font-subsetting seam (2026-11-13)
+
+**What landed.** `crates/assets/src/font_subset.rs` — the §V2-C08
+remaining half on top of the already-landed helpers: the spec-verbatim
+`FontSubsetter` trait (font bytes + a harvested `BTreeSet<char>` in,
+subset bytes out; object-safe, plus the D40 `id()`/`version()` key
+dimensions the C07 seam carries), the bundled `SkrifaSubsetter` behind
+the crate's `subset` feature, `select_subsetter` (feature off refuses
+`AST-FNT-002` — the `AST-SVG-002` shape, naming the flag and the
+fallback), the `font:{id}@{version}:{blake3-16hex}` CAS key and
+`subset_used_for_build` as the one definition site the bundler calls
+(always-needed set unioned into every request; every refusal
+warn-degrades to the verbatim bytes). The backend's honesty half, found
+by the spec's own cmap pin: `subsetter`'s `Profile::pdf` copies the
+original cmap VERBATIM (only glyf/loca/cff/head/hmtx/post are processed),
+so a dropped glyph keeps its cmap entry and renders as a blank instead of
+falling back to the next face — the bundled backend therefore rewrites
+the subset's cmap (`cmap_rewrite`: a fresh format-12 subtable mapping
+exactly the kept codepoint→glyph pairs, the sfnt re-serialized with
+per-table checksums and the recomputed `head.checkSumAdjustment`; any
+rewrite refusal ships the raw subsetter output, so the seam only ever
+improves). The post-prerender harvest the
+spec names: `harvest_html_codepoints` (the `lol_html` `text!`-over-body
+walk, `<script>`/`<style>` subtrees removed before the text handler runs
+so a minified bundle's identifier soup never grows the shipped font) and
+`harvest_text_codepoints` for the content-collection field text. The CLI
+wire-up: `emit_fonts` harvests every `*.html` under `dist` plus every
+configured collection (entry bodies + frontmatter strings) into
+`FontSpec.used_chars` when `fonts.subset` carries `used`. 15 TDD pins
+including the spec's skrifa cmap pin over the committed
+`tests/fixtures/subset-fixture.ttf`; the `font_subsetter` criterion
+group and the `font_subsetter` walkthrough example ride along.
+
+**Spec deltas (recorded, not silent).**
+
+1. **The `AST-FNT-001` raise did not need re-raising.** The C08 status
+   row listed "the raised `AST-FNT-001` refusal" as remaining, but the
+   refusal has been live since the V2-R02 config-key half
+   (`check_config`'s target-independent fonts arm, pinned in
+   `crates/adapters/tests/config_refusal_tdd.rs` and consulted by the
+   CLI build) — the row was stale at "remain" and is corrected to
+   `merged`.
+2. **The static-list harvest is retired, not extended.** `bundle` used
+   to subset to the glyphs of the literal strategy strings (configuring
+   `subset: ["latin"]` shipped a font containing only `l`,`a`,`t`,`i`,
+   `n`). In the landed reading, `latin`/`unicode-range` are range
+   declarations, not glyph-usage sources: only the `used` spelling
+   subsets (through the seam, with the harvest); every other spelling
+   ships the source byte-identical, pinned by the TDD suite.
+3. **`fontcull` stays a stand-in.** The deps report's `fontcull`
+   (fontations/klippa) is not published on crates.io; the WOFF2-row
+   deviation shape applies. The `FontSubsetter` seam is the injection
+   point a published `fontcull` drops into — `SkrifaSubsetter` (the
+   `subsetter` crate driven by `skrifa`'s charmap) ships as the bundled
+   backend behind `subset`.
+4. **`lol_html` rides every assets build (non-optional).** The harvest
+   is a build-side step (V2.0 item 3: the pure walk belongs where tests
+   are cheap), not a subsetting-engine detail — only `subset_core` and
+   its callers are feature-gated, mirroring the C07 `roxmltree` ruling.
+5. **One char set for every family** (the spec's honest simplification,
+   verbatim): per-element `font-family` resolution stays out of scope.
+
+**To unclose.** The §16.2 emit path keeps its TrueType container (the
+16-B WOFF2 deviation, tripwired); the acceptance's ≥60% shrink number
+belongs to a real docs fixture build through the CLI (the committed
+fixture shrinks 90%+ on a two-letter request — the bench pins the
+per-font cost).
+
+## V2-B07 — the parallel-precompile engine (2026-11-13)
+
+**What landed.** `crates/compiler/src/precompile_engine.rs` — the §V2-B07
+phase-2 engine: `PrecompileJob` (the discovered job: the precompiled-map
+path, the tooling kind, the source), `compile_jobs` (the bounded
+`buffer_unordered` window generic over the injected per-job pass; every
+job produces exactly one row, folded back to INPUT order so the caller's
+map fold is deterministic under out-of-order completion; a failing job
+rides its own row and never cancels its siblings) and `width_for` (the
+spec's `workers * 2` sizing as one definition site, floored at 1). The
+CLI's `precompile_entries` (`crates/cli/src/precompile.rs`) keeps its
+phase-1 discovery walk (the existing `scan_import_specs`/
+`resolve_relative` helpers unchanged, BUG-MAPKEY normalization intact)
+and compiles the discovered jobs through the engine — cache lookup and
+the pool call stay inside the per-job pass, exactly the spec's
+`compile_one` shape. The `precompile_engine` criterion group
+(fake-pool 20 jobs at width 1 vs 4, 200 instant jobs) rides along.
+
+**Spec deltas (recorded, not silent).**
+
+1. **The engine lives in the V8-free compiler crate, not
+   `precompile.rs`.** The spec's file column says `cli/src/precompile.rs`,
+   but V2.0 item 3 puts pure logic where tests do not pay the V8 link
+   cost — the three named pins (determinism under out-of-order
+   completion, the ≥4 overlap window, failure isolation) run against
+   fakes in the compiler crate in seconds; the CLI keeps the discovery
+   walk and the pool-specific `compile_one` dispatch. Recorded per the
+   own-your-files rule.
+2. **The window is `workers * 2` as specified; `compile_one` is the
+   injected pass.** Cache handling (`cached_compile`/
+   `cached_compile_optional` for `mdx`) stays per job inside the pass,
+   so the CAS short-circuit semantics are unchanged per kind.
+3. **The cold-fixture 4x number is deferred to the real-pool adoption.**
+   The bench pins the structure (width 1 vs width 4 over fake-latency
+   jobs); an honest e2e number needs the tooling pool's real compilers,
+   which this environment cannot run.
+
+**To unclose.** C01's CLI adoption (native compilers plugging in at
+`compile_one` with `width = available_parallelism()`) consumes the same
+engine unchanged.
