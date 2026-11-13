@@ -186,7 +186,10 @@ impl std::fmt::Display for Diagnostic {
 impl std::error::Error for Diagnostic {}
 
 /// An error carrying a `Diagnostic`, so every subsystem error converts losslessly.
-#[derive(Debug, thiserror::Error)]
+///
+/// `Clone` (V2-C09): the image-job single-flight shares one awaited outcome
+/// across N concurrent requests, so the error half must be cloneable too.
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("{0}")]
 pub struct OxideError(pub Box<Diagnostic>);
 
