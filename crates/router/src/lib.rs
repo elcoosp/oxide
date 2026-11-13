@@ -63,6 +63,11 @@ mod scan;
 mod segment;
 mod typegen;
 
+/// V2-E02: the `searchSchema` declaration scanner, public so the CLI's
+/// typegen/docs consumers reuse the one definition (the same source of
+/// truth the emitted `routes.d.ts` and `routes.json` use).
+pub use typegen::declares_search_schema;
+
 /// V2-B01: precomputed per-route dispatch answers (`RouteContextTable`, D22).
 pub mod context;
 pub use context::{LayoutLoad, RouteContext, RouteContextTable, default_pattern_of};
