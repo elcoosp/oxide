@@ -60,7 +60,97 @@ fn ts_lit(pattern: &str) -> String {
 
 /// One deduped route row for type emission: (ts pattern, encoded pattern,
 /// param names, sibling `page.server.ts` path).
-type RouteRow = (String, String, Vec<String>, PathBuf);
+/// One typegen row: a URL-addressable entry and its resolved server
+/// module, plus the V2-E02 search dimension the row declares.
+struct RouteRow {
+    /// TS template-literal pattern: params become `${string}`.
+    ts: String,
+    /// Param names in segment order.
+    params: Vec<String>,
+    /// The sibling `page.server.ts` path (routes-root joined).
+    server: PathBuf,
+    /// V2-E02: the server module declares `export const searchSchema` —
+    /// a Standard Schema value typegen delegates inference for.
+    search: bool,
+    /// The per-route import name for the schema value
+    /// (`s_` + the sanitized pattern), stable and unique per route.
+    import: String,
+    /// The extensionless import path from the types dir to the server
+    /// module, as written in the emitted `.d.ts`.
+    import_path: String,
+}
+
+/// The `s_` import name for a route: the encoded pattern with every
+/// non-alphanumeric run collapsed to a single `_` (`/blog/[slug]` →
+/// `blog_slug`; the root `/` → `index`).
+fn import_name(encoded: &str) -> String {
+    let mut out = String::with_capacity(encoded.len());
+    for c in encoded.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "index".to_string()
+    } else {
+        out
+    }
+}
+
+/// The extensionless import specifier from `from_dir` to `to_file`, as a
+/// forward-slash relative path (`<out>/.oxide/types` →
+/// `<root>/routes/blog/[slug]/page.server.ts` →
+/// `../../routes/blog/[slug]/page.server`). A result that does not start
+/// with `..` is prefixed with `./` so TS never treats it as a package.
+fn relative_import(from_dir: &Path, to_file: &Path) -> String {
+    let from: Vec<_> = from_dir.components().collect();
+    let to: Vec<_> = to_file.components().collect();
+    let common = from
+        .iter()
+        .zip(to.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut parts: Vec<String> = Vec::new();
+    for _ in &from[common..] {
+        parts.push("..".to_string());
+    }
+    for c in &to[common..] {
+        parts.push(c.as_os_str().to_string_lossy().to_string());
+    }
+    if parts.is_empty() {
+        parts.push(".".to_string());
+    }
+    let joined = parts.join("/");
+    if let Some(stripped) = joined.strip_suffix(".ts") {
+        return stripped.to_string();
+    }
+    joined
+}
+
+/// V2-E02: whether a `page.server.ts` source declares `searchSchema` as a
+/// `const` export — the Standard Schema value shape typegen can delegate
+/// inference to. A `function` export is NOT a schema value (a value with
+/// a `~standard` property is; a bare function is not) and a longer name
+/// (`searchSchemaV2`) is a different binding — the token boundary matters.
+#[must_use]
+pub fn declares_search_schema(source: &str) -> bool {
+    source.lines().any(|line| {
+        let t = line.trim_start();
+        t.strip_prefix("export const searchSchema")
+            .is_some_and(|rest| {
+                let after = rest.trim_start();
+                // `= s.object(…)` (an initializer), `: SomeType = …` (a typed
+                // initializer), or a bare end — but never another identifier
+                // character, which would make this a longer binding name.
+                after.is_empty() || after.starts_with('=') || after.starts_with(':')
+            })
+    })
+}
 
 /// `fmt::Write` to a `String` is infallible; every generated-type append
 /// goes through `write!` so the emitters read like the code they produce.
@@ -82,8 +172,8 @@ fn push_route_type_decls(
     // the statement's terminating `;` (a `;` after every member is a
     // syntax error and broke `tsc` on the generated file).
     let last = rows.len() - 1;
-    for (i, (ts, _, _, _)) in rows.iter().enumerate() {
-        let lit = ts_lit(ts);
+    for (i, row) in rows.iter().enumerate() {
+        let lit = ts_lit(&row.ts);
         if i == last {
             w(dts, format_args!("  | {lit};\n"));
         } else {
@@ -91,9 +181,9 @@ fn push_route_type_decls(
         }
     }
     w(dts, format_args!("\nexport type RouteParams = {{\n"));
-    for (ts, _, params, _) in rows {
-        let lit = ts_lit(ts);
-        let val = params_object(params);
+    for row in rows {
+        let lit = ts_lit(&row.ts);
+        let val = params_object(&row.params);
         w(dts, format_args!("  {lit}: {val};\n"));
     }
     w(dts, format_args!("}};\n"));
@@ -104,14 +194,24 @@ fn push_route_type_decls(
         format_args!("\nexport type LoaderSearchParams = Record<string, string | string[]>;\n"),
     );
     // §8.3 / §9.1: the `load(event)` input per route — route identity,
-    // params, parsed search params, url and method.
+    // params, parsed search params, url and method. V2-E02: a route whose
+    // `page.server.ts` declares `export const searchSchema` additionally
+    // carries `search` — the VALIDATED dimension, typed through delegated
+    // inference (`S.InferOutput<typeof searchSchema>`); the raw record
+    // stays available as `searchParams` on every route.
     w(dts, format_args!("\nexport type LoaderEvent = {{\n"));
-    for (ts, _, params, _) in rows {
-        let lit = ts_lit(ts);
-        let val = params_object(params);
+    for row in rows {
+        let lit = ts_lit(&row.ts);
+        let val = params_object(&row.params);
         w(dts, format_args!("  {lit}: {{\n"));
         w(dts, format_args!("    route: {lit};\n"));
         w(dts, format_args!("    params: {val};\n"));
+        if row.search {
+            w(
+                dts,
+                format_args!("    search: S.InferOutput<typeof {}>;\n", row.import),
+            );
+        }
         w(dts, format_args!("    searchParams: LoaderSearchParams;\n"));
         w(dts, format_args!("    url: string;\n"));
         w(dts, format_args!("    method: string;\n"));
@@ -122,6 +222,38 @@ fn push_route_type_decls(
         dts,
         format_args!("\nexport type LoaderInput<R extends OxideRoutes> = LoaderEvent[R];\n"),
     );
+    // V2-E02: the per-route search dimension as a named map (the tree's
+    // `RouteParams`/`RouteData` pattern): the validated output for
+    // declaring routes, the raw record for the rest. Only when at least
+    // one route declares — schema-less projects keep their pre-E02 bytes.
+    if rows.iter().any(|r| r.search) {
+        w(dts, format_args!("\nexport type RouteSearch = {{\n"));
+        for row in rows {
+            let lit = ts_lit(&row.ts);
+            if row.search {
+                w(
+                    dts,
+                    format_args!("  {lit}: S.InferOutput<typeof {}>;\n", row.import),
+                );
+            } else {
+                w(dts, format_args!("  {lit}: LoaderSearchParams;\n"));
+            }
+        }
+        w(dts, format_args!("}};\n"));
+    }
+    push_href_overloads(dts, rows, locales, default_locale);
+}
+
+/// The per-route `href` overload declarations (§8.3, SPEC-16.4, V2-E02):
+/// the search-less forms first, then the typed-search options as an
+/// ADDITIONAL overload (the search-less forms resolve first, so existing
+/// call sites keep compiling), the i18n locale last when enabled.
+fn push_href_overloads(
+    dts: &mut String,
+    rows: &[RouteRow],
+    locales: Option<&[String]>,
+    default_locale: Option<&str>,
+) {
     // SPEC-16.4 / §16-D: emit a `locale` variant of each `href`
     // overload when the project has i18n enabled. The locale parameter
     // sits LAST so an existing `href('/blog', {slug})` call still
@@ -130,9 +262,10 @@ fn push_route_type_decls(
         .filter(|l| !l.is_empty())
         .map(|l| l.iter().map(|s| ts_lit(s)).collect::<Vec<_>>().join(" | "));
     let default_literal: Option<String> = default_locale.map(ts_lit);
-    for (ts, _, params, _) in rows {
-        let lit = ts_lit(ts);
-        if params.is_empty() {
+    for row in rows {
+        let lit = ts_lit(&row.ts);
+        let val = params_object(&row.params);
+        if row.params.is_empty() {
             w(
                 dts,
                 format_args!("export declare function href(route: {lit}): string;\n"),
@@ -146,7 +279,6 @@ fn push_route_type_decls(
                 );
             }
         } else {
-            let val = params_object(params);
             w(
                 dts,
                 format_args!(
@@ -160,6 +292,45 @@ fn push_route_type_decls(
                         "export declare function href(route: {lit}, params: {val}, locale: {loc}): string;\n"
                     ),
                 );
+            }
+        }
+        // V2-E02: a declaring route's `href` gains the typed search
+        // options — an ADDITIONAL overload (the search-less forms above
+        // still resolve first, so existing call sites keep compiling);
+        // the locale, when i18n is on, stays the last parameter.
+        if row.search {
+            let opts = format!(
+                "opts?: {{ search?: Partial<S.InferOutput<typeof {}>>; hash?: string }}",
+                row.import
+            );
+            if row.params.is_empty() {
+                w(
+                    dts,
+                    format_args!("export declare function href(route: {lit}, {opts}): string;\n"),
+                );
+                if let Some(loc) = &locales_literal {
+                    w(
+                        dts,
+                        format_args!(
+                            "export declare function href(route: {lit}, {opts}, locale: {loc}): string;\n"
+                        ),
+                    );
+                }
+            } else {
+                w(
+                    dts,
+                    format_args!(
+                        "export declare function href(route: {lit}, params: {val}, {opts}): string;\n"
+                    ),
+                );
+                if let Some(loc) = &locales_literal {
+                    w(
+                        dts,
+                        format_args!(
+                            "export declare function href(route: {lit}, params: {val}, {opts}, locale: {loc}): string;\n"
+                        ),
+                    );
+                }
             }
         }
     }
@@ -176,8 +347,8 @@ fn push_route_type_decls(
 /// annotation is `unknown` (honest — we do not infer from arbitrary TS).
 fn push_route_data(dts: &mut String, rows: &[RouteRow]) {
     w(dts, format_args!("\nexport type RouteData = {{\n"));
-    for (ts, _, _, server) in rows {
-        let data_ty = std::fs::read_to_string(server)
+    for row in rows {
+        let data_ty = std::fs::read_to_string(&row.server)
             .ok()
             .and_then(|src| {
                 // A user-declared `export type LoaderData = X;` names X.
@@ -190,10 +361,114 @@ fn push_route_data(dts: &mut String, rows: &[RouteRow]) {
                 })
             })
             .unwrap_or_else(|| "unknown".to_string());
-        let lit = ts_lit(ts);
+        let lit = ts_lit(&row.ts);
         w(dts, format_args!("  {lit}: {data_ty};\n"));
     }
     w(dts, format_args!("}};\n"));
+}
+
+/// The typegen rows: URL-addressable entries sorted by (pattern, id), each
+/// with its resolved server module and the V2-E02 search dimension. The
+/// server path resolves from the entry's OWN file (re-finding by encoded
+/// pattern could grab a same-pattern sibling — SPEC-09 follow-up).
+#[allow(clippy::too_many_lines)]
+fn build_rows(tree: &RouteTree, routes_root: Option<&Path>, types_dir: &Path) -> Vec<RouteRow> {
+    // Deterministic nav routes: URL-addressable entries sorted by (pattern, id).
+    let mut nav: Vec<&RouteEntry> = tree.entries.iter().filter(|e| e.matchable()).collect();
+    nav.sort_by(|a, b| {
+        pattern_encoded(&a.segments)
+            .cmp(&pattern_encoded(&b.segments))
+            .then_with(|| a.id.0.cmp(&b.id.0))
+    });
+    // (ts pattern, encoded pattern, params, sibling `page.server.ts` path).
+    // The server path is resolved from the row's OWN entry: re-finding the
+    // entry by encoded pattern could grab a same-pattern sibling (a `(group)`
+    // duplicate, or a layout at the same depth), which made per-route
+    // `LoaderData` extraction miss (SPEC-09 follow-up). V2-E02: each row
+    // also carries the `searchSchema` declaration flag and the delegated
+    // import name/path.
+    let mut rows: Vec<RouteRow> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for e in nav {
+        let ts = pattern_ts(&e.segments);
+        if seen.insert(ts.clone()) {
+            // `RouteEntry.file` is routes-root-relative; join the root when
+            // the caller supplied one (`typegen_with_root`).
+            let rel = e.file.with_file_name("page.server.ts");
+            let server = match routes_root {
+                Some(root) => root.join(&rel),
+                None => rel,
+            };
+            // V2-E02: the scan is the source of truth — a `page.server.ts`
+            // that declares `export const searchSchema` delegates its
+            // search dimension to TypeScript's inference of the value.
+            let search = routes_root
+                .is_some()
+                .then(|| std::fs::read_to_string(&server).ok())
+                .flatten()
+                .is_some_and(|src| declares_search_schema(&src));
+            rows.push(RouteRow {
+                import: format!("s_{}", import_name(&pattern_encoded(&e.segments))),
+                import_path: String::new(),
+                ts,
+                params: param_names(&e.segments),
+                server,
+                search,
+            });
+        }
+    }
+    // The import path needs the types dir (resolved below), so it is
+    // filled after `types_dir` exists.
+    for row in &mut rows {
+        if row.search {
+            row.import_path = relative_import(types_dir, &row.server);
+        }
+    }
+
+    for row in &mut rows {
+        if row.search {
+            row.import_path = relative_import(types_dir, &row.server);
+        }
+    }
+    rows
+}
+
+/// The `oxide routes` manifest rows (§19.1) — every entry, sorted, with the
+/// V2-E02 `hasSearchSchema` flag from the same source-of-truth scan.
+fn json_rows_for(tree: &RouteTree, routes_root: Option<&Path>) -> Vec<serde_json::Value> {
+    // Machine-readable manifest for `oxide routes` (§19.1): every entry, sorted.
+    let mut all: Vec<&RouteEntry> = tree.entries.iter().collect();
+    all.sort_by(|a, b| {
+        pattern_encoded(&a.segments)
+            .cmp(&pattern_encoded(&b.segments))
+            .then_with(|| a.id.0.cmp(&b.id.0))
+    });
+    let json_rows: Vec<serde_json::Value> = all
+        .iter()
+        .map(|e| {
+            // V2-E02: the same source-of-truth scan the d.ts rows used —
+            // the entry's own server module decides the flag.
+            let server = e.file.with_file_name("page.server.ts");
+            let server = match routes_root {
+                Some(root) => root.join(&server),
+                None => server,
+            };
+            let has_search =
+                std::fs::read_to_string(&server).is_ok_and(|src| declares_search_schema(&src));
+            serde_json::json!({
+                "id": e.id.0,
+                "pattern": pattern_encoded(&e.segments),
+                "params": param_names(&e.segments),
+                "kind": kind_str(&e.kind),
+                "renderMode": e.render_mode,
+                "tags": e.tags,
+                "slot": e.slot,
+                "hasServerModule": e.has_server_module,
+                "hasSearchSchema": has_search,
+            })
+        })
+        .collect();
+    json_rows
 }
 
 pub(crate) fn typegen_impl(
@@ -215,41 +490,23 @@ pub(crate) fn typegen_impl(
         )
     })?;
 
-    // Deterministic nav routes: URL-addressable entries sorted by (pattern, id).
-    let mut nav: Vec<&RouteEntry> = tree.entries.iter().filter(|e| e.matchable()).collect();
-    nav.sort_by(|a, b| {
-        pattern_encoded(&a.segments)
-            .cmp(&pattern_encoded(&b.segments))
-            .then_with(|| a.id.0.cmp(&b.id.0))
-    });
-    // (ts pattern, encoded pattern, params, sibling `page.server.ts` path).
-    // The server path is resolved from the row's OWN entry: re-finding the
-    // entry by encoded pattern could grab a same-pattern sibling (a `(group)`
-    // duplicate, or a layout at the same depth), which made per-route
-    // `LoaderData` extraction miss (SPEC-09 follow-up).
-    let mut rows: Vec<RouteRow> = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for e in nav {
-        let ts = pattern_ts(&e.segments);
-        if seen.insert(ts.clone()) {
-            // `RouteEntry.file` is routes-root-relative; join the root when
-            // the caller supplied one (`typegen_with_root`).
-            let rel = e.file.with_file_name("page.server.ts");
-            let server = match routes_root {
-                Some(root) => root.join(&rel),
-                None => rel,
-            };
-            rows.push((
-                ts,
-                pattern_encoded(&e.segments),
-                param_names(&e.segments),
-                server,
-            ));
-        }
-    }
+    let rows: Vec<RouteRow> = build_rows(tree, routes_root, &types_dir);
 
     let mut dts = String::new();
-    dts.push_str("// Generated by oxide-fw-router typegen (spec §8.3). DO NOT EDIT.\n\n");
+    dts.push_str("// Generated by oxide-fw-router typegen (spec §8.3). DO NOT EDIT.\n");
+    if rows.iter().any(|r| r.search) {
+        dts.push_str("import type { StandardSchemaV1 as S } from '@standard-schema/spec';\n");
+        for row in &rows {
+            if row.search {
+                let line = format!(
+                    "import type {{ searchSchema as {} }} from '{}';\n",
+                    row.import, row.import_path
+                );
+                dts.push_str(&line);
+            }
+        }
+    }
+    dts.push('\n');
     if rows.is_empty() {
         dts.push_str("export type OxideRoutes = never;\n");
         dts.push_str("\nexport type RouteParams = Record<string, never>;\n");
@@ -277,6 +534,17 @@ pub(crate) fn typegen_impl(
     dts.push_str("  export type Params<R extends OxideRoutes> = RouteParams[R];\n");
     dts.push_str("  export type Data<R extends OxideRoutes> = RouteData[R];\n");
     dts.push_str("  export type Input<R extends OxideRoutes> = LoaderInput<R>;\n");
+    // V2-E02: the per-route search accessor — only when at least one
+    // route declares (the same gate as the `RouteSearch` map).
+    if rows.iter().any(|r| r.search) {
+        dts.push_str("  export type Search<R extends OxideRoutes> = RouteSearch[R];\n");
+    }
+    // V2-E02: the per-route search accessor (validated output for
+    // declaring routes, the raw record otherwise) — same any-declared gate
+    // as the map above.
+    if rows.iter().any(|r| r.search) {
+        dts.push_str("  export type Search<R extends OxideRoutes> = RouteSearch[R];\n");
+    }
     dts.push_str("}\n");
 
     let dts_path = types_dir.join("routes.d.ts");
@@ -288,28 +556,7 @@ pub(crate) fn typegen_impl(
         )
     })?;
 
-    // Machine-readable manifest for `oxide routes` (§19.1): every entry, sorted.
-    let mut all: Vec<&RouteEntry> = tree.entries.iter().collect();
-    all.sort_by(|a, b| {
-        pattern_encoded(&a.segments)
-            .cmp(&pattern_encoded(&b.segments))
-            .then_with(|| a.id.0.cmp(&b.id.0))
-    });
-    let json_rows: Vec<serde_json::Value> = all
-        .iter()
-        .map(|e| {
-            serde_json::json!({
-                "id": e.id.0,
-                "pattern": pattern_encoded(&e.segments),
-                "params": param_names(&e.segments),
-                "kind": kind_str(&e.kind),
-                "renderMode": e.render_mode,
-                "tags": e.tags,
-                "slot": e.slot,
-                "hasServerModule": e.has_server_module,
-            })
-        })
-        .collect();
+    let json_rows = json_rows_for(tree, routes_root);
     let json = serde_json::to_string_pretty(&json_rows).expect("json rows serialize");
     let json_path = types_dir.join("routes.json");
     fs::write(&json_path, json + "\n").map_err(|e| {
