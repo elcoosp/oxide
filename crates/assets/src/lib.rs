@@ -37,6 +37,7 @@ pub use route_search::{
 mod css;
 mod font_metrics;
 pub mod i18n;
+pub mod image_jobs;
 mod images;
 mod lightningcss_backend;
 mod og_backend;
@@ -48,6 +49,7 @@ pub use i18n::{
     Catalog, I18nConfig, LanguageRange, href, locale_prefix, negotiate, parse_accept_language,
     strip_locale_prefix,
 };
+pub use image_jobs::{ImageCas, ImageJobs};
 pub use lightningcss_backend::LightningCssBackend;
 pub use og_backend::SvgOgBackend;
 
