@@ -1,4 +1,4 @@
-//! Extract named exports from CommonJS module source.
+//! Extract named exports from `CommonJS` module source.
 //!
 //! Rolldown's built-in CJS-to-ESM interop extracts named exports only for
 //! top-level `exports.X = ...` statements. React 19.3.1 wraps its 46
@@ -12,7 +12,7 @@
 //! Handles the three shapes that cover the React ecosystem:
 //!
 //! 1. `exports.NAME = ...` (React, React-DOM, JSX runtime)
-//! 2. `module.exports.NAME = ...` (CommonJS alternatives)
+//! 2. `module.exports.NAME = ...` (`CommonJS` alternatives)
 //! 3. `module.exports = { NAME: ..., OTHER: ... }` (object-literal entry)
 //!
 //! The caller (see `prebundle.rs::bundle_one`) uses this to append missing
@@ -32,13 +32,14 @@ use std::collections::BTreeSet;
 
 const MAX_DEPTH: u32 = 64;
 
-/// Extract every named export from a CommonJS module's source. Returns a
+/// Extract every named export from a `CommonJS` module's source. Returns a
 /// sorted, deduplicated list of identifier-safe names. `default` is
 /// excluded (the bundle's own `export default X;` covers it).
 ///
 /// Returns an empty `Vec` on parse failure — the caller leaves the bundle
 /// untouched in that case rather than inventing exports from an unclear
 /// source.
+#[must_use]
 pub fn extract_cjs_export_names(source: &str) -> Vec<String> {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
@@ -164,11 +165,10 @@ fn walk_expression(expr: &Expression<'_>, out: &mut BTreeSet<String>, depth: u32
         Expression::CallExpression(c) => walk_call(c, out, depth + 1),
         Expression::FunctionExpression(f) => walk_function(f, out, depth + 1),
         Expression::ArrowFunctionExpression(a) => walk_arrow(a, out, depth + 1),
-        Expression::ObjectExpression(_) => {
-            // An object literal at this position is a value, not an export
-            // container. Its keys are only collected when it's the RHS of
-            // `module.exports =` (handled in walk_assignment).
-        }
+        // An object literal at this position is a value, not an export
+        // container. Its keys are only collected when it's the RHS of
+        // `module.exports =` (handled in walk_assignment); every other
+        // expression shape is equally a non-container.
         _ => {}
     }
 }
@@ -325,29 +325,20 @@ mod tests {
               })();
         "#;
         let names = extract_cjs_export_names(src);
-        assert!(
-            names.contains(&"Fragment".to_string()),
-            "names = {:?}",
-            names
-        );
-        assert!(
-            names.contains(&"useState".to_string()),
-            "names = {:?}",
-            names
-        );
+        assert!(names.contains(&"Fragment".to_string()), "names = {names:?}");
+        assert!(names.contains(&"useState".to_string()), "names = {names:?}");
         assert!(
             names.contains(&"useEffect".to_string()),
-            "names = {:?}",
-            names
+            "names = {names:?}"
         );
     }
 
     #[test]
     fn extracts_module_exports_dot_name() {
-        let src = r#"
+        let src = r"
             module.exports.jsx = function(t, p) {};
             module.exports.jsxs = function(t, p) {};
-        "#;
+        ";
         let names = extract_cjs_export_names(src);
         assert_eq!(names, vec!["jsx", "jsxs"]);
     }
@@ -383,7 +374,7 @@ mod tests {
     fn returns_empty_on_parse_error() {
         let src = "exports.!!! = 1;";
         let names = extract_cjs_export_names(src);
-        assert!(names.is_empty());
+        assert_eq!(names, [] as [String; 0]);
     }
 
     #[test]
@@ -401,7 +392,7 @@ mod tests {
 
     #[test]
     fn extracts_from_try_catch() {
-        let src = r#"
+        let src = r"
             try {
               exports.tryName = 1;
             } catch (e) {
@@ -409,7 +400,7 @@ mod tests {
             } finally {
               exports.finallyName = 3;
             }
-        "#;
+        ";
         let names = extract_cjs_export_names(src);
         assert_eq!(names, vec!["catchName", "finallyName", "tryName"]);
     }
