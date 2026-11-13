@@ -2211,3 +2211,74 @@ splicer where the `.replace` calls sit today.
    justification is the allocation profile (O(chunk) transient vs a
    full second copy per document), which is what the B08 acceptance
    gates on (dhat `max_bytes` at the CLI layer).
+
+## V2-F10 tail — the two-generation serving pools substrate (2026-11-13)
+
+**What the deferral asked.** The parent F10 record named the remaining
+halves: "the `deploy.skewWindow` config key, the CLI adoption (constructing
+the pool at serve boot, promoting it when `cmd_dev` reloads a build) and the
+two-generation serving pools (`GenerationPools` serving the old build's HTML
+while the new one takes traffic — needs the serve-side artifact promotion
+F11's `releases/` layout already lays out)". This pass closes the pools
+half (`feat/generation-serving-pools`).
+
+**What lands.** `crates/dispatch/src/pools.rs` — `GenerationPools<P>`, the
+§V2-F10 design step 1 structure holding a serving HANDLE per generation
+(the generic `P` is the caller's; the spec instantiates it over
+`Arc<dyn Pool>`, this V8-free crate stays pool-agnostic). `route(id, now)`
+is the step-2 routing decision in one lookup: the absent id (every HTML
+navigation and header-less data-plane request) and the current id take the
+CURRENT pool, an accepted demoted id takes THAT generation's own handle
+(`previous_pool_serves_old_build_header` — the old build's data plane keeps
+serving old tabs), an unknown or expired id routes `None` and the §V2-A04
+409 authority stays [`stage_check`], which now drives the pools through the
+existing `AcceptedGenerations` seam (`accepts` is `route`'s generation
+half, so the set/pool/pools verdict parity is pinned by
+`tests/pools_tdd.rs::the_stage_drives_set_and_pools_with_identical_
+verdicts` — the three id substrates agree on every §V2-A04 verdict).
+Lifecycle: `promote(id, pool, now)` demotes the current id WITH its live
+handle (per-demotion windows, expired trimmed first, oldest evicted at
+capacity — the A04 bounded-by-config rule generalized from ids to handles),
+the re-promote of a demoted id installs the caller's fresh handle and drops
+the stale entry (the rollback path), `expire(now)` drops expired HANDLES
+without unlinking anything ("at window end it drops the previous pool and
+unlinks nothing" — client chunks are content-hashed), and
+`evict_oldest()` is the brownout early-drop (the F12 hook) returning the
+evicted handle for a graceful drain-and-shutdown. 9 TDD pins
+(`tests/pools_tdd.rs`), the `pools` criterion group (the absent-id fast
+path, the current hot path, the depth-8 oldest-demoted walk, the miss and
+the stage-through-the-seam shape) and the `serving_pools` walkthrough
+example ride along.
+
+**Status.** Green end-to-end: `cargo test -p oxide-fw-dispatch` 128 passed
+(119 parent + 9 new), the bench group runs, the example runs. The id-only
+`GenerationPool` and the `stage_check` signatures are untouched — the new
+structure is a third implementor of the same seam, exactly as the parent
+record sketched.
+
+**Deltas.**
+
+1. **Capacity N, not literally two.** The spec's sketch bounds memory "at
+   two generations" (`previous: Option<...>`); the landed shape is the
+   bounded deque the id-only pool already generalized (capacity 1 IS the
+   sketch's two-generation shape, 0 keeps only the current build). The
+   config key that will size it (`deploy.skewWindow`, deferred) sizes
+   depth the same way it sizes the window.
+2. **The handle is the caller's.** `P` is generic instead of a
+   `dyn Pool` trait defined here: the V8-free crate must not know the
+   server's worker-pool type, and the spec's `Arc<dyn Pool>` spelling
+   drops straight in at the CLI layer (the same seam choice the
+   `AcceptedGenerations` trait made — the boot-time-chosen source stays
+   outside the substrate).
+3. **The no-op promote keeps the LIVE handle.** Promoting the current id
+   ignores the caller's (fresh) handle: an idempotent re-deploy must not
+   swap a serving pool for a newly-booted identical one mid-flight. The
+   rollback path is the explicit re-promote of a DEMOTED id, which
+   installs the fresh handle and drops the stale entry (pinned).
+
+**To unclose.** The `deploy.skewWindow` config key (the E11
+config-reference regeneration it requires needs the V8-linked generator),
+the CLI adoption (booting the pools from `dist/` + F11's `releases/<build-id>/`
+layout, promoting on `cmd_dev` reload, the 30 s expiry task and the F12
+brownout trigger calling `evict_oldest`) and the E2E `tests/skew.sh` — all
+A01-phase-3 slices on a V8-capable host.
