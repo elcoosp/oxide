@@ -44,6 +44,10 @@ tokio = { workspace = true }
 futures = { workspace = true }
 dashmap = { workspace = true }
 tracing = { workspace = true }
+# V2-C08: the post-prerender glyph harvest (the spec's `text!`-over-body
+# walk). Non-optional — the harvest rides every build; only the subsetting
+# engine is gated behind `subset` (the roxmltree shape).
+lol_html = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -75,9 +79,20 @@ name = "svg_optimizer"
 harness = false
 required-features = ["bench-util"]
 
+# V2-C08: the glyph-usage seam bench, behind the same bench-util opt-in.
+[[bench]]
+name = "font_subsetter"
+harness = false
+required-features = ["bench-util"]
+
 [[example]]
 name = "svg_optimizer"
 required-features = ["svg-oxvg"]
+
+# V2-C08: the glyph-usage walkthrough drives the real subsetting engine.
+[[example]]
+name = "font_subsetter"
+required-features = ["subset"]
 
 [package.metadata.docs.rs]
 all-features = true
