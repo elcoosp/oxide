@@ -12,15 +12,13 @@
 use blake3::Hasher;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 mod content;
 pub mod content_collection;
 pub mod content_typegen;
-#[cfg(feature = "subset")]
-#[cfg_attr(docsrs, doc(cfg(feature = "subset")))]
-mod font_subset;
+pub mod font_subset;
 pub mod route_search;
 pub use content::{
     ContentFormat, MdxCompileRequest, parse_content_entry_with_format, parse_mdx_source,
@@ -46,6 +44,17 @@ pub mod svg;
 pub use font_metrics::{
     FontMetric, MetricOverrides, TIMES_NEW_ROMAN, metric_overrides, read_metrics,
 };
+// V2-C08: the glyph-usage font-subsetting seam — the trait and its
+// selection, the build-side `used` hook, the CAS key and the post-prerender
+// harvest ride every build; the bundled `SkrifaSubsetter` (and the
+// pre-seam helpers it wraps) need the `subset` feature.
+pub use font_subset::{
+    ALWAYS_NEEDED_CHARS, FontSubsetter, font_cas_key, harvest_html_codepoints,
+    harvest_text_codepoints, select_subsetter, subset_used_for_build,
+};
+#[cfg(feature = "subset")]
+#[cfg_attr(docsrs, doc(cfg(feature = "subset")))]
+pub use font_subset::{SkrifaSubsetter, harvest_codepoints, subset_for_codepoints};
 pub use i18n::{
     Catalog, I18nConfig, LanguageRange, href, locale_prefix, negotiate, parse_accept_language,
     strip_locale_prefix,
@@ -423,6 +432,13 @@ pub struct FontSpec {
     pub weights: Vec<u32>,
     pub styles: Vec<String>,
     pub subset: Vec<String>,
+    /// V2-C08: the glyph-usage harvest (§V2-C08 steps 1-2) the driver
+    /// collected from the prerendered pages and the content-collection
+    /// field text — the char set the `used` strategy subsets to. Ignored
+    /// unless `subset` contains `"used"`; the always-needed set rides
+    /// inside the seam regardless.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub used_chars: BTreeSet<char>,
     pub local_paths: Vec<PathBuf>,
 }
 
@@ -461,30 +477,29 @@ fn metric_overrides_for(spec: &FontSpec) -> Option<font_metrics::MetricOverrides
 }
 
 impl FontBackend for DefaultFontBackend {
-    /// Local pass-through bundling (§16.2): files are copied verbatim (subsetting via
-    /// fontations/skrifa slots in), one `@font-face` per weight×style with
-    /// `font-display: swap`, preload = first file (the critical face), plus a
-    /// `family-fallback` face with `size-adjust: 100%`.
-    /// Documented: `size-adjust: 100%` is a placeholder — real metric math
-    /// (ascent/descent/lineGap from the font tables) lands with fontations.
+    /// Local pass-through bundling (§16.2): files are copied verbatim
+    /// (the `used` strategy subsets via the [`font_subset::FontSubsetter`]
+    /// seam), one `@font-face` per weight×style with `font-display: swap`,
+    /// preload = first file (the critical face), plus a `family-fallback`
+    /// face with real metric overrides when the font parses.
     fn bundle(&self, spec: &FontSpec) -> Result<FontBundle> {
-        // SPEC-16.2: when `subset` is requested, harvest codepoints from the
-        // spec's `subset` marker strings + harvest any inline source text
-        // the caller supplied (via `subset_chars` if set — a follow-up
-        // field; today just the marker string is harvested, which is
-        // enough for a fixture).
+        // V2-C08 (steps 3-4): the `used` strategy subsets through the
+        // seam with the harvest the driver supplied (`used_chars`) — the
+        // always-needed set rides inside the hook, and every refusal
+        // degrades to the verbatim copy (fonts are never load-bearing).
+        // The other spellings (`latin`, `unicode-range`) are range
+        // declarations, not glyph-usage sources: the file ships
+        // byte-identical. (The retired static-list harvest subsetted to
+        // the glyphs of the literal strategy strings — see
+        // docs/deviations.md.)
         //
         // NOTE: layout tables (GSUB/GPOS) are DROPPED by the subset pass.
         // This is fine for Latin scripts (minimal shaping), degraded for
         // complex scripts. See `font_subset.rs` header for the full
         // rationale.
-        #[cfg(feature = "subset")]
-        let codepoints: std::collections::BTreeSet<u32> = {
-            let markers: Vec<&str> = spec.subset.iter().map(String::as_str).collect();
-            font_subset::harvest_codepoints(markers)
-        };
+        let used = spec.subset.iter().any(|s| s == "used");
         #[cfg(not(feature = "subset"))]
-        let _ = &spec.subset;
+        let _ = (&used, &spec.used_chars);
 
         let mut files = Vec::new();
         for p in &spec.local_paths {
@@ -499,13 +514,13 @@ impl FontBackend for DefaultFontBackend {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "font.woff2".to_string());
 
-            // SPEC-16.2: run the subset pass when configured. The output is
-            // TrueType (subsetter emits sfnt); we rename the file to `.ttf`
-            // so the CSS `format()` hint matches the actual container.
+            // The subset output is TrueType (subsetter emits sfnt); the
+            // file is renamed to `.ttf` so the CSS `format()` hint below
+            // matches the actual container.
             #[cfg(feature = "subset")]
-            let (name, bytes) = if !spec.subset.is_empty() {
-                match font_subset::subset_for_codepoints(&bytes, &codepoints) {
-                    Ok(Some(subset)) => {
+            let (name, bytes) = if used {
+                match font_subset::subset_used_for_build(&bytes, &spec.used_chars, true) {
+                    Some(subset) => {
                         // Preserve the original stem; change extension to .ttf.
                         let stem = std::path::Path::new(&original_name)
                             .file_stem()
@@ -513,16 +528,7 @@ impl FontBackend for DefaultFontBackend {
                             .unwrap_or("font");
                         (format!("{stem}.subset.ttf"), subset)
                     }
-                    Ok(None) => (original_name, bytes),
-                    Err(e) => {
-                        eprintln!(
-                            "warn: subset failed for {} ({} {}); using verbatim",
-                            p.display(),
-                            e.0.code,
-                            e.0.message,
-                        );
-                        (original_name, bytes)
-                    }
+                    None => (original_name, bytes),
                 }
             } else {
                 (original_name, bytes)
