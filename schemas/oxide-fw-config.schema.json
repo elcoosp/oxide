@@ -963,6 +963,17 @@
       },
       "type": "object"
     },
+    "svg": {
+      "additionalProperties": false,
+      "properties": {
+        "optimize": {
+          "default": false,
+          "description": "V2-C07: run the SVG optimizer over SVG documents that enter the build (imports and SVG-as-component sources). The backend is the OXVG optimiser's correctness preset behind the `svg-oxvg` feature; with the knob off (and in every feature-off build) documents ship byte-identical. Every optimizer output is held to the preservation rules — the source's `viewBox`, every `<use>`/`url(#…)`/`aria-*` referenced id, well-formed output — and a violation is refused with `AST-SVG-001`, the source kept.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "sw": {
       "additionalProperties": false,
       "description": "§16.6: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence).",
