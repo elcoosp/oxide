@@ -36,6 +36,7 @@ pub mod generate_params;
 pub mod lexer;
 pub mod native;
 mod oxc_backend;
+pub mod precompile_engine;
 
 pub use cjs_exports::extract_cjs_export_names;
 pub use framework::{
