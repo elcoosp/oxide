@@ -236,6 +236,7 @@ fn font_spec(dir: &std::path::Path) -> FontSpec {
         weights: vec![400, 700],
         styles: vec!["normal".into()],
         subset: vec![],
+        used_chars: std::collections::BTreeSet::new(),
         local_paths: vec![p],
     }
 }
@@ -260,6 +261,7 @@ fn font_bundle_missing_file_is_an_error() {
         weights: vec![],
         styles: vec![],
         subset: vec![],
+        used_chars: std::collections::BTreeSet::new(),
         local_paths: vec!["/definitely/not/here.woff2".into()],
     };
     assert_eq!(
@@ -616,6 +618,7 @@ fn font_format_hint_matches_the_file_container() {
         weights: vec![400],
         styles: vec!["normal".into()],
         subset: vec![],
+        used_chars: std::collections::BTreeSet::new(),
         local_paths: vec![ttf],
     };
     let bundle = DefaultFontBackend.bundle(&spec).unwrap();
@@ -641,6 +644,7 @@ fn font_fallback_face_is_emitted_with_a_metric_override() {
         weights: vec![],
         styles: vec![],
         subset: vec![],
+        used_chars: std::collections::BTreeSet::new(),
         local_paths: vec![ttf],
     };
     let bundle = DefaultFontBackend.bundle(&spec).unwrap();
