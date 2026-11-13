@@ -38,6 +38,11 @@ name = "match"
 harness = false
 required-features = ["bench-util"]
 
+[[bench]]
+name = "typegen_search"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 default = []
 # V2-B09: exposes the synthetic route generator (`testing::synthetic_entries`)
