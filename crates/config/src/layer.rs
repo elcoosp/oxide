@@ -62,6 +62,14 @@ const ENV_ALLOW_LIST: &[&str] = &[
     "build.target",
 ];
 
+/// Allow-list entries whose config path is camelCase: the env spelling is
+/// lowercased and underscore-split (`OXIDE_COMPILER_BACKEND` derives
+/// `compiler.backend`), so a camelCase config key cannot be reached
+/// directly — the alias maps the derived spelling onto the real path.
+/// V2-C01's `compilerBackend` is the first camelCase key to need this;
+/// extend the table as later keys arrive.
+const ENV_DOTTED_ALIASES: &[(&str, &str)] = &[("compiler.backend", "framework.compilerBackend")];
+
 pub(crate) fn load_with_env(
     dir: &Path,
     mode: &str,
@@ -125,15 +133,24 @@ pub(crate) fn load_with_env(
 
     // 5. `OXIDE_*` allow-list → dotted config paths. `OXIDE_SERVER_PORT` →
     //    `server.port`. Values are parsed as JSON when possible ("4000" → 4000).
+    //    A camelCase config path is reached through its alias
+    //    (`OXIDE_COMPILER_BACKEND` → `framework.compilerBackend`).
     for (key, raw) in &env {
         let Some(rest) = key.strip_prefix("OXIDE_") else {
             continue;
         };
         let dotted = rest.to_ascii_lowercase().replace('_', ".");
-        if ENV_ALLOW_LIST.contains(&dotted.as_str()) {
-            let parsed = serde_json::from_str::<Value>(raw).unwrap_or(Value::String(raw.clone()));
-            set_dotted(&mut value, &dotted, parsed);
-        }
+        let aliased = ENV_DOTTED_ALIASES
+            .iter()
+            .find(|(from, _)| *from == dotted.as_str())
+            .map(|(_, to)| *to);
+        let target = match aliased {
+            Some(to) => to,
+            None if ENV_ALLOW_LIST.contains(&dotted.as_str()) => dotted.as_str(),
+            None => continue,
+        };
+        let parsed = serde_json::from_str::<Value>(raw).unwrap_or(Value::String(raw.clone()));
+        set_dotted(&mut value, target, parsed);
     }
 
     // 6. CLI overrides (dotted keys), the final layer.
@@ -417,6 +434,19 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     // of a bare serde type error at the typed boundary.
     if let Some(v) = map.get("prefetch") {
         validate_prefetch(v)?;
+    }
+    // V2-C01: the compiler-backend switch (D26) gets the same raw-`Value`
+    // treatment — a bad `compilerBackend` spelling names the three valid
+    // modes (CFG-BACKEND) instead of a bare serde type error at the typed
+    // boundary.
+    if let Some(v) = map.get("framework") {
+        validate_framework(v)?;
+    }
+    // V2-C09: the AVIF encoder speed is a whole number in 1..=10 (ravif's
+    // `with_speed` range) — the CFG-AVIF diagnostic names the range before
+    // the typed parse.
+    if let Some(v) = map.get("images") {
+        validate_images(v)?;
     }
     if let Some(Value::Array(rules)) = map.get("rules") {
         for rule in rules {
@@ -793,6 +823,77 @@ fn cfg_sec(key: &str, got: &str, valid: &str) -> OxideError {
         format!("`security.{key}` must be one of {valid} — got `{got}`"),
     );
     d.fix = Some(format!("set `security.{key}` to one of {valid}"));
+    OxideError(Box::new(d))
+}
+
+/// V2-C01: the `framework.compilerBackend` enum spelling (D26). The
+/// raw-`Value` pass runs before the typed parse, so a bad spelling gets
+/// the `CFG-BACKEND` diagnostic naming the three valid modes instead of a
+/// bare serde type error at the typed boundary.
+fn validate_framework(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Ok(()); // not an object — the typed parse reports the shape
+    };
+    let Some(v) = map.get("compilerBackend") else {
+        return Ok(()); // absent — the default (`auto`) applies
+    };
+    let bad = match v {
+        Value::String(s) if matches!(s.as_str(), "auto" | "native" | "node") => None,
+        other => Some(match other {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        }),
+    };
+    match bad {
+        None => Ok(()),
+        Some(got) => Err(cfg_backend(&got)),
+    }
+}
+
+/// V2-C09: the `images.avifSpeed` range check (1..=10 — ravif's
+/// `with_speed` domain). The raw-`Value` pass runs before the typed parse,
+/// so a `0`, a `11` or a non-number gets the `CFG-AVIF` diagnostic naming
+/// the range instead of a bare serde type error.
+fn validate_images(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Ok(()); // not an object — the typed parse reports the shape
+    };
+    let Some(v) = map.get("avifSpeed") else {
+        return Ok(()); // absent — the default (6) applies
+    };
+    let ok = match v {
+        Value::Number(n) => n.as_u64().is_some_and(|speed| (1..=10).contains(&speed)),
+        _ => false,
+    };
+    if ok {
+        return Ok(());
+    }
+    Err(cfg_avif(&v.to_string()))
+}
+
+/// The `CFG-AVIF` diagnostic for a bad `images.avifSpeed` value (V2-C09).
+fn cfg_avif(got: &str) -> OxideError {
+    let mut d = Diagnostic::error(
+        "CFG-AVIF",
+        format!(
+            "`images.avifSpeed` must be a whole number in 1..=10 (ravif's encoder speed) — got `{got}`"
+        ),
+    );
+    d.fix = Some("set `images.avifSpeed` to a whole number in 1..=10 (the default is 6)".into());
+    OxideError(Box::new(d))
+}
+
+/// The `CFG-BACKEND` diagnostic for a bad `compilerBackend` spelling
+/// (V2-C01, D26).
+fn cfg_backend(got: &str) -> OxideError {
+    let mut d = Diagnostic::error(
+        "CFG-BACKEND",
+        format!(
+            "`framework.compilerBackend` must be one of `auto`, `native`, `node` — got `{got}`"
+        ),
+    );
+    d.fix =
+        Some("set `framework.compilerBackend` to `auto` (the default), `native` or `node`".into());
     OxideError(Box::new(d))
 }
 
