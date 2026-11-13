@@ -120,7 +120,24 @@ fn encode(
 
 /// AVIF encode via `ravif` (spec §16.1: real AVIF output with the pure-Rust stack).
 /// The `image` crate gives us RGBA8; ravif wants `Img<&[RGBA8]>`.
+///
+/// Speed is the `images.avifSpeed` config knob (§V2-C09, default 6 —
+/// ravif's documented middle rate); the caller (the images endpoint's job
+/// model) threads the config value through.
 fn encode_avif(rgba: &image::RgbaImage, quality: u8) -> Result<Vec<u8>> {
+    encode_avif_at_speed(rgba, quality, DEFAULT_AVIF_SPEED)
+}
+
+/// The `images.avifSpeed` default (§V2-C09): ravif's documented middle rate.
+pub(crate) const DEFAULT_AVIF_SPEED: u8 = 6;
+
+/// [`encode_avif`] with the config-selected encoder speed (1..=10; the
+/// config layer validates the range, `CFG-AVIF`).
+pub(crate) fn encode_avif_at_speed(
+    rgba: &image::RgbaImage,
+    quality: u8,
+    speed: u8,
+) -> Result<Vec<u8>> {
     use ravif::{Encoder, Img, RGBA8};
     let (w, h) = (rgba.width() as usize, rgba.height() as usize);
     let pixels: Vec<RGBA8> = rgba
@@ -128,10 +145,10 @@ fn encode_avif(rgba: &image::RgbaImage, quality: u8) -> Result<Vec<u8>> {
         .map(|p| RGBA8::new(p[0], p[1], p[2], p[3]))
         .collect();
     let img = Img::new(pixels.as_slice(), w, h);
-    let q = (quality.clamp(1, 100)) as f32;
+    let q = quality.clamp(1, 100) as f32;
     let encoded = Encoder::new()
         .with_quality(q)
-        .with_speed(6)
+        .with_speed(speed.clamp(1, 10))
         .encode_rgba(img)
         .map_err(|e| err("AST-AVIF", format!("ravif encode failed: {e}")))?;
     Ok(encoded.avif_file)
