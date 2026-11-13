@@ -27,6 +27,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `AST-IDX` | index serialization failed: {e} | — |
 | `AST-IMG` | failed to decode source image: {e} | — |
 | `AST-IMG-REQ` | `url` query parameter is empty | — |
+| `AST-JOBS` | the image encoder panicked: {join} | inspect the encoder diagnostic; the next request retries the encode |
 | `AST-LIV-001` | a route opts into `live: true` but target `{}` does not support live loaders (§18 capability matrix) | Use `live.transport: 'poll'` or change target |
 | `AST-OG` | usvg parse failed: {e} | — |
 | `AST-QUERY` | asset specifier must be a non-empty path optionally followed by `?query` | — |
@@ -70,6 +71,8 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CAS-NO-ENTRY` | touch: key {} is not in the index | — |
 | `CAS-REMOTE` | remote cache URL must be http:// ({url}) | — |
 | `CFG-001` | unknown config key `framwork` | did you mean `framework`? |
+| `CFG-AVIF` | `images.avifSpeed` must be a whole number in 1..=10 (ravif's encoder speed) — got `{got}` | set `images.avifSpeed` to a whole number in 1..=10 (the default is 6) |
+| `CFG-BACKEND` | `framework.compilerBackend` must be one of `auto`, `native`, `node` — got `{got}` | set `framework.compilerBackend` to `auto` (the default), `native` or `node` |
 | `CFG-EXTENDS` | extends chain too deep at `{spec}` (cycle?) | — |
 | `CFG-IO` | read {}: {e} | — |
 | `CFG-SCHEMA` | serialize defaults: {e} | — |
@@ -80,6 +83,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CHECK-TS` | the typecheck binary reported errors | Fix the reported type errors, or narrow the `check` config |
 | `CMP-CACHE` | 'use cache' function has no binding name | — |
 | `CMP-GUARD` | server-only `{ident}` from `{}` shipped into client chunk `{chunk}` | — |
+| `CMP-NAT-001` | framework.compilerBackend is 'native' but no healthy native compiler is available for {fw} | build oxide-cli with --features native-{fw} or set framework.compilerBackend to 'auto' or 'node' |
 | `CMP-PARSE` | fix the syntax error reported by the Oxc parser | Fix the syntax error the parser names |
 | `CMP-SECRET` | `process.env.{name}` is read in client module `{}`;                          this would ship the secret to the browser. Move the                          read to a server module or rename to `PUBLIC_{name}`. | — |
 | `CONTENT-TYPEGEN` | mkdir {}: {e} | — |
@@ -224,7 +228,6 @@ Defined by the spec for work packages that have not landed; no call site raises 
 | code | message | fix |
 | --- | --- | --- |
 | `BLD-409` | Build header unknown or expired (surfaced client-side as a reload) | Reload the page |
-| `CMP-NAT-001` | `compilerBackend: 'native'` but no healthy native compiler for the framework | Build with `--features native-<fw>` or set `compilerBackend` to `auto` or `node` |
 | `OX-SRC-001` | Search params failed `searchSchema` validation | Fix the URL or add defaults to the schema |
 | `PRM-001` | A route used a capability outside its declared permissions (F19) | Add it to `config.permissions` or remove the call |
 | `RFN-001` | Rust function library ABI version mismatch | Rebuild the user crate with the matching `oxide-rustfn` version |
