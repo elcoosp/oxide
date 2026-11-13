@@ -38,6 +38,10 @@ message = "failed to read {}: {e}"
 message = "`fonts.subset: 'used'` requires every route to be `static` (glyph-usage subsetting needs all text known at build), but the project has non-static routes"
 fix = "Use `latin` or `unicode-range`, or make all routes static"
 
+[AST-FNT-002]
+message = "`fonts.subset: 'used'` requires the `subset` feature, which is not compiled into this build of oxide-fw-assets"
+fix = "rebuild with `--features subset`, or drop `used` from `fonts.subset`"
+
 [AST-FONT]
 message = "skrifa parse failed: {e}"
 
