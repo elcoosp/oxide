@@ -83,6 +83,9 @@ pub struct OxideConfig {
     pub cache: CacheConfig,
     pub images: ImagesConfig,
     pub fonts: FontsConfig,
+    /// §V2-C07: the SVG optimizer section (the `svg.optimize` knob).
+    #[serde(default)]
+    pub svg: SvgConfig,
     pub i18n: I18nConfig,
     pub security: SecurityConfig,
     pub rules: Vec<crate::native_rule::NativeRule>,
@@ -414,6 +417,7 @@ impl Default for OxideConfig {
             cache: CacheConfig::default(),
             images: ImagesConfig::default(),
             fonts: FontsConfig::default(),
+            svg: SvgConfig::default(),
             i18n: I18nConfig::default(),
             security: SecurityConfig::default(),
             rules: Vec::new(),
@@ -898,6 +902,19 @@ pub struct FontsConfig {
     pub subset: Vec<String>,
     /// §16.2: font families to fetch/subset/self-host at build time.
     pub families: Vec<FontFamilyConfig>,
+}
+
+/// §V2-C07: the SVG optimizer section. The knob is opt-in — a build that
+/// did not set it ships every SVG document byte-identical (the assets
+/// default backend is the identity passthrough). With `optimize: true`
+/// the OXVG backend (compiled in via the assets crate's `svg-oxvg`
+/// feature) runs the correctness preset, and its output is held to the
+/// preservation rules (`AST-SVG-001` on a violation, the source kept).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct SvgConfig {
+    /// Opt in to the SVG optimizer (§V2-C07). Default off.
+    pub optimize: bool,
 }
 
 /// One font family to bundle at build (§16.2): a family name, the weights and
