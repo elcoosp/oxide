@@ -33,6 +33,7 @@ pub enum GenerateParamsResult {
 }
 
 /// Extract `generateParams` from a server module's source.
+#[must_use]
 pub fn extract_generate_params(source: &str) -> GenerateParamsResult {
     let Some(binding) = find_binding(source) else {
         return GenerateParamsResult::Absent;
@@ -323,10 +324,10 @@ mod tests {
 
     #[test]
     fn runtime_function_body_is_runtime() {
-        let src = r#"export const generateParams = async () => {
+        let src = r"export const generateParams = async () => {
             const posts = await db.query();
             return posts.map(p => ({ slug: p.slug }));
-        };"#;
+        };";
         match extract_generate_params(src) {
             GenerateParamsResult::Runtime { .. } => {}
             other => panic!("expected Runtime, got {other:?}"),
@@ -335,7 +336,7 @@ mod tests {
 
     #[test]
     fn runtime_call_in_array_is_runtime() {
-        let src = r#"export const generateParams = [{ slug: getDefault() }];"#;
+        let src = r"export const generateParams = [{ slug: getDefault() }];";
         match extract_generate_params(src) {
             GenerateParamsResult::Runtime { .. } => {}
             other => panic!("expected Runtime, got {other:?}"),
@@ -346,14 +347,14 @@ mod tests {
     fn empty_array_is_literal_empty() {
         let src = "export const generateParams = [];";
         match extract_generate_params(src) {
-            GenerateParamsResult::Literal(v) => assert!(v.is_empty()),
+            GenerateParamsResult::Literal(v) => assert_eq!(v, Vec::new()),
             other => panic!("expected Literal(empty), got {other:?}"),
         }
     }
 
     #[test]
     fn numeric_and_boolean_values_are_stringified() {
-        let src = r#"export const generateParams = [{ year: 2026, draft: false }];"#;
+        let src = r"export const generateParams = [{ year: 2026, draft: false }];";
         match extract_generate_params(src) {
             GenerateParamsResult::Literal(v) => {
                 assert_eq!(v[0].get("year").unwrap(), "2026");
@@ -365,7 +366,7 @@ mod tests {
 
     #[test]
     fn single_quoted_values_are_accepted() {
-        let src = r#"export const generateParams = [{ slug: 'hello' }];"#;
+        let src = r"export const generateParams = [{ slug: 'hello' }];";
         match extract_generate_params(src) {
             GenerateParamsResult::Literal(v) => assert_eq!(v[0].get("slug").unwrap(), "hello"),
             other => panic!("expected Literal, got {other:?}"),
