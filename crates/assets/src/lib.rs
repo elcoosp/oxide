@@ -41,6 +41,7 @@ pub mod image_jobs;
 mod images;
 mod lightningcss_backend;
 mod og_backend;
+pub mod svg;
 
 pub use font_metrics::{
     FontMetric, MetricOverrides, TIMES_NEW_ROMAN, metric_overrides, read_metrics,
@@ -52,6 +53,13 @@ pub use i18n::{
 pub use image_jobs::{ImageCas, ImageJobs};
 pub use lightningcss_backend::LightningCssBackend;
 pub use og_backend::SvgOgBackend;
+#[cfg(feature = "svg-oxvg")]
+#[cfg_attr(docsrs, doc(cfg(feature = "svg-oxvg")))]
+pub use svg::OxvgSvg;
+pub use svg::{
+    IdentitySvg, SvgOptimizer, assert_preserved, optimize_for_build, referenced_svg_ids,
+    select_optimizer, svg_cas_key,
+};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
