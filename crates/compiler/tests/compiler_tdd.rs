@@ -1,9 +1,9 @@
 //! TDD suite for oxide-fw-compiler (spec §6.2–6.4, §9.3–9.4, §19.4).
 
 use oxide_fw_compiler::{
-    DirectiveKind, Env, ScannerTransformer, TransformInput, Transformer, guard_server_only,
-    inject_hmr_boundary, scan_import_spans, scan_imports, server_fn_id, transform_server_fn_stubs,
-    transform_use_cache,
+    Directive, DirectiveKind, Env, ImportScan, ImportSpan, ScannerTransformer, ServerFnStub,
+    TransformInput, Transformer, guard_server_only, inject_hmr_boundary, scan_import_spans,
+    scan_imports, server_fn_id, transform_server_fn_stubs, transform_use_cache,
 };
 use oxide_fw_diagnostics::Diagnostic;
 use std::collections::BTreeMap;
@@ -16,13 +16,13 @@ fn lexer_ignores_imports_in_strings_and_templates() {
 const t = `import z from 'w'`;
 const u = 'import q from "w"';
 "#;
-    assert_eq!(scan_imports(code), Default::default());
+    assert_eq!(scan_imports(code), ImportScan::default());
 }
 
 #[test]
 fn lexer_ignores_imports_in_comments() {
     let code = "// import x from 'y'\n/* import q from 'z' */\nconst a = 1;\n";
-    assert_eq!(scan_imports(code), Default::default());
+    assert_eq!(scan_imports(code), ImportScan::default());
 }
 
 #[test]
@@ -35,14 +35,14 @@ fn lexer_regex_literals_do_not_confuse_the_scanner() {
 
 #[test]
 fn scan_all_static_import_forms() {
-    let code = r#"import './polyfill';
+    let code = r"import './polyfill';
 import react from 'react';
 import { a, b as c } from './lib';
 import * as ns from './ns';
 export { helper } from './helper';
 export * from './wild';
 export * as alias from './alias';
-"#;
+";
     let scan = scan_imports(code);
     for spec in [
         "./polyfill",
@@ -55,7 +55,7 @@ export * as alias from './alias';
     ] {
         assert!(scan.imports.iter().any(|s| s == spec), "missing {spec}");
     }
-    assert!(scan.dynamic_imports.is_empty());
+    assert_eq!(scan.dynamic_imports, Vec::<String>::new());
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn scan_dynamic_imports() {
     let scan = scan_imports(code);
     // `./c?raw` carries a query → asset query, not a dynamic module import
     assert_eq!(scan.dynamic_imports, vec!["./a", "./b"]);
-    assert!(scan.imports.is_empty());
+    assert_eq!(scan.imports, Vec::<String>::new());
     assert_eq!(scan.asset_queries, vec!["./c?raw".to_string()]);
 }
 
@@ -121,7 +121,7 @@ fn server_fn_id_varies_by_secret_and_export() {
 
 #[test]
 fn use_cache_named_function_hoists_tags_and_life() {
-    let code = r#"import { db } from './db.server';
+    let code = r"import { db } from './db.server';
 
 async function getPosts() {
   'use cache';
@@ -129,7 +129,7 @@ async function getPosts() {
   cacheLife({ revalidate: 60 });
   return db.getPosts();
 }
-"#;
+";
     let (out, directives) = transform_use_cache(code, "routes/page.server.ts").unwrap();
     assert!(!out.contains("'use cache'"));
     assert!(out.contains("__oxide_cache("));
@@ -152,11 +152,11 @@ async function getPosts() {
 
 #[test]
 fn use_cache_exported_arrow_function() {
-    let code = r#"export const bar = async () => {
+    let code = r"export const bar = async () => {
   'use cache';
   return fetch('/x');
 };
-"#;
+";
     let (out, directives) = transform_use_cache(code, "m.ts").unwrap();
     assert!(out.contains("export const bar = __oxide_cache("));
     assert!(out.contains("\"m.ts\", \"bar\""));
@@ -212,12 +212,12 @@ fn use_cache_unmarked_functions_untouched() {
     let (out, directives) = transform_use_cache(code, "m.ts").unwrap();
     // string is not the first *statement*, so nothing is rewritten
     assert_eq!(out, code);
-    assert!(directives.is_empty());
+    assert_eq!(directives, Vec::<Directive>::new());
 }
 
 // ------------------------------------------------------ server-fn stub pass
 
-const SERVER_FN_SRC: &str = r#"import { serverFn } from '@oxide-fw/core/server';
+const SERVER_FN_SRC: &str = r"import { serverFn } from '@oxide-fw/core/server';
 
 export const addToCart = serverFn(async (productId: string) => {
   return db.add(productId);
@@ -226,7 +226,7 @@ export const addToCart = serverFn(async (productId: string) => {
 export const checkout = serverFn(async function () {
   return db.checkout();
 });
-"#;
+";
 
 #[test]
 fn stubs_client_emit_fetch_stub_per_export() {
@@ -306,7 +306,10 @@ fn guard_clean_graph_has_no_diagnostics() {
     graph.insert("a.ts".to_string(), vec![]);
     let mut servers = BTreeMap::new();
     servers.insert("db.server.ts".to_string(), true);
-    assert!(guard_server_only(&graph, &servers).is_empty());
+    assert_eq!(
+        guard_server_only(&graph, &servers),
+        Vec::<Diagnostic>::new()
+    );
 }
 
 #[test]
@@ -399,7 +402,7 @@ fn hmr_is_idempotent() {
 
 // ---------------------------------------------------- ScannerTransformer e2e
 
-const PAGE_SERVER: &str = r#"import { db } from './db.server';
+const PAGE_SERVER: &str = r"import { db } from './db.server';
 import { serverFn } from '@oxide-fw/core/server';
 
 export const getPosts = serverFn(async () => {
@@ -411,7 +414,7 @@ export async function cachedCount() {
   cacheTag('posts');
   return db.count();
 }
-"#;
+";
 
 #[test]
 fn transformer_page_server_ssr_end_to_end() {
@@ -450,7 +453,7 @@ fn transformer_page_server_ssr_end_to_end() {
     assert!(out.code.contains("__oxide_fn_ids"));
     // dev boundary not injected into server modules
     assert!(!out.code.contains("import.meta.hot"));
-    assert!(out.diagnostics.is_empty());
+    assert_eq!(out.diagnostics, Vec::<Diagnostic>::new());
 }
 
 #[test]
@@ -486,8 +489,8 @@ fn transformer_client_page_dev_injects_refresh() {
     let out = ScannerTransformer.transform(&input).unwrap();
     assert!(out.scan.imports.contains(&"./Button".to_string()));
     assert!(out.scan.imports.contains(&"./cart.server".to_string()));
-    assert!(out.directives.is_empty());
-    assert!(out.server_fns.is_empty());
+    assert_eq!(out.directives, Vec::<Directive>::new());
+    assert_eq!(out.server_fns, Vec::<ServerFnStub>::new());
     assert!(out.code.contains("__oxide_refresh(mod);"));
     assert!(out.code.starts_with("import { Button }"));
 }
@@ -496,8 +499,8 @@ fn transformer_client_page_dev_injects_refresh() {
 
 use oxide_fw_compiler::{OxcTransformer, TransformOutput};
 
-fn oxc_transform(input: TransformInput) -> TransformOutput {
-    OxcTransformer.transform(&input).unwrap()
+fn oxc_transform(input: &TransformInput) -> TransformOutput {
+    OxcTransformer.transform(input).unwrap()
 }
 
 #[test]
@@ -511,7 +514,7 @@ fn oxc_transformer_parses_valid_syntax_without_diagnostics() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
 }
 
@@ -526,7 +529,7 @@ fn oxc_transformer_surfaces_cmp_parse_on_syntax_error() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     assert!(
         out.diagnostics.iter().any(|d| d.code == "CMP-PARSE"),
         "expected CMP-PARSE diagnostic, got: {:?}",
@@ -547,7 +550,7 @@ fn oxc_transformer_scan_uses_ast_spans() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     for spec in ["./a", "./b", "./c", "./d"] {
         assert!(
             out.scan.imports.iter().any(|s| s == spec),
@@ -569,7 +572,7 @@ fn oxc_transformer_use_cache_directive_via_ast() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     assert_eq!(out.directives.len(), 1, "directives: {:?}", out.directives);
     assert_eq!(out.directives[0].name.as_deref(), Some("getPosts"));
     assert!(out.code.contains("__oxide_cache("));
@@ -588,7 +591,7 @@ fn oxc_transformer_use_cache_arrow_binding_via_ast() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     assert_eq!(out.directives.len(), 1);
     assert_eq!(out.directives[0].name.as_deref(), Some("loader"));
     assert!(out.code.contains("__oxide_cache("));
@@ -608,7 +611,7 @@ fn oxc_transformer_server_fn_client_stub_via_ast() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     assert_eq!(out.server_fns.len(), 1);
     assert_eq!(out.server_fns[0].export_name, "addToCart");
     assert_eq!(
@@ -631,7 +634,7 @@ fn oxc_transformer_server_fn_ssr_keeps_body_via_ast() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     assert_eq!(out.server_fns.len(), 1);
     assert!(out.code.contains("return db.checkout();"));
     assert!(out.code.contains("__oxide_register_fn("));
@@ -640,13 +643,13 @@ fn oxc_transformer_server_fn_ssr_keeps_body_via_ast() {
 
 #[test]
 fn oxc_transformer_use_cache_hoists_tags_and_life_via_ast() {
-    let code = r#"export async function getPosts() {
+    let code = r"export async function getPosts() {
   'use cache';
   cacheTag('posts');
   cacheLife({ revalidate: 60, swr: 30 });
   return db.getPosts();
 }
-"#;
+";
     let input = TransformInput {
         path: "routes/page.server.ts".into(),
         code: code.into(),
@@ -656,7 +659,7 @@ fn oxc_transformer_use_cache_hoists_tags_and_life_via_ast() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     assert_eq!(out.directives.len(), 1);
     assert_eq!(out.directives[0].name.as_deref(), Some("getPosts"));
     assert!(out.code.contains("__oxide_cache("), "output:\n{}", out.code);
@@ -703,7 +706,7 @@ fn oxc_transformer_use_cache_multiple_tags_via_ast() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     // NOTE: output now runs through `oxc_codegen` (lowering pass), which
     // normalises quote style and re-flows arrays. Assert on semantics: all
     // three tags must survive the transform, with the `tags:` option present.
@@ -724,12 +727,12 @@ fn oxc_transformer_use_cache_multiple_tags_via_ast() {
 
 #[test]
 fn oxc_transformer_use_cache_arrow_with_tags_via_ast() {
-    let code = r#"export const loader = async () => {
+    let code = r"export const loader = async () => {
   'use cache';
   cacheTag('home');
   return 42;
 };
-"#;
+";
     let input = TransformInput {
         path: "p.server.ts".into(),
         code: code.into(),
@@ -739,7 +742,7 @@ fn oxc_transformer_use_cache_arrow_with_tags_via_ast() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     // NOTE: output now runs through `oxc_codegen` (lowering pass), which
     // normalises quote style. Assert on semantics, not byte layout.
     assert!(out.code.contains("tags:"), "output:\n{}", out.code);
@@ -773,7 +776,7 @@ fn use_cache_non_literal_tag_becomes_a_thunk() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     // Codegen normalizes quote style, so assert on the shape: the thunk
     // takes the wrapped fn's parameter list and evaluates the tag
     // expression, keeping `slug` in scope.
@@ -808,7 +811,7 @@ fn use_cache_literal_tag_stays_a_plain_array() {
         dev: false,
         jsx_import_source: None,
     };
-    let out = oxc_transform(input);
+    let out = oxc_transform(&input);
     // Codegen normalizes `'home'` to `"home"`. Assert on the array shape,
     // accepting either quote style.
     assert!(
@@ -953,7 +956,7 @@ fn scan_star_without_from_does_not_hang() {
     // `export *` alone is invalid JS, but the scanner must not hang on it.
     let code = "export *;\n";
     let spans = scan_import_spans(code);
-    assert!(spans.is_empty());
+    assert_eq!(spans, Vec::<ImportSpan>::new());
 }
 
 #[test]
@@ -980,5 +983,5 @@ fn scan_reexport_with_from_still_works() {
 fn scan_export_default_does_not_hang() {
     let code = "export default function F() {}\n";
     let spans = scan_import_spans(code);
-    assert!(spans.is_empty());
+    assert_eq!(spans, Vec::<ImportSpan>::new());
 }
