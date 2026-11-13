@@ -68,6 +68,13 @@ name = "skew"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F10 serving pools: criterion bench for the per-request build-id
+# ROUTING (which pool serves this id) across the depth-8 pool.
+[[bench]]
+name = "pools"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 # V2-A02: exposes the criterion bench harness (bench-support feature). The
 # synthetic route fixtures for the `ctx_table` group live behind the same
