@@ -82,6 +82,7 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 
 - `framework.adapter` — `enum: `"react"` \| `"vue"` \| `"svelte"` \| `"solid"`` — default —: §7: the component dialect the adapter compiles (the loader in `page.server.ts` stays framework-neutral).
 - `framework.compiler` — `boolean` — default —: C01: the native compiler pass for the adapter. true prefers the native backend when its toolchain is healthy; the node backend is the fallback (C01 / `compilerBackend`).
+- `framework.compilerBackend` — `enum: `"auto"` \| `"native"` \| `"node"`` — default —: V2-C01 (D26): the compiler backend the precompile pass consults per file. `auto` (the default) picks a native compiler when one is compiled in and healthy and uses the Node tooling pool otherwise; `native` requires the native path and refuses with CMP-NAT-001 when no healthy backend is available; `node` always uses the pool. Overridable via `OXIDE_COMPILER_BACKEND`.
 - `framework.islands` — `object` — default —: §10.3 islands registry: component name → source file. The CLI emits a synthetic __boot__ client entry that imports each entry; `<Island chunk="X">` on a page resolves to X in this map.
 - `framework.name` — `string` — default —: §7: the framework adapter package the config exports (`@oxide-fw/react`, `@oxide-fw/vue`, ...).
 ### `i18n`
@@ -91,6 +92,7 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `i18n.strategy` — `enum: `"prefix"` \| `"prefix-except-default"` \| `"none"`` — default —: Locale routing strategy: `prefix` (always), `prefix-except-default` (omit the default locale), `none` (no path prefix; cookie/Accept-Language only).
 ### `images`
 
+- `images.avifSpeed` — `integer` — default `6`: V2-C09: the AVIF encoder speed (ravif's `with_speed`, 1..=10 — higher is faster at lower quality; the default is 6, the documented middle rate). Validated at load (`CFG-AVIF`).
 - `images.formats` — `string[]` — default —: §16.1: the encodings `/_oxide/image` emits, in preference order (avif via ravif).
 - `images.maxConcurrency` — `integer` — default `4`: §16.1: maximum concurrent rasterizations. Each transform is CPU-bound; unbounded concurrency lets a few clients saturate every core.
 - `images.maxDimension` — `integer` — default `8192`: §16.1: largest accepted `w`/`h`. A user-supplied size is not trusted to allocate an arbitrarily large canvas.
