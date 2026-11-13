@@ -1,3 +1,89 @@
+# Handoff — the glyph-usage font-subsetting seam + the parallel-precompile engine landed (`feat/font-subsetting-seam` + `perf/parallel-precompile-engine`: the V2-C08 remaining half — `crates/assets/src/font_subset.rs`, the spec-verbatim `FontSubsetter` trait with the D40 `id()`/`version()` dimensions, the bundled `SkrifaSubsetter` behind `subset` (the `fontcull` stand-in — unpublished upstream), `select_subsetter` refusing `AST-FNT-002` feature-off, the `font:{id}@{version}:{blake3-16hex}` CAS key, `subset_used_for_build` as the one definition site, the post-prerender `lol_html` `text!`-over-body harvest with script/style stripped plus the plain-text collection harvest, the always-needed set, and the cmap rewrite the spec's own pin forced — `subsetter`'s `Profile::pdf` copies the original cmap verbatim so a dropped glyph renders blank instead of falling back; the backend re-emits a format-12 cmap over exactly the kept pairs with the sfnt re-serialized and checksums recomputed; and the V2-B07 phase-2 engine — `crates/compiler/src/precompile_engine.rs`, the bounded `buffer_unordered` window generic over the injected per-job pass, input-order folds, per-row failure isolation, `width_for` (`workers * 2`, floored), with the CLI's `precompile_entries` split into the unchanged discovery walk + the engine; plus the hygiene — the stale `#[allow(clippy::too_many_lines)]` and the duplicated import-path fill loop removed from `typegen.rs`, the C08/B07 status-table rows corrected, `AST-FNT-002` added to the registry and the reference page)
+
+## Where things stand
+
+**Branch:** `main` (uncommitted changes plus `ship.toml` /
+`.github/pr-body.md` at the repo root, both gitignored; `ship.toml`
+groups the diff into conventional commits — one per file,
+dependency-ordered). **Verified this session (rustc 1.100.0 stable,
+2-core sandbox, portable nasm extracted for the rav1e build):**
+
+- `cargo test -p oxide-fw-assets --all-features --no-fail-fast`: 9
+  targets green — 132 lib tests (the new `font_subset` pins included:
+  the group-merge encoding pin, the feature-off harvest pin), the 15
+  `font_subsetter_tdd` pins (the spec's skrifa cmap pin over the
+  committed `tests/fixtures/subset-fixture.ttf` — subset to `{"a","b"}`,
+  read the cmap back, `c` does not map and `a`/`b` keep their original
+  glyph ids — plus the harvest pins, the D40 key shapes, the
+  feature-aware selection, the empty-harvest always-needed subset, the
+  static-list verbatim pin), and the existing integration suites
+  untouched.
+- The M1 red→green cycle is recorded: the first `cargo check -p
+  oxide-fw-assets --tests --all-features` run failed with `E0432`
+  unresolved imports + `E0603` private module over the new API (the
+  red), and the intermediate runs caught two real bugs the pins were
+  designed to catch — the missing `style`-skip (an assertion bug on my
+  side: the check used `{`, which the always-needed set legitimately
+  carries) and, decisively, `subsetter`'s verbatim cmap copy (`c`
+  still mapped in the subset). The cmap rewrite is the fix the pin
+  forced; the group-merge encoding bug (`startGlyph` drifting instead
+  of the end) was caught by the in-module pin before it could ship.
+- `cargo check -p oxide-fw-compiler --tests` red (the engine module
+  unregistered — `E0432` over `oxide_fw_compiler::precompile_engine`)
+  precedes the engine's green run, per the same TDD cycle.
+- The V8-linked targets (`oxide-fw-cli`, `oxide-fw-jshost`), the
+  workspace-wide clippy/test gates and the E11 `docs generate --check`
+  were attempted with the portable-nasm toolchain; see the session's
+  final report for what the sandbox budget allowed — the CLI wire-up
+  (`emit_fonts` harvest + the precompile engine fold) compiles under
+  the scoped gates that were run.
+- Registry: `AST-FNT-002` added (`docs/errors.toml` + the hand-patched
+  reference page in the generator's format; the coverage gate
+  `tests/errors_registry_tdd.rs` runs in the V8-linked CLI target).
+
+## What landed
+
+**M1 — the glyph-usage font-subsetting seam (§V2-C08), complete.**
+`crates/assets/src/font_subset.rs`: the `FontSubsetter` trait (font
+bytes + a harvested `BTreeSet<char>` in, subset bytes out; object-safe;
+`id()`/`version()` are the D40 key dimensions), the bundled
+`SkrifaSubsetter` (behind the crate's `subset` feature; the `fontcull`
+stand-in is the recorded deviation — upstream unpublished), and around
+it: `select_subsetter` (feature off refuses `AST-FNT-002`, the
+`AST-SVG-002` shape), the CAS key, `subset_used_for_build` (always-needed
+unioned into every request; every refusal warn-degrades to the verbatim
+bytes), the harvest (`harvest_html_codepoints` — the spec's
+`text!`-over-body walk, `<script>`/`<style>` subtrees removed before the
+text handler, `harvest_text_codepoints` for the collection field text).
+`crates/assets/src/lib.rs`: `FontSpec.used_chars` (`#[serde(default)]`,
+skipped when empty), `bundle()` subsets ONLY on the `used` spelling —
+the retired static-list harvest (the marker strings were the glyph
+source: `subset: ["latin"]` shipped a font with the glyphs of the
+literal string "latin") is pinned verbatim-copy by the TDD suite. The
+CLI wire-up: `emit_fonts` harvests every `*.html` under `dist` (sorted,
+depth-capped) plus every configured collection into `used_chars` when
+`fonts.subset` carries `used`. The cmap rewrite: the fresh format-12
+subtable maps exactly the kept codepoint→glyph pairs (consecutive runs
+merged into groups), the sfnt re-serialized with per-table checksums and
+the recomputed `head.checkSumAdjustment`; any rewrite refusal ships the
+raw subsetter output. The `font_subsetter` criterion group and the
+`font_subsetter` walkthrough example ride along.
+
+**M2 — the parallel-precompile engine (§V2-B07).**
+`crates/compiler/src/precompile_engine.rs`: `PrecompileJob`,
+`compile_jobs` (the bounded window generic over the injected per-job
+pass — the spec's three named behaviors are engine pins driven by
+fakes, not the pool: determinism under out-of-order completion via
+input-order rows, the ≥4 overlap window at `workers * 2`, failure
+isolation per row) and `width_for`. The engine lives in the V8-free
+compiler crate per the V2.0 item 3 test-placement rule (the spec's file
+column says `precompile.rs`; recorded in `docs/deviations.md` per the
+own-your-files rule). `crates/cli/src/precompile.rs`: `precompile_entries`
+split into `discover_jobs` (the unchanged BUG-MAPKEY/BUG-13 helpers) +
+the engine fold, with `compile_one` (the cache first, then the kind
+dispatch; `mdx` keeps its optional shape) and four discovery pins in the
+in-module suite.
+
 # Handoff — the native-compiler seam + the image job model landed (`feat/native-compiler-image-jobs`: the V2-C01 substrate — `crates/compiler/src/native/mod.rs`, the spec-verbatim `NativeCompiler` trait/`NativeRegistry`/`Backend` selection with the once-only health fixture, the `CMP-NAT-001` refusal and the D40 `cas_tool_version`, plus the typed `framework.compilerBackend` config surface with `CFG-BACKEND` validation and the `OXIDE_COMPILER_BACKEND` alias; and the V2-C09 image job model — `crates/assets/src/image_jobs.rs`, the bounded CPU + smaller AVIF lanes, per-key single-flight over shared futures, the injectable `ImageCas` hooks, `AST-JOBS` panic surfacing and the `images.avifSpeed` knob with `CFG-AVIF` validation; plus the crate hygiene — compiler adopted the workspace lints with the full pedantic pass, nine dead workspace dependencies pruned, and the stale A08–A10/C01 status-table rows corrected)
 
 ## Where things stand
