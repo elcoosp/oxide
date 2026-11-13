@@ -657,6 +657,24 @@ pub struct StaticConfig {
     pub fallback: Option<String>,
 }
 
+/// V2-C01 (D26): the `framework.compilerBackend` switch — `auto` (the
+/// default) picks a healthy native compiler when one is compiled in and
+/// falls back to the Node tooling pool, `native` requires the native path
+/// (`CMP-NAT-001` otherwise) and `node` always uses the pool. Serialized
+/// lowercase to match the config-file spelling the TS side writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CompilerBackend {
+    /// Pick a healthy compiled-in native compiler, else the Node pool.
+    #[default]
+    Auto,
+    /// Require the native path; refuse with `CMP-NAT-001` when no healthy
+    /// native compiler is available.
+    Native,
+    /// Always the Node tooling pool (the one-release escape hatch).
+    Node,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FrameworkConfig {
@@ -664,6 +682,21 @@ pub struct FrameworkConfig {
     /// `react | vue | svelte | solid`
     pub adapter: Option<String>,
     pub compiler: Option<bool>,
+    /// V2-C01 (D26): the compiler backend the precompile pass consults
+    /// per file. `auto` (the default) picks a native compiler when one is
+    /// compiled in **and** healthy, and uses the Node tooling pool
+    /// otherwise — a broken backend must never surface as a hard failure
+    /// the config author did not ask for. `native` requires the native
+    /// path and refuses with `CMP-NAT-001` when no healthy backend is
+    /// available; `node` is the one-release escape hatch that always uses
+    /// the pool. The engine-side copy of this switch lives in
+    /// `oxide_fw_compiler::native::Backend`; the two shapes are pinned by
+    /// their own crates and mapped at the call site (the recorded F04
+    /// ruling: config → engine conversion is wiring, not a dependency).
+    /// A bad spelling fails the load with `CFG-BACKEND` (the raw-`Value`
+    /// validation pass runs before the typed parse).
+    #[serde(default)]
+    pub compiler_backend: CompilerBackend,
     /// §10.3 islands registry: component name → source path (relative to
     /// the project root). The build emits a synthetic `__boot__` client
     /// chunk that statically imports every island here and registers them
@@ -816,6 +849,13 @@ pub struct ImagesConfig {
     /// to allocate an arbitrarily large canvas.
     #[serde(default = "default_image_max_dimension")]
     pub max_dimension: u32,
+    /// V2-C09: the AVIF encoder speed (ravif's `with_speed`, 1..=10 —
+    /// higher is faster at lower quality; the spec default is 6, the
+    /// documented middle rate). A value outside 1..=10 fails the load
+    /// with `CFG-AVIF` (the raw-`Value` validation pass runs before the
+    /// typed parse).
+    #[serde(default = "default_avif_speed")]
+    pub avif_speed: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -831,6 +871,7 @@ impl Default for ImagesConfig {
         Self {
             formats: vec!["avif".into(), "webp".into()],
             remote_patterns: Vec::new(),
+            avif_speed: 6,
             max_concurrency: default_image_concurrency(),
             max_dimension: default_image_max_dimension(),
         }
@@ -843,6 +884,11 @@ fn default_image_concurrency() -> usize {
 
 fn default_image_max_dimension() -> u32 {
     8192
+}
+
+/// §V2-C09: the `images.avifSpeed` default — ravif's documented middle rate.
+fn default_avif_speed() -> u8 {
+    6
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
