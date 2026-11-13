@@ -371,7 +371,6 @@ fn push_route_data(dts: &mut String, rows: &[RouteRow]) {
 /// with its resolved server module and the V2-E02 search dimension. The
 /// server path resolves from the entry's OWN file (re-finding by encoded
 /// pattern could grab a same-pattern sibling — SPEC-09 follow-up).
-#[allow(clippy::too_many_lines)]
 fn build_rows(tree: &RouteTree, routes_root: Option<&Path>, types_dir: &Path) -> Vec<RouteRow> {
     // Deterministic nav routes: URL-addressable entries sorted by (pattern, id).
     let mut nav: Vec<&RouteEntry> = tree.entries.iter().filter(|e| e.matchable()).collect();
@@ -419,12 +418,6 @@ fn build_rows(tree: &RouteTree, routes_root: Option<&Path>, types_dir: &Path) ->
     }
     // The import path needs the types dir (resolved below), so it is
     // filled after `types_dir` exists.
-    for row in &mut rows {
-        if row.search {
-            row.import_path = relative_import(types_dir, &row.server);
-        }
-    }
-
     for row in &mut rows {
         if row.search {
             row.import_path = relative_import(types_dir, &row.server);
