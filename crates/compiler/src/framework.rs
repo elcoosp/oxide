@@ -9,6 +9,7 @@
 
 use crate::{Env, Result, err};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Framework {
@@ -20,6 +21,7 @@ pub enum Framework {
 }
 
 impl Framework {
+    #[must_use]
     pub fn from_extension(ext: &str) -> Self {
         match ext {
             "tsx" | "jsx" => Framework::React,
@@ -28,6 +30,7 @@ impl Framework {
             _ => Framework::None,
         }
     }
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Framework::React => "react",
@@ -39,6 +42,7 @@ impl Framework {
     }
     /// Which framework's compiler lives in the tooling pool vs. the native Oxc
     /// path (§6.3 table).
+    #[must_use]
     pub fn requires_tooling_pool(&self) -> bool {
         matches!(self, Framework::Vue | Framework::Svelte | Framework::Solid)
     }
@@ -64,6 +68,13 @@ pub struct FrameworkOutput {
 /// Framework compiler trait (D4 isolation point).
 pub trait FrameworkCompiler: Send + Sync {
     fn framework(&self) -> Framework;
+    /// Compile one framework input.
+    ///
+    /// # Errors
+    ///
+    /// When the input cannot compile in-process — the `ToolingDispatcher`
+    /// arm returns `CMP-FRAMEWORK` (the pipeline's signal to route through
+    /// the tooling pool), and a backend may surface its own diagnostic.
     fn compile(&self, input: &FrameworkInput) -> Result<FrameworkOutput>;
 }
 
@@ -97,7 +108,8 @@ impl FrameworkCompiler for ReactInline {
         code.push_str(&input.code);
         if self.refresh && input.dev && !input.is_server_module {
             for name in top_level_function_names(&input.code) {
-                code.push_str(&format!("\n$RefreshReg$({name}, \"{name}\");"));
+                // `write!` on a `String` never fails; the discard documents that.
+                let _ = write!(code, "\n$RefreshReg$({name}, \"{name}\");");
             }
         }
         Ok(FrameworkOutput {
@@ -137,6 +149,10 @@ pub struct ToolingDispatcher {
 }
 
 impl ToolingDispatcher {
+    ///
+    /// # Errors
+    ///
+    /// `CMP-FRAMEWORK` when the framework does not use the tooling pool.
     pub fn for_framework(f: Framework) -> Result<Self> {
         if !f.requires_tooling_pool() {
             return Err(err(
@@ -146,6 +162,7 @@ impl ToolingDispatcher {
         }
         Ok(Self { framework: f })
     }
+    #[must_use]
     pub fn module_and_export(&self) -> (&'static str, &'static str) {
         match self.framework {
             Framework::Vue => ("@vue/compiler-sfc", "parse"),
@@ -172,14 +189,20 @@ impl FrameworkCompiler for ToolingDispatcher {
 /// Pick a compiler for a path. Vue and Svelte return a `ToolingDispatcher`
 /// whose `compile` errors — that error is the signal to the pipeline to route
 /// through the tooling pool. React/Solid use the inline Oxc path.
+///
+/// # Panics
+///
+/// Never for a real extension: `for_framework` was just shown to succeed
+/// for the Vue/Svelte/Solid arms it is called with (the `unwrap` guards a
+/// `from_extension` dispatch that stays in sync by construction).
+#[must_use]
 pub fn compiler_for(path: &str) -> Box<dyn FrameworkCompiler> {
     let ext = path.rsplit('.').next().unwrap_or("");
     match Framework::from_extension(ext) {
-        Framework::React => Box::new(ReactInline::default()),
         Framework::Vue | Framework::Svelte | Framework::Solid => {
             Box::new(ToolingDispatcher::for_framework(Framework::from_extension(ext)).unwrap())
         }
-        Framework::None => Box::new(ReactInline::default()),
+        Framework::React | Framework::None => Box::new(ReactInline::default()),
     }
 }
 
@@ -245,7 +268,7 @@ mod tests {
         let e = vue
             .compile(&FrameworkInput {
                 path: "App.vue".into(),
-                code: "".into(),
+                code: String::new(),
                 env: Env::Client,
                 dev: false,
                 is_server_module: false,
