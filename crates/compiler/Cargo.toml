@@ -18,11 +18,13 @@ serde_json = { workspace = true }
 # V2-F16: spans on the inference seams (the parse-failure fallback path and
 # the collect-all reason walk are traceable build-time events).
 tracing = { workspace = true }
-regex = { workspace = true }
 thiserror = { workspace = true }
 # server_fn_id content hashing (§9.4, D6) — workspace-pinned (D6 mandates blake3 everywhere)
 blake3 = { workspace = true }
-oxc = { workspace = true }
+# V2-C01: the sub-crates below carry every oxc entry point this crate uses;
+# the `oxc` umbrella is NOT listed (cargo's unused-dependencies lint flagged
+# it: nothing imports `oxc::`, and pulling the umbrella pinned the full
+# feature set into every build that links this crate).
 oxc_parser = { workspace = true }
 oxc_ast = { workspace = true }
 oxc_span = { workspace = true }
@@ -31,6 +33,25 @@ oxc_semantic = { workspace = true }
 oxc_transformer = { workspace = true }
 oxc_codegen = { workspace = true }
 oxc_sourcemap = "9.0.0"
+
+[dev-dependencies]
+# V2-C01: criterion harness for the `native` bench (the pick/health cache
+# hot path). Opt-in via the bench-util feature so plain `cargo test` never
+# pays the criterion build (the V2-B09 pattern).
+criterion = { workspace = true }
+
+[features]
+# V2-C01: exposes the criterion bench harness for the native-registry
+# benches (same shape as `oxide-fw-dispatch`'s bench-util, V2-B09).
+bench-util = []
+
+[[bench]]
+name = "native"
+harness = false
+required-features = ["bench-util"]
+
+[lints]
+workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
