@@ -14,6 +14,7 @@
 
 use crate::precompile_cache::{PrecompileCache, PrecompileKey};
 use anyhow::Context;
+use oxide_fw_compiler::precompile_engine::{PrecompileJob, compile_jobs, width_for};
 use oxide_fw_jshost::{CallInput, EntryRef, Pool};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -293,8 +294,116 @@ where
     Ok(js)
 }
 
-/// Walk the entry set and precompile every reachable `.vue` / `.svelte` file.
-/// Returns a `path → JS` map ready for `BundleOptions::precompiled`.
+/// The compile kind a discovered file routes to (§V2-B07 phase 1): the
+/// Solid JSX compiler is `babel-preset-solid`, not Oxc's automatic
+/// runtime — its output is `ssrElement`/template calls, not `jsx()`
+/// factories. Route `.tsx`/`.jsx` through it when the project declares
+/// the Solid adapter.
+fn compile_kind(ext: &str, framework: Option<&str>) -> Option<&'static str> {
+    match ext {
+        "vue" => Some("vue"),
+        "svelte" => Some("svelte"),
+        "mdx" => Some("mdx"),
+        "tsx" | "jsx" if framework == Some("solid") => Some("solid"),
+        _ => None,
+    }
+}
+
+/// §V2-B07 phase 1: the synchronous discovery walk. Every file the entry
+/// set reaches (transitively through non-JS imports), with its source
+/// text in hand and its compile kind resolved — no pool calls. The walk
+/// helpers are the existing ones (the BUG-MAPKEY normalization, the
+/// BUG-13 span scanner), unchanged. Deterministic: the queue is seeded
+/// from the BTreeMap-ordered entries and every level is read in order.
+fn discover_jobs(
+    entries: &BTreeMap<String, PathBuf>,
+    framework: Option<&str>,
+) -> Vec<PrecompileJob> {
+    let mut jobs: Vec<PrecompileJob> = Vec::new();
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut queue: VecDeque<PathBuf> = entries.values().cloned().collect();
+    while let Some(path) = queue.pop_front() {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        // Always scan for imports, so SFC→SFC chains are followed.
+        for spec in scan_import_specs(&source) {
+            if let Some(dep) = resolve_relative(&path, &spec) {
+                queue.push_back(dep);
+            }
+        }
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if let Some(kind) = compile_kind(ext, framework) {
+            jobs.push(PrecompileJob { path, kind, source });
+        }
+    }
+    jobs
+}
+
+/// §V2-B07 phase 2's per-job pass — the spec's `compile_one`: the cache
+/// consulted first (the CAS short-circuit), then the kind dispatch over
+/// the existing pool compilers. `mdx` keeps its optional shape: a compile
+/// that yields no JS adds no row (`Ok(None)`).
+async fn compile_one(
+    pool: &Arc<dyn Pool>,
+    job: &PrecompileJob,
+    svelte_generate: &str,
+    cache: Option<&PrecompileCache>,
+    tool_version: &str,
+) -> anyhow::Result<Option<String>> {
+    let PrecompileJob { path, kind, source } = job;
+    match *kind {
+        "solid" => {
+            let ssr = svelte_generate == "ssr";
+            let key = cache_key_for(path, source, "solid", svelte_generate, tool_version);
+            cached_compile(cache, key, || compile_solid(pool, path, source, ssr))
+                .await
+                .map(Some)
+        }
+        "vue" => {
+            let key = cache_key_for(path, source, "vue", svelte_generate, tool_version);
+            cached_compile(cache, key, || compile_vue(pool, path, source))
+                .await
+                .map(Some)
+        }
+        "svelte" => {
+            let key = cache_key_for(path, source, "svelte", svelte_generate, tool_version);
+            cached_compile(cache, key, || {
+                compile_svelte(pool, path, source, svelte_generate)
+            })
+            .await
+            .map(Some)
+        }
+        "mdx" => {
+            // SPEC-16-C / §5.4: compile via @mdx-js/mdx in the tooling
+            // pool, wrapped in the precompile cache so a warm build
+            // reuses the compiled output instead of re-invoking the JS
+            // compiler on every run.
+            let key = cache_key_for(path, source, "mdx", svelte_generate, tool_version);
+            cached_compile_optional(cache, key, || async { compile_mdx(pool, path).await }).await
+        }
+        // Discovery only produces the kinds above; the catch-all keeps
+        // the match total without an unreachable path.
+        _ => Ok(None),
+    }
+}
+
+/// Walk the entry set and precompile every reachable `.vue` / `.svelte` /
+/// `.mdx` file (and Solid's `.tsx`/`.jsx` when the project declares the
+/// Solid adapter). Returns a `path → JS` map ready for
+/// `BundleOptions::precompiled`.
+///
+/// §V2-B07: the walk is two phases — a synchronous discovery pass (no
+/// pool calls) and a bounded-concurrency compile of the independent jobs
+/// through the V8-free engine (`oxide-fw-compiler::precompile_engine`),
+/// so the tooling pool's workers stop sitting idle while the walk awaits
+/// each compile in turn. The window is the spec's
+/// `pool.stats().workers * 2`; the output map is deterministic (input
+/// order folded into the BTreeMap) and the pass stays best-effort per
+/// file (§6.3): a compile failure warns and drops its own row only.
 pub async fn precompile_entries(
     pool: Option<&Arc<dyn Pool>>,
     entries: &BTreeMap<String, PathBuf>,
@@ -306,94 +415,30 @@ pub async fn precompile_entries(
     let Some(pool) = pool else {
         return BTreeMap::new();
     };
-    let mut out: BTreeMap<PathBuf, String> = BTreeMap::new();
-    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
-    let mut queue: VecDeque<PathBuf> = entries.values().cloned().collect();
-
-    while let Some(path) = queue.pop_front() {
-        if !seen.insert(path.clone()) {
-            continue;
-        }
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let Ok(source) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-
-        // Always scan for imports, so SFC→SFC chains are followed.
-        for spec in scan_import_specs(&source) {
-            if let Some(dep) = resolve_relative(&path, &spec) {
-                queue.push_back(dep);
+    let jobs = discover_jobs(entries, framework);
+    let width = width_for(pool.stats().workers);
+    let pool_ref = Arc::clone(pool);
+    let results = compile_jobs(jobs, width, |job| {
+        let pool = Arc::clone(&pool_ref);
+        async move { compile_one(&pool, &job, svelte_generate, cache, tool_version).await }
+    })
+    .await;
+    let mut out = BTreeMap::new();
+    for (path, result) in results {
+        match result {
+            Ok(Some(js)) if !js.is_empty() => {
+                out.insert(path, js);
             }
-        }
-
-        // §6.3: Solid's JSX compiler is `babel-preset-solid`, not Oxc's
-        // automatic runtime — its output is `ssrElement`/template calls,
-        // not `jsx()` factories. Route `.tsx`/`.jsx` through it when the
-        // project declares the Solid adapter.
-        if matches!(ext, "tsx" | "jsx") && framework == Some("solid") {
-            let ssr = svelte_generate == "ssr";
-            let key = cache_key_for(&path, &source, "solid", svelte_generate, tool_version);
-            match cached_compile(cache, key, || compile_solid(pool, &path, &source, ssr)).await {
-                Ok(js) => {
-                    out.insert(path, js);
-                }
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "solid precompile failed");
-                }
+            Ok(Some(js)) => {
+                // A defensive empty row: not produced by any kind today,
+                // but an empty module must not shadow the raw source.
+                let _ = js;
+                tracing::warn!(path = %path.display(), "precompile produced empty JS; skipped");
             }
-            continue;
-        }
-        match ext {
-            "vue" => {
-                let key = cache_key_for(&path, &source, "vue", svelte_generate, tool_version);
-                match cached_compile(cache, key, || compile_vue(pool, &path, &source)).await {
-                    Ok(js) => {
-                        // Compiled JS may itself import other .vue files (rare
-                        // but possible via `defineAsyncComponent`); the scan
-                        // above already covered the pre-compile source.
-                        out.insert(path, js);
-                    }
-                    Err(e) => {
-                        tracing::warn!(path = %path.display(), error = %e, "vue precompile failed");
-                    }
-                }
+            Ok(None) => { /* an mdx file that compiles to nothing adds no row */ }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "framework precompile failed");
             }
-            "svelte" => {
-                let key = cache_key_for(&path, &source, "svelte", svelte_generate, tool_version);
-                match cached_compile(cache, key, || {
-                    compile_svelte(pool, &path, &source, svelte_generate)
-                })
-                .await
-                {
-                    Ok(js) => {
-                        out.insert(path, js);
-                    }
-                    Err(e) => {
-                        tracing::warn!(path = %path.display(), error = %e, "svelte precompile failed");
-                    }
-                }
-            }
-            "mdx" => {
-                // SPEC-16-C / §5.4: compile via @mdx-js/mdx in the
-                // tooling pool, wrapped in the precompile cache so a
-                // warm build reuses the compiled output instead of
-                // re-invoking the JS compiler on every run.
-                let key = cache_key_for(&path, &source, "mdx", svelte_generate, tool_version);
-                match cached_compile_optional(cache, key, || async {
-                    compile_mdx(pool, &path).await
-                })
-                .await
-                {
-                    Ok(Some(js)) => {
-                        out.insert(path, js);
-                    }
-                    Ok(None) => { /* empty */ }
-                    Err(e) => {
-                        tracing::warn!(path = %path.display(), error = %e, "mdx compile failed")
-                    }
-                }
-            }
-            _ => { /* JS/TS/TSX handled by the bundler's Oxc lowering */ }
         }
     }
     out
@@ -479,5 +524,122 @@ mod bug_mapkey_tests {
         assert!(resolve_relative(&page, "vue").is_none());
         assert!(resolve_relative(&page, "@oxide-fw/core").is_none());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    //! §V2-B07 phase 1: the discovery walk's own pins. The walk is pure
+    //! (no pool), so these run without a worker; the parallel-compile
+    //! semantics they feed live in the V8-free engine
+    //! (`crates/compiler/tests/precompile_engine_tdd.rs`).
+
+    use super::*;
+
+    /// An entry page importing two components, one of which imports a
+    /// third — the transitive chain discovery must follow.
+    fn write_chain(root: &std::path::Path) -> std::path::PathBuf {
+        std::fs::create_dir_all(root.join("src/routes")).unwrap();
+        std::fs::create_dir_all(root.join("src/components")).unwrap();
+        std::fs::write(
+            root.join("src/components/inner.vue"),
+            "<template><i/></template>",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/components/outer.svelte"),
+            "<script>import './inner.vue';</script><p>o</p>",
+        )
+        .unwrap();
+        let page = root.join("src/routes/index/page.vue");
+        std::fs::write(
+            &page,
+            "<script>import '../components/outer.svelte';</script><template><p/></template>",
+        )
+        .unwrap();
+        page
+    }
+
+    #[test]
+    fn discovery_follows_sfc_import_chains() {
+        let tmp = tempfile::tempdir().unwrap();
+        let page = write_chain(tmp.path());
+        let mut entries = BTreeMap::new();
+        entries.insert("routes/index".to_string(), page);
+
+        let jobs = discover_jobs(&entries, None);
+        let paths: Vec<&std::path::Path> = jobs.iter().map(|j| j.path.as_path()).collect();
+        assert!(paths.contains(&tmp.path().join("src/routes/index/page.vue").as_path()));
+        assert!(paths.contains(&tmp.path().join("src/components/outer.svelte").as_path()));
+        assert!(paths.contains(&tmp.path().join("src/components/inner.vue").as_path()));
+    }
+
+    #[test]
+    fn discovery_marks_the_compilable_kinds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src/routes")).unwrap();
+        std::fs::create_dir_all(root.join("src/components")).unwrap();
+        std::fs::write(root.join("src/routes/index/page.vue"), "<template />").unwrap();
+        std::fs::write(root.join("src/components/a.svelte"), "<p/>").unwrap();
+        std::fs::write(root.join("src/components/b.mdx"), "# x").unwrap();
+        std::fs::write(root.join("src/components/plain.ts"), "export {}").unwrap();
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "routes/index".to_string(),
+            root.join("src/routes/index/page.vue"),
+        );
+
+        let jobs = discover_jobs(&entries, None);
+        let by_name: std::collections::BTreeMap<String, &str> = jobs
+            .iter()
+            .map(|j| {
+                (
+                    j.path.file_name().unwrap().to_string_lossy().into_owned(),
+                    j.kind,
+                )
+            })
+            .collect();
+        assert_eq!(by_name.get("page.vue"), Some(&"vue"));
+        assert_eq!(by_name.get("a.svelte"), Some(&"svelte"));
+        assert_eq!(by_name.get("b.mdx"), Some(&"mdx"));
+        assert!(
+            !by_name.contains_key("plain.ts"),
+            "plain TS is the bundler's Oxc lowering, not a precompile kind"
+        );
+    }
+
+    #[test]
+    fn discovery_routes_solid_tsx_only_when_the_project_declares_solid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src/routes")).unwrap();
+        let tsx = root.join("src/routes/island.tsx");
+        std::fs::write(&tsx, "export default () => null;").unwrap();
+        let mut entries = BTreeMap::new();
+        entries.insert("routes/island".to_string(), tsx.clone());
+
+        assert!(discover_jobs(&entries, Some("react")).is_empty());
+        let solid = discover_jobs(&entries, Some("solid"));
+        assert_eq!(solid.len(), 1);
+        assert_eq!(solid[0].kind, "solid");
+    }
+
+    #[test]
+    fn discovery_is_deterministic_and_dedupes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let page = write_chain(tmp.path());
+        // Both entries reach the same component set.
+        let mut entries = BTreeMap::new();
+        entries.insert("routes/index".to_string(), page.clone());
+        entries.insert("routes/index-again".to_string(), page);
+
+        let first = discover_jobs(&entries, None);
+        let second = discover_jobs(&entries, None);
+        assert_eq!(first, second, "two runs, identical jobs");
+        let mut paths: Vec<&std::path::Path> = first.iter().map(|j| j.path.as_path()).collect();
+        paths.sort();
+        paths.dedup();
+        assert_eq!(paths.len(), first.len(), "no duplicate jobs");
     }
 }
