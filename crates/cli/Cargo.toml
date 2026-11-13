@@ -24,6 +24,11 @@ bench-util = []
 # `/_oxide/search` arm alongside the build-side emission hook.
 search = ["dep:oxide-fw-search", "oxide-fw-server/search"]
 
+# V2-C07: the OXVG SVG optimizer backend, forwarded to the assets crate
+# (the `svg.optimize` knob refuses with `AST-SVG-002` without it — the
+# refusal names this flag).
+svg-oxvg = ["oxide-fw-assets/svg-oxvg"]
+
 [[bench]]
 name = "perf_bisect"
 harness = false
