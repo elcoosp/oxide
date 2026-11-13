@@ -23,6 +23,7 @@ use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType};
 use oxide_fw_diagnostics::Diagnostic;
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 /// Oxc-backed transformer (D4). Parse errors surface as `CMP-PARSE` diagnostics;
@@ -46,14 +47,15 @@ impl Transformer for OxcTransformer {
                 let msg = e.message.to_string();
                 let mut d = Diagnostic::error("CMP-PARSE", msg)
                     .with_fix("fix the syntax error reported by the Oxc parser");
-                if let Some(span) = e.labels.first().map(|l| l.span()) {
+                if let Some(l) = e.labels.first() {
+                    let span = l.span();
                     let start = span.start as usize;
                     // Byte offset -> 1-based (line, column). Column is a
                     // character count within the line, not a byte count, so
                     // a multi-byte character does not shift the caret.
                     let before = &input.code[..start.min(input.code.len())];
                     let line = before.matches('\n').count() + 1;
-                    let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
                     let col = before[line_start..].chars().count() + 1;
                     d = d.at(oxidation_location(&input.path, line, col));
                     let frame =
@@ -97,7 +99,7 @@ impl Transformer for OxcTransformer {
         let mut server_fns: Vec<ServerFnStub> = Vec::new();
         let server = is_server_module_path(&input.path);
         if server && input.env == Env::Ssr {
-            let (c, d) = ast_use_cache(&parsed.program, &code, &input.path)?;
+            let (c, d) = ast_use_cache(&parsed.program, &code, &input.path);
             code = c;
             directives = d;
         }
@@ -108,7 +110,7 @@ impl Transformer for OxcTransformer {
                 &input.path,
                 input.env,
                 &input.build_secret,
-            )?;
+            );
             code = c;
             server_fns = f;
         }
@@ -142,6 +144,11 @@ impl Transformer for OxcTransformer {
 /// Lower TS/JSX to plain JS and produce a V3 sourcemap back to the original
 /// source. The map is `None` only if codegen chose not to emit one, which
 /// today cannot happen given we always set `source_map_path`.
+///
+/// # Errors
+///
+/// `CMP-PARSE` when the source fails to parse (the diagnostic carries the
+/// first error's line/column and a rendered code frame).
 pub fn lower_to_js(
     code: &str,
     lang: &'static str,
@@ -194,7 +201,7 @@ pub fn lower_to_js(
         .with_options(cg_options)
         .build(&program);
     let code = ret.code;
-    let map = ret.map.map(|m| m.into_owned_sourcemap());
+    let map = ret.map.map(oxc_sourcemap::SourceMap::into_owned_sourcemap);
     Ok((code, map))
 }
 
@@ -217,6 +224,11 @@ pub fn lower_to_js(
 /// invalidated when its module changes," which is a safe default and what the
 /// official Babel plugin does in the absence of a stable hook signature. A
 /// later phase can add the signature chain.
+///
+/// # Errors
+///
+/// Never in the current implementation — the signature keeps `Result` so
+/// a backend swap (D4) can surface parse diagnostics unchanged.
 pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String> {
     if !matches!(lang, "tsx" | "jsx") {
         return Ok(code.to_string());
@@ -349,7 +361,7 @@ pub fn inject_react_refresh(code: &str, lang: &str, path: &str) -> Result<String
         out.push_str("$RefreshReg$(");
         out.push_str(name);
         out.push_str(", ");
-        out.push_str(&format!("{:?}", stable_id));
+        let _ = write!(out, "{stable_id:?}");
         out.push_str(");\n");
     }
     Ok(out)
@@ -432,11 +444,7 @@ fn build_hook_key(body: &oxc_ast::ast::FunctionBody<'_>, code: &str) -> Option<S
                     let name = id.name.as_str();
                     if name.len() < 4
                         || !name.starts_with("use")
-                        || !name
-                            .chars()
-                            .nth(3)
-                            .map(|c| c.is_uppercase())
-                            .unwrap_or(false)
+                        || !name.chars().nth(3).is_some_and(char::is_uppercase)
                     {
                         continue;
                     }
@@ -460,11 +468,7 @@ fn build_hook_key(body: &oxc_ast::ast::FunctionBody<'_>, code: &str) -> Option<S
                 let name = id.name.as_str();
                 if name.len() < 4
                     || !name.starts_with("use")
-                    || !name
-                        .chars()
-                        .nth(3)
-                        .map(|c| c.is_uppercase())
-                        .unwrap_or(false)
+                    || !name.chars().nth(3).is_some_and(char::is_uppercase)
                 {
                     continue;
                 }
@@ -566,8 +570,7 @@ fn collect_components_for_sig(
             if let ExportDefaultDeclarationKind::FunctionDeclaration(f) = &e.declaration {
                 let name =
                     f.id.as_ref()
-                        .map(|i| i.name.to_string())
-                        .unwrap_or_else(|| "default".to_string());
+                        .map_or_else(|| "default".to_string(), |i| i.name.to_string());
                 walk(&name, f.body.as_deref(), stmt_end, code, out);
             }
         }
@@ -579,25 +582,21 @@ fn top_level_component_names(stmt: &Statement<'_>) -> Vec<String> {
     match stmt {
         Statement::FunctionDeclaration(f) => {
             f.id.as_ref()
-                .map(|id| vec![id.name.to_string()])
-                .unwrap_or_default()
+                .map_or_else(Default::default, |id| vec![id.name.to_string()])
         }
         Statement::ClassDeclaration(c) => {
             c.id.as_ref()
-                .map(|id| vec![id.name.to_string()])
-                .unwrap_or_default()
+                .map_or_else(Default::default, |id| vec![id.name.to_string()])
         }
         Statement::ExportDeclaration(e) => match &e.declaration {
             Declaration::FunctionDeclaration(f) => {
                 f.id.as_ref()
-                    .map(|id| vec![id.name.to_string()])
-                    .unwrap_or_default()
+                    .map_or_else(Default::default, |id| vec![id.name.to_string()])
             }
             Declaration::ClassDeclaration(cl) => cl
                 .id
                 .as_ref()
-                .map(|id| vec![id.name.to_string()])
-                .unwrap_or_default(),
+                .map_or_else(Default::default, |id| vec![id.name.to_string()]),
             Declaration::VariableDeclaration(v) => var_declarator_component_names(v.as_ref()),
             _ => Vec::new(),
         },
@@ -605,14 +604,12 @@ fn top_level_component_names(stmt: &Statement<'_>) -> Vec<String> {
         Statement::ExportDefaultDeclaration(e) => match &e.declaration {
             ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
                 f.id.as_ref()
-                    .map(|id| vec![id.name.to_string()])
-                    .unwrap_or_default()
+                    .map_or_else(Default::default, |id| vec![id.name.to_string()])
             }
             ExportDefaultDeclarationKind::ClassDeclaration(cl) => cl
                 .id
                 .as_ref()
-                .map(|id| vec![id.name.to_string()])
-                .unwrap_or_default(),
+                .map_or_else(Default::default, |id| vec![id.name.to_string()]),
             _ => Vec::new(),
         },
         _ => Vec::new(),
@@ -647,6 +644,11 @@ fn var_declarator_component_names(v: &VariableDeclaration<'_>) -> Vec<String> {
 /// names (the lowered output still contains the same top-level bindings). If
 /// either pass fails, the JS-lowered code is still returned — a
 /// Refresh-registration failure must never break rendering.
+///
+/// # Errors
+///
+/// `CMP-PARSE` from [`lower_to_js`] when the source fails to parse; the
+/// Refresh-injection result is best-effort and never errors on its own.
 pub fn lower_to_js_with_refresh(
     code: &str,
     lang: &'static str,
@@ -674,6 +676,12 @@ impl OxcTransformer {
     /// Returns the rewritten source. The `scan`/`directives`/`server_fns`
     /// metadata is computed by the caller when needed; this method is
     /// deliberately narrow.
+    ///
+    /// # Errors
+    ///
+    /// `CMP-PARSE` when the source fails to parse (the diagnostic carries
+    /// the first error's line/column and a rendered code frame); the
+    /// AST passes' diagnostics bubble up unchanged.
     pub fn transform_passes_only(&self, input: &TransformInput) -> Result<String> {
         let allocator = Allocator::default();
         let source_type = source_type_for(input.lang);
@@ -695,16 +703,17 @@ impl OxcTransformer {
                 ),
             )
             .with_fix("fix the syntax error reported by the Oxc parser");
-            if let Some(span) = first.labels.first().map(|l| l.span()) {
+            if let Some(l) = first.labels.first() {
+                let span = l.span();
                 let start = span.start as usize;
                 let before = &input.code[..start.min(input.code.len())];
                 let line = before.matches('\n').count() + 1;
-                let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let line_start = before.rfind('\n').map_or(0, |i| i + 1);
                 let col = before[line_start..].chars().count() + 1;
                 d = d.at(oxide_fw_diagnostics::Location::file(
                     &input.path,
-                    line as u32,
-                    col as u32,
+                    u32::try_from(line).unwrap_or(u32::MAX),
+                    u32::try_from(col).unwrap_or(u32::MAX),
                 ));
                 let frame = oxide_fw_diagnostics::render_code_frame(&input.code, line, Some(col));
                 if !frame.is_empty() {
@@ -717,7 +726,7 @@ impl OxcTransformer {
         let mut code = input.code.clone();
         let server = is_server_module_path(&input.path);
         if server && input.env == Env::Ssr {
-            let (c, _) = ast_use_cache(&parsed.program, &code, &input.path)?;
+            let (c, _) = ast_use_cache(&parsed.program, &code, &input.path);
             code = c;
         }
         if server {
@@ -727,7 +736,7 @@ impl OxcTransformer {
                 &input.path,
                 input.env,
                 &input.build_secret,
-            )?;
+            );
             code = c;
         }
         if input.dev && !server {
@@ -742,7 +751,7 @@ fn source_type_for(lang: &str) -> SourceType {
         "tsx" => SourceType::tsx(),
         "ts" => SourceType::ts(),
         "jsx" => SourceType::jsx(),
-        "mjs" | "js" => SourceType::mjs(),
+        // "js", "mjs" and any future spelling share the module default.
         _ => SourceType::mjs(),
     }
 }
@@ -826,7 +835,7 @@ fn ast_use_cache(
     program: &oxc_ast::ast::Program<'_>,
     code: &str,
     module_path: &str,
-) -> Result<(String, Vec<Directive>)> {
+) -> (String, Vec<Directive>) {
     let mut edits: Vec<(u32, u32, String)> = Vec::new();
     let mut directives: Vec<Directive> = Vec::new();
     let mod_arg = code_escape(module_path);
@@ -836,7 +845,7 @@ fn ast_use_cache(
     }
 
     let out = apply_str_edits(code, edits);
-    Ok((out, directives))
+    (out, directives)
 }
 
 /// Visit a top-level statement, descending through export wrappers.
@@ -878,8 +887,7 @@ fn walk_top_stmt_for_use_cache(
             let name = func
                 .id
                 .as_ref()
-                .map(|i| i.name.as_str().to_string())
-                .unwrap_or_default();
+                .map_or_else(Default::default, |i| i.name.as_str().to_string());
             let span_start = func.span.start;
             try_decl_fn!(func, span_start, false, false, name);
         }
@@ -918,8 +926,7 @@ fn walk_export_decl_for_use_cache(
             let name = func
                 .id
                 .as_ref()
-                .map(|i| i.name.as_str().to_string())
-                .unwrap_or_default();
+                .map_or_else(Default::default, |i| i.name.as_str().to_string());
             if let Some(body) = func.body.as_ref()
                 && let Some((ds, de)) = find_use_cache_directive(body)
             {
@@ -965,9 +972,8 @@ fn walk_var_decl_for_use_cache(
         };
         let (func_body, fn_span_start, fn_span_end, params_src) = match init {
             Expression::ArrowFunctionExpression(arrow) => {
-                let body = match &arrow.body {
-                    oxc_ast::ast::ArrowFunctionBody::FunctionBody(b) => b,
-                    _ => continue, // expression-body arrows cannot carry a directive
+                let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &arrow.body else {
+                    continue; // expression-body arrows cannot carry a directive
                 };
                 let ps = &code[arrow.params.span.start as usize..arrow.params.span.end as usize];
                 (body, arrow.span.start, arrow.span.end, ps.to_string())
@@ -1095,142 +1101,38 @@ fn emit_use_cache_edit(args: UseCacheEditArgs<'_>) {
     });
 }
 
-/// AST-driven server-fn stub pass (§9.4).
+/// AST-driven server-fn stub pass (§9.4). Never fails: every declaration
+/// that does not match the shape is left untouched, so the pass returns
+/// the rewritten source and the stub records directly.
 fn ast_server_fn_stubs(
     program: &oxc_ast::ast::Program<'_>,
     code: &str,
     module_path: &str,
     env: Env,
     secret: &str,
-) -> Result<(String, Vec<ServerFnStub>)> {
-    use oxc_ast::ast::{BindingPattern, Declaration, Expression, Statement};
+) -> (String, Vec<ServerFnStub>) {
+    use oxc_ast::ast::Declaration;
+    use oxc_ast::ast::Statement;
 
     let mut edits: Vec<(u32, u32, String)> = Vec::new();
     let mut stubs: Vec<ServerFnStub> = Vec::new();
     let mut ssr_lines: Vec<String> = Vec::new();
     let mut client_stub_ids: Vec<String> = Vec::new();
 
-    // Helper: is `expr` a call to `serverFn(...)`?
-    fn as_server_fn_call<'a>(
-        expr: &'a Expression<'a>,
-    ) -> Option<&'a oxc_ast::ast::CallExpression<'a>> {
-        let Expression::CallExpression(call) = expr else {
-            return None;
-        };
-        let Expression::Identifier(id) = &call.callee else {
-            return None;
-        };
-        (id.name.as_str() == "serverFn").then_some(call)
-    }
-
-    // Extract the name from a `VariableDeclarator.id`.
-    fn declarator_name(id: &oxc_ast::ast::BindingPattern<'_>) -> Option<String> {
-        match id {
-            BindingPattern::BindingIdentifier(b) => Some(b.name.as_str().to_string()),
-            _ => None,
-        }
-    }
-
-    let mut handle_var_decl = |var: &oxc_ast::ast::VariableDeclaration<'_>,
-                               edits: &mut Vec<(u32, u32, String)>,
-                               stubs: &mut Vec<ServerFnStub>,
-                               ssr_lines: &mut Vec<String>| {
-        for d in &var.declarations {
-            let Some(name) = declarator_name(&d.id) else {
-                continue;
-            };
-            let Some(init) = d.init.as_ref() else {
-                continue;
-            };
-            let Some(_call) = as_server_fn_call(init) else {
-                continue;
-            };
-
-            // Full declarator span is `name = serverFn(...)`; the scanner replaces
-            // the whole `export const NAME = serverFn(...)` statement. We use the
-            // declarator span and let the outer statement boundary be preserved.
-            let id = crate::server_fn_id(module_path, &name, secret);
-            stubs.push(ServerFnStub {
-                export_name: name.clone(),
-                id: id.clone(),
-            });
-
-            let repl = match env {
-                // §9.4: the client stub delegates to `__oxide_call_fn` from
-                // `@oxide-fw/core/fn`, which owns the fetch + wire format. Previously
-                // this inlined a fetch calling bare `__oxide_encode` /
-                // `__oxide_decode` globals that no module defines.
-                //
-                // `Object.assign(fn, { id })` keeps `NAME.id` working in app
-                // code (`const fnId = greet.id` for a `data-greeting-fn`
-                // attribute): a bare arrow has no `.id`, so the client rendered
-                // `undefined` where the server rendered a runtime-assigned
-                // `anonymous-N` — a guaranteed hydration mismatch.
-                Env::Client => {
-                    format!(
-                        "{name} = Object.assign((async (...args) => __oxide_call_fn(\"{id}\", args)), {{ id: \"{id}\" }});"
-                    )
-                }
-                // §9.4: rewrite the single-argument form to the ID-FIRST form
-                // (`serverFn("<static id>", fn)`). Keeping the raw
-                // `serverFn(fn)` call made the RUNTIME assign an
-                // `anonymous-N` id on the server while the client baked the
-                // static id — the two sides disagreed on `NAME.id` and every
-                // page that rendered it failed hydration. With the id-first
-                // form the runtime registers under the SAME static id the
-                // client compiled (the appended `__oxide_register_fn` line
-                // stays as a belt-and-braces registration).
-                Env::Ssr | Env::Edge => {
-                    let start = d.span.start as usize;
-                    let end = d.span.end as usize;
-                    let decl = &code[start..end];
-                    // Insert `"<id>", ` right after the callee's opening
-                    // paren (`serverFn(`). The call span is byte-exact from
-                    // the AST; the callee is the `serverFn` identifier per
-                    // `as_server_fn_call`.
-                    match decl.find("serverFn") {
-                        Some(callee_at) => {
-                            let after_callee = callee_at + "serverFn".len();
-                            let rest = &decl[after_callee..];
-                            match rest.find('(') {
-                                Some(paren_at) => {
-                                    let insert_at = after_callee + paren_at + 1;
-                                    let mut out = String::with_capacity(decl.len() + id.len() + 4);
-                                    out.push_str(&decl[..insert_at]);
-                                    out.push('"');
-                                    out.push_str(&id);
-                                    out.push_str("\", ");
-                                    out.push_str(&decl[insert_at..]);
-                                    out
-                                }
-                                // No paren (impossible for a CallExpression) —
-                                // keep the original verbatim.
-                                None => decl.to_string(),
-                            }
-                        }
-                        None => decl.to_string(),
-                    }
-                }
-            };
-            edits.push((d.span.start, d.span.end, repl));
-
-            if matches!(env, Env::Client) {
-                client_stub_ids.push(id.clone());
-            }
-            if matches!(env, Env::Ssr | Env::Edge) {
-                ssr_lines.push(format!("__oxide_register_fn(\"{id}\", {name});"));
-            }
-        }
+    let mut outs = StubOuts {
+        edits: &mut edits,
+        stubs: &mut stubs,
+        ssr_lines: &mut ssr_lines,
+        client_stub_ids: &mut client_stub_ids,
     };
-
     for stmt in &program.body {
         match stmt {
             Statement::VariableDeclaration(var) => {
-                handle_var_decl(var, &mut edits, &mut stubs, &mut ssr_lines);
+                stub_var_decl_declarators(var, code, module_path, env, secret, &mut outs);
             }
             Statement::ExportDeclaration(exp) => {
                 if let Declaration::VariableDeclaration(var) = &exp.declaration {
-                    handle_var_decl(var, &mut edits, &mut stubs, &mut ssr_lines);
+                    stub_var_decl_declarators(var, code, module_path, env, secret, &mut outs);
                 }
             }
             _ => {}
@@ -1257,13 +1159,151 @@ fn ast_server_fn_stubs(
             out.push('\n');
         }
         let ids: Vec<String> = stubs.iter().map(|f| format!("\"{}\"", f.id)).collect();
-        out.push_str(&format!(
-            "export const __oxide_fn_ids = [{}];\n",
-            ids.join(", ")
-        ));
+        out.push_str("export const __oxide_fn_ids = [");
+        out.push_str(&ids.join(", "));
+        out.push_str("];\n");
     }
 
-    Ok((out, stubs))
+    (out, stubs)
+}
+
+/// Is `expr` a call to `serverFn(...)`? (the §9.4 shape test)
+fn as_server_fn_call<'a>(
+    expr: &'a oxc_ast::ast::Expression<'a>,
+) -> Option<&'a oxc_ast::ast::CallExpression<'a>> {
+    let oxc_ast::ast::Expression::CallExpression(call) = expr else {
+        return None;
+    };
+    let oxc_ast::ast::Expression::Identifier(id) = &call.callee else {
+        return None;
+    };
+    (id.name.as_str() == "serverFn").then_some(call)
+}
+
+/// Extract the name from a `VariableDeclarator.id` (§9.4 bindings only).
+fn declarator_name(id: &oxc_ast::ast::BindingPattern<'_>) -> Option<String> {
+    match id {
+        oxc_ast::ast::BindingPattern::BindingIdentifier(b) => Some(b.name.as_str().to_string()),
+        _ => None,
+    }
+}
+
+/// The mutable outputs of the server-fn stub pass (§9.4), bundled so the
+/// per-declarator walker stays under the argument budget.
+struct StubOuts<'a> {
+    /// `(start, end, replacement)` byte edits, applied descending.
+    edits: &'a mut Vec<(u32, u32, String)>,
+    /// The stub records (one per `serverFn` binding).
+    stubs: &'a mut Vec<ServerFnStub>,
+    /// The server-side `__oxide_register_fn` lines (SSR/edge only).
+    ssr_lines: &'a mut Vec<String>,
+    /// The ids the client bundle imports `__oxide_call_fn` for.
+    client_stub_ids: &'a mut Vec<String>,
+}
+
+/// Stub every `const NAME = serverFn(...)` declarator in `var` (§9.4):
+/// the client env rewrites to the `__oxide_call_fn` stub, the server/edge
+/// env rewrites to the ID-FIRST `serverFn("<id>", fn)` registration form;
+/// both envs record the [`ServerFnStub`].
+fn stub_var_decl_declarators(
+    var: &oxc_ast::ast::VariableDeclaration<'_>,
+    code: &str,
+    module_path: &str,
+    env: Env,
+    secret: &str,
+    outs: &mut StubOuts<'_>,
+) {
+    let StubOuts {
+        edits,
+        stubs,
+        ssr_lines,
+        client_stub_ids,
+    } = outs;
+    for d in &var.declarations {
+        let Some(name) = declarator_name(&d.id) else {
+            continue;
+        };
+        let Some(init) = d.init.as_ref() else {
+            continue;
+        };
+        let Some(_call) = as_server_fn_call(init) else {
+            continue;
+        };
+
+        // Full declarator span is `name = serverFn(...)`; the scanner replaces
+        // the whole `export const NAME = serverFn(...)` statement. We use the
+        // declarator span and let the outer statement boundary be preserved.
+        let id = crate::server_fn_id(module_path, &name, secret);
+        stubs.push(ServerFnStub {
+            export_name: name.clone(),
+            id: id.clone(),
+        });
+
+        let repl = match env {
+            // §9.4: the client stub delegates to `__oxide_call_fn` from
+            // `@oxide-fw/core/fn`, which owns the fetch + wire format. Previously
+            // this inlined a fetch calling bare `__oxide_encode` /
+            // `__oxide_decode` globals that no module defines.
+            //
+            // `Object.assign(fn, { id })` keeps `NAME.id` working in app
+            // code (`const fnId = greet.id` for a `data-greeting-fn`
+            // attribute): a bare arrow has no `.id`, so the client rendered
+            // `undefined` where the server rendered a runtime-assigned
+            // `anonymous-N` — a guaranteed hydration mismatch.
+            Env::Client => {
+                format!(
+                    "{name} = Object.assign((async (...args) => __oxide_call_fn(\"{id}\", args)), {{ id: \"{id}\" }});"
+                )
+            }
+            // §9.4: rewrite the single-argument form to the ID-FIRST form
+            // (`serverFn("<static id>", fn)`). Keeping the raw
+            // `serverFn(fn)` call made the RUNTIME assign an
+            // `anonymous-N` id on the server while the client baked the
+            // static id — the two sides disagreed on `NAME.id` and every
+            // page that rendered it failed hydration. With the id-first
+            // form the runtime registers under the SAME static id the
+            // client compiled (the appended `__oxide_register_fn` line
+            // stays as a belt-and-braces registration).
+            Env::Ssr | Env::Edge => rewrite_server_fn_id_first(code, d.span, &id),
+        };
+        edits.push((d.span.start, d.span.end, repl));
+
+        if matches!(env, Env::Client) {
+            client_stub_ids.push(id.clone());
+        }
+        if matches!(env, Env::Ssr | Env::Edge) {
+            ssr_lines.push(format!("__oxide_register_fn(\"{id}\", {name});"));
+        }
+    }
+}
+
+/// Rewrite a `serverFn(fn)` call source to the ID-FIRST
+/// `serverFn("<id>", fn)` form: insert `"<id>", ` right after the
+/// callee's opening paren. The call span is byte-exact from the AST; the
+/// callee is the `serverFn` identifier per [`as_server_fn_call`]. An
+/// unexpected source shape keeps the original verbatim (a `CallExpression`
+/// always has the paren; the fallback is a guard, not a path).
+fn rewrite_server_fn_id_first(code: &str, span: oxc_span::Span, id: &str) -> String {
+    let start = span.start as usize;
+    let end = span.end as usize;
+    let decl = &code[start..end];
+    let Some(callee_at) = decl.find("serverFn") else {
+        return decl.to_string();
+    };
+    let after_callee = callee_at + "serverFn".len();
+    let rest = &decl[after_callee..];
+    let Some(paren_at) = rest.find('(') else {
+        // No paren (impossible for a CallExpression) — keep the original.
+        return decl.to_string();
+    };
+    let insert_at = after_callee + paren_at + 1;
+    let mut out = String::with_capacity(decl.len() + id.len() + 4);
+    out.push_str(&decl[..insert_at]);
+    out.push('"');
+    out.push_str(id);
+    out.push_str("\", ");
+    out.push_str(&decl[insert_at..]);
+    out
 }
 
 /// Apply `(start, end, replacement)` edits by sorting descending.
@@ -1283,9 +1323,9 @@ fn apply_str_edits(code: &str, mut edits: Vec<(u32, u32, String)>) -> String {
 ///     blank them out of the rewritten function text.
 ///
 /// Recognised shapes (matching the scanner passes):
-///   cacheTag("x");            → tags: ["x"]
-///   cacheTag('y');            → tags: [..., 'y']
-///   cacheLife({ ... });       → life: { ...inner... }
+///   `cacheTag("x");`      → `tags: ["x"]`
+///   `cacheTag('y');`      → `tags: [..., 'y']`
+///   `cacheLife({ ... });` → `life: { ...inner... }`
 /// Other statement forms are ignored.
 fn collect_cache_options(
     body: &oxc_ast::ast::FunctionBody<'_>,
@@ -1391,7 +1431,14 @@ fn code_escape(s: &str) -> String {
 
 /// Build a `Location` for a 1-based (line, column) in `path`.
 fn oxidation_location(path: &str, line: usize, col: usize) -> oxide_fw_diagnostics::Location {
-    oxide_fw_diagnostics::Location::file(path, line as u32, col as u32)
+    // Source positions never exceed u32 in practice; the saturating
+    // fallback is the house convention (`crates/router/src/rules.rs`,
+    // `lib.rs::infer_reasons`).
+    oxide_fw_diagnostics::Location::file(
+        path,
+        u32::try_from(line).unwrap_or(u32::MAX),
+        u32::try_from(col).unwrap_or(u32::MAX),
+    )
 }
 
 #[cfg(test)]
