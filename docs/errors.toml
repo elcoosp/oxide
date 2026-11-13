@@ -88,6 +88,18 @@ message = "collection `{}` entry `{}` has no frontmatter; external schema requir
 message = "`search` is configured but target `{}` does not support the built-in search capability (§18 capability matrix)"
 fix = "Use static JSON search or a Binary or Docker target"
 
+[AST-SVG-001]
+message = "the optimized SVG output violated a preservation rule: {rule}; the source is kept"
+fix = "Narrow the optimizer preset (the bundled backend already runs the correctness preset) or file an upstream issue; the build degrades to the unoptimized source"
+
+[AST-SVG-002]
+message = "`svg.optimize: true` requires the `svg-oxvg` feature, which is not compiled into this build of oxide-fw-assets"
+fix = "Rebuild with `--features svg-oxvg`, or set `svg.optimize: false`"
+
+[AST-SVG-003]
+message = "the SVG optimizer failed on the document: {e}"
+fix = "Check the document is well-formed XML; the build keeps the unoptimized source"
+
 [AST-WEBP]
 message = "webp encode unavailable in this image build; emitted PNG instead: {e}"
 
