@@ -34,6 +34,7 @@ pub mod cjs_exports;
 pub mod framework;
 pub mod generate_params;
 pub mod lexer;
+pub mod native;
 mod oxc_backend;
 
 pub use cjs_exports::extract_cjs_export_names;
@@ -42,6 +43,7 @@ pub use framework::{
     ToolingDispatcher, compiler_for,
 };
 pub use generate_params::{GenerateParamsResult, extract_generate_params};
+pub use native::{Backend, CompileOutput, CompileRequest, NativeCompiler, NativeRegistry};
 pub use oxc_backend::{
     OxcTransformer, inject_react_refresh, lower_to_js, lower_to_js_with_refresh,
 };
@@ -127,6 +129,7 @@ pub struct ServerFnStub {
 }
 
 /// Compute a server-fn id (§9.4): blake3(file, export, secret) → url-safe 24 chars.
+#[must_use]
 pub fn server_fn_id(file: &str, export: &str, secret: &str) -> String {
     let mut h = Hasher::new();
     h.update(file.as_bytes());
@@ -150,13 +153,14 @@ pub struct ImportSpan {
 /// `import '...'`, `import {a, b as c} from '...'`, `import * as ns from '...'`,
 /// `export ... from '...'`, dynamic `import('...')`. Strings, template literals
 /// (with `${}` nesting) and comments are skipped by the tokenizer ([`lexer`]).
+#[must_use]
 pub fn scan_import_spans(code: &str) -> Vec<ImportSpan> {
     use lexer::Tok;
     let toks = lexer::lex(code);
-    let n = toks.len();
+    let count = toks.len();
     let mut out = Vec::new();
     let mut i = 0usize;
-    while i < n {
+    while i < count {
         let t = &toks[i];
         if is_word(code, t, "import") {
             match toks.get(i + 1).map(|x| &x.kind) {
@@ -192,92 +196,15 @@ pub fn scan_import_spans(code: &str) -> Vec<ImportSpan> {
                 }
                 _ => {
                     // clause import: `import [type] default?, {..}?, * as ns?, from '...'`
-                    let mut j = i + 1;
-                    if matches!(toks.get(j).map(|x| &x.kind), Some(Tok::Ident)) {
-                        j += 1; // default binding (also absorbs TS `import type`)
-                    }
-                    if is_punct(toks.get(j), ',') {
-                        j += 1;
-                    }
-                    if is_punct(toks.get(j), '{') {
-                        j = skip_balanced(&toks, j, '{', '}');
-                    }
-                    if is_punct(toks.get(j), '*') {
-                        j += 1;
-                        if matches!(toks.get(j).map(|x| &x.kind), Some(Tok::Ident))
-                            && is_word(code, &toks[j], "as")
-                        {
-                            j += 1;
-                        }
-                        if matches!(toks.get(j).map(|x| &x.kind), Some(Tok::Ident)) {
-                            j += 1;
-                        }
-                    }
-                    if is_word_opt(code, toks.get(j), "from")
-                        && let Some(Tok::Str { value }) = toks.get(j + 1).map(|x| &x.kind)
-                    {
-                        let end_idx = stmt_end_idx(&toks, j + 1);
-                        out.push(ImportSpan {
-                            start: t.start,
-                            end: toks[end_idx - 1].end,
-                            specifier: value.clone(),
-                            dynamic: false,
-                        });
-                        i = end_idx;
-                        continue;
-                    }
-                    i += 1; // e.g. `import x = require('y')` — not an ESM import
+                    i = clause_import_end(code, &toks, i, t, &mut out);
                     continue;
                 }
             }
         }
         if is_word(code, t, "export") {
             // re-export: `export {..} from '...'` / `export * from '...'` / `export * as ns from '...'`
-            let reexport = matches!(
-                toks.get(i + 1).map(|x| &x.kind),
-                Some(Tok::Punct('{')) | Some(Tok::Punct('*'))
-            );
-            if reexport {
-                let mut j = i + 1;
-                if is_punct(toks.get(j), '{') {
-                    j = skip_balanced(&toks, j, '{', '}');
-                } else {
-                    j += 1; // '*'
-                    if is_word_opt(code, toks.get(j), "as") {
-                        j += 2;
-                    }
-                }
-                let mut k = j;
-                let mut advanced = false;
-                while k < n {
-                    if is_punct(toks.get(k), ';') {
-                        break;
-                    }
-                    if is_word_opt(code, toks.get(k), "from") {
-                        if let Some(Tok::Str { value }) = toks.get(k + 1).map(|x| &x.kind) {
-                            let end_idx = stmt_end_idx(&toks, k + 1);
-                            out.push(ImportSpan {
-                                start: t.start,
-                                end: toks[end_idx - 1].end,
-                                specifier: value.clone(),
-                                dynamic: false,
-                            });
-                            i = end_idx;
-                            advanced = true;
-                            break;
-                        }
-                        break;
-                    }
-                    k += 1;
-                }
-                // LOCAL re-export (`export { a, b };`) or `export *;` has
-                // no `from` clause. Without an explicit advance the outer
-                // `while i < n` would re-enter this branch on the same
-                // `export` token forever. `j` is guaranteed > i (past the
-                // `{...}` or `*`/`* as X`), so `i = j` always advances.
-                if !advanced {
-                    i = j;
-                }
+            if let Some(next) = export_reexport_end(code, &toks, i, t, &mut out) {
+                i = next;
                 continue;
             }
             i += 1;
@@ -288,8 +215,114 @@ pub fn scan_import_spans(code: &str) -> Vec<ImportSpan> {
     out
 }
 
+/// Consume one clause import (`import [type] default?, {..}?, * as ns?,
+/// from '...'`) starting at the `import` token `start`; pushes the
+/// `ImportSpan` when a `from '<spec>'` clause follows and returns the
+/// next scan position (past the statement, or +1 for the
+/// `import x = require('y')` shape that is not an ESM import).
+fn clause_import_end(
+    code: &str,
+    toks: &[lexer::Token],
+    start: usize,
+    t: &lexer::Token,
+    out: &mut Vec<ImportSpan>,
+) -> usize {
+    use lexer::Tok;
+    let mut j = start + 1;
+    if matches!(toks.get(j).map(|x| &x.kind), Some(Tok::Ident)) {
+        j += 1; // default binding (also absorbs TS `import type`)
+    }
+    if is_punct(toks.get(j), ',') {
+        j += 1;
+    }
+    if is_punct(toks.get(j), '{') {
+        j = skip_balanced(toks, j, '{', '}');
+    }
+    if is_punct(toks.get(j), '*') {
+        j += 1;
+        if matches!(toks.get(j).map(|x| &x.kind), Some(Tok::Ident)) && is_word(code, &toks[j], "as")
+        {
+            j += 1;
+        }
+        if matches!(toks.get(j).map(|x| &x.kind), Some(Tok::Ident)) {
+            j += 1;
+        }
+    }
+    if is_word_opt(code, toks.get(j), "from")
+        && let Some(Tok::Str { value }) = toks.get(j + 1).map(|x| &x.kind)
+    {
+        let end_idx = stmt_end_idx(toks, j + 1);
+        out.push(ImportSpan {
+            start: t.start,
+            end: toks[end_idx - 1].end,
+            specifier: value.clone(),
+            dynamic: false,
+        });
+        return end_idx;
+    }
+    start + 1 // e.g. `import x = require('y')` — not an ESM import
+}
+
+/// Consume one `export` statement starting at token `start` when it is a
+/// re-export (`export {..} from '...'` / `export * from '...'` /
+/// `export * as ns from '...'`); pushes the `ImportSpan` and returns the
+/// next scan position. `None` when the statement is not a re-export (the
+/// caller advances by one token).
+fn export_reexport_end(
+    code: &str,
+    toks: &[lexer::Token],
+    start: usize,
+    t: &lexer::Token,
+    out: &mut Vec<ImportSpan>,
+) -> Option<usize> {
+    use lexer::Tok;
+    let reexport = matches!(
+        toks.get(start + 1).map(|x| &x.kind),
+        Some(Tok::Punct('{' | '*'))
+    );
+    if !reexport {
+        return None;
+    }
+    let mut j = start + 1;
+    if is_punct(toks.get(j), '{') {
+        j = skip_balanced(toks, j, '{', '}');
+    } else {
+        j += 1; // '*'
+        if is_word_opt(code, toks.get(j), "as") {
+            j += 2;
+        }
+    }
+    let mut k = j;
+    while k < toks.len() {
+        if is_punct(toks.get(k), ';') {
+            break;
+        }
+        if is_word_opt(code, toks.get(k), "from") {
+            if let Some(Tok::Str { value }) = toks.get(k + 1).map(|x| &x.kind) {
+                let end_idx = stmt_end_idx(toks, k + 1);
+                out.push(ImportSpan {
+                    start: t.start,
+                    end: toks[end_idx - 1].end,
+                    specifier: value.clone(),
+                    dynamic: false,
+                });
+                return Some(end_idx);
+            }
+            break;
+        }
+        k += 1;
+    }
+    // LOCAL re-export (`export { a, b };`) or `export *;` has no `from`
+    // clause. Without an explicit advance the outer `while` would
+    // re-enter this branch on the same `export` token forever. `j` is
+    // guaranteed > start (past the `{...}` or `*`/`* as X`), so `i = j`
+    // always advances.
+    Some(j)
+}
+
 /// Import scan (§6.2 step 7): static imports, dynamic imports, asset queries.
 /// Specifiers containing `?` are asset queries (§6.7) and excluded from `imports`.
+#[must_use]
 pub fn scan_imports(code: &str) -> ImportScan {
     let mut scan = ImportScan::default();
     let mut seen_static: BTreeSet<String> = BTreeSet::new();
@@ -312,6 +345,7 @@ pub fn scan_imports(code: &str) -> ImportScan {
 }
 
 /// True when `path` names a server-only module (§6.4): `<name>.server.<ext>`.
+#[must_use]
 pub fn is_server_module_path(path: &str) -> bool {
     ["ts", "tsx", "js", "jsx", "mjs"]
         .iter()
@@ -320,6 +354,13 @@ pub fn is_server_module_path(path: &str) -> bool {
 
 /// The compiler trait (D4 isolation point; Oxc backend slots in here).
 pub trait Transformer: Send + Sync {
+    /// Run the scanner passes over one module input.
+    ///
+    /// # Errors
+    ///
+    /// When a pass cannot rewrite the module (`CMP-CACHE` for a `'use cache'`
+    /// function without a binding name; the Oxc backend surfaces
+    /// `CMP-PARSE` for a syntax error).
     fn transform(&self, input: &TransformInput) -> Result<TransformOutput>;
 }
 
@@ -372,6 +413,11 @@ impl Transformer for ScannerTransformer {
 /// `__oxide_cache(<fn>, "<module>", "<export>", { tags: [...], life: {...} })`
 /// with `cacheTag`/`cacheLife` statements hoisted into the options object and the
 /// directive statement removed. Zero or many tag/life calls are supported.
+///
+/// # Errors
+///
+/// `CMP-CACHE` when a `'use cache'`-marked function has no binding name to
+/// register the cache wrapper under.
 pub fn transform_use_cache(code: &str, module_path: &str) -> Result<(String, Vec<Directive>)> {
     use lexer::Tok;
     let toks = lexer::lex(code);
@@ -409,43 +455,7 @@ pub fn transform_use_cache(code: &str, module_path: &str) -> Result<(String, Vec
         taken.push((start, end));
 
         // Collect spans to blank: the directive statement + cacheTag/cacheLife calls.
-        let mut blanks: Vec<(usize, usize)> = Vec::new();
-        let mut tags: Vec<String> = Vec::new();
-        let mut life: Vec<String> = Vec::new();
-        let d_end = stmt_end_idx(&toks, first);
-        blanks.push((toks[first].start, toks[d_end - 1].end));
-        let mut j = first + 1;
-        while j < af.body_close {
-            if is_word(code, &toks[j], "cacheTag")
-                && is_punct(toks.get(j + 1), '(')
-                && matches!(toks.get(j + 2).map(|t| &t.kind), Some(Tok::Str { .. }))
-                && is_punct(toks.get(j + 3), ')')
-            {
-                tags.push(code[toks[j + 2].start..toks[j + 2].end].to_string());
-                let e = stmt_end_idx(&toks, j + 3);
-                blanks.push((toks[j].start, toks[e - 1].end));
-                j = e;
-                continue;
-            }
-            if is_word(code, &toks[j], "cacheLife") && is_punct(toks.get(j + 1), '(') {
-                let close = skip_balanced(&toks, j + 1, '(', ')');
-                // strip the outer braces of the object literal → mergeable key/value text
-                let inner = code[toks[j + 2].start..toks[close - 1].start]
-                    .trim()
-                    .trim_start_matches('{')
-                    .trim_end_matches('}')
-                    .trim()
-                    .to_string();
-                if !inner.is_empty() {
-                    life.push(inner);
-                }
-                let e = stmt_end_idx(&toks, close - 1);
-                blanks.push((toks[j].start, toks[e - 1].end));
-                j = e;
-                continue;
-            }
-            j += 1;
-        }
+        let (blanks, tags, life) = collect_cache_markers(code, &toks, first, af.body_close);
 
         // Rebuild the function with cleaned body text.
         let body_from = toks[af.body_open].end;
@@ -510,6 +520,57 @@ pub fn transform_use_cache(code: &str, module_path: &str) -> Result<(String, Vec
     Ok((out, directives))
 }
 
+/// Collect the spans to blank out for one `'use cache'` function: the
+/// directive statement itself plus every `cacheTag("...")` / `cacheLife({...})`
+/// call inside the body (§9.3). Returns the blank spans (directive first),
+/// the raw quoted tag strings and the merged `cacheLife` object bodies.
+fn collect_cache_markers(
+    code: &str,
+    toks: &[lexer::Token],
+    first: usize,
+    body_close: usize,
+) -> (Vec<(usize, usize)>, Vec<String>, Vec<String>) {
+    use lexer::Tok;
+    let mut blanks: Vec<(usize, usize)> = Vec::new();
+    let mut tags: Vec<String> = Vec::new();
+    let mut life: Vec<String> = Vec::new();
+    let d_end = stmt_end_idx(toks, first);
+    blanks.push((toks[first].start, toks[d_end - 1].end));
+    let mut j = first + 1;
+    while j < body_close {
+        if is_word(code, &toks[j], "cacheTag")
+            && is_punct(toks.get(j + 1), '(')
+            && matches!(toks.get(j + 2).map(|t| &t.kind), Some(Tok::Str { .. }))
+            && is_punct(toks.get(j + 3), ')')
+        {
+            tags.push(code[toks[j + 2].start..toks[j + 2].end].to_string());
+            let e = stmt_end_idx(toks, j + 3);
+            blanks.push((toks[j].start, toks[e - 1].end));
+            j = e;
+            continue;
+        }
+        if is_word(code, &toks[j], "cacheLife") && is_punct(toks.get(j + 1), '(') {
+            let close = skip_balanced(toks, j + 1, '(', ')');
+            // strip the outer braces of the object literal → mergeable key/value text
+            let inner = code[toks[j + 2].start..toks[close - 1].start]
+                .trim()
+                .trim_start_matches('{')
+                .trim_end_matches('}')
+                .trim()
+                .to_string();
+            if !inner.is_empty() {
+                life.push(inner);
+            }
+            let e = stmt_end_idx(toks, close - 1);
+            blanks.push((toks[j].start, toks[e - 1].end));
+            j = e;
+            continue;
+        }
+        j += 1;
+    }
+    (blanks, tags, life)
+}
+
 /// Server-fn stub pass (§9.4): on the **client** environment, importing `addToCart`
 /// from `cart.server.ts` compiles to a stub calling `POST /_oxide/fn/<id>`.
 /// On the **server** environment the body is kept and the id registry emitted.
@@ -518,6 +579,10 @@ pub fn transform_use_cache(code: &str, module_path: &str) -> Result<(String, Vec
 /// `serverFn(async function (...) {...})`; an optional schema first argument
 /// (`serverFn(schema, async ...)`) is supported (the schema arg is dropped in the
 /// client stub, which only forwards `...args`).
+///
+/// # Errors
+///
+/// `CMP-CACHE` when a server-fn declaration carries no binding name.
 pub fn transform_server_fn_stubs(
     code: &str,
     module_path: &str,
@@ -552,8 +617,8 @@ pub fn transform_server_fn_stubs(
             let mut found = false;
             while m < toks.len() {
                 match toks[m].kind {
-                    Tok::Punct('(') | Tok::Punct('{') | Tok::Punct('[') => depth += 1,
-                    Tok::Punct(')') | Tok::Punct('}') | Tok::Punct(']') => {
+                    Tok::Punct('(' | '{' | '[') => depth += 1,
+                    Tok::Punct(')' | '}' | ']') => {
                         depth -= 1;
                         if depth == 0 {
                             break;
@@ -636,10 +701,9 @@ pub fn transform_server_fn_stubs(
             out.push('\n');
         }
         let ids: Vec<String> = stubs.iter().map(|f| format!("\"{}\"", f.id)).collect();
-        out.push_str(&format!(
-            "export const __oxide_fn_ids = [{}];\n",
-            ids.join(", ")
-        ));
+        out.push_str("export const __oxide_fn_ids = [");
+        out.push_str(&ids.join(", "));
+        out.push_str("];\n");
     }
     Ok((out, stubs))
 }
@@ -773,7 +837,7 @@ fn rewrite_import_stripping_server_fn(stmt: &str) -> ImportEdit {
         segments.push(default_part);
     }
     if !named_out.is_empty() {
-        segments.push(format!("{{ {} }}", named_out));
+        segments.push(format!("{{ {named_out} }}"));
     }
     if !namespace_part.is_empty() {
         segments.push(namespace_part);
@@ -831,11 +895,10 @@ fn split_top_level_commas(inner: &str) -> Vec<String> {
 
 fn is_server_fn_reference(text: &str) -> bool {
     let s = text.trim();
-    let s = s
+    let type_stripped = s
         .strip_prefix("type")
-        .filter(|r| r.starts_with(char::is_whitespace))
-        .map(|r| r.trim_start())
-        .unwrap_or(s);
+        .filter(|rest| rest.starts_with(char::is_whitespace));
+    let s = type_stripped.map_or(s, str::trim_start);
     let word = s.split_whitespace().next().unwrap_or("");
     word.trim_end_matches(',').trim_end_matches('}').trim() == "serverFn"
 }
@@ -883,6 +946,7 @@ fn find_top_level_from(s: &str) -> Option<usize> {
     None
 }
 
+#[must_use]
 pub fn guard_server_only(
     client_graph: &BTreeMap<String, Vec<String>>,
     server_modules: &BTreeMap<String, bool>,
@@ -936,6 +1000,11 @@ pub fn guard_server_only(
 /// HMR boundary injection (§6.2 step 6, dev only): append `import.meta.hot` accept
 /// code appropriate for the module kind (component / css / server module).
 /// Idempotent: code that already references `import.meta.hot` is returned unchanged.
+///
+/// # Errors
+///
+/// Never in the current implementation — the signature keeps `Result` so
+/// backend swaps (the D4 seam) can surface parse diagnostics unchanged.
 pub fn inject_hmr_boundary(code: &str, path: &str, lang: &str) -> Result<String> {
     if code.contains("import.meta.hot") {
         return Ok(code.to_string());
@@ -1014,15 +1083,9 @@ fn find_body_open(toks: &[lexer::Token], mut j: usize) -> Option<usize> {
         while j < toks.len() {
             match &toks[j].kind {
                 lexer::Tok::Punct('{') if depth == 0 => return Some(j),
-                lexer::Tok::Punct('(')
-                | lexer::Tok::Punct('[')
-                | lexer::Tok::Punct('<')
-                | lexer::Tok::Punct('{') => depth += 1,
-                lexer::Tok::Punct(')')
-                | lexer::Tok::Punct(']')
-                | lexer::Tok::Punct('>')
-                | lexer::Tok::Punct('}') => depth -= 1,
-                lexer::Tok::Punct(';') | lexer::Tok::Punct(',') if depth == 0 => return None,
+                lexer::Tok::Punct('(' | '[' | '<' | '{') => depth += 1,
+                lexer::Tok::Punct(')' | ']' | '>' | '}') => depth -= 1,
+                lexer::Tok::Punct(';' | ',') if depth == 0 => return None,
                 _ => {}
             }
             j += 1;
@@ -1041,15 +1104,9 @@ fn find_arrow(toks: &[lexer::Token], mut j: usize) -> Option<usize> {
     while j < toks.len() {
         match &toks[j].kind {
             lexer::Tok::Arrow if depth == 0 => return Some(j),
-            lexer::Tok::Punct('(')
-            | lexer::Tok::Punct('[')
-            | lexer::Tok::Punct('<')
-            | lexer::Tok::Punct('{') => depth += 1,
-            lexer::Tok::Punct(')')
-            | lexer::Tok::Punct(']')
-            | lexer::Tok::Punct('>')
-            | lexer::Tok::Punct('}') => depth -= 1,
-            lexer::Tok::Punct(';') | lexer::Tok::Punct(',') if depth == 0 => return None,
+            lexer::Tok::Punct('(' | '[' | '<' | '{') => depth += 1,
+            lexer::Tok::Punct(')' | ']' | '>' | '}') => depth -= 1,
+            lexer::Tok::Punct(';' | ',') if depth == 0 => return None,
             _ => {}
         }
         j += 1;
