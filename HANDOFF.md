@@ -1,3 +1,113 @@
+# Handoff — the native-compiler seam + the image job model landed (`feat/native-compiler-image-jobs`: the V2-C01 substrate — `crates/compiler/src/native/mod.rs`, the spec-verbatim `NativeCompiler` trait/`NativeRegistry`/`Backend` selection with the once-only health fixture, the `CMP-NAT-001` refusal and the D40 `cas_tool_version`, plus the typed `framework.compilerBackend` config surface with `CFG-BACKEND` validation and the `OXIDE_COMPILER_BACKEND` alias; and the V2-C09 image job model — `crates/assets/src/image_jobs.rs`, the bounded CPU + smaller AVIF lanes, per-key single-flight over shared futures, the injectable `ImageCas` hooks, `AST-JOBS` panic surfacing and the `images.avifSpeed` knob with `CFG-AVIF` validation; plus the crate hygiene — compiler adopted the workspace lints with the full pedantic pass, nine dead workspace dependencies pruned, and the stale A08–A10/C01 status-table rows corrected)
+
+## Where things stand
+
+**Branch:** `main` (uncommitted changes plus `ship.toml` /
+`.github/pr-body.md` at the repo root, both gitignored; `ship.toml`
+groups the diff into conventional commits — one per file,
+dependency-ordered). **Verified this session (rustc 1.100.0 stable,
+2-core sandbox, `CARGO_INCREMENTAL=0`, fresh toolchain install, portable
+nasm extracted for the rav1e build):**
+
+- `cargo fmt --all --check` clean workspace-wide.
+- Scoped pedantic gates: `cargo clippy --no-deps -p oxide-fw-compiler -p
+  oxide-fw-config -p oxide-fw-diagnostics --all-targets --all-features --
+  -D warnings -W clippy::pedantic` ZERO findings — the compiler crate
+  opted into `[lints] workspace = true` with this session (the full
+  adoption pass: or-patterns, `# Errors`/`# Panics` docs, `#[must_use]`,
+  `map_or`/`is_some_and`, format inlining, house-convention
+  `u32::try_from` casts, the 236-line `lex` split, the
+  `ast_server_fn_stubs` closure extraction). Assets held to the repo CI
+  gate (`--all-targets --all-features -- -D warnings`) with the new files
+  additionally pedantic-clean; the crate-wide adoption is the next
+  crate-owned hygiene pass. The allow-grep gate over the touched crates
+  is EMPTY.
+- `cargo test -p oxide-fw-diagnostics -p oxide-fw-config -p
+  oxide-fw-compiler`: 20 targets green (the 10 `native_registry_tdd`
+  pins — the spec's four named pins included — the 7
+  `compiler_backend_config` pins and the 4 `images_avif_speed_config`
+  pins ride along).
+- `cargo test -p oxide-fw-assets`: 7 targets green, including the 7
+  `image_jobs_tdd` pins (the spec's three named pins —
+  50-concurrent-one-encode, failed-not-cached-retried, lane-bounds — plus
+  CAS-hit/store, AVIF-lane isolation and the panic path).
+- Benches: `native` (pick 3.2–13.8 ns across the scan shapes,
+  `cas_tool_version` ~97 ns — the selection cost is nanoseconds and the
+  health cache makes re-picks free) and `image_jobs` (`cas_hit` ~336 ns,
+  `fresh_encode` ~10.6 µs, `single_flight_join_8` ~4.8 µs — 8 waiters
+  converge on one encode).
+- Examples: `native_registry` (empty registry → auto = pool / native =
+  CMP-NAT-001 with the fix; healthy backend → doctor rows + D40 version;
+  unhealthy → silent auto fallback) and `image_jobs` (lanes, the 8-waiter
+  single-flight, the retry contract, the warm path) both ran.
+- Registry: `CMP-NAT-001` flipped from `spec_only` to landed;
+  `CFG-BACKEND`, `CFG-AVIF`, `AST-JOBS` rows added (`docs/errors.toml` +
+  the reference page hand-patch). The coverage gate
+  (`tests/errors_registry_tdd.rs`) runs in the V8-linked CLI target,
+  which this sandbox cannot build.
+- Not run: the V8-linked targets (`oxide-fw-cli`/`oxide-fw-jshost`
+  builds, `cargo clippy --workspace` with the V8 link, the E11
+  `docs generate --check`) — no V8 build budget or linked-binary disk
+  here; the reference pages follow the strict formats those gates
+  enforce.
+
+## What landed
+
+**M1 — the native-compiler seam (§V2-C01), complete.**
+`crates/compiler/src/native/mod.rs`: the `NativeCompiler` trait (string
+in, string out — no AST type crosses the boundary), the `Backend` copy
+(`Auto`/`Native`/`Node`, the F04 config→engine ruling), the
+`NativeRegistry` (`pick` consulting the once-only `OnceLock`-cached
+health fixture — `auto` falls back silently, `native` refuses
+`CMP-NAT-001` with the feature-flag + fallback fix, `node` never picks
+native; `register` is the injection seam; `report` is the doctor
+surface) and `cas_tool_version` (`native:{id}@{version}`, the D40 CAS
+key dimension). The config surface: the typed `CompilerBackend`
+(`framework.compilerBackend`, lowercase spellings), schema'd (E11
+DOC-001), load-time-validated (`CFG-BACKEND` names the three modes
+before the typed parse), env-overridable (`OXIDE_COMPILER_BACKEND`
+through the new `ENV_DOTTED_ALIASES` camelCase mechanism). No native
+backend is compiled in — C02–C04 land the vendored backends and push
+into `from_enabled_features()`; the feature flags are deliberately not
+pre-declared.
+
+**M2 — the image job model (§V2-C09), complete.**
+`crates/assets/src/image_jobs.rs`: the bounded CPU lane
+(`available_parallelism() - 1`, `with_lanes` for the config-sized
+shape), the smaller AVIF lane (default half the CPU lane, never zero),
+per-output-key single-flight (a `DashMap` of `Shared<BoxFuture>` keyed
+by the module's `cache_key()`; the shard guard is dropped BEFORE
+awaiting; a failed or panicked job drops its entry so the next request
+retries), the injectable `ImageCas` hooks (sync get/put, an `Arc<T>`
+delegation impl; CAS lookup before work, store after success),
+`spawn_blocking` placement and the `AST-JOBS` panic path.
+`images.avifSpeed` (1..=10, default 6) is typed, schema'd, validated
+(`CFG-AVIF`) and threads into ravif via `encode_avif_at_speed`.
+`OxideError` gained `Clone` (additive — the shared outcome's error half;
+the graph crate's manual workaround becomes unnecessary).
+
+**Drift and micro-debt.** The spec status table's `A08 to A10 | todo`
+row was stale — `crates/cache` ships all three remote handlers, so A10
+is `merged` and A08/A09 stay `todo`; the `C01 to C11 | todo` row split
+into C01 `partial` + C09 `partial` + the rest `todo`. Nine dead
+`[workspace.dependencies]` entries removed (grep-verified zero
+inheritors: `deno_ast`, `miette`, the `oxc` umbrella,
+`oxide-fw-core-wasm`, `oxide-fw-schema`, `parley`, `taffy`,
+`tokio-test`, `write-fonts` — cargo's unused-dependencies lint now
+silent) plus two crate-level dead deps (`oxc` umbrella and `regex` in
+the compiler manifest).
+
+## Where to pick up, in one sentence
+
+The CLI adoption — `compile_one` consulting `NativeRegistry::pick`
+ahead of the tooling pool, `oxide doctor` printing `report()`'s rows,
+`PrecompileKey::tool_version` folding `cas_tool_version`, and the
+images endpoint constructing `ImageJobs` from
+`maxConcurrency`/`avifSpeed` with the tiered CAS behind it (plus the
+C09 `oha -c 64` acceptance) — is the A01-phase-3 slice on a V8-capable
+host, after which C02–C04 (the vendored Solid/Vue/Svelte backends)
+register into the registry.
+
 # Handoff — the object-store deploy target + the B08 nonce splicer landed (`feat/object-store-deploy-target`: the V2-F11 remaining store half — `crates/adapters/src/objstore.rs`, the second `DeployStore` impl over `object_store` behind the adapters `s3` feature with the conditional-put pointer swap; and the V2-B08 phase-2 streaming nonce splicer — `crates/render/src/splice.rs`, the spec-verbatim `NonceSplicer`; plus the drift/micro-debt pass — the PUBLISHING/CONVENTIONS/README-count fixes, the dead `og_cache_key` removal and the loud corrupt-tag-blob warn)
 
 ## Where things stand
