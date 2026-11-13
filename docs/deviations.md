@@ -2282,3 +2282,100 @@ the CLI adoption (booting the pools from `dist/` + F11's `releases/<build-id>/`
 layout, promoting on `cmd_dev` reload, the 30 s expiry task and the F12
 brownout trigger calling `evict_oldest`) and the E2E `tests/skew.sh` — all
 A01-phase-3 slices on a V8-capable host.
+
+## V2-C01 — the native-compiler seam (2026-11-13)
+
+**What landed.** `crates/compiler/src/native/mod.rs` — the §V2-C01
+substrate, V8-free and complete per the WP's own acceptance:
+
+- the `NativeCompiler` trait (string in, string out — no AST type crosses
+  the boundary, each upstream pins its own `oxc`), the `Backend` selection
+  copy, `NativeRegistry` (`pick` with the once-only `OnceLock` health
+  fixture, `register` as the injection seam, `report` for `oxide doctor`)
+  and `cas_tool_version` (`native:{id}@{version}`, the D40 CAS key
+  dimension);
+- the config surface: `framework.compilerBackend` typed (`CompilerBackend`:
+  `auto` default | `native` | `node`), schema'd (the E11 DOC-001 gate),
+  load-time-validated (`CFG-BACKEND` names the three modes before the
+  typed parse) and env-overridable (`OXIDE_COMPILER_BACKEND`);
+- the crate adopted the workspace lints (the pedantic hygiene pass — the
+  or-patterns/`# Errors`/`must_use`/cast fixes across
+  `oxc_backend.rs`/`lib.rs`/`framework.rs`/`lexer.rs`/`cjs_exports.rs`/
+  `generate_params.rs`, the 236-line `lex` split into scanner helpers,
+  the `ast_server_fn_stubs` closure extraction) and shed two dead
+  dependencies (`oxc` umbrella — cargo's unused-dependencies lint — and
+  `regex`, both unreferenced);
+- 10 TDD pins (`tests/native_registry_tdd.rs`, driven by an injected
+  `FakeNative` — the spec's own test plan for the pre-C02 tree), the
+  config suite (`tests/compiler_backend_config.rs`), the `native` criterion
+  group and the `native_registry` walkthrough example.
+
+**Spec deltas (recorded, not silent).**
+
+1. **The config key is a typed enum, not the sketch's `Option<String>`.**
+   The config crate holds every key typed (`deny_unknown_fields` +
+   load-time validators); a bare string would push validation into every
+   consumer. The engine-side `native::Backend` stays a separate copy per
+   the recorded F04 ruling (config → engine conversion is wiring, not a
+   dependency).
+2. **`report()` returns a `NativeReport` struct, not the sketch's tuple.**
+   The doctor prints `id version healthy`; a named row is self-documenting
+   and the field order stays stable in the face of additions.
+3. **`OXIDE_COMPILER_BACKEND` needs an alias table.** The env layer
+   derives dotted paths by lowercasing + underscore-splitting, so a
+   camelCase config key is unreachable (`compiler.backend` ≠
+   `framework.compilerBackend`). `ENV_DOTTED_ALIASES` maps the derived
+   spelling onto the real path; it is the first camelCase key to need it
+   and later keys extend the table.
+4. **`from_enabled_features()` is empty today.** No native backend is
+   compiled in — C02–C04 land the real backends behind their vendored
+   upstreams (D27) and push into the registry; the feature flags are NOT
+   pre-declared (a feature with no backend behind it is dead scaffolding).
+   `auto` answers the Node pool for every framework and `native` refuses
+   `CMP-NAT-001` until then — the C01 contract the spec's own
+   `registry_pick_node_always_none` pin holds.
+
+**To unclose.** The CLI adoption — `compile_one` consulting `pick` ahead
+of the tooling pool, `oxide doctor` printing `report`'s rows,
+`PrecompileKey::tool_version` folding `cas_tool_version`, and the
+`registry_auto_falls_back_when_unhealthy` acceptance at the CLI layer —
+is an A01-phase-3 slice on a V8-capable host, exactly like the A02/A05/A06
+substrate adoptions.
+
+## V2-C09 — the image job model (2026-11-13)
+
+**What landed.** `crates/assets/src/image_jobs.rs` — the §V2-C09
+substrate: the bounded CPU lane (`available_parallelism() - 1`,
+`with_lanes` for the config-sized shape), the smaller AVIF lane, per-key
+single-flight over a `DashMap` of shared futures (losers join the leader's
+outcome; failed/panicked jobs drop their entry so the next request
+retries), the injectable `ImageCas` hooks (lookup before work, store after
+success), `spawn_blocking` placement and the `AST-JOBS` panic path; the
+`images.avifSpeed` config key (1..=10, default 6) threads into ravif
+through `encode_avif_at_speed`; `OxideError` gained `Clone` (additive —
+the shared outcome's error half). 7 TDD pins + the `image_jobs` criterion
+group + the `image_jobs` walkthrough example.
+
+**Spec deltas (recorded, not silent).**
+
+1. **The single-flight key is the module's `cache_key()` `String`, not the
+   cache crate's `KeyStr`.** `oxide-fw-assets` does not depend on
+   `oxide-fw-cache` today; importing the heap-free key type would pull the
+   redb/odf tree into every assets build for a type the module immediately
+   re-hexes. The CLI adoption can switch the key spelling when it wires
+   the real CAS — the seam (the `ImageCas` trait) does not change.
+2. **`OxideError` is `Clone` now.** The single-flight shares ONE awaited
+   outcome across N waiters, so the error half must clone. The graph crate
+   already worked around the missing derive (`OxideError(e.0.clone())`);
+   the derive makes that workaround unnecessary.
+3. **The CAS is an injected seam, not a concrete tier.** The spec's step c
+   ("CAS lookup before work, CAS store after") is the `ImageCas` trait;
+   the endpoint feeds the real tiered store at the CLI adoption. Tests
+   pin the contract against fakes (the spec's own test plan).
+
+**To unclose.** The endpoint wiring — constructing `ImageJobs` from
+`images.maxConcurrency`/`images.avifSpeed`, feeding the tiered CAS, and
+the `oha -c 64` acceptance run against a live server — is an A01-phase-3
+slice on a V8-capable host. The assets crate's own pedantic adoption (the
+crate is not yet in `[lints] workspace = true`) is the next crate-owned
+hygiene pass; the new module is held to the same standard by hand.
