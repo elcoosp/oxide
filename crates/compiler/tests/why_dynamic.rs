@@ -55,7 +55,7 @@ fn header_fixture_reports_a_header_read() {
 fn search_fixture_reports_a_search_param_read() {
     let src = fixture("search.server.ts");
     let reasons = infer_reasons(&src, "search.server.ts");
-    assert!(!reasons.is_empty());
+    assert!(!reasons.is_empty(), "the reason walk must report");
     assert!(
         reasons
             .iter()
@@ -152,7 +152,10 @@ fn unparseable_module_yields_no_reasons() {
     // does not parse (a build error is reported elsewhere); the why engine
     // has no span to point at, so it reports nothing.
     let src = "export const load = async ( { \n";
-    assert!(infer_reasons(src, "page.server.ts").is_empty());
+    assert_eq!(
+        infer_reasons(src, "page.server.ts"),
+        Vec::<oxide_fw_compiler::DynamicReason>::new()
+    );
     assert_eq!(infer_render_mode(src, "page.server.ts").mode, "dynamic");
 }
 
@@ -196,7 +199,7 @@ fn reason_diagnostic_carries_ox_dyn_code_frame_and_fix() {
         .fix
         .as_ref()
         .expect("every OX-DYN carries the miette help text");
-    assert!(!fix.is_empty());
+    assert!(!fix.is_empty(), "the fix must name a remedy");
     assert!(!d.causes.is_empty(), "the why-chain names the reason kind");
     let rendered = d.to_string();
     assert!(rendered.contains("[OX-DYN]"), "{rendered}");
