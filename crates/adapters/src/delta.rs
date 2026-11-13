@@ -549,8 +549,7 @@ pub fn deploy_dir(
     let local = scan_dist(dist)?;
     let prior = store.load_manifest()?;
     let pointer_now = store.read_pointer()?;
-    let prior_files: BTreeMap<String, String> =
-        prior.as_ref().map(|m| m.files.clone()).unwrap_or_default();
+    let prior_files: BTreeMap<String, String> = prior.as_ref().map_or_default(|m| m.files.clone());
     let plan = plan(&local, &prior_files);
 
     // The idempotent re-run: the ledger already describes this build and
