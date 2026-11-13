@@ -5249,6 +5249,7 @@ dependencies = [
  "icu_locale_core",
  "image",
  "lightningcss",
+ "lol_html",
  "oxide-fw-diagnostics",
  "oxvg_ast",
  "oxvg_optimiser",
@@ -5383,6 +5384,7 @@ version = "0.17.0"
 dependencies = [
  "blake3",
  "criterion",
+ "futures",
  "oxc_allocator",
  "oxc_ast",
  "oxc_codegen",
@@ -5395,6 +5397,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
 ]
 
