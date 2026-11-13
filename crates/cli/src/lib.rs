@@ -7186,6 +7186,12 @@ async fn cmd_build(
                     let Ok(raw) = std::fs::read_to_string(&svg_path) else {
                         continue;
                     };
+                    // V2-C07: honor `svg.optimize` at the one import hook
+                    // the tree ships today (`.svg?react`). The knob-off
+                    // path is byte-identical; every refusal (the feature
+                    // missing, a preservation rule, a backend failure)
+                    // warns with its diagnostic code and keeps the source.
+                    let raw = oxide_fw_assets::svg::optimize_for_build(&raw, cfg.svg.optimize);
                     let display = svg_path.to_string_lossy().to_string();
                     match oxide_fw_bundler::svg_react::svg_to_react_component(&raw, &display) {
                         Ok(tsx) => {
