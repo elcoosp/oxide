@@ -35,6 +35,7 @@ pub fn config_schema() -> Value {
             "cache": cache_schema(),
             "images": images_schema(),
             "fonts": fonts_schema(),
+            "svg": svg_schema(),
             "i18n": i18n_schema(),
             "security": security_schema(),
             "rules": rules_schema(),
@@ -284,6 +285,24 @@ fn images_schema() -> Value {
                 "minimum": 1,
                 "default": 8192,
                 "description": "§16.1: largest accepted `w`/`h`. A user-supplied size is not trusted to allocate an arbitrarily large canvas."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `svg` section (§V2-C07; extracted so
+/// [`config_schema`] stays legible, the same shape as the `images`
+/// fragment).
+#[must_use]
+fn svg_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "optimize": {
+                "type": "boolean",
+                "default": false,
+                "description": "V2-C07: run the SVG optimizer over SVG documents that enter the build (imports and SVG-as-component sources). The backend is the OXVG optimiser's correctness preset behind the `svg-oxvg` feature; with the knob off (and in every feature-off build) documents ship byte-identical. Every optimizer output is held to the preservation rules — the source's `viewBox`, every `<use>`/`url(#…)`/`aria-*` referenced id, well-formed output — and a violation is refused with `AST-SVG-001`, the source kept."
             }
         }
     })
