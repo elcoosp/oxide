@@ -160,7 +160,7 @@ impl Default for QueryCache {
 
 impl std::fmt::Debug for QueryCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let live = self.entries.lock().map(|s| s.map.len()).unwrap_or_default();
+        let live = self.entries.lock().map_or_default(|s| s.map.len());
         f.debug_struct("QueryCache")
             .field("ttl", &self.ttl)
             .field("cap", &self.cap)
