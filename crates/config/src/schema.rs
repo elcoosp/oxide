@@ -130,6 +130,11 @@ fn framework_schema() -> Value {
                     "description": "§7: the component dialect the adapter compiles (the loader in `page.server.ts` stays framework-neutral)."
                 },
                 "compiler": { "type": "boolean", "description": "C01: the native compiler pass for the adapter. true prefers the native backend when its toolchain is healthy; the node backend is the fallback (C01 / `compilerBackend`)." },
+                "compilerBackend": {
+                    "type": "string",
+                    "enum": ["auto", "native", "node"],
+                    "description": "V2-C01 (D26): the compiler backend the precompile pass consults per file. `auto` (the default) picks a native compiler when one is compiled in and healthy and uses the Node tooling pool otherwise; `native` requires the native path and refuses with CMP-NAT-001 when no healthy backend is available; `node` always uses the pool. Overridable via `OXIDE_COMPILER_BACKEND`."
+                },
                 "islands": {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
@@ -251,6 +256,13 @@ fn images_schema() -> Value {
                 "type": "array",
                 "items": { "type": "string", "enum": ["avif", "webp", "jpeg", "png"] },
                 "description": "§16.1: the encodings `/_oxide/image` emits, in preference order (avif via ravif)."
+            },
+            "avifSpeed": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10,
+                "default": 6,
+                "description": "V2-C09: the AVIF encoder speed (ravif's `with_speed`, 1..=10 — higher is faster at lower quality; the default is 6, the documented middle rate). Validated at load (`CFG-AVIF`)."
             },
             "remotePatterns": {
                 "type": "array",
