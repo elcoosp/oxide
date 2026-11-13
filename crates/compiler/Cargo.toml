@@ -21,6 +21,9 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 # server_fn_id content hashing (§9.4, D6) — workspace-pinned (D6 mandates blake3 everywhere)
 blake3 = { workspace = true }
+# V2-B07: the parallel-precompile engine's bounded window (the
+# `buffer_unordered` stream) — a workspace dep, pinned at the root.
+futures = { workspace = true }
 # V2-C01: the sub-crates below carry every oxc entry point this crate uses;
 # the `oxc` umbrella is NOT listed (cargo's unused-dependencies lint flagged
 # it: nothing imports `oxc::`, and pulling the umbrella pinned the full
@@ -39,6 +42,9 @@ oxc_sourcemap = "9.0.0"
 # hot path). Opt-in via the bench-util feature so plain `cargo test` never
 # pays the criterion build (the V2-B09 pattern).
 criterion = { workspace = true }
+# V2-B07: the engine pins drive async runtimes (the overlap and
+# determinism behaviors are only observable under concurrent tasks).
+tokio = { workspace = true }
 
 [features]
 # V2-C01: exposes the criterion bench harness for the native-registry
@@ -47,6 +53,12 @@ bench-util = []
 
 [[bench]]
 name = "native"
+harness = false
+required-features = ["bench-util"]
+
+# V2-B07: the parallel-precompile engine bench, behind the same opt-in.
+[[bench]]
+name = "precompile_engine"
 harness = false
 required-features = ["bench-util"]
 
