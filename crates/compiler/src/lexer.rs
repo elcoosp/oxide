@@ -41,6 +41,12 @@ pub struct Token {
 }
 
 /// Tokenize `src`. Comments are skipped entirely; offsets always index `src`.
+///
+/// # Panics
+///
+/// Never: the two `unwrap`s in the interpolation-brace arms are guarded by
+/// the `!tmpl_stack.is_empty()` match guard on the same arm.
+#[must_use]
 pub fn lex(src: &str) -> Vec<Token> {
     let b = src.as_bytes();
     let n = b.len();
@@ -55,55 +61,7 @@ pub fn lex(src: &str) -> Vec<Token> {
 
     while i < n {
         if in_text {
-            let start = text_start;
-            let first = text_first;
-            let mut j = i;
-            loop {
-                if j >= n {
-                    // unterminated template to EOF
-                    out.push(Token {
-                        kind: Tok::TemplateEnd,
-                        start,
-                        end: n,
-                    });
-                    i = n;
-                    break;
-                }
-                if b[j] == b'\\' {
-                    j += 2;
-                    continue;
-                }
-                if b[j] == b'`' {
-                    let kind = if first {
-                        Tok::TemplateFull
-                    } else {
-                        Tok::TemplateEnd
-                    };
-                    out.push(Token {
-                        kind,
-                        start,
-                        end: j + 1,
-                    });
-                    i = j + 1;
-                    break;
-                }
-                if b[j] == b'$' && j + 1 < n && b[j + 1] == b'{' {
-                    let kind = if first {
-                        Tok::TemplateStart
-                    } else {
-                        Tok::TemplateMid
-                    };
-                    out.push(Token {
-                        kind,
-                        start,
-                        end: j + 2,
-                    });
-                    tmpl_stack.push(0);
-                    i = j + 2;
-                    break;
-                }
-                j += 1;
-            }
+            i = scan_template_text(b, n, &mut out, &mut tmpl_stack, text_start, text_first, i);
             in_text = false;
             continue;
         }
@@ -124,31 +82,7 @@ pub fn lex(src: &str) -> Vec<Token> {
                 i = (i + 2).min(n);
             }
             b'"' | b'\'' => {
-                let start = i;
-                i += 1;
-                while i < n {
-                    if b[i] == b'\\' {
-                        i += 2;
-                        continue;
-                    }
-                    if b[i] == c {
-                        i += 1;
-                        break;
-                    }
-                    i += 1;
-                }
-                let end = i.min(n);
-                let inner_end = if end > start && b[end - 1] == c {
-                    end - 1
-                } else {
-                    end
-                };
-                let value = src[start + 1..inner_end].to_string();
-                out.push(Token {
-                    kind: Tok::Str { value },
-                    start,
-                    end,
-                });
+                i = scan_string(src, b, n, &mut out, c, i);
             }
             b'`' => {
                 text_start = i;
@@ -157,31 +91,10 @@ pub fn lex(src: &str) -> Vec<Token> {
                 i += 1;
             }
             b'0'..=b'9' => {
-                let start = i;
-                while i < n
-                    && (b[i].is_ascii_alphanumeric()
-                        || b[i] == b'_'
-                        || b[i] == b'.'
-                        || b[i] == b'$')
-                {
-                    i += 1;
-                }
-                out.push(Token {
-                    kind: Tok::Num,
-                    start,
-                    end: i,
-                });
+                i = scan_word(b, n, &mut out, i, Tok::Num);
             }
             b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'$' => {
-                let start = i;
-                while i < n && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'$') {
-                    i += 1;
-                }
-                out.push(Token {
-                    kind: Tok::Ident,
-                    start,
-                    end: i,
-                });
+                i = scan_word(b, n, &mut out, i, Tok::Ident);
             }
             b'=' if i + 1 < n && b[i + 1] == b'>' => {
                 out.push(Token {
@@ -193,53 +106,7 @@ pub fn lex(src: &str) -> Vec<Token> {
             }
             b'/' => {
                 // Regex vs division: after an expression-ending token it is division.
-                let div_prev = matches!(
-                    out.last().map(|t| &t.kind),
-                    Some(Tok::Ident)
-                        | Some(Tok::Num)
-                        | Some(Tok::Str { .. })
-                        | Some(Tok::TemplateFull)
-                        | Some(Tok::TemplateEnd)
-                        | Some(Tok::Regex)
-                        | Some(Tok::Punct(')'))
-                        | Some(Tok::Punct(']'))
-                        | Some(Tok::Punct('}'))
-                );
-                if div_prev {
-                    out.push(Token {
-                        kind: Tok::Punct('/'),
-                        start: i,
-                        end: i + 1,
-                    });
-                    i += 1;
-                } else {
-                    let start = i;
-                    i += 1;
-                    let mut in_class = false;
-                    while i < n {
-                        if b[i] == b'\\' {
-                            i += 2;
-                            continue;
-                        }
-                        if b[i] == b'[' {
-                            in_class = true;
-                        } else if b[i] == b']' {
-                            in_class = false;
-                        } else if b[i] == b'/' && !in_class {
-                            i += 1;
-                            break;
-                        }
-                        i += 1;
-                    }
-                    while i < n && b[i].is_ascii_alphabetic() {
-                        i += 1;
-                    }
-                    out.push(Token {
-                        kind: Tok::Regex,
-                        start,
-                        end: i,
-                    });
-                }
+                i = scan_slash(b, n, &mut out, i);
             }
             b'{' if !tmpl_stack.is_empty() => {
                 *tmpl_stack.last_mut().unwrap() += 1;
@@ -251,26 +118,13 @@ pub fn lex(src: &str) -> Vec<Token> {
                 i += 1;
             }
             b'}' if !tmpl_stack.is_empty() => {
-                let top = tmpl_stack.last_mut().unwrap();
-                if *top == 0 {
-                    tmpl_stack.pop();
-                    out.push(Token {
-                        kind: Tok::Punct('}'),
-                        start: i,
-                        end: i + 1,
-                    });
-                    i += 1;
+                let (next, to_text) = interp_brace_close(&mut out, &mut tmpl_stack, i);
+                i = next;
+                if to_text {
+                    // Closing a `${` returns to template text (the tail).
                     text_start = i;
                     text_first = false;
                     in_text = true;
-                } else {
-                    *top -= 1;
-                    out.push(Token {
-                        kind: Tok::Punct('}'),
-                        start: i,
-                        end: i + 1,
-                    });
-                    i += 1;
                 }
             }
             _ => {
@@ -284,6 +138,217 @@ pub fn lex(src: &str) -> Vec<Token> {
         }
     }
     out
+}
+
+/// Scan one template-text run from `i` (the bytes after a backtick or
+/// after the `}` that closed an interpolation) until the next backtick
+/// (full/end token) or `${` (start/mid token). Pushes one token and
+/// returns the offset to resume lexing at.
+fn scan_template_text(
+    b: &[u8],
+    n: usize,
+    out: &mut Vec<Token>,
+    tmpl_stack: &mut Vec<u32>,
+    start: usize,
+    first: bool,
+    i: usize,
+) -> usize {
+    let mut j = i;
+    loop {
+        if j >= n {
+            // unterminated template to EOF
+            out.push(Token {
+                kind: Tok::TemplateEnd,
+                start,
+                end: n,
+            });
+            return n;
+        }
+        if b[j] == b'\\' {
+            j += 2;
+            continue;
+        }
+        if b[j] == b'`' {
+            let kind = if first {
+                Tok::TemplateFull
+            } else {
+                Tok::TemplateEnd
+            };
+            out.push(Token {
+                kind,
+                start,
+                end: j + 1,
+            });
+            return j + 1;
+        }
+        if b[j] == b'$' && j + 1 < n && b[j + 1] == b'{' {
+            let kind = if first {
+                Tok::TemplateStart
+            } else {
+                Tok::TemplateMid
+            };
+            out.push(Token {
+                kind,
+                start,
+                end: j + 2,
+            });
+            tmpl_stack.push(0);
+            return j + 2;
+        }
+        j += 1;
+    }
+}
+
+/// Scan one single/double-quoted string from `i` (at the opening quote).
+/// Pushes the `Str` token (raw inner text, escapes left raw) and returns
+/// the offset after the closing quote (or end of input for an
+/// unterminated literal).
+fn scan_string(
+    src: &str,
+    b: &[u8],
+    n: usize,
+    out: &mut Vec<Token>,
+    quote: u8,
+    mut i: usize,
+) -> usize {
+    let start = i;
+    i += 1;
+    while i < n {
+        if b[i] == b'\\' {
+            i += 2;
+            continue;
+        }
+        if b[i] == quote {
+            i += 1;
+            break;
+        }
+        i += 1;
+    }
+    let end = i.min(n);
+    let inner_end = if end > start && b[end - 1] == quote {
+        end - 1
+    } else {
+        end
+    };
+    let value = src[start + 1..inner_end].to_string();
+    out.push(Token {
+        kind: Tok::Str { value },
+        start,
+        end,
+    });
+    end
+}
+
+/// Scan one regex literal from `i` (at the opening `/`; the caller has
+/// already decided it is a regex, not division). Pushes the `Regex`
+/// token (contents opaque) and returns the offset after the closing
+/// `/` and its flags.
+fn scan_regex(b: &[u8], n: usize, out: &mut Vec<Token>, mut i: usize) -> usize {
+    let start = i;
+    i += 1;
+    let mut in_class = false;
+    while i < n {
+        if b[i] == b'\\' {
+            i += 2;
+            continue;
+        }
+        if b[i] == b'[' {
+            in_class = true;
+        } else if b[i] == b']' {
+            in_class = false;
+        } else if b[i] == b'/' && !in_class {
+            i += 1;
+            break;
+        }
+        i += 1;
+    }
+    while i < n && b[i].is_ascii_alphabetic() {
+        i += 1;
+    }
+    out.push(Token {
+        kind: Tok::Regex,
+        start,
+        end: i,
+    });
+    i
+}
+
+/// Scan one `/` at `i`: after an expression-ending token it is division
+/// (`Punct('/')`); otherwise it opens a regex literal (see [`scan_regex`]).
+/// Returns the offset to resume lexing at.
+fn scan_slash(b: &[u8], n: usize, out: &mut Vec<Token>, i: usize) -> usize {
+    let div_prev = matches!(
+        out.last().map(|t| &t.kind),
+        Some(
+            Tok::Ident
+                | Tok::Num
+                | Tok::Str { .. }
+                | Tok::TemplateFull
+                | Tok::TemplateEnd
+                | Tok::Regex
+                | Tok::Punct(')' | ']' | '}'),
+        )
+    );
+    if div_prev {
+        out.push(Token {
+            kind: Tok::Punct('/'),
+            start: i,
+            end: i + 1,
+        });
+        i + 1
+    } else {
+        scan_regex(b, n, out, i)
+    }
+}
+
+/// Scan one identifier-or-number run from `i` (the caller matched the
+/// first byte): alphanumeric/`_`/`$` continuation, numbers also absorb
+/// `.`. Pushes the token of `kind` and returns the offset after it.
+fn scan_word(b: &[u8], n: usize, out: &mut Vec<Token>, mut i: usize, kind: Tok) -> usize {
+    let start = i;
+    while i < n
+        && (b[i].is_ascii_alphanumeric()
+            || b[i] == b'_'
+            || b[i] == b'$'
+            // Number literals absorb the decimal point (`1.5`, `1.5e3`).
+            || (b[i] == b'.' && kind == Tok::Num))
+    {
+        i += 1;
+    }
+    out.push(Token {
+        kind,
+        start,
+        end: i,
+    });
+    i
+}
+
+/// Pop one interpolation-brace level at the `}` in position `i`: a `}`
+/// closing the `${` returns to template text (the tail scan); a nested
+/// `{` just decrements the depth. Returns the offset after the `}` and
+/// whether lexing returns to template text. The caller guarantees
+/// `tmpl_stack` is non-empty (the match arm's guard).
+fn interp_brace_close(out: &mut Vec<Token>, tmpl_stack: &mut Vec<u32>, i: usize) -> (usize, bool) {
+    let top = tmpl_stack
+        .last_mut()
+        .expect("the match arm guards a non-empty stack");
+    if *top == 0 {
+        tmpl_stack.pop();
+        out.push(Token {
+            kind: Tok::Punct('}'),
+            start: i,
+            end: i + 1,
+        });
+        (i + 1, true)
+    } else {
+        *top -= 1;
+        out.push(Token {
+            kind: Tok::Punct('}'),
+            start: i,
+            end: i + 1,
+        });
+        (i + 1, false)
+    }
 }
 
 #[cfg(test)]
