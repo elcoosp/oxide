@@ -61,6 +61,10 @@ message = "index serialization failed: {e}"
 [AST-IMG]
 message = "failed to decode source image: {e}"
 
+[AST-JOBS]
+message = "the image encoder panicked: {join}"
+fix = "inspect the encoder diagnostic; the next request retries the encode"
+
 [AST-IMG-REQ]
 message = "`url` query parameter is empty"
 
@@ -211,6 +215,14 @@ message = "remote cache URL must be http:// ({url})"
 message = "unknown config key `framwork`"
 fix = "did you mean `framework`?"
 
+[CFG-AVIF]
+message = "`images.avifSpeed` must be a whole number in 1..=10 (ravif's encoder speed) — got `{got}`"
+fix = "set `images.avifSpeed` to a whole number in 1..=10 (the default is 6)"
+
+[CFG-BACKEND]
+message = "`framework.compilerBackend` must be one of `auto`, `native`, `node` — got `{got}`"
+fix = "set `framework.compilerBackend` to `auto` (the default), `native` or `node`"
+
 [CFG-EXTENDS]
 message = "extends chain too deep at `{spec}` (cycle?)"
 
@@ -244,9 +256,8 @@ message = "'use cache' function has no binding name"
 message = "server-only `{ident}` from `{}` shipped into client chunk `{chunk}`"
 
 [CMP-NAT-001]
-message = "`compilerBackend: 'native'` but no healthy native compiler for the framework"
-fix = "Build with `--features native-<fw>` or set `compilerBackend` to `auto` or `node`"
-spec_only = true
+message = "framework.compilerBackend is 'native' but no healthy native compiler is available for {fw}"
+fix = "build oxide-cli with --features native-{fw} or set framework.compilerBackend to 'auto' or 'node'"
 
 [CMP-PARSE]
 message = "fix the syntax error reported by the Oxc parser"
