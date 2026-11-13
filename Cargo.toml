@@ -52,7 +52,6 @@ pedantic = { level = "warn", priority = -1 }
 [workspace.dependencies]
 # Internal crates (spec §23)
 oxide-fw-diagnostics = { path = "crates/diagnostics" }
-oxide-fw-schema = { path = "crates/schema" }
 oxide-fw-odf = { path = "crates/odf" }
 oxide-fw-router = { path = "crates/router" }
 oxide-fw-dispatch = { path = "crates/dispatch" }
@@ -69,7 +68,6 @@ oxide-fw-server = { path = "crates/server" }
 oxide-fw-assets = { path = "crates/assets" }
 oxide-fw-dev = { path = "crates/dev" }
 oxide-fw-adapters = { path = "crates/adapters" }
-oxide-fw-core-wasm = { path = "crates/core-wasm" }
 
 # Async / HTTP / TLS (spec Appendix A: stable, direct use)
 tokio = { version = "1.52.3", features = ["full"] }
@@ -154,7 +152,6 @@ tracing-opentelemetry = { version = "0.32.1", default-features = false }
 opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["trace", "grpc-tonic"] }
 opentelemetry_sdk = { version = "0.31.0", default-features = false, features = ["trace", "rt-tokio"] }
 opentelemetry = { version = "0.31.0", default-features = false, features = ["trace"] }
-miette = { version = "7.6.0", features = ["fancy"] }
 
 # Testing
 proptest = "1.12.0"
@@ -164,7 +161,6 @@ proptest = "1.12.0"
 # test-only dependency. All snapshot assertions here are on strings.
 insta = "1.49.0"
 tempfile = "3.27.0"
-tokio-test = "0.4.6"
 mimalloc = { version = "0.1" }
 
 # Real upstream dependencies backing every documented stub (docs/deviations.md).
@@ -172,9 +168,7 @@ mimalloc = { version = "0.1" }
 # trait's default engine to the spec's exact external choice (spec Appendix A).
 deno_core = { version = "0.412.0" }
 deno_error = { version = "0.7.1" }
-deno_ast = { version = "0.53.3" }
 moka = { version = "0.12.16", features = ["future", "sync"] }
-oxc = { version = "0.155.0", features = ["full"] }
 oxc_resolver = { version = "11.24.3" }
 oxc_allocator = { version = "0.155.0" }
 oxc_parser = { version = "0.155.0" }
@@ -204,12 +198,9 @@ skrifa = { version = "0.48.0" }
 # SPEC-16.2: font subsetting.
 subsetter = "0.1"
 read-fonts = { version = "0.45.0" }
-write-fonts = { version = "0.52.0" }
 resvg = { version = "0.48.1" }
 tiny-skia = { version = "0.12" }
 usvg = { version = "0.48.1" }
-taffy = { version = "0.14.0" }
-parley = { version = "0.11.0" }
 wasmtime = { version = "48.0.1", default-features = false, features = ["addr2line", "async", "component-model", "coredump", "cranelift", "debug-builtins", "demangle", "gc", "gc-drc", "gc-null", "parallel-compilation", "pooling-allocator", "runtime", "std", "threads", "wat"] }
 local-ip-address = "0.5.7"
 qrcode = { version = "0.14.1", default-features = false }
