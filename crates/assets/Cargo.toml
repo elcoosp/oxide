@@ -30,12 +30,32 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
+# V2-C09: the image job model — the bounded lanes (tokio), the single-flight
+# map (dashmap), the shared outcomes (futures) and the job-span events
+# (tracing, the house observability convention).
+tokio = { workspace = true }
+futures = { workspace = true }
+dashmap = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# V2-C09: the image_jobs pins drive an async runtime (the lane + single-flight
+# behavior is only observable under concurrent tasks).
+tokio = { workspace = true }
+# V2-C09: criterion harness for the job-model bench, opt-in via bench-util
+# (the V2-B09 pattern).
+criterion = { workspace = true }
 
 [features]
 subset = ["dep:subsetter"]
+# V2-C09: exposes the criterion bench harness for the image job model.
+bench-util = []
+
+[[bench]]
+name = "image_jobs"
+harness = false
+required-features = ["bench-util"]
 
 [package.metadata.docs.rs]
 all-features = true
