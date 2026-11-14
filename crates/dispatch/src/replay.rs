@@ -29,9 +29,12 @@
 //! The wiring — the worker's `globalThis.__oxide_replay` install, the
 //! `oxide replay` CLI command and the MCP `replay.run` tool — is the
 //! CLI-adoption half, deferred with the rest of the A01 phase-3 wiring
-//! (see `docs/deviations.md`).
+//! (see `docs/deviations.md`); the one-definition orchestration they all
+//! drive is the [`ReplayRunner`] + [`ReplayExecutor`] seam here, so the
+//! command and the tool stay thin wrappers over the same tested path.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use base64::Engine as _;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
@@ -378,6 +381,128 @@ pub struct ReplayDiff {
     pub ok: bool,
     /// Every divergence, in status → header → body order.
     pub divergences: Vec<Divergence>,
+}
+
+/// One re-executed response: what a [`ReplayExecutor`] hands back. The
+/// body stays raw bytes in memory; on the wire (the `--json` surface, the
+/// MCP tool) it rides base64 — the record's own convention.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExecutedResponse {
+    /// The HTTP status the re-execution produced.
+    pub status: u16,
+    /// The response headers, in order.
+    pub headers: Vec<(String, String)>,
+    /// The response body, raw.
+    pub body: Vec<u8>,
+}
+
+impl serde::Serialize for ExecutedResponse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use base64::Engine as _;
+        use serde::ser::SerializeStruct as _;
+        let mut state = serializer.serialize_struct("ExecutedResponse", 3)?;
+        state.serialize_field("status", &self.status)?;
+        state.serialize_field("headers", &self.headers)?;
+        state.serialize_field(
+            "bodyBase64",
+            &base64::engine::general_purpose::STANDARD.encode(&self.body),
+        )?;
+        state.end()
+    }
+}
+
+/// The re-execution seam (§V2-F15: "`oxide replay <id>` re-executes a
+/// captured request deterministically"). The runner loads the record and
+/// compares; THIS trait is the actual re-execution — the CLI's
+/// implementation drives the captured request line-set, route id, params
+/// and locals back through the real pipeline (V8 loaders, the §9.2 load
+/// graph), with the worker's `globalThis.__oxide_replay` install playing
+/// the recorded fetch ops and sequences into the same run. Test and
+/// example hosts implement it over fakes; the runner stays
+/// re-execution-agnostic.
+#[async_trait::async_trait]
+pub trait ReplayExecutor: Send + Sync {
+    /// Re-execute one captured request.
+    ///
+    /// # Errors
+    ///
+    /// The implementation's own diagnostics surface unchanged — a
+    /// playback that hits a call outside the record refuses `RPL-002`,
+    /// a drained sequence `RPL-004`; the runner never wraps them.
+    async fn execute(
+        &self,
+        record: &crate::record::RequestRecord,
+    ) -> Result<ExecutedResponse, OxideError>;
+}
+
+/// The replay orchestration — the one definition the `oxide replay
+/// <id> [--diff]` command and the MCP `replay.run` tool drive (the
+/// CLI-side wiring wraps this; the substrate stays V8-free). The flow is
+/// the spec's: load the record (`RPL-001` on a missing store entry,
+/// `RPL-005` on a foreign schema version), warn-but-run on an older
+/// build id (`RPL-003`), re-execute through the injected executor, and
+/// produce the `--diff` verdict (nonce-normalized).
+pub struct ReplayRunner {
+    source: Arc<dyn crate::record::RecordSource>,
+    current_build_id: String,
+}
+
+impl ReplayRunner {
+    /// A runner over `source`, replaying against the build id the
+    /// process runs now (the `RPL-003` comparison side).
+    #[must_use]
+    pub fn new(source: Arc<dyn crate::record::RecordSource>, current_build_id: &str) -> Self {
+        Self {
+            source,
+            current_build_id: current_build_id.to_string(),
+        }
+    }
+
+    /// Load, re-execute and diff one record.
+    ///
+    /// # Errors
+    ///
+    /// [`OxideError`] with `RPL-001` / `RPL-005` when the record cannot
+    /// load, or the executor's own refusal (an `RPL-002` unexpected call,
+    /// an `RPL-004` drained sequence, the pipeline's own codes) unchanged.
+    pub async fn run(
+        &self,
+        request_id: &str,
+        executor: &dyn ReplayExecutor,
+    ) -> Result<ReplayOutcome, OxideError> {
+        let record = self.source.load(request_id)?;
+        // §V2-F15: "a record from an older build id warns (RPL-003) but
+        // runs" — the structured warn fires here, the verdict rides the
+        // outcome.
+        let stale_build = warn_stale_build(&record, &self.current_build_id);
+        let response = executor.execute(&record).await?;
+        let body = String::from_utf8_lossy(&response.body);
+        let diff = replay_diff(&record, response.status, &response.headers, &body);
+        Ok(ReplayOutcome {
+            record,
+            response,
+            stale_build,
+            diff,
+        })
+    }
+}
+
+/// The runner's verdict: the loaded record, the re-executed response, the
+/// `RPL-003` staleness and the `--diff` comparison. Serializes camelCase
+/// for the `--json` and MCP surfaces (the executed body rides base64, the
+/// record's wire convention).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayOutcome {
+    /// The record the replay loaded (redacted, versioned).
+    pub record: crate::record::RequestRecord,
+    /// The re-executed response.
+    pub response: ExecutedResponse,
+    /// The record was made on an older build id (`RPL-003`; the replay
+    /// ran anyway).
+    pub stale_build: bool,
+    /// The `--diff` verdict against the recorded response.
+    pub diff: ReplayDiff,
 }
 
 #[cfg(test)]
