@@ -658,6 +658,32 @@
       },
       "type": "array"
     },
+    "offline": {
+      "additionalProperties": false,
+      "description": "V2-F14: the offline-first knobs. Inert at the wiring until the F14 CLI adoption lands (the PWA worker's precache emitting from the client manifest, the client outbox boot); the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Master switch. false (the default) installs no service worker and boots no outbox.",
+          "type": "boolean"
+        },
+        "outbox": {
+          "default": true,
+          "description": "The offline action outbox (packages/core's enqueue/flush, the x-oxide-idem replay header). On inside an enabled section (the spec's example shape); false keeps the precache-only posture.",
+          "type": "boolean"
+        },
+        "precache": {
+          "default": "routes",
+          "description": "The precache breadth: 'routes' caches the shell + the prerendered routes (the navigation-fallback surface), 'all' caches every hashed asset the client manifest carries.",
+          "enum": [
+            "routes",
+            "all"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "og": {
       "additionalProperties": true,
       "description": "S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true.",
