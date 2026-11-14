@@ -5361,6 +5361,7 @@ dependencies = [
  "oxide-fw-router",
  "oxide-fw-search",
  "oxide-fw-server",
+ "oxide-rustfn",
  "rayon",
  "reqwest 0.12.28",
  "ring",
@@ -5661,6 +5662,33 @@ dependencies = [
  "tracing",
  "url",
  "zstd",
+]
+
+[[package]]
+name = "oxide-macros"
+version = "0.17.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "oxide-rustfn"
+version = "0.17.0"
+dependencies = [
+ "async-trait",
+ "criterion",
+ "libloading",
+ "oxide-fw-diagnostics",
+ "oxide-fw-odf",
+ "oxide-macros",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
