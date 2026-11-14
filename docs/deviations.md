@@ -3097,3 +3097,63 @@ config + the prerender walk into `emit_pwa`) and the boot's
 `onSwFlushMessage` adoption — both thin wrappers over the landed seams (the
 A01 phase-3 wiring on a V8-capable host). The `Offline` matrix row stays
 Degraded until they land.
+
+## Auto-islands inference (V2-F02) — the scanner + manifest + gate landed, the CLI call-site is the deferred half (`feat/auto-islands-inference`, 2026-11-14)
+
+**What landed.** The §V2-F02 one-week-spike's V8-free substrate:
+`crates/compiler/src/interactivity.rs` — the spec-verbatim
+`scan_interactivity(source, framework) -> Interactivity` (direct detection
+only): React (`useState`/`useReducer`/`useEffect`/`useLayoutEffect`,
+`useRef` **with** a `.current` write, any `on*` JSX attribute), Solid
+(`createSignal`/`createEffect`/`createStore`, `on*`), Vue (`ref`/`reactive`/
+`computed`/`watch`/`onMounted`/`emit`, `v-on:`/`@event` in the template),
+Svelte (`$state`, `$:` labeled statements, `on:`/`onclick`/`bind:`); the
+`{ file: { interactive, reasons } }` manifest (`IslandManifest`, the
+`.oxide/island-manifest.json` side-car contract, compact + sorted + a
+typed `AST-ISL-001` refusal on a corrupt read); the project fixpoint
+(a component is pure when it has no hits AND imports no interactive
+component from the same project — relative specifiers only, transitive);
+and the hydration decision (`hydrates`: an explicit registry entry always
+wins, a pure classification is the only skip, missing data hydrates). 27
+TDD pins, the `interactivity` criterion group, the `auto_islands`
+walkthrough example, and the typed `framework.autoIslands` gate (schema'd,
+`KNOWN_KEYS` face unchanged — the key nests under `framework` — and the
+committed schema regenerated). Every conservative arm points the same
+direction the kill criterion demands: an unparseable module classifies
+interactive, a missing classification hydrates, an over-flagged island
+only costs bytes — a pure classification is the ONLY reason hydration is
+skipped, so the worst case of a wrong inference is today's behavior.
+
+**Deltas.**
+
+- The gate is `framework.autoIslands`, not the spec's
+  `experiments.autoIslands` spelling: F04 already typed `experiments` as
+  the A/B array (a different shape), so the flag lands beside the islands
+  registry it governs. The default is `false` — the spec's own default
+  ("a wrong inference silently breaks interactivity, so the default is to
+  defer").
+- The Vue/Svelte template arms are a conservative token scan over the
+  `<template>` region (the script arms are real Oxc parses), not a full
+  template parse — no Vue/Svelte template parser exists in the Rust tree.
+  The scan can only over-flag (`@media` in a stray inline style, an email
+  in text); it cannot under-flag, so the kill criterion stays safe.
+- `defineEmits`/`emit` (Vue) and `$effect` (Svelte) ride the detection
+  sets beside the spec's named tokens — an emitting or effecting
+  component is interactive by construction; the superset is the safe
+  direction. `$state.raw(...)`/`$effect.pre(...)` count under the rune.
+- A module that does not parse classifies `interactive` (`unparsed`) —
+  content the parser cannot read is content the scanner cannot vouch for,
+  and a false negative silently breaks interactivity.
+- The manifest write and the registry merge stay at the CLI call site
+  (the F04 ruling: the module never touches the filesystem; the
+  `routes.reasons.json` advisory precedent). The dev warn for a
+  pure-classified component receiving `on*` props needs the island props
+  at the boot/render surface and rides the same wiring.
+
+**What remains.** The CLI build call-site: when `framework.autoIslands`
+holds, scan the client tree into the manifest side-car and merge the
+interactive files into the boot registry before `plan_island_boot` (the
+A01 phase-3 wiring on a V8-capable host). The `MixedIslands` capability
+row is unaffected; the spike's 15%-JS-saving measurement runs after the
+call-site lands (the scanner is deterministic and V8-free — the build-time
+side of the spike is done).
