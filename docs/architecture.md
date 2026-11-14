@@ -615,3 +615,17 @@ build's route scan owns the component graph:
    Lightning CSS (CssBackend), libvips (ImageBackend), fontations (FontBackend),
    wasmtime (WASM plugins) each have a working default engine or fail-fast stub behind
    the spec's own isolation point — swaps don't touch call sites.
+
+## Native framework compilers (§V2-C01 tail + C03/C04/C05)
+
+The precompile pass consults `NativeRegistry::pick` ahead of the Node
+tooling pool per file: `auto` picks a healthy compiled-in backend,
+`native` refuses with `CMP-NAT-001`, `node` always uses the pool. The
+compiled-in set is feature-gated: `native-vue` (verter_core 0.0.1-beta.1),
+`native-svelte` (svelte-compiler 0.1.4) and `native-react-compiler`
+(oxc_react_compiler 0.143.0, applied before the JSX lowering through a
+string-in/string-out seam). C02 (Solid) is killed upstream — see
+`docs/decisions/C02-solid-kill.md`; C10 (MDX) is spiked-killed — see
+`docs/decisions/C10-mdx-kill.md`. The CAS key folds
+`native:{id}@{version}` (D40); the build fingerprint folds
+`framework.compilerBackend`.
