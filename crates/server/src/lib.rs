@@ -78,6 +78,11 @@ pub use search_endpoint::SearchEndpoint;
 
 pub mod trace_context;
 
+/// The §V2-F08 dispatcher consult (the native `*.server.rs` registry
+/// answers before the JS pool).
+pub mod rustfn_bridge;
+pub use rustfn_bridge::{NativeFnSource, RustFirstDispatcher};
+
 use bytes::Bytes;
 use flate2::write::GzEncoder;
 use futures::Stream;
