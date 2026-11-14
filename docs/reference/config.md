@@ -130,6 +130,12 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 ### `modules`
 
 - `modules` — `string[]` — default —: §15.4: distributable modules to install.
+### `offline`
+
+- `offline` — `object` — default —: V2-F14: the offline-first knobs. Inert at the wiring until the F14 CLI adoption lands (the PWA worker's precache emitting from the client manifest, the client outbox boot); the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).
+- `offline.enabled` — `boolean` — default `false`: Master switch. false (the default) installs no service worker and boots no outbox.
+- `offline.outbox` — `boolean` — default `true`: The offline action outbox (packages/core's enqueue/flush, the x-oxide-idem replay header). On inside an enabled section (the spec's example shape); false keeps the precache-only posture.
+- `offline.precache` — `string` — default `"routes"`: The precache breadth: 'routes' caches the shell + the prerendered routes (the navigation-fallback surface), 'all' caches every hashed asset the client manifest carries.
 ### `og`
 
 - `og` — `object` — default —: S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true.
