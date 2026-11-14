@@ -177,5 +177,91 @@ fn bench_native(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_native);
+criterion_group!(
+    benches,
+    bench_native_compile_vue,
+    bench_native_compile_svelte,
+    bench_native_compile_react_compiler,
+    bench_native
+);
 criterion_main!(benches);
+
+// §V2-C03/C04/C05: the per-backend native compile benches (the landed
+// backends' cold-compile cost for their health-fixture-shaped sources).
+// Each group compiles ONLY when its feature is on (`cargo bench -p
+// oxide-fw-compiler --features native-vue ...`); with the feature off
+// the group compiles to nothing (cfg-eliminated).
+#[cfg(feature = "native-vue")]
+fn bench_native_compile_vue(c: &mut Criterion) {
+    let mut group = c.benchmark_group("native_compile");
+    use oxide_fw_compiler::native::{CompileRequest, Generate, NativeCompiler};
+    let src = "<script setup lang=\"ts\">import { ref } from 'vue'; const n = ref(1);</script>\n<template><b @click=\"n++\">{{ n }}</b></template>";
+    let path = std::path::Path::new("src/components/Bench.vue");
+    group.bench_function("vue", |b| {
+        b.iter(|| {
+            let backend = oxide_fw_compiler::vue::VueNative;
+            let out = backend
+                .compile(&CompileRequest {
+                    path,
+                    source: src,
+                    generate: Generate::Dom,
+                    dev: false,
+                })
+                .expect("bench compile");
+            black_box(out);
+        })
+    });
+    group.finish();
+}
+#[cfg(not(feature = "native-vue"))]
+fn bench_native_compile_vue(_c: &mut Criterion) {}
+
+#[cfg(feature = "native-svelte")]
+fn bench_native_compile_svelte(c: &mut Criterion) {
+    let mut group = c.benchmark_group("native_compile");
+    use oxide_fw_compiler::native::{CompileRequest, Generate, NativeCompiler};
+    let src = "<script>let n = $state(1);</script>\n<button on:click={() => n++}>{n}</button>";
+    let path = std::path::Path::new("src/components/Bench.svelte");
+    group.bench_function("svelte", |b| {
+        b.iter(|| {
+            let backend = oxide_fw_compiler::svelte::SvelteNative;
+            let out = backend
+                .compile(&CompileRequest {
+                    path,
+                    source: src,
+                    generate: Generate::Dom,
+                    dev: false,
+                })
+                .expect("bench compile");
+            black_box(out);
+        })
+    });
+    group.finish();
+}
+#[cfg(not(feature = "native-svelte"))]
+fn bench_native_compile_svelte(_c: &mut Criterion) {}
+
+#[cfg(feature = "native-react-compiler")]
+fn bench_native_compile_react_compiler(c: &mut Criterion) {
+    let mut group = c.benchmark_group("native_compile");
+    use oxide_fw_compiler::native::{CompileRequest, Generate, NativeCompiler};
+    let src = "import { useState } from \"react\";\nexport function C() { const [n, set] = useState(0); return <button onClick={() => set(n + 1)}>{n}</button>; }\n";
+    let path = std::path::Path::new("src/components/Bench.tsx");
+    group.bench_function("react_compiler", |b| {
+        b.iter(|| {
+            let backend = oxide_fw_compiler::react_compiler::ReactCompilerNative;
+            let out = backend
+                .compile(&CompileRequest {
+                    path,
+                    source: src,
+                    generate: Generate::Dom,
+                    dev: false,
+                })
+                .expect("bench compile");
+            black_box(out);
+        })
+    });
+    group.finish();
+}
+#[cfg(not(feature = "native-react-compiler"))]
+fn bench_native_compile_react_compiler(_c: &mut Criterion) {}
