@@ -118,6 +118,37 @@ impl Watcher {
         }
     }
 
+    /// V2-E12: a watcher whose roots extend into the enclosing workspace —
+    /// the linked packages the app actually imports (by name, from its own
+    /// dependency manifest) are resolved to their REAL trees through
+    /// [`workspace::ManifestWorkspaceLinks`], and each link's source dir is
+    /// added to the watch set (deduplicated). An edit to
+    /// `../packages/ui/src` therefore invalidates the app without watching
+    /// every sibling package in the monorepo (the coarse SPEC-16 walk).
+    ///
+    /// Discovery failures surface through the returned [`Result`]: a
+    /// malformed workspace manifest is a loud `DEV-WS-001`, never a silent
+    /// roots-only boot. An uninstalled dependency skips with a warn — the
+    /// watcher still boots for the app itself.
+    pub fn with_workspace_links(
+        roots: Vec<PathBuf>,
+        links: &dyn WorkspaceLinks,
+        app_root: &Path,
+    ) -> Result<Self> {
+        let mut all = roots;
+        for link in links.links(app_root)? {
+            tracing::debug!(
+                name = %link.name,
+                watch_root = %link.watch_root.display(),
+                "workspace links: watch root added"
+            );
+            if !all.contains(&link.watch_root) {
+                all.push(link.watch_root);
+            }
+        }
+        Ok(Self::with_notify(all))
+    }
+
     fn try_notify(roots: &[PathBuf]) -> Result<NotifyBackend> {
         use notify::RecursiveMode;
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1305,6 +1336,13 @@ pub use dev_server::{
 /// seam (§V2-E01).
 pub mod state;
 pub use state::{DefaultStatePolicy, Preservation, StatePolicy};
+
+/// V2-E12: the workspace-links substrate — the linked-package discovery
+/// (`pnpm-workspace.yaml` / `package.json` `workspaces` → `oxc_resolver`
+/// real-path resolution) that extends the watcher roots into the enclosing
+/// monorepo, plus the `real_path` package-edge bridge (§V2-E12).
+pub mod workspace;
+pub use workspace::{DEV_WS_001, LinkedPackage, ManifestWorkspaceLinks, WorkspaceLinks, real_path};
 
 #[cfg(test)]
 mod tests;
