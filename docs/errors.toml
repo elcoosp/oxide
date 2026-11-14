@@ -347,6 +347,10 @@ message = "QR generation failed: {e}"
 [DEV-TLS]
 message = "certificate params failed: {e}"
 
+[DEV-WS-001]
+message = "workspace discovery failed for {path}: {err_msg}"
+fix = "Check the manifest's shape — pnpm-workspace.yaml `packages:` is a list of glob entries (block or flow), package.json `workspaces` is a list of globs — and run the package manager's install so linked packages resolve under node_modules"
+
 [DOC-001]
 message = "config keys carry no schema description; the page refuses to render (E11 acceptance)"
 fix = "add a `description` in `crates/config/src/schema.rs`, then regenerate the pages"
