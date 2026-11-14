@@ -111,7 +111,7 @@ impl<T: TsType> TsType for Option<T> {
     }
 }
 
-impl<T: TsType> TsType for std::collections::HashSet<T> {
+impl<T: TsType, S: std::hash::BuildHasher> TsType for std::collections::HashSet<T, S> {
     fn ts_type_name() -> String {
         format!("Array<{}>", T::ts_type_name())
     }
@@ -129,7 +129,7 @@ impl<T: TsType> TsType for std::collections::BTreeSet<T> {
     }
 }
 
-impl<T: TsType> TsType for std::collections::HashMap<String, T> {
+impl<T: TsType, S: std::hash::BuildHasher> TsType for std::collections::HashMap<String, T, S> {
     fn ts_type_name() -> String {
         format!("Record<string, {}>", T::ts_type_name())
     }
