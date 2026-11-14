@@ -55,6 +55,11 @@ tempfile = { workspace = true }
 bench-util = []
 
 [[bench]]
+name = "islands"
+harness = false
+required-features = ["bench-util"]
+
+[[bench]]
 name = "native"
 harness = false
 required-features = ["bench-util"]
