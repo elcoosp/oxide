@@ -1,0 +1,17 @@
+{
+  "renames": [],
+  "rewrites": [],
+  "config": [
+    {
+      "key": "routes.dir",
+      "value": "\"src/routes\""
+    }
+  ],
+  "manual": [
+    {
+      "file": "src/main.tsx",
+      "line": 1,
+      "text": "create `src/routes/page.tsx` with `export { default } from 'src/main.tsx'` — the existing entry becomes the `spa` route (the index.html script tag moves to the built shell)"
+    }
+  ]
+}
