@@ -104,7 +104,7 @@ fn raw_buf_empty_is_a_valid_zero_length_buffer() {
     assert_eq!(buf.len, 0);
     assert_eq!(buf.cap, 0);
     // SAFETY: a zero-length buffer has no dereferenceable bytes.
-    assert!(unsafe { buf.as_slice() }.is_empty());
+    assert_eq!(unsafe { buf.as_slice() }.len(), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +184,7 @@ fn shim_panic_maps_to_status_two_with_no_payload() {
         panic!("the user body exploded");
     });
     assert_eq!(status, STATUS_PANIC);
-    assert!(take_out(&out).is_empty());
+    assert_eq!(take_out(&out).len(), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -650,9 +650,17 @@ mod macro_surface {
     /// shim compiles and the registry-side names resolve.
     #[server_fn]
     pub fn macro_checked(input: FixtureIn) -> Result<FixtureOut, ServerError> {
+        if input.width == 0 {
+            return Err(ServerError {
+                message: format!("width must be positive (url: {})", input.url),
+            });
+        }
+        // The body CONSUMES the input (the shim decodes into the call),
+        // and the Err arm is real, so the macro's `Result` contract is
+        // exercised rather than wrapped for ceremony.
         Ok(FixtureOut {
             bytes: vec![0; input.width as usize],
-            mime: "application/octet-stream".into(),
+            mime: input.url,
         })
     }
 
@@ -666,7 +674,7 @@ mod macro_surface {
             width: 3,
         })
         .expect("encodes");
-        let status = shim(args.as_ptr(), args.len(), &mut out);
+        let status = shim(args.as_ptr(), args.len(), std::ptr::from_mut(&mut out));
         assert_eq!(status, STATUS_OK);
         let decoded: FixtureOut = decode_odf(&take_out(&out)).expect("the shim encoded the result");
         assert_eq!(decoded.bytes.len(), 3);
