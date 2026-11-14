@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 pub mod attest;
 mod audit;
 pub mod docs_gen;
+pub mod llms;
 pub mod mcp;
 mod native_plugins;
 pub mod perf_bisect;
@@ -252,9 +253,16 @@ pub enum Command {
     },
     /// MCP server over stdio (§19.3): exposes routes, cache, graph and
     /// diagnostics as MCP tools so coding agents see accurate project facts.
+    /// Read-only by default; `--allow-write` enables the write tools
+    /// (V2-E07, the SEC-09 CLI-flag shape).
     Mcp {
         #[arg(long, default_value = ".")]
         root: String,
+        /// Enable the registry's write tools (`build.run`). Read-only by
+        /// default — a write tool called without this flag is refused with
+        /// a named refusal, not a protocol error.
+        #[arg(long, default_value_t = false)]
+        allow_write: bool,
     },
     /// Print the JSON Schema for `oxide.config.{ts,json}` to stdout (§19.3).
     /// Editors (VS Code, JetBrains) consume this via a `$schema` field.
@@ -608,7 +616,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<i32> {
 /// writes here (§19.1 output), so tests assert on the buffer instead of stdout.
 /// Exit codes follow §19.1 conventions: 0 ok, 1 failed checks/build, 2 usage-class
 /// failures (unknown source/kind).
-pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Result<i32> {
+pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> anyhow::Result<i32> {
     match cli.command {
         Command::Dev {
             root,
@@ -676,7 +684,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
             write,
         } => cmd_migrate(&root, &source, write, w).await,
         Command::Test { root } => cmd_test(&root, w).await,
-        Command::Mcp { root } => cmd_mcp(&root, w).await,
+        Command::Mcp {
+            root, allow_write, ..
+        } => cmd_mcp(&root, allow_write, w).await,
         Command::Schema => cmd_schema(w),
         Command::Config { root, json } => cmd_config(&root, json, w).await,
         Command::Render {
@@ -714,7 +724,10 @@ pub async fn run_with_writer(cli: Cli, w: &mut dyn std::io::Write) -> anyhow::Re
 
 // ----------------------------------------------------------------- helpers
 
-type Writer<'a> = &'a mut dyn std::io::Write;
+// V2-E07: `+ Send` — the MCP registry's async tools (build.run) hold the
+// writer across an await, so the trait object must be Send. Every current
+// call site passes a Send writer (stdout locks, sinks, byte buffers).
+type Writer<'a> = &'a mut (dyn std::io::Write + Send);
 
 macro_rules! outln {
     ($w:expr, $($arg:tt)*) => {
@@ -2309,8 +2322,9 @@ async fn build_client_bundle(
     let js_hook = build_js_plugin_hook(rootp, cfg, pool);
     let transform_hook: Option<oxide_fw_bundler::TransformHook> = match (js_hook, wasm_hook) {
         (Some(js), Some(wasm)) => Some(oxide_fw_bundler::TransformHook::new(move |id, src| {
-            let after_js = js.call(id, src)?;
-            wasm.call(id, &after_js)
+            let js_out = js.call(id, src)?;
+            let wasm_out = wasm.call(id, &js_out.code)?;
+            Ok(compose_transform_outputs(js_out, wasm_out))
         })),
         (Some(js), None) => Some(js),
         (None, Some(wasm)) => Some(wasm),
@@ -4908,7 +4922,10 @@ fn emit_fonts(
             weights: fam.weights.clone(),
             styles: fam.styles.clone(),
             subset: cfg.fonts.subset.clone(),
-            used_chars,
+            // The same harvested set feeds EVERY family (the spec's
+            // single-set-per-family simplification), so each iteration
+            // clones it — the set is moved into the spec.
+            used_chars: used_chars.clone(),
             local_paths,
         };
         match DefaultFontBackend.bundle(&spec) {
@@ -7153,8 +7170,9 @@ async fn cmd_build(
     let js_hook = build_js_plugin_hook(&rootp, &cfg, stack.tooling_pool.as_ref());
     let transform_hook: Option<oxide_fw_bundler::TransformHook> = match (js_hook, wasm_hook) {
         (Some(js), Some(wasm)) => Some(oxide_fw_bundler::TransformHook::new(move |id, src| {
-            let after_js = js.call(id, src)?;
-            wasm.call(id, &after_js)
+            let js_out = js.call(id, src)?;
+            let wasm_out = wasm.call(id, &js_out.code)?;
+            Ok(compose_transform_outputs(js_out, wasm_out))
         })),
         (Some(js), None) => Some(js),
         (None, Some(wasm)) => Some(wasm),
@@ -8873,6 +8891,9 @@ async fn cmd_build(
     }
     // §16.3: sitemap.xml + robots.txt from the route table.
     emit_sitemap_and_robots(&cfg, &tree, &dist, w)?;
+    // V2-E07: dist/llms.txt + dist/llms-full.txt, when `llms.enabled` —
+    // the LLM-facing route index next to the sitemap.
+    llms::emit_llms(&cfg, &dist, w)?;
     // §16.3: manifest.webmanifest, when a `manifest` block is configured.
     emit_web_manifest(&cfg, &dist, w)?;
     // SPEC-21 / §16.6: the PWA service worker, when a manifest is configured.
@@ -12427,6 +12448,47 @@ fn build_css_transform_hook(
     })
 }
 
+/// V2-C06: fold one plugin's optional map into the JS chain's accumulated
+/// map. `next = None` (the plugin returned no map) means the plugin declares
+/// itself position-preserving — the Rollup convention — so the accumulated
+/// map keeps describing its output. A map that fails to parse is refused
+/// with `BLD-SMAP` and dropped: a broken plugin map never fails a build,
+/// but it is never silently accepted either.
+pub(crate) fn fold_plugin_map(acc: &mut Option<String>, next: Option<String>) {
+    use oxide_fw_bundler::sourcemap_compose::{BLD_SMAP, compose_v3_json, parse_v3};
+    let Some(next) = next else {
+        return;
+    };
+    match acc {
+        Some(prev) => match compose_v3_json(prev, &next) {
+            Ok(composed) => *acc = Some(composed),
+            Err(e) => {
+                tracing::warn!(code = BLD_SMAP, "plugin map refused: {}", e.0.message);
+            }
+        },
+        None => match parse_v3(&next) {
+            Ok(_) => *acc = Some(next),
+            Err(e) => {
+                tracing::warn!(code = BLD_SMAP, "plugin map refused: {}", e.0.message);
+            }
+        },
+    }
+}
+
+/// V2-C06: the JS→WASM hook composition, in one place (it was duplicated at
+/// the dev and the build call sites). The WASM stage's protocol carries code
+/// only, so by the fold's position-preserving rule the JS chain's composed
+/// map keeps describing the combined output.
+pub(crate) fn compose_transform_outputs(
+    js: oxide_fw_bundler::TransformOutput,
+    wasm: oxide_fw_bundler::TransformOutput,
+) -> oxide_fw_bundler::TransformOutput {
+    oxide_fw_bundler::TransformOutput {
+        code: wasm.code,
+        map: js.map.or(wasm.map),
+    }
+}
+
 /// SPEC-17 / §15.1: run the JS plugins' `transform` hook through the tooling
 /// worker bridge. Each `kind: js` plugin is imported once (`plugin:load`),
 /// then its `transform(code, id)` runs per module. A plugin that does not
@@ -12499,7 +12561,7 @@ fn build_js_plugin_hook(
         let source = source.to_string();
         std::thread::scope(|scope| {
             scope
-                .spawn(|| -> oxide_fw_diagnostics::Result<String> {
+                .spawn(|| -> Result<oxide_fw_bundler::TransformOutput, oxide_fw_diagnostics::OxideError> {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
@@ -12522,6 +12584,11 @@ fn build_js_plugin_hook(
                             }
                         };
                         let mut code = source;
+                        // V2-C06: the chain's accumulated map — each
+                        // plugin's optional `map` field (a V3 JSON string)
+                        // composes into this; a mapless plugin is
+                        // position-preserving and keeps it intact.
+                        let mut map: Option<String> = None;
                         for path in &plugins {
                             if need_load {
                                 let load = oxide_fw_jshost::CallInput {
@@ -12570,13 +12637,16 @@ fn build_js_plugin_hook(
                                     ),
                                 ))
                             })?;
-                            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
-                                && let Some(s) = hook_result_str(&v, "code")
-                            {
-                                code = s;
+                            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                                if let Some(s) = hook_result_str(&v, "code") {
+                                    code = s;
+                                }
+                                // V2-C06: the plugin may carry a map beside
+                                // the code (the protocol's `map` field).
+                                fold_plugin_map(&mut map, extract_hook_map(&v));
                             }
                         }
-                        Ok(code)
+                        Ok(oxide_fw_bundler::TransformOutput { code, map })
                     })
                 })
                 .join()
@@ -12680,13 +12750,15 @@ fn build_transform_hook(root: &Path, cfg: &OxideConfig) -> Option<oxide_fw_bundl
             continue;
         }
         let plugin = std::sync::Mutex::new(plugin);
-        return Some(oxide_fw_bundler::TransformHook::new(move |_id, source| {
-            // `call_string_hook` takes `&mut self` (the store is stateful);
-            // a `Mutex` makes the closure `Sync`. Plugin transforms are not
-            // hot enough for the lock to matter.
-            let mut guard = plugin.lock().unwrap_or_else(|p| p.into_inner());
-            guard.call_string_hook(&oxide_fw_plugin::Hook::Transform, source)
-        }));
+        return Some(oxide_fw_bundler::TransformHook::new_code(
+            move |_id, source| {
+                // `call_string_hook` takes `&mut self` (the store is stateful);
+                // a `Mutex` makes the closure `Sync`. Plugin transforms are not
+                // hot enough for the lock to matter.
+                let mut guard = plugin.lock().unwrap_or_else(|p| p.into_inner());
+                guard.call_string_hook(&oxide_fw_plugin::Hook::Transform, source)
+            },
+        ));
     }
     None
 }
@@ -15807,11 +15879,15 @@ fn find_config_file(root: &Path) -> anyhow::Result<PathBuf> {
     )
 }
 
-async fn cmd_mcp(root: &str, _w: Writer<'_>) -> anyhow::Result<i32> {
+async fn cmd_mcp(root: &str, allow_write: bool, _w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     // Progress/log go to stderr so stdout stays pure JSON-RPC.
-    eprintln!("oxide mcp: serving project at {}", rootp.display());
-    crate::mcp::serve_stdio(rootp).await?;
+    eprintln!(
+        "oxide mcp: serving project at {} (allow_write: {})",
+        rootp.display(),
+        allow_write
+    );
+    crate::mcp::serve_stdio(rootp, allow_write).await?;
     Ok(0)
 }
 
@@ -16620,6 +16696,14 @@ fn hook_result_str(v: &serde_json::Value, field: &str) -> Option<String> {
         return Some(s.to_string());
     }
     v.get(field).and_then(|x| x.as_str()).map(str::to_string)
+}
+
+/// V2-C06: extract the transform hook's optional `map` field (a V3 JSON
+/// string). Only the object form `{ code, map }` carries one — a bare-string
+/// result is code-only by contract — so unlike [`hook_result_str`] there is
+/// no bare-value fallback.
+fn extract_hook_map(v: &serde_json::Value) -> Option<String> {
+    v.get("map").and_then(|x| x.as_str()).map(str::to_string)
 }
 
 /// Extract `field` from a hook result as a string array. Accepts a bare
