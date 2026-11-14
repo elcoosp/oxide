@@ -55,12 +55,13 @@ pub struct RustFnLibrary {
     /// cargo's file) — `in-process` for a static table.
     path: PathBuf,
     /// The dlopen handle kept alive for the table's lifetime; `None`
-    /// for an in-process table.
-    _lib: Option<Library>,
+    /// for an in-process table. Kept (never read) so the library
+    /// outlives every call through `table`.
+    lib: Option<Library>,
     /// The table pointer (`&'static` for the static seam; valid while
-    /// `_lib` holds the library).
+    /// `lib` holds the library).
     table: *const FnTable,
-    /// The export name → entry-index map (BTreeMap: `names()` is
+    /// The export name → entry-index map (`BTreeMap`: `names()` is
     /// sorted, duplicate names refuse at load).
     index: BTreeMap<String, usize>,
     /// The optional `oxide_fn_types_json` payload (absent → `None`).
@@ -68,7 +69,7 @@ pub struct RustFnLibrary {
 }
 
 // SAFETY: the table's data is immutable library memory for the handle's
-// lifetime (`_lib` lives as long as the struct), the fn pointers it
+// lifetime (`lib` lives as long as the struct), the fn pointers it
 // carries are the user crate's `extern "C"` shims (thread-safe by the
 // same contract any server handler has — calls may run concurrently),
 // and `libloading::Library` is Send + Sync.
@@ -88,6 +89,9 @@ impl std::fmt::Debug for RustFnLibrary {
             .field("abi_version", &self.abi_version())
             .field("names", &self.names())
             .field("types", &self.types.is_some())
+            .field("table", &self.table)
+            .field("index", &self.index.len())
+            .field("lib", &self.lib.is_some())
             .finish()
     }
 }
@@ -157,7 +161,7 @@ impl RustFnLibrary {
         let index = Self::gate_and_index(table)?;
         Ok(Self {
             path: PathBuf::from("in-process"),
-            _lib: None,
+            lib: None,
             table,
             index,
             types: types.map(str::to_string),
@@ -188,10 +192,10 @@ impl RustFnLibrary {
             })?;
         let table_ptr: *const FnTable = sym();
         let index = Self::gate_and_index(table_ptr)?;
-        drop(sym);
+        let _ = sym;
         Ok(Self {
             path,
-            _lib: Some(lib),
+            lib: Some(lib),
             table: table_ptr,
             index,
             types,
@@ -285,7 +289,7 @@ impl RustFnLibrary {
         // SAFETY: the table is live for the struct's lifetime and the
         // entry pointer is within its bounds; the callee is the ABI
         // signature the shims implement.
-        let status = (entry.call)(ptr, len, &mut out);
+        let status = (entry.call)(ptr, len, &raw mut out);
         let bytes: Vec<u8> = if out.len == 0 {
             Vec::new()
         } else {
@@ -337,10 +341,9 @@ fn copy_to_versioned(source: &Path, dest_dir: &Path) -> Result<PathBuf, OxideErr
         if let Some(rest) = name
             .strip_prefix("lib-")
             .and_then(|r| r.strip_suffix(&format!(".{ext}")))
+            && let Ok(n) = rest.parse::<usize>()
         {
-            if let Ok(n) = rest.parse::<usize>() {
-                used.push(n);
-            }
+            used.push(n);
         }
     }
     used.sort_unstable();
