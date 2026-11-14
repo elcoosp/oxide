@@ -9,7 +9,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 
 # B-01: `cdylib` is what makes `cargo build --target wasm32-unknown-unknown`
 # emit a `.wasm`; `rlib` keeps the crate usable from `cargo test` and the CLI.
