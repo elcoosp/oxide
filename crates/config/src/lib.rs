@@ -238,6 +238,61 @@ pub struct OxideConfig {
     /// typed parse).
     #[serde(default)]
     pub deploy: DeployConfig,
+    /// V2-F14 (Appendix V2.L): the `offline` section — the PWA worker's
+    /// precache breadth and the offline action outbox
+    /// (`offline.enabled`, `offline.precache: 'routes' | 'all'`,
+    /// `offline.outbox`). Off by default (the key absent installs no
+    /// service worker and boots no outbox); the outbox knob defaults ON
+    /// inside an enabled section (the spec's example shape) — the
+    /// server-side stage the outbox's retries hit is
+    /// `oxide_fw_dispatch::idem::stage_idempotency`. Inert at the
+    /// wiring until the F14 CLI adoption lands (the precache emitting
+    /// from the manifest, the client outbox boot) — the RFN-002
+    /// pattern. A bad `precache` spelling or a wrong-typed knob fails
+    /// the load (`CFG-OFFLINE`; the raw-`Value` validation pass runs
+    /// before the typed parse).
+    #[serde(default)]
+    pub offline: OfflineConfig,
+}
+
+/// V2-F14 (Appendix V2.L): the `offline` knobs. Unknown keys are
+/// rejected (`deny_unknown_fields`, enforced by the `CFG-OFFLINE` pass)
+/// so a typo'd knob cannot silently disable the feature.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct OfflineConfig {
+    /// Master switch. `false` (the default) installs no service worker
+    /// and boots no outbox.
+    pub enabled: bool,
+    /// The precache breadth: `routes` (the shell + the prerendered
+    /// routes) or `all` (every hashed asset in the manifest).
+    pub precache: OfflinePrecache,
+    /// The offline action outbox (the `x-oxide-idem` replay key the
+    /// dispatch stage answers). On inside an enabled section (the
+    /// spec's example shape); `false` keeps the precache-only posture.
+    pub outbox: bool,
+}
+
+impl Default for OfflineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            precache: OfflinePrecache::default(),
+            outbox: true,
+        }
+    }
+}
+
+/// The precache breadth (§V2-F14: `precache: 'routes' | 'all'`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OfflinePrecache {
+    /// The cached route shell + the prerendered routes (the
+    /// navigation-fallback surface; the default).
+    #[default]
+    Routes,
+    /// Every hashed asset the client manifest carries.
+    All,
 }
 
 /// V2-F10 (Appendix V2.L): the `deploy` knobs. Unknown keys are rejected
@@ -629,6 +684,7 @@ impl Default for OxideConfig {
             llms: LlmsConfig::default(),
             record: RecordConfig::default(),
             deploy: DeployConfig::default(),
+            offline: OfflineConfig::default(),
         }
     }
 }
