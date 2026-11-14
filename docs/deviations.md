@@ -2924,3 +2924,100 @@ zero-`#[allow]` rule holds with no new exceptions anywhere.
 assets, cache, graph, plugin, core-wasm, dev, cli) — each is its own
 recorded pass in the same shape; `server` alone carries ~480 findings.
 The `missing [lints]` manifest advisories name them on every build.
+
+## `oxide migrate` codemod planner (V2-E03) — the engine substrate landed, the command is the deferred half
+
+**What the spec asks.** Real `oxide migrate` codemods: a dry-run plan
+(`MigrationPlan { renames, rewrites, config, manual }`) per source
+framework, `--apply` behind a clean git tree, import rewriting through the
+Oxc import-span scanner, per-framework fixture projects with golden plan
+JSON, and the SvelteKit/Vite fixtures building after apply.
+
+**What lands (this diff).** The V8-free engine half, in
+`crates/compiler/src/migrate.rs` (the crate that owns
+`scan_import_spans`; the own-your-files rule): the spec-verbatim
+`MigrationPlan` data model, the object-safe `MigrationPlanner` seam with
+the four planners (SvelteKit, Next app-router, Nuxt, Vite SPA),
+`detect_framework` (package.json dependency names first, the config-file
+signatures as the fallback), `apply_plan` (the whole-set collision
+pre-check + the rename half + the span-surgery import rewrites), 24 TDD
+pins over the four committed fixture projects with reviewed golden
+`plan.json` files, the `migrate` criterion bench and the walkthrough
+example.
+
+**Deltas.**
+
+- The next.config table values are carried as LOCATED NOTES (file + line
+  + the oxide spelling), not extracted values: the planner does not
+  evaluate JS, so `images.remotePatterns` plans "map this key, carry the
+  value by hand" — guessing a JS value would be exactly the failure mode
+  the plan-is-data design exists to avoid. A key the config does not
+  carry plans nothing.
+- `generateStaticParams` → `generateParams` rides `routes.compat:
+  'next'` instead of a per-file identifier rewrite: the router's
+  Next-compat scanner (`app/**/page.tsx`) already speaks the
+  conventions, and an identifier rewrite is not expressible in the
+  four-field plan model — the plan stays pure path/import data.
+- The SvelteKit `hooks.server.ts` migration RENAMES to
+  `src/middleware.ts` when the file exports a plain `handle` (Oxide's
+  one-chain convention) and flags `sequence` compositions manual with
+  the merge instruction — the spec's "flag as manual" row.
+- `apply_plan` lives in the engine (the CLI wraps it with the
+  clean-git-tree gate), so the plan/apply round trip is testable here;
+  the config keys and the manual notes are never applied silently —
+  the `ApplyReport` carries them pending.
+- The spec's acceptance ("the SvelteKit and Vite fixtures build with
+  `oxide check`/`oxide build` after apply") is the CLI half and rides
+  the V8-capable host, with the F08/F09 acceptance pattern.
+
+**What would change it.** The `oxide migrate` command (A01 phase-3
+wiring) — the engine's plan/apply/report surfaces are its contract.
+
+## Offline-first server substrate (V2-F14) — the idempotency stage + the client outbox landed, the PWA worker is the deferred half
+
+**What the spec asks.** The PWA worker with versioned caches, the client
+outbox (`packages/oxide/src/client/outbox.ts`), the server
+`stage_idempotency` for POST actions and server functions
+(`x-oxide-idem` → `idem:<key>` in L1, a hit returns the stored response,
+a miss stores 2xx/4xx for 24 h), the typed `offline` config key, and the
+matrix row `Offline` Full.
+
+**What lands (this diff).** The server substrate +
+the client outbox seam: `crates/dispatch/src/idem.rs` (the
+`IdempotencyStore` seam — the L1 tier's shape, object-safe with the
+`&T` blanket impl the `AcceptedGenerations` pattern uses; the stage with
+the spec's exact verdicts — replay-identical-bytes-handler-runs-once,
+different-keys-run-separately, the stored shape `(status, headers minus
+set-cookie, body)` with the base64 body the record module's wire
+convention, 5xx never pinned, the missing header a pass-through, the 24 h
+TTL on the put, a store failure degrading loud-then-run with the
+`DSP-116` warn), 12 TDD pins, the `idem` criterion group and the
+`idempotency` walkthrough example; the typed `offline:` key (schema'd,
+`CFG-OFFLINE` load-validated, the regenerated committed schema); and
+`packages/core/src/client/outbox.ts` (the spec-verbatim
+`enqueue`/`flush`/`del` over IndexedDB — the id IS the `x-oxide-idem`
+key, the delivery rule deleting 2xx + 4xx-minus-408/429 and keeping the
+rest, the `online` listener guarded for non-browser imports), 5 node
+pins.
+
+**Deltas.**
+
+- The outbox module imports cleanly outside a browser (the spec's
+  module-level `window.addEventListener` is guarded), so the node test
+  runner loads it directly — the boot wiring rides the CLI adoption.
+- The outbox's `flush` processes every item independently (a 5xx item is
+  kept and the loop continues — the spec's catch-and-continue shape), so
+  one stuck item never blocks the queue behind it.
+- The stage returns the first execution's response VERBATIM (Set-Cookie
+  included — the browser needs the session); only the STORED copy strips
+  `set-cookie`, so the replay never mints a second session.
+- The PWA worker half (the precache emitter reading the client
+  manifest, the navigation fallback to `/offline`) and the `enhance`
+  outbox wire (a failed form submit enqueuing) are the remaining
+  halves: the emitter is the V8-linked CLI, the wire is the client
+  adoption — the RFN-002 pattern. The matrix row stays Degraded until
+  they land.
+
+**What would change it.** The CLI's precache emission + the client boot
+wire — the stage's `IdempotencyStore` seam and the outbox's module
+surface are their contracts.
