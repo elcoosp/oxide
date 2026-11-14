@@ -86,7 +86,9 @@ fn magic_buf() -> Vec<u8> {
 
 // ---------- 1. roundtrip property (~44 representative values) ----------
 
-fn roundtrip_suite() -> Vec<(&'static str, Value, bool)> {
+/// The scalar half of [`roundtrip_suite`]: primitives, number specials,
+/// strings, big integers, the temporal values and the plain containers.
+fn roundtrip_scalars() -> Vec<(&'static str, Value, bool)> {
     // third field: true when plain `decode` must return the value unchanged
     // (no user refs, no structural duplicates eligible for sharing).
     vec![
@@ -132,7 +134,7 @@ fn roundtrip_suite() -> Vec<(&'static str, Value, bool)> {
         ),
         ("date-zero", Value::Date(0), true),
         ("date-max", Value::Date(i64::MAX), true),
-        ("date-min", Value::Date(-62135596800000), true),
+        ("date-min", Value::Date(-62_135_596_800_000), true),
         (
             "url",
             Value::Url("https://oxide.rs/docs?a=1&b=ü#frag".into()),
@@ -148,6 +150,13 @@ fn roundtrip_suite() -> Vec<(&'static str, Value, bool)> {
             Value::RegExp(String::new(), String::new()),
             true,
         ),
+    ]
+}
+
+/// The plain-container half of [`roundtrip_suite`]: empty containers,
+/// nesting, key ordering and the Map/Set variants.
+fn roundtrip_plain_containers() -> Vec<(&'static str, Value, bool)> {
+    vec![
         ("array-empty", Value::Array(vec![]), true),
         ("object-empty", Value::Object(BTreeMap::new()), true),
         ("map-empty", Value::Map(vec![]), true),
@@ -195,6 +204,14 @@ fn roundtrip_suite() -> Vec<(&'static str, Value, bool)> {
             ]),
             true,
         ),
+    ]
+}
+
+/// The container half of [`roundtrip_suite`]: typed arrays, errors,
+/// deferred slots and the structural-sharing cases (the scalar and
+/// container sections live in [`roundtrip_scalars`]).
+fn roundtrip_containers() -> Vec<(&'static str, Value, bool)> {
+    vec![
         ("ta-u8", ta(TypedArrayKind::U8, &[0, 1, 254, 255]), true),
         ("ta-i8", ta(TypedArrayKind::I8, &[255, 0, 127]), true),
         (
@@ -258,7 +275,12 @@ fn roundtrip_suite() -> Vec<(&'static str, Value, bool)> {
             "object-50-keys",
             obj_owned(
                 (0..50)
-                    .map(|i| (format!("key{i:02}"), Value::Number(i as f64)))
+                    .map(|i| {
+                        (
+                            format!("key{i:02}"),
+                            Value::Number(f64::from(u32::try_from(i).expect("key index fits u32"))),
+                        )
+                    })
                     .collect(),
             ),
             true,
@@ -284,6 +306,16 @@ fn roundtrip_suite() -> Vec<(&'static str, Value, bool)> {
         // needs resolve (user ref marker)
         ("cycle", cyclic_fixture(), false),
     ]
+}
+
+/// The round-trip fixture set, in the original order (the scalar half from
+/// [`roundtrip_scalars`], then [`roundtrip_containers`]).
+fn roundtrip_suite() -> Vec<(&'static str, Value, bool)> {
+    roundtrip_scalars()
+        .into_iter()
+        .chain(roundtrip_plain_containers())
+        .chain(roundtrip_containers())
+        .collect()
 }
 
 #[test]
@@ -766,8 +798,8 @@ fn json_interop() {
     // mapping rules
     assert_eq!(Value::Undefined.to_json(), json_ext_null());
     assert_eq!(
-        Value::Date(1700000000000).to_json(),
-        json!(1700000000000i64)
+        Value::Date(1_700_000_000_000).to_json(),
+        json!(1_700_000_000_000i64)
     );
     assert_eq!(Value::Number(f64::NAN).to_json(), json_ext_null()); // lossy
     assert_eq!(Value::BigInt("123".into()).to_json(), json!("123"));
@@ -837,14 +869,14 @@ fn fuzz_decode_never_panics() {
                 let mut b = encode(f).unwrap();
                 let flips = 1 + (rng.next() % 8);
                 for _ in 0..flips {
-                    let idx = (rng.next() as usize) % b.len();
+                    let idx = usize::try_from(rng.next()).expect("rng fits usize") % b.len();
                     b[idx] ^= 1 << (rng.next() % 8);
                 }
                 b
             }
         };
         if rng.next().is_multiple_of(4) && buf.len() > 2 {
-            buf.truncate((rng.next() as usize) % buf.len());
+            buf.truncate(usize::try_from(rng.next()).expect("rng fits usize") % buf.len());
         }
         // must return Ok or Err — never panic, never hang
         let _ = decode(&buf);
