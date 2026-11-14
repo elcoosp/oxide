@@ -379,7 +379,7 @@ pub fn build_esm_manifest(
 pub fn generate_esm_boot_entry(
     root: &Path,
     components: &BTreeMap<String, String>,
-    islands: &BTreeMap<String, String>,
+    islands: &BTreeMap<String, oxide_fw_config::IslandSpec>,
     framework: &str,
 ) -> anyhow::Result<PathBuf> {
     let out = root.join(BOOT_ENTRY_PATH);
@@ -461,7 +461,8 @@ pub fn generate_esm_boot_entry(
     // form produced `import { __island_Name } from "..."` which the
     // browser rejects with "does not provide an export named
     // '__island_Name'" — the exact error a user sees on first page load.
-    for (name, path) in islands {
+    for (name, spec) in islands {
+        let path: &str = spec.src();
         let sym = format!("__island_{name}");
         src.push_str(&format!("import {sym} from {path:?};\n"));
     }
