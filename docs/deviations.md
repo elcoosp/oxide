@@ -3021,3 +3021,21 @@ pins.
 **What would change it.** The CLI's precache emission + the client boot
 wire — the stage's `IdempotencyStore` seam and the outbox's module
 surface are their contracts.
+
+
+## F08 substrate — the native-function host (`feat/rustfn-host-seam`, 2026-11-14)
+
+- `oxide::server_fn` is reachable as `oxide_rustfn::server_fn` (the prelude re-export); the `oxide` facade crate is the CLI/publish half, deferred with the A01 phase-3 wiring.
+- `TsType` is a hand-rolled derive in `crates/macros` (named-field structs + fieldless enums), not ts-rs — the substrate needs only the shapes the spec's example carries, and the crate stays dependency-lean.
+- The types ride an OPTIONAL `oxide_fn_types_json` side export beside the spec-verbatim `oxide_fn_table` (the FnTable struct itself is unchanged); absent export → no `.d.ts` from that crate.
+- `export_table!` is a proc macro (`oxide_macros`), not `macro_rules!`, so the `__oxide_shim_<name>` ident concat needs no paste crate.
+- SSR/Edge `.server.rs` stubs emit the call-through shape (isolate-side callers reach the native fn through the §9.4 route); the worker op-table parity (`island:render`-style `A08` pattern) is the remaining half.
+- The dev cargo-build/watch loop (`oxide dev` building the user cdylib, hot-swap retire-after-drain) and the production `dist/native/<lib>` emission are the CLI halves — the dispatcher consult, the loader, the registry, the id reconstruction off the types export and the stub generator are landed and pinned.
+- The `.server.rs` import resolution at bundle time (the generated stub module reaching rolldown's resolver) is the remaining build half; `rust_fn_stub_source` is the landed generator.
+
+## F01 substrate — the mixed-framework islands planner + client (`feat/mixed-islands-substrate`, 2026-11-14)
+
+- The boot planner is a pure compiler-side module (`oxide_fw_compiler::islands`) over resolved entries; the inference (`island_framework`) lives in the config crate per the spec; the CLI does the file reads and delegates. Single-framework output is byte-preserving (the legacy shape), mixed takes the registry shape.
+- The adapter import is the package root (`@oxide-fw/<framework>`); the rolldown `advancedChunks` per-framework vendor split is the remaining build half.
+- The foreign-island SSR placeholder is the React adapter's `<Island>` (`data-ox-fw`/`data-ox-pending` attributes land with the adapter work); the core `resolveForeign` transform and the mixed client registry are landed. The Vue/Svelte/Solid `island.ts` twins and the worker `island:render` op (A08 parity) are the remaining halves.
+- The conformance assertion `mixed islands` and the Playwright four-island click-through ride E10/E10-adjacent work (documented, not silently stubbed).
