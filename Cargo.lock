@@ -5462,6 +5462,7 @@ name = "oxide-fw-dispatch"
 version = "0.17.0"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "blake3",
  "bytes",
  "criterion",
@@ -5469,8 +5470,12 @@ dependencies = [
  "oxide-fw-diagnostics",
  "oxide-fw-router",
  "oxide-fw-server",
+ "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
