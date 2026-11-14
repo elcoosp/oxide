@@ -3039,3 +3039,61 @@ surface are their contracts.
 - The adapter import is the package root (`@oxide-fw/<framework>`); the rolldown `advancedChunks` per-framework vendor split is the remaining build half.
 - The foreign-island SSR placeholder is the React adapter's `<Island>` (`data-ox-fw`/`data-ox-pending` attributes land with the adapter work); the core `resolveForeign` transform and the mixed client registry are landed. The Vue/Svelte/Solid `island.ts` twins and the worker `island:render` op (A08 parity) are the remaining halves.
 - The conformance assertion `mixed islands` and the Playwright four-island click-through ride E10/E10-adjacent work (documented, not silently stubbed).
+
+## Offline-first tail — the PWA worker emitter + the enhance outbox wire (`feat/pwa-precache-emitter` + `feat/offline-enhance-outbox`, 2026-11-14)
+
+**What lands.** The two V8-free halves the F14 substrate record deferred.
+`crates/bundler/src/pwa.rs`: the object-safe `ShellSource` seam (the
+prerendered route shells, as the URL paths a navigation requests), the pure
+`plan_precache` over the typed `sw:`/`offline:` keys — the build-id-versioned
+cache name `ox-<build-id>`, the `offline.precache` breadth's own docs
+implemented verbatim (`routes` = exactly the shells, `all` = every hashed
+manifest asset, the shell rides both because the navigation fallback needs
+it), the `SwConfig` comment's fallback-resolution contract enforced
+(`sw.offlineFallback` override → `/offline` when the build produced it →
+`/`), the deterministic `sw_source` render (install `addAll(PRECACHE)`;
+activate deletes the stale `ox-` caches and, when `offline.outbox` holds,
+fans `OXIDE_OUTBOX_FLUSH` to every client — a build swap is a flush point;
+`/__data` serves stale-while-revalidate; navigations fall back to the
+resolved route shell or the network; hashed `/client/` assets are
+cache-first) and `emit_pwa`'s `dist/sw.js` write (the manifest-write
+convention). And the client wire: `enhance` gains `outbox`/`isOnline` — a
+submit the browser knows cannot reach the network (the probe, or the fetch
+`TypeError`) enqueues into the outbox with the faithful request headers
+(`accept`, the urlencoded `content-type`, `x-oxide-build`), dispatches
+`ox:form-queued` with the id, and `outbox.onSwFlushMessage` answers the
+worker's fan-out with a queue flush. 14 Rust + 10 TS pins, the `pwa`
+criterion group (plan ≈ 360 ns at 8 shells, ≈ 1.1 µs at 32; the source
+render noise-scale), the `pwa_worker` walkthrough example and the
+`enhance-offline` TS micro-bench ride along.
+
+**Deltas.**
+
+- The emitter lives in the bundler crate beside the `ClientManifest` it
+  reads — the spec's `emit/pwa.rs` spelling was the old CLI layout (the
+  own-your-files rule; the precompile-engine precedent). The CLI call-site
+  is one line over the produced manifest (`offline.enabled && sw.enabled`
+  is the gate the config docs state; the module itself is total).
+- The worker's outbox arm is an ACTIVATE fan-out (`OXIDE_OUTBOX_FLUSH`
+  postMessage to all clients), not an in-worker flush: the outbox module is
+  page-context code, and the SW-side replay would need the outbox chunk's
+  hashed URL. The client listener (`onSwFlushMessage`) is the consumer; the
+  boot's adoption of it rides the CLI wiring.
+- Multipart form bodies cannot ride the string-item outbox — they keep
+  today's failure path (the parts have no string shape to store); recorded
+  in the `enhance` docs and pinned.
+- The offline probe counts as offline only when the platform SAYS offline
+  (`navigator.onLine === false`); Node's missing `onLine` counts as online,
+  so the existing enhance pins stayed byte-identical.
+- The seam fix riding this diff: `resolveForeign`'s splice produced a
+  double space where `data-ox-pending='1'` sat between the two captured
+  attribute sides (the strip regex targeted a flag the greedy match had
+  already consumed) — the pre-existing red pin
+  (`foreign-islands.test.ts`) is green again with the seam collapsed to
+  one separator.
+
+**What remains.** The CLI build call-site (passing the loaded `sw`/`offline`
+config + the prerender walk into `emit_pwa`) and the boot's
+`onSwFlushMessage` adoption — both thin wrappers over the landed seams (the
+A01 phase-3 wiring on a V8-capable host). The `Offline` matrix row stays
+Degraded until they land.
