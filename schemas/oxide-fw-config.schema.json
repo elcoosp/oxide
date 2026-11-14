@@ -473,9 +473,30 @@
         },
         "islands": {
           "additionalProperties": {
-            "type": "string"
+            "anyOf": [
+              {
+                "description": "the island's source path, relative to the project root",
+                "type": "string"
+              },
+              {
+                "properties": {
+                  "framework": {
+                    "description": "explicit framework (react | vue | svelte | solid); wins over the file extension and the first-line pragma",
+                    "type": "string"
+                  },
+                  "src": {
+                    "description": "the island's source path, relative to the project root",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "src"
+                ],
+                "type": "object"
+              }
+            ]
           },
-          "description": "§10.3 islands registry: component name → source file. The CLI emits a synthetic __boot__ client entry that imports each entry; `<Island chunk=\"X\">` on a page resolves to X in this map.",
+          "description": "§10.3 islands registry: component name → source file (V2-F01: string, or { src, framework? } for a mixed-framework island). The CLI emits a synthetic __boot__ client entry that registers each island with its own framework's adapter; `<Island chunk=\"X\">` on a page resolves to X in this map.",
           "type": "object"
         },
         "name": {
