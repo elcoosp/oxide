@@ -68,6 +68,7 @@ fn le_u64(v: &[u64]) -> Vec<u8> {
 }
 
 /// A mid-sized object used by the structural-sharing tests and fixture.
+#[must_use]
 pub fn big_object() -> Value {
     obj(&[
         ("f0", Value::String("value-0".into())),
@@ -75,7 +76,7 @@ pub fn big_object() -> Value {
         ("f2", Value::String("value-2".into())),
         ("f3", Value::String("value-3".into())),
         ("f4", Value::Number(4.5)),
-        ("f5", Value::Date(1700000000000)),
+        ("f5", Value::Date(1_700_000_000_000)),
         (
             "f6",
             arr(&[Value::Number(1.0), Value::Bool(false), Value::Null]),
@@ -84,9 +85,10 @@ pub fn big_object() -> Value {
     ])
 }
 
-/// The golden fixture set: name → value. Order is stable; keep names in sync
-/// with the committed files under `tests/fixtures/`.
-pub fn golden() -> Vec<(&'static str, Value)> {
+/// The scalar sections of [`golden`]: primitives, number specials, strings,
+/// big integers and the temporal pair.
+#[must_use]
+fn golden_scalars() -> Vec<(&'static str, Value)> {
     vec![
         (
             "primitives",
@@ -108,7 +110,7 @@ pub fn golden() -> Vec<(&'static str, Value)> {
                 Value::Number(f64::INFINITY),
                 Value::Number(f64::NEG_INFINITY),
                 Value::Number(5e-324),
-                Value::Number(1.7976931348623157e308),
+                Value::Number(1.797_693_134_862_315_7e308),
             ]),
         ),
         (
@@ -134,7 +136,7 @@ pub fn golden() -> Vec<(&'static str, Value)> {
             "temporal",
             obj(&[
                 ("date0", Value::Date(0)),
-                ("date-neg", Value::Date(-62135596800000)),
+                ("date-neg", Value::Date(-62_135_596_800_000)),
                 ("date-max", Value::Date(i64::MAX)),
                 (
                     "url",
@@ -143,6 +145,14 @@ pub fn golden() -> Vec<(&'static str, Value)> {
                 ("regexp", Value::RegExp("^a.*b$\\d".into(), "gimsu".into())),
             ]),
         ),
+    ]
+}
+
+/// The container sections of [`golden`]: empty containers, nesting, key
+/// ordering and the Map/Set variants.
+#[must_use]
+fn golden_containers() -> Vec<(&'static str, Value)> {
+    vec![
         (
             "empty-containers",
             arr(&[
@@ -191,6 +201,13 @@ pub fn golden() -> Vec<(&'static str, Value)> {
                 Value::Array(vec![]),
             ]),
         ),
+    ]
+}
+
+/// The typed-array, error and deferred sections of [`golden`].
+#[must_use]
+fn golden_typed() -> Vec<(&'static str, Value)> {
+    vec![
         (
             "typed-arrays",
             obj(&[
@@ -229,6 +246,14 @@ pub fn golden() -> Vec<(&'static str, Value)> {
                 ("b", Value::Deferred { id: 2 }),
             ]),
         ),
+    ]
+}
+
+/// The structural-sharing sections of [`golden`]: shared references, the
+/// cycle and the kitchen-sink object.
+#[must_use]
+fn golden_structures() -> Vec<(&'static str, Value)> {
+    vec![
         ("shared-structure", {
             let big = big_object();
             Value::Array(vec![big.clone(), big])
@@ -248,7 +273,7 @@ pub fn golden() -> Vec<(&'static str, Value)> {
                         Value::BigInt("42".into()),
                     ]),
                 ),
-                ("when", Value::Date(1234567890123)),
+                ("when", Value::Date(1_234_567_890_123)),
                 ("where", Value::Url("https://oxide.rs/?q=≥".into())),
                 ("re", Value::RegExp("(a|b)+".into(), "gi".into())),
                 (
@@ -285,11 +310,33 @@ pub fn golden() -> Vec<(&'static str, Value)> {
     ]
 }
 
+/// The golden fixture set: name → value. Order is stable; keep names in sync
+/// with the committed files under `tests/fixtures/`.
+#[must_use]
+pub fn golden() -> Vec<(&'static str, Value)> {
+    golden_scalars()
+        .into_iter()
+        .chain(golden_containers())
+        .chain(golden_typed())
+        .chain(golden_structures())
+        .collect()
+}
+
 /// Write every golden fixture into `dir` as `<name>.odf.bin` (encoded bytes)
 /// and `<name>.expected.json` ([`Value::to_json`] of the decoded value).
 ///
 /// Called by the `odf_fixture` example; the output must be byte-stable across
 /// releases because the TS decoder suite consumes the committed files.
+///
+/// # Errors
+///
+/// Propagates the `std::io` failures of the directory create and the two
+/// per-fixture writes.
+///
+/// # Panics
+///
+/// Panics if a golden fixture fails to encode (fixtures are constants; a
+/// failure is a bug in `encode`, not bad input).
 pub fn write_all(dir: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     for (name, value) in golden() {
@@ -319,115 +366,67 @@ pub struct PatchGolden {
     pub expect_mismatch: bool,
 }
 
-/// The 12 spec-named patch cases (§V2-F06: "set, nested set, delete, append,
-/// prepend, middle splice, truncate, type change, Map untouched, deep array
-/// of objects, no-op, base mismatch"). Order is stable; keep names in sync
-/// with the committed files under `tests/fixtures/patch/`.
-pub fn patch_golden() -> Vec<PatchGolden> {
+/// The `rows` array the deep-array-of-objects case carries: row 3 is
+/// renamed in place, and the SAME array rides in both the base and the new
+/// snapshot — the committed bytes pin that spelling (the case exercises
+/// deep-object traversal on the patch path, not a diff delta).
+#[must_use]
+fn patch_rows() -> (Value, Value) {
     let mut rows: Vec<Value> = (0..6)
         .map(|k| {
-            Value::Object(
-                [
-                    ("i".to_string(), Value::Number(k as f64)),
-                    ("name".to_string(), Value::String(format!("row-{k}"))),
-                ]
-                .into_iter()
-                .collect(),
-            )
+            obj(&[
+                ("i", Value::Number(f64::from(k))),
+                ("name", Value::String(format!("row-{k}"))),
+            ])
         })
         .collect();
-    rows[3] = Value::Object(
-        [
-            ("i".to_string(), Value::Number(3.0)),
-            (
-                "name".to_string(),
-                Value::String("row-3-renamed".to_string()),
-            ),
-        ]
-        .into_iter()
-        .collect(),
-    );
+    rows[3] = obj(&[
+        ("i", Value::Number(3.0)),
+        ("name", Value::String("row-3-renamed".to_string())),
+    ]);
+    (Value::Array(rows.clone()), Value::Array(rows))
+}
+
+/// The object-shaped patch cases: Set, nested Set and Delete (§V2-F06).
+#[must_use]
+fn patch_golden_named() -> Vec<PatchGolden> {
     vec![
         PatchGolden {
             name: "set",
-            base: Value::Object(
-                [
-                    ("a".into(), Value::Number(1.0)),
-                    ("keep".into(), Value::Bool(true)),
-                ]
-                .into_iter()
-                .collect(),
-            ),
-            new: Value::Object(
-                [
-                    ("a".into(), Value::Number(2.0)),
-                    ("keep".into(), Value::Bool(true)),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+            base: obj(&[("a", Value::Number(1.0)), ("keep", Value::Bool(true))]),
+            new: obj(&[("a", Value::Number(2.0)), ("keep", Value::Bool(true))]),
             expect_mismatch: false,
         },
         PatchGolden {
             name: "nested-set",
-            base: Value::Object(
-                [(
-                    "deep".into(),
-                    Value::Object(
-                        [(
-                            "x".into(),
-                            Value::Object([("c".into(), Value::Number(1.0))].into_iter().collect()),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                )]
-                .into_iter()
-                .collect(),
-            ),
+            base: obj(&[("deep", obj(&[("x", obj(&[("c", Value::Number(1.0))]))]))]),
             // The new leaf is a Date: rich values ride inside Set ops.
-            new: Value::Object(
-                [(
-                    "deep".into(),
-                    Value::Object(
-                        [(
-                            "x".into(),
-                            Value::Object(
-                                [("c".into(), Value::Date(1_234_567_890_123))]
-                                    .into_iter()
-                                    .collect(),
-                            ),
-                        )]
-                        .into_iter()
-                        .collect(),
-                    ),
-                )]
-                .into_iter()
-                .collect(),
-            ),
+            new: obj(&[(
+                "deep",
+                obj(&[("x", obj(&[("c", Value::Date(1_234_567_890_123))]))]),
+            )]),
             expect_mismatch: false,
         },
         PatchGolden {
             name: "delete",
-            base: Value::Object(
-                [
-                    ("a".into(), Value::Number(1.0)),
-                    ("gone".into(), Value::String("bye".into())),
-                ]
-                .into_iter()
-                .collect(),
-            ),
-            new: Value::Object([("a".into(), Value::Number(1.0))].into_iter().collect()),
+            base: obj(&[
+                ("a", Value::Number(1.0)),
+                ("gone", Value::String("bye".into())),
+            ]),
+            new: obj(&[("a", Value::Number(1.0))]),
             expect_mismatch: false,
         },
+    ]
+}
+
+/// The array-shaped patch cases: Append, Prepend, middle Splice, Truncate.
+#[must_use]
+fn patch_golden_arrays() -> Vec<PatchGolden> {
+    vec![
         PatchGolden {
             name: "append",
-            base: Value::Array(vec![
-                Value::Number(1.0),
-                Value::Number(2.0),
-                Value::Number(3.0),
-            ]),
-            new: Value::Array(vec![
+            base: arr(&[Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]),
+            new: arr(&[
                 Value::Number(1.0),
                 Value::Number(2.0),
                 Value::Number(3.0),
@@ -437,124 +436,98 @@ pub fn patch_golden() -> Vec<PatchGolden> {
         },
         PatchGolden {
             name: "prepend",
-            base: Value::Array(vec![Value::Number(1.0), Value::Number(2.0)]),
-            new: Value::Array(vec![
-                Value::Number(0.0),
-                Value::Number(1.0),
-                Value::Number(2.0),
-            ]),
+            base: arr(&[Value::Number(1.0), Value::Number(2.0)]),
+            new: arr(&[Value::Number(0.0), Value::Number(1.0), Value::Number(2.0)]),
             expect_mismatch: false,
         },
         PatchGolden {
             name: "middle-splice",
-            base: Value::Array(vec![
-                Value::Number(1.0),
-                Value::Number(2.0),
-                Value::Number(3.0),
-            ]),
-            new: Value::Array(vec![
-                Value::Number(1.0),
-                Value::Number(9.0),
-                Value::Number(3.0),
-            ]),
+            base: arr(&[Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]),
+            new: arr(&[Value::Number(1.0), Value::Number(9.0), Value::Number(3.0)]),
             expect_mismatch: false,
         },
         PatchGolden {
             name: "truncate",
-            base: Value::Array(vec![
-                Value::Number(1.0),
-                Value::Number(2.0),
-                Value::Number(3.0),
-            ]),
-            new: Value::Array(vec![Value::Number(1.0)]),
+            base: arr(&[Value::Number(1.0), Value::Number(2.0), Value::Number(3.0)]),
+            new: arr(&[Value::Number(1.0)]),
             expect_mismatch: false,
         },
+    ]
+}
+
+/// The structural patch cases: type change, untouched Map, the deep array
+/// of objects, the no-op and the deliberate base mismatch.
+#[must_use]
+fn patch_golden_structures() -> Vec<PatchGolden> {
+    let (base_rows, new_rows) = patch_rows();
+    vec![
         PatchGolden {
             name: "type-change",
-            base: Value::Object(
-                [(
-                    "v".into(),
-                    Value::Object([("k".into(), Value::Number(1.0))].into_iter().collect()),
-                )]
-                .into_iter()
-                .collect(),
-            ),
-            new: Value::Object(
-                [("v".into(), Value::Array(vec![Value::Number(1.0)]))]
-                    .into_iter()
-                    .collect(),
-            ),
+            base: obj(&[("v", obj(&[("k", Value::Number(1.0))]))]),
+            new: obj(&[("v", arr(&[Value::Number(1.0)]))]),
             expect_mismatch: false,
         },
         PatchGolden {
             name: "map-untouched",
-            base: Value::Object(
-                [
-                    (
-                        "m".into(),
-                        Value::Map(vec![(Value::String("k".into()), Value::Number(1.0))]),
-                    ),
-                    ("x".into(), Value::Number(1.0)),
-                ]
-                .into_iter()
-                .collect(),
-            ),
-            new: Value::Object(
-                [
-                    (
-                        "m".into(),
-                        Value::Map(vec![(Value::String("k".into()), Value::Number(1.0))]),
-                    ),
-                    ("x".into(), Value::Number(2.0)),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+            base: obj(&[
+                (
+                    "m",
+                    Value::Map(vec![(Value::String("k".into()), Value::Number(1.0))]),
+                ),
+                ("x", Value::Number(1.0)),
+            ]),
+            new: obj(&[
+                (
+                    "m",
+                    Value::Map(vec![(Value::String("k".into()), Value::Number(1.0))]),
+                ),
+                ("x", Value::Number(2.0)),
+            ]),
             expect_mismatch: false,
         },
         PatchGolden {
             name: "deep-array-of-objects",
-            base: Value::Object(
-                [("rows".into(), Value::Array(rows.clone()))]
-                    .into_iter()
-                    .collect(),
-            ),
-            new: Value::Object([("rows".into(), Value::Array(rows))].into_iter().collect()),
+            base: obj(&[("rows", base_rows)]),
+            new: obj(&[("rows", new_rows)]),
             expect_mismatch: false,
         },
         PatchGolden {
             name: "no-op",
-            base: Value::Object(
-                [
-                    ("a".into(), Value::Number(1.0)),
-                    ("b".into(), Value::String("x".into())),
-                ]
-                .into_iter()
-                .collect(),
-            ),
-            new: Value::Object(
-                [
-                    ("a".into(), Value::Number(1.0)),
-                    ("b".into(), Value::String("x".into())),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+            base: obj(&[("a", Value::Number(1.0)), ("b", Value::String("x".into()))]),
+            new: obj(&[("a", Value::Number(1.0)), ("b", Value::String("x".into()))]),
             expect_mismatch: false,
         },
         PatchGolden {
             name: "base-mismatch",
-            base: Value::Object([("a".into(), Value::Number(1.0))].into_iter().collect()),
-            new: Value::Object([("a".into(), Value::Number(2.0))].into_iter().collect()),
+            base: obj(&[("a", Value::Number(1.0))]),
+            new: obj(&[("a", Value::Number(2.0))]),
             expect_mismatch: true,
         },
     ]
+}
+
+/// The 12 spec-named patch cases (§V2-F06: "set, nested set, delete, append,
+/// prepend, middle splice, truncate, type change, Map untouched, deep array
+/// of objects, no-op, base mismatch"). Order is stable; keep names in sync
+/// with the committed files under `tests/fixtures/patch/`.
+#[must_use]
+pub fn patch_golden() -> Vec<PatchGolden> {
+    patch_golden_named()
+        .into_iter()
+        .chain(patch_golden_arrays())
+        .chain(patch_golden_structures())
+        .collect()
 }
 
 /// Write every patch golden into `dir` (the `tests/fixtures/patch`
 /// subdirectory): `<stem>.base.odf.bin`, `<stem>.odp.bin` and
 /// `<stem>.expected.json`. Byte-stable across releases (the TS patch suite
 /// consumes the committed files).
+///
+/// # Errors
+///
+/// Propagates the `std::io` failures of the directory create and the three
+/// per-case writes.
 ///
 /// # Panics
 ///
