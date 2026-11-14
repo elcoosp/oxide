@@ -195,6 +195,7 @@ oxc_ast = { version = "0.155.0" }
 oxc_span = { version = "0.155.0" }
 oxc_semantic = { version = "0.155.0" }
 oxc_transformer = { version = "0.155.0" }
+oxc_ast_visit = { version = "0.155.0" }
 oxc_codegen = { version = "0.155.0" }
 # `experimental` is REQUIRED, not vestigial: the incremental-rebuild engine
 # (`IncrementalWorker` in `crates/bundler/src/rolldown_backend.rs`) drives
