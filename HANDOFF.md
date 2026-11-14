@@ -1,3 +1,146 @@
+# Handoff — the F15 V8-free completion + the F10 config half landed (`feat/replay-runner-seam` + `feat/config-deploy-key`: the replay-RUNNER seam — the one-definition orchestration the `oxide replay` command and the MCP `replay.run` tool drive, with the record store's READ side (`RecordSource::load`, the `RPL-005` version gate) and the injected `ReplayExecutor` re-execution seam; plus the `record:` config key (Appendix V2.L union shape, `CFG-REC`) and the `deploy:` config key (`skewWindow` + the §14 duration grammar `parse_duration_secs`, `CFG-DEPLOY`); the pre-existing `validate_llms` null-default green-gate bug fixed and the registry/reference/schema drift closed — the committed JSON schema was missing the whole `llms` section, `CFG-LLMS` had production call sites and no registry row)
+
+## Where things stand
+
+**Branch:** `main` (uncommitted changes plus `ship.toml` /
+`.github/pr-body.md` at the repo root, both gitignored; `ship.toml`
+groups the diff into conventional commits — one per file,
+dependency-ordered). **Verified this session (rustc 1.100.0 stable,
+2-core / 4 GB / ~7 GB-disk sandbox — the V8-linked `oxide-fw-cli` and
+`oxide-fw-jshost` were NOT built, per the recorded disk constraint):**
+
+- `cargo test -p oxide-fw-config -p oxide-fw-dispatch --all-features
+  --no-fail-fast`: **328 passed, 0 failed** — the new
+  `replay_runner_tdd` pins (10: the store read side round trip, the
+  missing-record/traversal `RPL-001` shapes, the `RPL-005` version gate
+  naming saw-and-expected, the runner's ok/stale/divergent/executor/
+  store-refusal paths and the camelCase outcome serialization) and the
+  `record_config` pins (13: the union shape, the `CFG-REC` refusal
+  table, the typo surface, the schema shape) green on the first
+  implementation pass; the `deploy_config` pins (12) likewise, with the
+  `parse_duration_secs` grammar table (`30s`/`15m`/`1h`/`2d`/plain
+  seconds) and the refusal table (`15x`, `m`, `1.5h`, overflow).
+- The TDD red runs are recorded: `cargo test -p oxide-fw-dispatch --test
+  replay_runner_tdd` failed with `E0432` (unresolved
+  `RecordSource`/`RPL_RECORD_VERSION`/`ExecutedResponse`/`ReplayExecutor`/
+  `ReplayRunner`) and `cargo test -p oxide-fw-config --test
+  record_config` with `E0433`/`E0609` before the first implementation
+  line; the M2 `deploy_config` red was the same shape
+  (`parse_duration_secs` + the `deploy` field unresolved).
+- `cargo clippy -p oxide-fw-config -p oxide-fw-dispatch --all-targets
+  --all-features -- -D warnings`: exit 0 — the touched crates opt into
+  `[lints] workspace = true`, so the pedantic groups ride this bar for
+  THEM; the consumer ripple (`oxide-fw-render`, `oxide-fw-schema`,
+  `oxide-fw-search`, `oxide-fw-server`, all-features, all targets) is
+  exit 0 as well. The GLOBAL `-W clippy::pedantic` sweep is NOT
+  re-runnable on this graph: it re-lints the non-opted dependencies and
+  fails on `oxide-fw-odf`'s ~75 pre-existing findings (the recorded
+  next crate-owned hygiene pass) — the earlier session's sweeps only
+  covered graphs without odf. `cargo fmt --all --check` clean; the
+  zero-`allow` grep over `crates/ tests/ examples/` + every crate
+  `build.rs` is empty.
+- Benches: `cargo test -p oxide-fw-dispatch --benches --features
+  bench-util` — 31 bench-target tests passed (the new `replay_runner`
+  criterion group included: `run/1` ≈ 6.4 µs, `run/8`, and `load_fs` —
+  the store read + parse + version gate); `cargo bench ... --bench
+  replay_runner` measured clean. `cargo run -p oxide-fw-dispatch
+  --example replay_runner` prints the walkthrough end-to-end (the
+  `RPL-003` warn fires, the faithful replay diffs `ok: true`).
+
+## What landed
+
+**M1 — the F15 V8-free completion (`feat/replay-runner-seam`),
+complete.** Everything F15 still needs that does not link V8, in two
+halves. `crates/dispatch/src/record.rs`: the store's READ side — the
+`RecordSource` trait (the write side's `store_key` traversal guard
+shared; a missing record a load-shaped `RPL-001` whose fix names the
+record's remedy; and the record module's "the replay side refuses a
+record whose version it does not know" contract now ENFORCED at the
+only door a record enters through: `RPL-005` names the version it saw
+and the version this build reads). `crates/dispatch/src/replay.rs`: the
+`ReplayExecutor` trait (the re-execution seam — the CLI's real
+implementation drives the captured line-set, route id, params and
+locals back through the V8 pipeline; test and example hosts implement
+it over fakes, keeping the runner V8-free) and the `ReplayRunner` —
+load → the `RPL-003` stale-build warn-but-run verdict → re-execute →
+`replay_diff` — returning the camelCase `ReplayOutcome` (record +
+executed response + staleness + diff; the executed body rides base64,
+the record's wire convention); the executor's and the store's refusals
+surface unchanged. `crates/config`: the `record:` key — the Appendix
+V2.L union (`false | 'errors' | 'all' | { sample, onError }`) as the
+flat `RecordConfig` enum, the raw-`Value` load validator (`CFG-REC`
+refuses `record: true`, unknown words, out-of-range or non-number
+`samples`, non-boolean `onError` and unknown knobs, each naming the
+valid spellings), `KNOWN_KEYS` + schema section + the regenerated
+committed schema. Inert at the wiring until the CLI adoption (the
+RFN-002 shape); defaults are the spec's prod example verbatim.
+
+**M2 — the F10 config half (`feat/config-deploy-key`), complete.**
+`crates/config`: the `deploy:` section (`skewWindow` the duration
+STRING with the `'15m'` default — the spec's type kept, not the
+`ttl_secs` precedent — and `generations` the F11 retention count with
+the 3 default; `deny_unknown_fields`), `parse_duration_secs` (the §14
+literal grammar extended to time: `<n>s|m|h|d`, plain integers =
+seconds, checked arithmetic), the `CFG-DEPLOY` raw-pass validator (a
+non-parsing or ZERO window and a zero generation count refused — the
+physically-useless-bound shape — unknown knobs named), the schema
+section, `KNOWN_KEYS`, the regenerated schema, the registry row +
+reference rows. 12 pins. Inert at the wiring until the F10 CLI
+adoption; `DEFAULT_SKEW_WINDOW` (`crates/adapters`) stays the plumbing
+default.
+
+**Docs drift fixed + micro-debt cleaned (this diff, additive):**
+`validate_llms` rejected the `null` `title`/`summary` the serialized
+`OxideConfig::default()` carries — every default-config load failed
+`CFG-LLMS` and `crates/config`'s `brownout_config` loads were failing
+on PRISTINE HEAD (verified by stash); null is now the serialized
+`Option::None`, loads green again. The committed
+`schemas/oxide-fw-config.schema.json` was missing the whole `llms`
+section (E07 landed without regenerating it); `docs/reference/config.md`
+was missing both the `llms` and the new `record`/`deploy` sections
+(hand-patched in the generator's walk order — `docs generate --check`
+to confirm byte-identical on a capable host). `CFG-LLMS` had production
+call sites (`validate_llms`) and NO `docs/errors.toml` row (the
+coverage gate is a V8-linked CLI test, invisible here) — the row is
+added, plus `CFG-REC`/`CFG-DEPLOY`/`RPL-005` and the `RPL-001` message
+widened to the store's two operations. Micro-debt: the silent
+`unwrap_or(Value::Null)` serialization fallbacks in `Recording::
+record_loader` are now LOUD warns (the house convention), never
+dropping the op.
+
+## Sandbox notes for the next session
+
+- Disk is the binding constraint as recorded: `cargo clippy/test
+  --workspace` pulls the V8-linked `cli`/`jshost`; the scoped gates
+  above are what this class of sandbox verifies. `cargo clean` the
+  bench artifacts (`rm -rf target/release`) before anything heavy.
+- The odf pedantic hygiene pass (~75 findings, recorded) is ALSO the
+  blocker for the global `-W clippy::pedantic` sweep over any graph
+  that includes it (dispatch does, via `server`).
+- The three remaining F15 halves (worker `globalThis.__oxide_replay`
+  install, the `oxide replay <id> [--diff] [--json]` command, the MCP
+  `replay.run` tool) are now THIN wrappers over the landed
+  `ReplayRunner`/`RecordSource` seams; the `record:` key's wiring into
+  `RecordPolicy` rides with them. F10's remaining CLI adoption reads
+  the new `deploy:` key.
+
+## Docs drift noted this session
+
+- CONTRIBUTING's rust-channel claim matches `rust-toolchain.toml`
+  (stable) — the previously-noted drift is already fixed upstream.
+- `docs/reference/config.md` + the committed JSON schema were stale
+  against the crate (missing `llms`, then missing `record`/`deploy`);
+  fixed this diff, regeneration confirmed additive by `git diff`.
+
+## Where to pick up, in one sentence
+
+On a V8-capable host: wire the CLI's dispatch closure to record
+(`RecordPolicy` from the new `record:` key), add `oxide replay <id>
+[--diff] [--json]` + the MCP `replay.run` tool over the landed
+`ReplayRunner`, boot the F10 pools from `dist/` + `releases/` reading
+the `deploy:` key — then run the odf pedantic pass so the global
+sweep goes green everywhere.
+
 # Handoff — the glyph-usage font-subsetting seam + the parallel-precompile engine landed (`feat/font-subsetting-seam` + `perf/parallel-precompile-engine`: the V2-C08 remaining half — `crates/assets/src/font_subset.rs`, the spec-verbatim `FontSubsetter` trait with the D40 `id()`/`version()` dimensions, the bundled `SkrifaSubsetter` behind `subset` (the `fontcull` stand-in — unpublished upstream), `select_subsetter` refusing `AST-FNT-002` feature-off, the `font:{id}@{version}:{blake3-16hex}` CAS key, `subset_used_for_build` as the one definition site, the post-prerender `lol_html` `text!`-over-body harvest with script/style stripped plus the plain-text collection harvest, the always-needed set, and the cmap rewrite the spec's own pin forced — `subsetter`'s `Profile::pdf` copies the original cmap verbatim so a dropped glyph renders blank instead of falling back; the backend re-emits a format-12 cmap over exactly the kept pairs with the sfnt re-serialized and checksums recomputed; and the V2-B07 phase-2 engine — `crates/compiler/src/precompile_engine.rs`, the bounded `buffer_unordered` window generic over the injected per-job pass, input-order folds, per-row failure isolation, `width_for` (`workers * 2`, floored), with the CLI's `precompile_entries` split into the unchanged discovery walk + the engine; plus the hygiene — the stale `#[allow(clippy::too_many_lines)]` and the duplicated import-path fill loop removed from `typegen.rs`, the C08/B07 status-table rows corrected, `AST-FNT-002` added to the registry and the reference page)
 
 ## Where things stand
