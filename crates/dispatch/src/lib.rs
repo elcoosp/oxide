@@ -45,6 +45,21 @@
 //!   the evicted handle for graceful shutdown; it implements the
 //!   [`skew::AcceptedGenerations`] seam, so `stage_check` drives it with
 //!   the same verdicts (CLI adoption deferred, see `docs/deviations.md`).
+//! - [`record`]: the record-and-replay capture substrate (V2-F15
+//!   recorder half) — the versioned [`record::RequestRecord`] schema (the
+//!   redacted request, route id + params, locals, loader inputs/outputs,
+//!   capped base64 fetch ops, cache ops, the non-deterministic
+//!   sequences), the [`record::RecordPolicy`] sampling decision, the
+//!   [`record::RecordSink`] storage seam over
+//!   `.oxide/records/<request-id>.json` and the
+//!   [`record::RecordingLoaderRunner`] decorator the dispatch closure
+//!   wraps its runner in (CLI adoption deferred, see `docs/deviations.md`).
+//! - [`replay`]: the record-and-replay playback substrate (V2-F15 replay
+//!   half) — the ordered [`replay::ReplayMatcher`] (`RPL-002` on an
+//!   unexpected call), the [`replay::ReplaySequences`] playback
+//!   (`RPL-004` on a drained stream), the `RPL-003` stale-build warning
+//!   and the [`replay::replay_diff`] verdict the `oxide replay --diff`
+//!   JSON surface emits (CLI adoption deferred, see `docs/deviations.md`).
 //!
 //! Acceptance (spec V2-A02): `cargo test -p oxide-fw-dispatch` finishes in
 //! under 20 seconds after dependencies are built, and
@@ -57,5 +72,7 @@ pub mod flow;
 pub mod loads;
 pub mod locals;
 pub mod pools;
+pub mod record;
+pub mod replay;
 pub mod skew;
 pub mod url;
