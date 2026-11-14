@@ -36,6 +36,26 @@ oxc_transformer = { workspace = true }
 oxc_ast_visit = { workspace = true }
 oxc_codegen = { workspace = true }
 oxc_sourcemap = "9.0.0"
+# V2-C03/C04/C05: the native backends' upstreams — optional, each behind
+# its own feature (a flag with no backend behind it is dead scaffolding).
+verter_core = { workspace = true, optional = true }
+# The oxc 0.117 allocator verter_core's entry point is typed against
+# (the workspace's own oxc 0.155 stays the transform's stack — the seam
+# hands the backend source text and takes emitted text back).
+oxc_allocator_0_117 = { package = "oxc_allocator", version = "0.117.0", optional = true }
+svelte-compiler = { workspace = true, optional = true }
+oxc_react_compiler = { workspace = true, optional = true }
+# V2-C05: the oxc 0.143 stack oxc_react_compiler's API is typed against.
+# The workspace itself pins oxc 0.155; these are the SAME crates at the
+# crate's own pin, package-renamed so one [dependencies] table can carry
+# both majors (they unify with the crate's own 0.143 deps). The seam is
+# string in / string out — no 0.143 type crosses into the 0.155 world.
+oxc_parser_0_143 = { package = "oxc_parser", version = "0.143.0", optional = true }
+oxc_allocator_0_143 = { package = "oxc_allocator", version = "0.143.0", optional = true }
+oxc_span_0_143 = { package = "oxc_span", version = "0.143.0", optional = true }
+oxc_diagnostics_0_143 = { package = "oxc_diagnostics", version = "0.143.0", optional = true }
+oxc_semantic_0_143 = { package = "oxc_semantic", version = "0.143.0", optional = true }
+oxc_codegen_0_143 = { package = "oxc_codegen", version = "0.143.0", optional = true }
 
 [dev-dependencies]
 # V2-C01: criterion harness for the `native` bench (the pick/health cache
@@ -54,6 +74,26 @@ tempfile = { workspace = true }
 # V2-C01: exposes the criterion bench harness for the native-registry
 # benches (same shape as `oxide-fw-dispatch`'s bench-util, V2-B09).
 bench-util = []
+# V2-C03 (§V2-C03): the native Vue SFC compiler (verter_core 0.0.1-beta.1,
+# crates.io latest). Off by default — the fast dev build never pays the
+# extra stack; the release recipe turns the landed backends on.
+native-vue = ["dep:verter_core", "dep:oxc_allocator_0_117"]
+# V2-C04 (§V2-C04): the native Svelte compiler (svelte-compiler 0.1.4,
+# crates.io latest).
+native-svelte = ["dep:svelte-compiler"]
+# V2-C05 (§V2-C05): the React Compiler port (oxc_react_compiler 0.143.0).
+# The crate rides its own oxc 0.143 stack — the `*143` aliases below are
+# the package-renamed pins the seam parses with (string in, string out;
+# the workspace's oxc 0.155 transform never shares a type with them).
+native-react-compiler = [
+    "dep:oxc_react_compiler",
+    "dep:oxc_parser_0_143",
+    "dep:oxc_semantic_0_143",
+    "dep:oxc_codegen_0_143",
+    "dep:oxc_allocator_0_143",
+    "dep:oxc_span_0_143",
+    "dep:oxc_diagnostics_0_143",
+]
 
 [[bench]]
 name = "islands"
