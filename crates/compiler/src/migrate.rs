@@ -13,7 +13,7 @@
 //! The four source frameworks the spec names each get a planner behind
 //! the object-safe [`MigrationPlanner`] seam:
 //!
-//! - **SvelteKit** — the pure path mapping (the highest-value, safest
+//! - **`SvelteKit`** — the pure path mapping (the highest-value, safest
 //!   migration): every `+`-prefixed route basename loses its marker,
 //!   endpoints (`+server.ts`) become `route.ts`, a plain
 //!   `hooks.server.ts` becomes the `middleware.ts` rename, a
@@ -144,7 +144,7 @@ pub struct ApplyReport {
 /// The source frameworks `oxide migrate` plans for (§V2-E03).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Framework {
-    /// SvelteKit (`@sveltejs/kit`): the pure path mapping.
+    /// `SvelteKit` (`@sveltejs/kit`): the pure path mapping.
     SvelteKit,
     /// Next.js (app router): the compat conventions.
     Next,
@@ -199,7 +199,7 @@ pub fn detect_framework(root: &Path) -> Option<Framework> {
             ("nuxt", Framework::Nuxt),
             ("vite", Framework::Vite),
         ] {
-            if deps.contains(&needle.to_string()) {
+            if deps.contains(needle) {
                 return Some(fw);
             }
         }
@@ -214,9 +214,7 @@ pub fn detect_framework(root: &Path) -> Option<Framework> {
     }
     let svelte_config = root.join("svelte.config.js");
     if svelte_config.is_file()
-        && fs::read_to_string(&svelte_config)
-            .map(|s| s.contains("kit"))
-            .unwrap_or(false)
+        && fs::read_to_string(&svelte_config).is_ok_and(|s| s.contains("kit"))
     {
         return Some(Framework::SvelteKit);
     }
@@ -339,7 +337,7 @@ pub fn apply_plan(root: &Path, plan: &MigrationPlan) -> Result<ApplyReport, Oxid
 
 // --------------------------------------------------------------- SvelteKit
 
-/// The SvelteKit planner (§V2-E03): the pure path mapping, the
+/// The `SvelteKit` planner (§V2-E03): the pure path mapping, the
 /// `hooks.server.ts` → `middleware.ts` rename (or the `sequence`
 /// manual note), and the `$lib` tsconfig path entry.
 struct SvelteKitPlanner;
@@ -403,7 +401,7 @@ impl MigrationPlanner for SvelteKitPlanner {
     }
 }
 
-/// The Oxide route basename for a SvelteKit route-file name: the
+/// The Oxide route basename for a `SvelteKit` route-file name: the
 /// `+`-prefixed markers strip, `+server.*` becomes `route.*`, and a
 /// name without a marker is not a route file (`None`).
 fn oxide_route_basename(name: &str) -> Option<String> {
@@ -658,7 +656,7 @@ impl MigrationPlanner for NuxtPlanner {
         }
         // The data fetching: `useFetch` / `useAsyncData` move server-side.
         for file in &files {
-            if !file.extension().is_some_and(|e| e == "vue") {
+            if file.extension().is_none_or(|e| e != "vue") {
                 continue;
             }
             let source = fs::read_to_string(root.join(file))
