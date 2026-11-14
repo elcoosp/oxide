@@ -11,7 +11,7 @@
 import { hydrateIslands, type IslandsOptions } from './islands.ts'
 import { createRouter } from './router.ts'
 import { prefetchAdvertised, startLearnedPrefetch } from './prefetch.ts'
-import { decodeOdf } from './odf-decode.ts'
+import { type MixedIslandRegistry, decodeOdf } from './odf-decode.ts'
 import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
@@ -29,6 +29,9 @@ import './hot.ts'
 interface BootState {
   adapter?: FrameworkAdapter
   loadChunk: (chunk: string) => Promise<unknown>
+  /** §V2-F01: the mixed registry when the entry hands one over — the
+   *  boot scan dispatches each island through its own framework. */
+  mixed?: MixedIslandRegistry
 }
 
 interface BootWindow extends Window {
@@ -91,12 +94,18 @@ function ensureInstalled(w: BootWindow): void {
     // (hydration bootstrap / oxide.config.ts) opts out; startReplay is
     // idempotent per document, so a re-run never double-installs.
     if (w.__oxide?.interactionReplay !== false) startReplay(doc)
-    const opts: IslandsOptions = {
-      doc,
-      adapter: state.adapter,
-      loadChunk: state.loadChunk,
+    // §V2-F01: a mixed registry dispatches every island through its
+    // own framework's adapter; the single-adapter path is unchanged.
+    if (state.mixed) {
+      hydrateMixedIslands(state.mixed, { doc })
+    } else {
+      const opts: IslandsOptions = {
+        doc,
+        adapter: state.adapter,
+        loadChunk: state.loadChunk,
+      }
+      hydrateIslands(opts)
     }
-    hydrateIslands(opts)
     // §16.6: schedule server-rendered `<Script>` placeholders by strategy.
     loadScripts({ doc })
   }
@@ -680,10 +689,23 @@ export function bootWithRouter(
  * is available when the entry imports the framework adapter. No-op outside
  * the browser — safe to call from any module.
  */
-export function installBootRuntime(): void {
+export function installBootRuntime(reg?: { adapters?: MixedIslandRegistry['adapters']; islands?: MixedIslandRegistry['islands']; adapter?: FrameworkAdapter; fw?: string }): void {
   const w = maybeWindow()
   if (!w) return
   ensureInstalled(w)
+  // §V2-F01: the mixed registry (or the one-adapter shorthand — an
+  // `adapter` with its framework key expands to the adapters map).
+  if (reg) {
+    const state = w.__oxideBoot
+    if (!state) return
+    let adapters = reg.adapters
+    if (!adapters && reg.adapter) {
+      const fw = reg.fw ?? '__page__'
+      const clientAdapter = reg.adapter
+      adapters = { [fw]: async () => ({ clientAdapter }) }
+    }
+    if (adapters && reg.islands) state.mixed = { adapters, islands: reg.islands }
+  }
 }
 
 // Install eagerly when the browser context is present, so a hand-written
