@@ -20,7 +20,10 @@ fn rows(n: usize) -> Value {
             .map(|k| {
                 Value::Object(
                     [
-                        ("i".to_string(), Value::Number(k as f64)),
+                        (
+                            "i".to_string(),
+                            Value::Number(f64::from(u32::try_from(k).expect("row index fits u32"))),
+                        ),
                         ("name".to_string(), Value::String(format!("row-{k}"))),
                         (
                             "body".to_string(),
@@ -71,8 +74,8 @@ fn bench_diff_encode(c: &mut Criterion) {
             b.iter(|| {
                 let ops = diff(black_box(&old), black_box(&new));
                 let id = base_id(black_box(&old_b));
-                encode_patch(&id, black_box(&ops)).expect("patch encodes")
-            })
+                encode_patch(&id, black_box(&ops)).expect("patch encodes");
+            });
         });
     }
     g.finish();
@@ -85,7 +88,7 @@ fn bench_apply(c: &mut Criterion) {
         let ops = diff(&old, &new);
         assert_eq!(ops.len(), 1, "an append is one Splice");
         g.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter(|| apply(black_box(&old), black_box(&ops)).expect("applies"))
+            b.iter(|| apply(black_box(&old), black_box(&ops)).expect("applies"));
         });
     }
     g.finish();
@@ -113,7 +116,7 @@ fn bench_delta_policy(c: &mut Criterion) {
                 } else {
                     new_b.clone()
                 }
-            })
+            });
         });
     }
     g.finish();
