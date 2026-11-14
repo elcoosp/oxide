@@ -9,7 +9,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 
 [dependencies]
 object_store = { workspace = true, optional = true }
