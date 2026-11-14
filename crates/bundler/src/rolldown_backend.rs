@@ -164,15 +164,33 @@ impl RolldownBundler {
                 if let Some(parent) = synthetic.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if std::fs::write(
-                    &synthetic,
-                    serde_json::to_vec_pretty(&body).unwrap_or_default(),
-                )
-                .is_ok()
-                {
-                    Some(TsConfig::Manual(synthetic))
-                } else {
-                    None
+                // The serialized bytes come first: a serialize failure must
+                // not hand Rolldown an EMPTY synthetic tsconfig — the old
+                // `unwrap_or_default()` wrote one silently, and the alias
+                // map would resolve nothing while the build behaved as if
+                // the `paths` key never existed. Both failures are loud
+                // now; `None` degrades to no tsconfig instead of a corrupt
+                // one.
+                match serde_json::to_vec_pretty(&body) {
+                    Ok(bytes) => {
+                        if std::fs::write(&synthetic, bytes).is_ok() {
+                            Some(TsConfig::Manual(synthetic))
+                        } else {
+                            tracing::warn!(
+                                "oxide: the synthetic .oxide-tsconfig.json write failed; \
+                                 tsconfig paths are inert for this build"
+                            );
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "oxide: the synthetic .oxide-tsconfig.json serialize failed; \
+                             tsconfig paths are inert for this build"
+                        );
+                        None
+                    }
                 }
             }
         };
