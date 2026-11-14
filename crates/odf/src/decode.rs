@@ -21,6 +21,11 @@ use std::collections::BTreeMap;
 /// containers occupy the following slots in pre-order, exactly as the encoder
 /// numbered them. Hardening per §17.1: `ODF-SIZE`, `ODF-MAGIC`, `ODF-DEPTH`,
 /// `ODF-REF`, `ODF-TAG`, `ODF-KEY`, `ODF-TRUNC`.
+///
+/// # Errors
+///
+/// Every refusal above is returned as-is; the payload is never partially
+/// decoded.
 pub fn decode_with_shared(bytes: &[u8]) -> Result<(Value, Vec<Value>)> {
     if bytes.len() > MAX_BYTES {
         return Err(err(
@@ -111,7 +116,7 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
             }
             continue;
         }
-        let depth = stack.len() as u32 + 1;
+        let depth = u32::try_from(stack.len() + 1).expect("stack depth is bounded by MAX_DEPTH");
         if depth > MAX_DEPTH {
             return Err(err(
                 "ODF-DEPTH",
@@ -120,130 +125,18 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
         }
         let tag = r.u8()?;
         // A complete value, unless the tag opens a container (pushed below).
-        let value: Option<Value> = match tag {
-            tags::NULL => Some(Value::Null),
-            tags::UNDEFINED => Some(Value::Undefined),
-            tags::BOOL => match r.u8()? {
-                0 => Some(Value::Bool(false)),
-                1 => Some(Value::Bool(true)),
-                other => return Err(err("ODF-TAG", format!("invalid boolean byte {other}"))),
-            },
-            tags::NUMBER => Some(Value::Number(f64::from_bits(r.u64_le()?))),
-            tags::BIGINT => {
-                let s = r.string()?;
-                if !crate::wire::validate_bigint(&s) {
-                    return Err(err(
-                        "ODF-TAG",
-                        format!("invalid BigInt decimal string `{s}` (expected `-?(0|[0-9]+)`)"),
-                    ));
-                }
-                Some(Value::BigInt(s))
-            }
-            tags::STRING => Some(Value::String(r.string()?)),
-            tags::DATE => Some(Value::Date(r.i64_le()?)),
-            tags::URL => Some(Value::Url(r.string()?)),
-            tags::REGEXP => {
-                let source = r.string()?;
-                let flags = r.string()?;
-                Some(Value::RegExp(source, flags))
-            }
-            tags::ARRAY => {
-                open_slot(base, started)?;
-                stack.push(Frame::Array {
-                    items: Vec::new(),
-                    remaining: r.varu()?,
-                });
-                None
-            }
-            tags::SET => {
-                open_slot(base, started)?;
-                stack.push(Frame::Set {
-                    items: Vec::new(),
-                    remaining: r.varu()?,
-                });
-                None
-            }
-            tags::OBJECT => {
-                open_slot(base, started)?;
-                stack.push(Frame::Object {
-                    map: BTreeMap::new(),
-                    remaining: r.varu()?,
-                    pending_key: None,
-                });
-                None
-            }
-            tags::MAP => {
-                open_slot(base, started)?;
-                stack.push(Frame::Map {
-                    pairs: Vec::new(),
-                    remaining: r.varu()?,
-                    pending_key: None,
-                });
-                None
-            }
-            tags::TYPED_ARRAY => {
-                let kb = r.u8()?;
-                let kind = crate::TypedArrayKind::from_byte(kb).ok_or_else(|| {
-                    err(
-                        "ODF-TAG",
-                        format!("unknown typed-array kind byte 0x{kb:02X}"),
-                    )
-                })?;
-                let len = r.varu()? as usize;
-                if !len.is_multiple_of(kind.element_size()) {
-                    return Err(err(
-                        "ODF-TAG",
-                        format!(
-                            "typed array payload length {len} is not a multiple of the {}-byte element size",
-                            kind.element_size()
-                        ),
-                    ));
-                }
-                Some(Value::TypedArray(kind, r.take(len)?.to_vec()))
-            }
-            tags::ERROR => {
-                let name = r.string()?;
-                let message = r.string()?;
-                let stack_flag = match r.u8()? {
-                    0 => None,
-                    1 => Some(r.string()?),
-                    other => {
-                        return Err(err("ODF-TAG", format!("invalid stack flag byte {other}")));
-                    }
-                };
-                Some(Value::Error {
-                    name,
-                    message,
-                    stack: stack_flag,
-                })
-            }
-            tags::REF => {
-                let i = r.varu()?;
-                if i as u64 >= base as u64 + *started as u64 {
-                    return Err(err(
-                        "ODF-REF",
-                        format!(
-                            "Ref({i}) points outside the {} started slot(s)",
-                            base + *started
-                        ),
-                    ));
-                }
-                Some(Value::Ref(i))
-            }
-            tags::DEFERRED => Some(Value::Deferred { id: r.varu()? }),
-            other => {
-                return Err(err("ODF-TAG", format!("unknown type tag 0x{other:02X}")));
-            }
-        };
+        let value = read_record(r, tag, base, started, &mut stack)?;
         // Immediately-completable empty containers still went through the
         // push above; fold them here so zero-length containers never linger.
         let mut value = value;
         if value.is_none() {
             match stack.last() {
-                Some(Frame::Array { remaining: 0, .. })
-                | Some(Frame::Set { remaining: 0, .. })
-                | Some(Frame::Object { remaining: 0, .. })
-                | Some(Frame::Map { remaining: 0, .. }) => {
+                Some(
+                    Frame::Array { remaining: 0, .. }
+                    | Frame::Set { remaining: 0, .. }
+                    | Frame::Object { remaining: 0, .. }
+                    | Frame::Map { remaining: 0, .. },
+                ) => {
                     value = Some(finish_frame(stack.pop().expect("just checked")));
                 }
                 _ => continue,
@@ -255,14 +148,7 @@ fn read_value(r: &mut Reader<'_>, base: u32, started: &mut u32) -> Result<Value>
             match stack.last_mut() {
                 None => return Ok(v),
                 Some(frame) => match frame {
-                    Frame::Array { items, remaining } => {
-                        items.push(v);
-                        *remaining -= 1;
-                        if *remaining > 0 {
-                            break;
-                        }
-                    }
-                    Frame::Set { items, remaining } => {
+                    Frame::Array { items, remaining } | Frame::Set { items, remaining } => {
                         items.push(v);
                         *remaining -= 1;
                         if *remaining > 0 {
@@ -315,10 +201,144 @@ fn finish_frame(frame: Frame) -> Value {
     }
 }
 
+/// Read one record for its tag: leaves return the finished value; containers
+/// register their slot, push their frame and return `None` — the driver in
+/// [`read_value`] folds them as their children complete. Split out of
+/// `read_value` so the frame driver and the wire table stay under one read.
+fn read_record(
+    r: &mut Reader<'_>,
+    tag: u8,
+    base: u32,
+    started: &mut u32,
+    stack: &mut Vec<Frame>,
+) -> Result<Option<Value>> {
+    // The four container tags open a frame and return nothing yet; every
+    // other tag is one leaf record, finished in place.
+    if matches!(tag, tags::ARRAY | tags::SET | tags::OBJECT | tags::MAP) {
+        return open_container(r, tag, base, started, stack);
+    }
+    Ok(match tag {
+        tags::NULL => Some(Value::Null),
+        tags::UNDEFINED => Some(Value::Undefined),
+        tags::BOOL => match r.u8()? {
+            0 => Some(Value::Bool(false)),
+            1 => Some(Value::Bool(true)),
+            other => return Err(err("ODF-TAG", format!("invalid boolean byte {other}"))),
+        },
+        tags::NUMBER => Some(Value::Number(f64::from_bits(r.u64_le()?))),
+        tags::BIGINT => {
+            let s = r.string()?;
+            if !crate::wire::validate_bigint(&s) {
+                return Err(err(
+                    "ODF-TAG",
+                    format!("invalid BigInt decimal string `{s}` (expected `-?(0|[0-9]+)` )"),
+                ));
+            }
+            Some(Value::BigInt(s))
+        }
+        tags::STRING => Some(Value::String(r.string()?)),
+        tags::DATE => Some(Value::Date(r.i64_le()?)),
+        tags::URL => Some(Value::Url(r.string()?)),
+        tags::REGEXP => {
+            let source = r.string()?;
+            let flags = r.string()?;
+            Some(Value::RegExp(source, flags))
+        }
+        tags::TYPED_ARRAY => {
+            let kb = r.u8()?;
+            let kind = crate::TypedArrayKind::from_byte(kb).ok_or_else(|| {
+                err(
+                    "ODF-TAG",
+                    format!("unknown typed-array kind byte 0x{kb:02X}"),
+                )
+            })?;
+            let len = r.varu()? as usize;
+            if !len.is_multiple_of(kind.element_size()) {
+                return Err(err(
+                    "ODF-TAG",
+                    format!(
+                        "typed array payload length {len} is not a multiple of the {}-byte element size",
+                        kind.element_size()
+                    ),
+                ));
+            }
+            Some(Value::TypedArray(kind, r.take(len)?.to_vec()))
+        }
+        tags::ERROR => {
+            let name = r.string()?;
+            let message = r.string()?;
+            let stack_flag = match r.u8()? {
+                0 => None,
+                1 => Some(r.string()?),
+                other => {
+                    return Err(err("ODF-TAG", format!("invalid stack flag byte {other}")));
+                }
+            };
+            Some(Value::Error {
+                name,
+                message,
+                stack: stack_flag,
+            })
+        }
+        tags::REF => {
+            let i = r.varu()?;
+            if u64::from(i) >= u64::from(base) + u64::from(*started) {
+                return Err(err(
+                    "ODF-REF",
+                    format!(
+                        "Ref({i}) points outside the {} started slot(s)",
+                        base + *started
+                    ),
+                ));
+            }
+            Some(Value::Ref(i))
+        }
+        tags::DEFERRED => Some(Value::Deferred { id: r.varu()? }),
+        other => {
+            return Err(err("ODF-TAG", format!("unknown type tag 0x{other:02X}")));
+        }
+    })
+}
+
+/// Open the frame for one of the four container tags: register the slot
+/// (§17.1 bounded tables) and push the empty frame the driver folds into.
+fn open_container(
+    r: &mut Reader<'_>,
+    tag: u8,
+    base: u32,
+    started: &mut u32,
+    stack: &mut Vec<Frame>,
+) -> Result<Option<Value>> {
+    open_slot(base, started)?;
+    let remaining = r.varu()?;
+    match tag {
+        tags::ARRAY => stack.push(Frame::Array {
+            items: Vec::new(),
+            remaining,
+        }),
+        tags::SET => stack.push(Frame::Set {
+            items: Vec::new(),
+            remaining,
+        }),
+        tags::OBJECT => stack.push(Frame::Object {
+            map: BTreeMap::new(),
+            remaining,
+            pending_key: None,
+        }),
+        tags::MAP => stack.push(Frame::Map {
+            pairs: Vec::new(),
+            remaining,
+            pending_key: None,
+        }),
+        other => unreachable!("open_container called on tag 0x{other:02X}"),
+    }
+    Ok(None)
+}
+
 /// Register a container slot and enforce the bounded-table limit (§17.1).
 fn open_slot(base: u32, started: &mut u32) -> Result<()> {
     *started += 1;
-    if base as u64 + *started as u64 > MAX_REFS as u64 {
+    if u64::from(base) + u64::from(*started) > u64::from(MAX_REFS) {
         return Err(err(
             "ODF-REF",
             format!("more than {MAX_REFS} shared slots in one payload"),
