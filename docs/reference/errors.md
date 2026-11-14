@@ -82,6 +82,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CFG-EXTENDS` | extends chain too deep at `{spec}` (cycle?) | — |
 | `CFG-IO` | read {}: {e} | — |
 | `CFG-LLMS` | the `llms` section carries a bad knob: {msg} | fix the `llms` section — `enabled` is the unquoted boolean master switch and `include` an array of absolute site-path patterns like `/docs/**` |
+| `CFG-OFFLINE` | the `offline` section carries a bad knob: {msg} | spell the section `offline: { enabled: true, precache: 'routes', outbox: true }` — `precache` is `'routes'` (the shell + prerendered routes) or `'all'` (every hashed asset) |
 | `CFG-REC` | the `record` key is `false`, `'all'`, `'errors'` or `{ sample, onError }` | spell the key `record: false`, `record: 'all'`, `record: 'errors'` or `record: { sample: 0.001, onError: true }` |
 | `CFG-SCHEMA` | serialize defaults: {e} | — |
 | `CFG-SEC` | `security.{key}` must be one of {valid} — got `{got}` | Set `security.{key}` to one of the valid spellings |
@@ -120,6 +121,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DSP-113` | invalid overload priority spelling (rules[].priority accepts only `low`, `normal`, `critical`) | Use `low`, `normal` or `critical` |
 | `DSP-114` | invalid `interactionReplay` spelling (a non-boolean value) | Set `interactionReplay` to the unquoted boolean `true` or `false` |
 | `DSP-115` | invalid `prefetch` section (a non-boolean `learned`, or a `minProbability` outside 0.0-1.0) | Fix the `prefetch` section |
+| `DSP-116` | the idempotency store refused `{key}`: {detail} | Check the store backend's availability — the stage degrades loud-then-run, so the request itself is unaffected |
 | `EDGE-101` | routes manifest must be an array of route rows or {"routes": [...]} (router typegen §8.3) | — |
 | `FN-BAD-REQUEST` | the server-function envelope is malformed (the 400 dispatch class) | Send the envelope shape `/_oxide/fn/<id>` documents |
 | `FN-INTERNAL` | the server-function dispatch failed internally (the 500 dispatch class) | Inspect the server logs; the dispatch failed inside the host |
@@ -162,6 +164,9 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `JSH-TOOLING` | task join failed: {e} | — |
 | `JSH-V8` | tokio rt: {e} | — |
 | `JSH-V8KIND` | V8 backend incompatible with the server code (JSH-V8KIND) | — |
+| `MIG-DETECT` | no migratable framework detected in {root} (the signature surface: package.json dependency names, next.config.*, nuxt.config.*, svelte.config.js with `kit`) | Point `oxide migrate` at the project root, or migrate by hand — supported: sveltekit, next, nuxt, vite |
+| `MIG-IO` | {what}: {e} | Check the path's permissions and re-run `oxide migrate` |
+| `MIG-TARGET` | rename target {to} already exists; the migration would overwrite it | Resolve the collision (the source is {from}), or apply in a clean git tree |
 | `NOT-FOUND` | JSH-ACTION | — |
 | `ODF-CYCLE` | reference expansion exceeds the {MAX_DEPTH}-level limit | — |
 | `ODF-DEPTH` | value is nested deeper than the {MAX_DEPTH}-level limit | — |
