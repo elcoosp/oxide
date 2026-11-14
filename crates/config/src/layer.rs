@@ -50,6 +50,7 @@ const KNOWN_KEYS: &[&str] = &[
     "stream",
     "brownout",
     "deploy",
+    "offline",
     "search",
     "interactionReplay",
     "prefetch",
@@ -463,6 +464,14 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     // of a bare serde type error at the typed boundary.
     if let Some(v) = map.get("deploy") {
         validate_deploy(v)?;
+    }
+    // V2-F14: the `offline` section gets the same raw-`Value` treatment —
+    // `enabled`/`outbox` real booleans and `precache` one of `'routes'`/
+    // `'all'`; a bad spelling or shape gets the `CFG-OFFLINE` diagnostic
+    // naming the valid spellings instead of a bare serde type error at
+    // the typed boundary.
+    if let Some(v) = map.get("offline") {
+        validate_offline(v)?;
     }
     // V2-C01: the compiler-backend switch (D26) gets the same raw-`Value`
     // treatment — a bad `compilerBackend` spelling names the three valid
@@ -1018,6 +1027,69 @@ fn cfg_deploy(msg: &str) -> OxideError {
     d.fix = Some(
         "spell the section `deploy: { skewWindow: '15m', generations: 3 }` — the window \
          grammar is `<n>s|m|h|d`, plain integers are seconds"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-F14: the `offline` section's raw-`Value` validation — `enabled`
+/// and `outbox` real booleans, `precache` one of the two spellings, and
+/// the section's keys exactly `enabled`, `precache` and `outbox`. The
+/// raw pass runs before the typed parse, so a bad spelling or shape
+/// gets the `CFG-OFFLINE` diagnostic (naming the valid spellings)
+/// instead of a bare serde type error at the typed boundary.
+fn validate_offline(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Err(cfg_offline(&format!(
+            "`offline` is an object with the knobs `enabled`, `precache` and `outbox` — got `{value}`"
+        )));
+    };
+    for (key, _) in map {
+        if key != "enabled" && key != "precache" && key != "outbox" {
+            return Err(cfg_offline(&format!(
+                "`offline` carries the knob `{key}` — the section's keys are `enabled`, `precache` and `outbox`"
+            )));
+        }
+    }
+    if let Some(v) = map.get("enabled")
+        && !v.is_boolean()
+    {
+        return Err(cfg_offline(&format!(
+            "`offline.enabled` must be a real boolean — got `{v}`"
+        )));
+    }
+    if let Some(v) = map.get("outbox")
+        && !v.is_boolean()
+    {
+        return Err(cfg_offline(&format!(
+            "`offline.outbox` must be a real boolean — got `{v}`"
+        )));
+    }
+    if let Some(v) = map.get("precache") {
+        match v {
+            Value::String(s) if s == "routes" || s == "all" => {}
+            Value::String(s) => {
+                return Err(cfg_offline(&format!(
+                    "`offline.precache` must be `'routes'` or `'all'` — got `'{s}'`"
+                )));
+            }
+            other => {
+                return Err(cfg_offline(&format!(
+                    "`offline.precache` must be the string `'routes'` or `'all'` — got `{other}`"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `CFG-OFFLINE` diagnostic for a bad `offline` value (V2-F14).
+fn cfg_offline(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("CFG-OFFLINE", msg);
+    d.fix = Some(
+        "spell the section `offline: { enabled: true, precache: 'routes', outbox: true }` — \
+         `precache` is `'routes'` (the shell + prerendered routes) or `'all'` (every hashed \
+         asset)"
             .into(),
     );
     OxideError(Box::new(d))
