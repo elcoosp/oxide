@@ -126,6 +126,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `FN-BAD-REQUEST` | the server-function envelope is malformed (the 400 dispatch class) | Send the envelope shape `/_oxide/fn/<id>` documents |
 | `FN-INTERNAL` | the server-function dispatch failed internally (the 500 dispatch class) | Inspect the server logs; the dispatch failed inside the host |
 | `FN-NOT-FOUND` | no server function with that id is registered in this build | Rebuild, or check the id the client posts to `/_oxide/fn/<id>` |
+| `FN-TIMEOUT` | the native function `{name}` exceeded its {secs}s budget | Raise the call budget or make the function faster; long work belongs in a background job |
 | `FN-THREW` | the server function threw; the envelope carries the function's own error message | — |
 | `GRAPH-ARTIFACT` | rkyv serialize: {e} | — |
 | `GRAPH-CANCEL` | computation cancelled: a newer change invalidated in-flight work | — |
@@ -200,6 +201,10 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `PLG-WASM` | wasmtime engine init failed: {e} | — |
 | `PLG-WIT` | WASM plugin `{}` declares no `wit_world` — a stable WIT interface is required (§15.1 kind 2) | — |
 | `RFN-002` | `*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08) | Use Binary or Docker, or remove the Rust functions |
+| `RFN-003` | native function library failed to load: {e} | Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type = ["cdylib"]` shape) |
+| `RFN-004` | native function payload did not convert: {e} | The client stub sends JSON args; the host converts to ODF at the boundary — check the args shape against the generated types |
+| `RFN-PANIC` | a native function panicked; the host answers 500 and the library never unwinds across the boundary | Inspect the server log for the panic backtrace; panics are a bug in the function body |
+| `RFN-TYPES` | the native function types payload did not parse: {e} | Rebuild the user crate with the matching `oxide-rustfn` version |
 | `RND-INJECT` | html injection failed: {e} | — |
 | `RND-PPR` | unterminated boundary tag | — |
 | `RND-SCRIPT` | <Script> requires either a `src` or inline `content` | — |
@@ -249,4 +254,4 @@ Defined by the spec for work packages that have not landed; no call site raises 
 | `BLD-409` | Build header unknown or expired (surfaced client-side as a reload) | Reload the page |
 | `OX-SRC-001` | Search params failed `searchSchema` validation | Fix the URL or add defaults to the schema |
 | `PRM-001` | A route used a capability outside its declared permissions (F19) | Add it to `config.permissions` or remove the call |
-| `RFN-001` | Rust function library ABI version mismatch | Rebuild the user crate with the matching `oxide-rustfn` version |
+| `RFN-001` | native function library speaks ABI {saw}, the host speaks ABI {want}; rebuild the user crate with the matching oxide-rustfn version | Rebuild the user crate with the matching `oxide-rustfn` version |
