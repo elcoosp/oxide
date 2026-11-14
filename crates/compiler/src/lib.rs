@@ -33,6 +33,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub mod cjs_exports;
 pub mod framework;
 pub mod generate_params;
+pub mod interactivity;
 pub mod islands;
 pub mod lexer;
 pub mod migrate;
@@ -46,6 +47,9 @@ pub use framework::{
     ToolingDispatcher, compiler_for,
 };
 pub use generate_params::{GenerateParamsResult, extract_generate_params};
+pub use interactivity::{
+    Interactivity, InteractivityReason, IslandManifest, hydrates, scan_interactivity,
+};
 pub use migrate::{
     ApplyReport, ConfigKey, ImportRewrite, MIG_DETECT, MIG_IO, MIG_TARGET, MigrationPlan,
     MigrationPlanner, Note, apply_plan, detect_framework, plan_for, planner_for,
