@@ -72,6 +72,7 @@ pub fn config_schema() -> Value {
             "llms": llms_schema(),
             "record": record_schema(),
             "deploy": deploy_schema(),
+            "offline": offline_schema(),
             "interactionReplay": {
                 "type": "boolean",
                 "default": true,
@@ -514,6 +515,35 @@ fn deploy_schema() -> Value {
                 "minimum": 1,
                 "default": 3,
                 "description": "How many past generations stay roll-back-able (the F11 releases/ retention; the spec's N=3 default). CFG-DEPLOY refuses zero."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `offline` section (V2-F14) — the PWA
+/// worker's precache breadth and the offline action outbox.
+#[must_use]
+fn offline_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "V2-F14: the offline-first knobs. Inert at the wiring until the F14 CLI adoption lands (the PWA worker's precache emitting from the client manifest, the client outbox boot); the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).",
+        "properties": {
+            "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master switch. false (the default) installs no service worker and boots no outbox."
+            },
+            "precache": {
+                "type": "string",
+                "enum": ["routes", "all"],
+                "default": "routes",
+                "description": "The precache breadth: 'routes' caches the shell + the prerendered routes (the navigation-fallback surface), 'all' caches every hashed asset the client manifest carries."
+            },
+            "outbox": {
+                "type": "boolean",
+                "default": true,
+                "description": "The offline action outbox (packages/core's enqueue/flush, the x-oxide-idem replay header). On inside an enabled section (the spec's example shape); false keeps the precache-only posture."
             }
         }
     })
