@@ -2885,7 +2885,6 @@ async fn static_build_refuses_dynamic_without_fallback() {
 #[tokio::test]
 async fn mcp_routes_tool_lists_routes() {
     use rmcp::ServerHandler as _;
-    use rmcp::handler::server::wrapper::Parameters;
     let dir = tempfile::tempdir().unwrap();
     let routes = dir.path().join("src/routes");
     std::fs::create_dir_all(routes.join("blog").join("[slug]")).unwrap();
@@ -2904,7 +2903,7 @@ async fn mcp_routes_tool_lists_routes() {
 
     let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
     let result = server
-        .oxide_routes(Parameters(crate::mcp::NoArgs {}))
+        .dispatch("routes.list", serde_json::json!({}))
         .await
         .expect("tool call");
     // Success = at least one content block.
@@ -2934,11 +2933,10 @@ async fn mcp_routes_tool_lists_routes() {
 
 #[tokio::test]
 async fn mcp_cache_tool_reports_empty_cache() {
-    use rmcp::handler::server::wrapper::Parameters;
     let dir = tempfile::tempdir().unwrap();
     let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
     let result = server
-        .oxide_fw_cache(Parameters(crate::mcp::NoArgs {}))
+        .dispatch("cache.inspect", serde_json::json!({}))
         .await
         .unwrap();
     let text = result
@@ -2956,11 +2954,10 @@ async fn mcp_cache_tool_reports_empty_cache() {
 
 #[tokio::test]
 async fn mcp_errors_tool_empty_when_no_build() {
-    use rmcp::handler::server::wrapper::Parameters;
     let dir = tempfile::tempdir().unwrap();
     let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
     let result = server
-        .oxide_errors(Parameters(crate::mcp::NoArgs {}))
+        .dispatch("errors.recent", serde_json::json!({}))
         .await
         .unwrap();
     let text = result
@@ -2976,7 +2973,6 @@ async fn mcp_errors_tool_empty_when_no_build() {
 
 #[tokio::test]
 async fn mcp_errors_tool_reads_diagnostics_file() {
-    use rmcp::handler::server::wrapper::Parameters;
     let dir = tempfile::tempdir().unwrap();
     let oxide = dir.path().join(".oxide");
     std::fs::create_dir_all(&oxide).unwrap();
@@ -2990,7 +2986,7 @@ async fn mcp_errors_tool_reads_diagnostics_file() {
     .unwrap();
     let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
     let result = server
-        .oxide_errors(Parameters(crate::mcp::NoArgs {}))
+        .dispatch("errors.recent", serde_json::json!({}))
         .await
         .unwrap();
     let text = result
@@ -3008,6 +3004,309 @@ async fn mcp_errors_tool_reads_diagnostics_file() {
     );
     assert_eq!(v["entries"][0]["code"], "BLD-RESOLVE");
     assert_eq!(v["entries"][0]["fix"], "fix it");
+}
+
+// ------------------------------------------ V2-E07: the MCP tool registry
+
+#[test]
+fn mcp_registry_lists_the_spec_tools() {
+    // tools/list renders the REGISTRY: the spec's names in its stable
+    // order, each carrying a description and a JSON Schema input.
+    let server = crate::mcp::OxideMcp::new(std::env::temp_dir());
+    let tools = server.registry_tools();
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
+    assert_eq!(
+        names,
+        [
+            "routes.list",
+            "route.explain",
+            "errors.recent",
+            "cache.inspect",
+            "graph.why",
+            "config.get",
+            "state.recent",
+            "build.run"
+        ],
+        "the registry order is the tools/list order"
+    );
+    for t in &tools {
+        assert!(t.description.is_some(), "{} has a description", t.name);
+        assert!(
+            t.input_schema.get("type").and_then(|v| v.as_str()) == Some("object"),
+            "{} has a JSON Schema input object",
+            t.name
+        );
+    }
+}
+
+#[tokio::test]
+async fn mcp_write_tool_refused_without_allow_write() {
+    // V2-E07: `build.run` is a write tool — refused with a named refusal
+    // (an error RESULT the caller reads, not a protocol error) unless the
+    // server runs with `--allow-write`.
+    let dir = tempfile::tempdir().unwrap();
+    let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
+    let result = server
+        .dispatch("build.run", serde_json::json!({}))
+        .await
+        .expect("the refusal is an Ok(error result)");
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        result.is_error.unwrap_or(false),
+        "the refusal is an error result"
+    );
+    assert!(
+        text.contains("--allow-write"),
+        "the refusal names the flag: {text}"
+    );
+
+    // With the flag the tool RUNS (no refusal text) — on an empty project
+    // the build fails with its own message, not the write refusal.
+    let server = crate::mcp::OxideMcp::with_policy(crate::mcp::McpCx {
+        root: dir.path().to_path_buf(),
+        allow_write: true,
+    });
+    let result = server
+        .dispatch("build.run", serde_json::json!({}))
+        .await
+        .expect("the build attempt");
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !text.contains("--allow-write"),
+        "no write refusal with the flag: {text}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_unknown_tool_is_method_not_found() {
+    let server = crate::mcp::OxideMcp::new(std::env::temp_dir());
+    let e = server
+        .dispatch("no.such.tool", serde_json::json!({}))
+        .await
+        .expect_err("unknown tool");
+    assert_eq!(e.code.0, -32601, "METHOD_NOT_FOUND");
+}
+
+#[tokio::test]
+async fn mcp_config_get_reports_redacted_resolved_config() {
+    // config.get: the resolved config (defaults filled) — and the
+    // redaction walk never lets a secret-shaped key leave the process.
+    let dir = tempfile::tempdir().unwrap();
+    write_config(dir.path(), "{}");
+    let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
+    let result = server
+        .dispatch("config.get", serde_json::json!({}))
+        .await
+        .unwrap();
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(
+        v["config"].is_object(),
+        "the resolved config rides the report"
+    );
+    assert_eq!(v["redacted_count"], 0, "an empty config carries no secrets");
+}
+
+#[test]
+fn redact_secrets_redacts_secret_shaped_keys_at_any_depth() {
+    // The redaction rule is the request log's is_secret_key rule, applied
+    // recursively: cookie/authorization headers and anything naming a
+    // secret, token, password or api key.
+    let mut v = serde_json::json!({
+        "apiKey": "s3cret",
+        "name": "keep me",
+        "nested": {
+            "authorization": "Bearer x",
+            "cookie": "sid=1",
+            "deeper": { "userToken": "t", "count": 3 }
+        },
+        "list": [{ "password": "p" }, { "ok": true }]
+    });
+    let n = crate::mcp::redact_secrets(&mut v);
+    assert_eq!(n, 5, "apiKey, authorization, cookie, userToken, password");
+    assert_eq!(v["apiKey"], "***");
+    assert_eq!(v["name"], "keep me", "non-secret keys ride through");
+    assert_eq!(v["nested"]["authorization"], "***");
+    assert_eq!(v["nested"]["cookie"], "***");
+    assert_eq!(v["nested"]["deeper"]["userToken"], "***");
+    assert_eq!(v["nested"]["deeper"]["count"], 3);
+    assert_eq!(v["list"][0]["password"], "***");
+    assert_eq!(v["list"][1]["ok"], true);
+}
+
+#[tokio::test]
+async fn mcp_route_explain_reports_the_dispatch_facts() {
+    // route.explain: the "why is this route what it is" answer — layout
+    // chain, middleware chain, render mode, server-module flag.
+    let dir = tempfile::tempdir().unwrap();
+    let routes = dir.path().join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default function Page() { return null; }",
+    )
+    .unwrap();
+    write_config(dir.path(), "{}");
+    let server = crate::mcp::OxideMcp::new(dir.path().to_path_buf());
+
+    let result = server
+        .dispatch("route.explain", serde_json::json!({ "route": "/index" }))
+        .await
+        .expect("the route exists under its pattern spelling");
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let v: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    assert!(
+        v["layout_chain"].is_array(),
+        "layout chain rides the report: {v}"
+    );
+    assert!(v["middleware_chain"].is_array());
+    assert!(v["render_mode"].is_string());
+
+    // An unknown route is an invalid-params error naming the fix.
+    let e = server
+        .dispatch("route.explain", serde_json::json!({ "route": "/nope" }))
+        .await
+        .expect_err("unknown route");
+    assert_eq!(e.code.0, -32602, "INVALID_PARAMS");
+    assert!(
+        e.message.contains("routes.list"),
+        "the error names where ids come from"
+    );
+}
+
+// ------------------------------------------------- V2-E07: the llms emission
+
+#[test]
+fn llms_include_matches_globs() {
+    use crate::llms::include_matches as m;
+    // `**` spans segments (including none); `*` stays within one.
+    assert!(m("/docs/**", "/docs"));
+    assert!(m("/docs/**", "/docs/guide/intro"));
+    assert!(!m("/docs/**", "/blog/x"));
+    assert!(m("/docs/*", "/docs/intro"));
+    assert!(!m("/docs/*", "/docs/guide/intro"));
+    assert!(
+        m("/blog/hello", "/blog/hello"),
+        "a literal pattern matches its path"
+    );
+    assert!(
+        !m("/blog/:slug", "/blog/hello"),
+        "config patterns are concrete site paths, not param route patterns"
+    );
+    assert!(m("/", "/"));
+    assert!(!m("/", "/docs"));
+    // A wildcard-free single segment is a section prefix.
+    assert!(m("/docs", "/docs/guide"));
+    assert!(!m("/docs", "/documents"));
+}
+
+#[test]
+fn llms_renderers_shape_the_documents() {
+    use crate::llms::{llms_full_txt, llms_txt};
+    let rows = vec![
+        ("/".to_string(), "Home".to_string()),
+        ("/docs/intro".to_string(), String::new()),
+    ];
+    let txt = llms_txt("Oxide Docs", Some("The docs site"), &rows);
+    assert!(txt.starts_with("# Oxide Docs\n\n> The docs site\n\n## Routes\n\n"));
+    assert!(txt.contains("- /: Home\n"));
+    // A route without a description renders bare (no dangling colon).
+    assert!(txt.contains("- /docs/intro\n"));
+
+    let full = llms_full_txt(
+        "Oxide Docs",
+        None,
+        &[("/".to_string(), "Welcome text.\n".to_string())],
+    );
+    assert!(full.starts_with("# Oxide Docs\n\n## Routes\n\n"));
+    assert!(full.contains("## /\n\nWelcome text."));
+}
+
+#[test]
+fn llms_meta_description_and_html_text_extract() {
+    use crate::llms::{html_text, meta_description};
+    let html = r#"<html><head><meta name="description" content="The guide intro">
+<style>body{color:red}</style><script>var x = 1;</script></head>
+<body><h1>Intro</h1><p>Hello &amp; welcome.</p></body></html>"#;
+    assert_eq!(
+        meta_description(html).as_deref(),
+        Some("The guide intro"),
+        "the meta description rides llms.txt"
+    );
+    let text = html_text(html);
+    assert!(text.contains("Intro"));
+    assert!(text.contains("Hello & welcome."), "entities decode: {text}");
+    assert!(!text.contains("var x = 1"), "script text never leaks");
+    assert!(!text.contains("color:red"), "style text never leaks");
+}
+
+#[tokio::test]
+async fn llms_emit_writes_both_files_and_respects_include() {
+    let dir = tempfile::tempdir().unwrap();
+    let pre = dir.path().join("dist/prerendered");
+    std::fs::create_dir_all(pre.join("docs")).unwrap();
+    std::fs::write(
+        pre.join("index.html"),
+        r#"<html><head><meta name="description" content="Home page"></head><body><h1>Home</h1></body></html>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        pre.join("docs").join("intro.html"),
+        r#"<html><head><meta name="description" content="Intro"></head><body><h1>Intro</h1><p>Text.</p></body></html>"#,
+    )
+    .unwrap();
+    let mut cfg = crate::load_config_or_default(dir.path(), "development");
+    cfg.llms.enabled = true;
+    cfg.llms.title = Some("Docs".into());
+    cfg.llms.summary = Some("Summary".into());
+    // Only /docs/** rides the files.
+    cfg.llms.include = vec!["/docs/**".to_string()];
+    let mut buf = Vec::new();
+    crate::llms::emit_llms(&cfg, &dir.path().join("dist"), &mut buf).expect("emit");
+
+    let txt = std::fs::read_to_string(dir.path().join("dist/llms.txt")).unwrap();
+    assert!(txt.contains("# Docs"));
+    assert!(txt.contains("> Summary"));
+    assert!(txt.contains("/docs/intro: Intro"), "{txt}");
+    assert!(
+        !txt.contains("- /: Home"),
+        "the filtered-out root is absent: {txt}"
+    );
+
+    let full = std::fs::read_to_string(dir.path().join("dist/llms-full.txt")).unwrap();
+    assert!(full.contains("## /docs/intro"));
+    assert!(
+        full.contains("Intro"),
+        "the visible text rides the full doc"
+    );
+
+    // Disabled → neither file is written.
+    let dir2 = tempfile::tempdir().unwrap();
+    let mut cfg2 = crate::load_config_or_default(dir2.path(), "development");
+    cfg2.llms.enabled = false;
+    let mut buf2 = Vec::new();
+    crate::llms::emit_llms(&cfg2, &dir2.path().join("dist"), &mut buf2).unwrap();
+    assert!(!dir2.path().join("dist/llms.txt").exists());
 }
 
 // ------------------------------------------------------- §19.3 JSON Schema
@@ -4740,6 +5039,105 @@ fn build_transform_hook_returns_none_when_no_wasm_plugin_configured() {
         "no plugins configured → no transform hook"
     );
 }
+
+#[test]
+fn fold_plugin_map_first_map_stands_and_malformed_maps_are_dropped() {
+    // V2-C06: the JS chain's map fold. The first plugin's map starts the
+    // accumulation (validated — a malformed one is dropped, the code
+    // stands); a second plugin's map composes into it; a mapless plugin is
+    // position-preserving and leaves the accumulation untouched.
+    let identity = serde_json::json!({
+        "version": 3,
+        "sources": ["src/a.ts"],
+        "names": [],
+        "mappings": "AAAA;AACA"
+    })
+    .to_string();
+    let mut acc: Option<String> = None;
+    // No map: nothing changes.
+    crate::fold_plugin_map(&mut acc, None);
+    assert!(
+        acc.is_none(),
+        "a mapless plugin keeps the accumulation None"
+    );
+    // The first (valid) map starts it.
+    crate::fold_plugin_map(&mut acc, Some(identity.clone()));
+    assert_eq!(acc.as_deref(), Some(identity.as_str()));
+    // A malformed map is refused and dropped, not fatal.
+    crate::fold_plugin_map(&mut acc, Some("{not a map".to_string()));
+    assert_eq!(
+        acc.as_deref(),
+        Some(identity.as_str()),
+        "the broken map never poisons the chain"
+    );
+}
+
+#[test]
+fn fold_plugin_map_composes_two_chain_maps() {
+    // Two consecutive banner shifts: plugin 1 prepends one line, plugin 2
+    // prepends another. The folded map must send the ORIGINAL source lines
+    // through both shifts (line 0 of the source sits at generated line 2).
+    use oxide_fw_bundler::sourcemap_compose::{Tok, toks_of, v3_from_toks};
+    let tok = |gen_line: u32, src_line: u32| Tok {
+        gen_line,
+        gen_col: 0,
+        src: 0,
+        src_line,
+        src_col: 0,
+    };
+    let first = v3_from_toks(
+        &[tok(1, 0), tok(2, 1)],
+        Some("one.js".to_string()),
+        vec!["src/a.ts".to_string()],
+        Vec::new(),
+    )
+    .to_json_string();
+    let second = v3_from_toks(
+        &[tok(2, 1), tok(3, 2)],
+        Some("two.js".to_string()),
+        vec!["one.js".to_string()],
+        Vec::new(),
+    )
+    .to_json_string();
+
+    let mut acc: Option<String> = None;
+    crate::fold_plugin_map(&mut acc, Some(first));
+    crate::fold_plugin_map(&mut acc, Some(second));
+    let folded = acc.expect("two mapped plugins compose");
+    let map = oxide_fw_bundler::sourcemap_compose::parse_v3(&folded)
+        .expect("the folded map is a valid V3 document");
+    let toks = toks_of(&map).expect("the folded map decodes");
+    assert_eq!(
+        map.sources,
+        ["src/a.ts"],
+        "the folded map names the ORIGINAL source"
+    );
+    assert!(
+        toks.iter().any(|t| t.gen_line == 2 && t.src_line == 0),
+        "source line 1 sits at generated line 3 after two banners (tokens: {toks:?})"
+    );
+}
+
+#[test]
+fn extract_hook_map_reads_only_the_object_form() {
+    // V2-C06: the `map` field rides the `{ code, map }` object form only —
+    // a bare-string result is code-only by contract, so there is no
+    // bare-value fallback the way `hook_result_str` has one.
+    let object = serde_json::json!({ "code": "x", "map": "{\"version\":3}" });
+    assert_eq!(
+        crate::extract_hook_map(&object).as_deref(),
+        Some("{\"version\":3}")
+    );
+    let bare = serde_json::Value::String("rewritten".to_string());
+    assert_eq!(
+        crate::extract_hook_map(&bare),
+        None,
+        "bare strings carry no map"
+    );
+    let no_map = serde_json::json!({ "code": "x" });
+    assert_eq!(crate::extract_hook_map(&no_map), None);
+}
+
 // ---- SPEC-16.6: session codec reaches `locals.session` ---------------------
 
 /// A LoaderRunner that captures the `locals.session` its load() saw.
@@ -5520,13 +5918,12 @@ async fn add_warns_on_adapter_mismatch() {
 
 #[tokio::test]
 async fn mcp_graph_tool_reports_demand_graph_snapshot() {
-    use rmcp::handler::server::wrapper::Parameters;
     let (_d, root) = fixture_project();
     // No build yet: the graph section must be absent (serde skip).
     {
         let server = crate::mcp::OxideMcp::new(root.clone());
         let result = server
-            .oxide_fw_graph(Parameters(crate::mcp::NoArgs {}))
+            .dispatch("graph.why", serde_json::json!({}))
             .await
             .expect("tool call");
         let text = result
@@ -5548,7 +5945,7 @@ async fn mcp_graph_tool_reports_demand_graph_snapshot() {
 
     let server = crate::mcp::OxideMcp::new(root.clone());
     let result = server
-        .oxide_fw_graph(Parameters(crate::mcp::NoArgs {}))
+        .dispatch("graph.why", serde_json::json!({}))
         .await
         .expect("tool call");
     let text = result
