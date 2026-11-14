@@ -29,8 +29,6 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/elcoosp/oxide"
-homepage = "https://github.com/elcoosp/oxide"
-description = "Oxide: framework-agnostic, full-stack meta-framework with a Rust core (working name, spec v0.1)"
 authors = ["elcoosp <elcoosp@gmail.com>"]
 
 # V2-A02: workspace lint policy. Crates opt in per-manifest with
