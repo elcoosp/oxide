@@ -56,6 +56,7 @@ const KNOWN_KEYS: &[&str] = &[
     "prefetch",
     "llms",
     "record",
+    "check",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -485,6 +486,13 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     // the typed parse.
     if let Some(v) = map.get("images") {
         validate_images(v)?;
+    }
+    // V2-C11: the typecheck-backend switch gets the same raw-`Value`
+    // treatment — a bad `check.typecheck` spelling names the five valid
+    // backends (CFG-CHECK) instead of a bare serde type error at the
+    // typed boundary.
+    if let Some(v) = map.get("check") {
+        validate_check(v)?;
     }
     if let Some(Value::Array(rules)) = map.get("rules") {
         for rule in rules {
@@ -1199,6 +1207,45 @@ fn cfg_backend(got: &str) -> OxideError {
     );
     d.fix =
         Some("set `framework.compilerBackend` to `auto` (the default), `native` or `node`".into());
+    OxideError(Box::new(d))
+}
+
+/// V2-C11: the `check.typecheck` backend spelling (§V2-C11). The
+/// raw-`Value` pass runs before the typed parse, so a bad spelling gets
+/// the `CFG-CHECK` diagnostic naming the five valid backends instead of a
+/// bare serde type error at the typed boundary.
+fn validate_check(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Ok(()); // not an object — the typed parse reports the shape
+    };
+    let Some(v) = map.get("typecheck") else {
+        return Ok(()); // absent — the default (`tsgo`) applies
+    };
+    let bad = match v {
+        Value::String(s) if matches!(s.as_str(), "tsgo" | "oxlint" | "tsrs" | "tsc" | "off") => {
+            None
+        }
+        other => Some(match other {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        }),
+    };
+    match bad {
+        None => Ok(()),
+        Some(got) => Err(cfg_check(&got)),
+    }
+}
+
+/// The `CFG-CHECK` diagnostic for a bad `check.typecheck` spelling
+/// (V2-C11).
+fn cfg_check(got: &str) -> OxideError {
+    let mut d = Diagnostic::error(
+        "CFG-CHECK",
+        format!(
+            "`check.typecheck` must be one of `tsgo`, `oxlint`, `tsrs`, `tsc`, `off` — got `{got}`"
+        ),
+    );
+    d.fix = Some("set `check.typecheck` to `tsgo` (the default), `oxlint`, `tsrs` (experimental), `tsc` or `off`".into());
     OxideError(Box::new(d))
 }
 
