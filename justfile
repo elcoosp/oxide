@@ -8,3 +8,8 @@ wr:
     watchexec -w ./wr.sh --clear -r  "./wr.sh"
 wr1:
     watchexec -w ./wr1.sh --clear -r  "./wr1.sh"
+
+# §V2-C01: the release recipe compiles the landed native framework
+# compilers in (default dev builds keep them off — fast compile).
+release-build:
+    cargo build --release -p oxide-fw-cli --features native-vue,native-svelte,native-react-compiler
