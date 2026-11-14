@@ -142,8 +142,20 @@ fn framework_schema() -> Value {
                 },
                 "islands": {
                     "type": "object",
-                    "additionalProperties": { "type": "string" },
-                    "description": "§10.3 islands registry: component name → source file. The CLI emits a synthetic __boot__ client entry that imports each entry; `<Island chunk=\"X\">` on a page resolves to X in this map."
+                    "additionalProperties": {
+                        "anyOf": [
+                            { "type": "string", "description": "the island's source path, relative to the project root" },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "src": { "type": "string", "description": "the island's source path, relative to the project root" },
+                                    "framework": { "type": "string", "description": "explicit framework (react | vue | svelte | solid); wins over the file extension and the first-line pragma" }
+                                },
+                                "required": ["src"]
+                            }
+                        ]
+                    },
+                    "description": "§10.3 islands registry: component name → source file (V2-F01: string, or { src, framework? } for a mixed-framework island). The CLI emits a synthetic __boot__ client entry that registers each island with its own framework's adapter; `<Island chunk=\"X\">` on a page resolves to X in this map."
                 }
             }
         })
