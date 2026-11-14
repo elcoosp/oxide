@@ -112,6 +112,14 @@ name = "replay_runner"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F14: criterion bench for the offline idempotency stage — the miss
+# (probe + handler + put), the hit (the replay the outbox's retry gets)
+# and the header-less pass-through.
+[[bench]]
+name = "idem"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 # V2-A02: exposes the criterion bench harness (bench-support feature). The
 # synthetic route fixtures for the `ctx_table` group live behind the same
