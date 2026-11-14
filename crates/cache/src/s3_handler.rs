@@ -201,7 +201,13 @@ impl CacheHandler for S3CacheHandler {
                 ),
             )
             .await;
-            let mut keys = self.read_tag_keys(tag).await.unwrap_or_default();
+            let mut keys = match self.read_tag_keys(tag).await {
+                Ok(k) => k,
+                Err(e) => {
+                    tracing::warn!(tag, error = %e, "CACHE-S3: the tag-key store read failed; treating as empty (self-heals on the next write)");
+                    Vec::new()
+                }
+            };
             if !keys.iter().any(|k| k == key) {
                 keys.push(key.to_string());
                 let json = serde_json::to_vec(&keys)
@@ -241,7 +247,13 @@ impl CacheHandler for S3CacheHandler {
     async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
         // B-11: union the tag set with the per-key markers so a lost RMW update
         // does not drop a key from invalidation.
-        let mut keys = self.read_tag_keys(tag).await.unwrap_or_default();
+        let mut keys = match self.read_tag_keys(tag).await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(tag, error = %e, "CACHE-S3: the tag-key store read failed; treating as empty (self-heals on the next write)");
+                Vec::new()
+            }
+        };
         let prefix = ObjPath::from(format!("{PREFIX_TAGMARK}{tag}"));
         let collected = tokio::time::timeout(L2_OP_TIMEOUT, async {
             use futures::StreamExt as _;
@@ -268,7 +280,13 @@ impl CacheHandler for S3CacheHandler {
     }
 
     async fn invalidate_tag(&self, tag: &str, _soft: bool) -> Result<usize> {
-        let keys = self.tag_keys(tag).await.unwrap_or_default();
+        let keys = match self.tag_keys(tag).await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(tag, error = %e, "CACHE-S3: the tag-key store read failed; treating as empty (the invalidation misses keys this round, the store self-heals on the next write)");
+                Vec::new()
+            }
+        };
         if keys.is_empty() {
             return Ok(0);
         }
