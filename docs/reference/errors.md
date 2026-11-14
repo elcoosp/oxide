@@ -54,6 +54,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `BLD-RESOLVE` | entry module `{}` for route `{route}` not found | — |
 | `BLD-ROLLDOWN` | tokio runtime: {e} | — |
 | `BLD-SFC` | check the tooling-pool logs for the {ext} compile failure of {bare}; the build must not bundle raw framework SFC sources | — |
+| `BLD-SMAP` | plugin map refused: {e} | Fix the plugin's `map` field to serialize a valid V3 sourcemap (version 3, base64-VLQ `mappings`), or omit the field — the build continues with the code and no map |
 | `BLD-TAILWIND` | the @oxide-fw/tailwind plugin pass failed | Check the @oxide-fw/tailwind plugin config and the CSS entry |
 | `BND-SVG` | `{path_for_errors}`: no <svg> element found | — |
 | `CAC-BUILDID` | dist missing: {} | — |
