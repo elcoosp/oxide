@@ -43,7 +43,7 @@ pub type Result<T> = std::result::Result<T, OxideError>;
 pub const MAGIC: [u8; 4] = *b"ODF1";
 
 /// A resolved ODF value. Mirrors the spec §9.5 supported types.
-/// Promises are represented at a higher layer as [Value::Deferred].
+/// Promises are represented at a higher layer as [`Value::Deferred`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Null,
@@ -115,8 +115,9 @@ impl Value {
     /// Lossy conversion to JSON (Date→ISO-ish epoch, BigInt→string, Ref→error at encode time instead).
     pub fn to_json(&self) -> Json {
         match self {
-            Value::Null => Json::Null,
-            Value::Undefined => Json::Null,
+            // serde_json has no undefined, and a raw Ref has no payload
+            // here: all three fold to null (refs resolve before this runs).
+            Value::Null | Value::Undefined | Value::Ref(_) => Json::Null,
             Value::Bool(b) => Json::Bool(*b),
             Value::Number(n) => {
                 // JSON has no int/float distinction, but serde_json does; keep
@@ -126,16 +127,26 @@ impl Value {
                 // the exactly-representable integer range (or non-finite)
                 // falls back to the f64 form, NaN/±Inf become `null` (lossy).
                 if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9.007_199_254_740_992e15 {
-                    Json::Number(Number::from(*n as i64))
+                    // Integral and in-range by the guard (|n| ≤ 2^53): serde_json
+                    // keeps integers distinct from floats, so `1.0` must
+                    // round-trip as `1`. std has no fallible f64→i64 conversion,
+                    // and f64 Display prints exact integer digits in that range,
+                    // so the parse is total there; anything else keeps the float
+                    // form rather than lying about the value.
+                    match n.to_string().parse::<i64>() {
+                        Ok(i) => Json::Number(Number::from(i)),
+                        Err(_) => Number::from_f64(*n).map_or(Json::Null, Json::Number),
+                    }
                 } else {
-                    Number::from_f64(*n).map(Json::Number).unwrap_or(Json::Null)
+                    Number::from_f64(*n).map_or(Json::Null, Json::Number)
                 }
             }
-            Value::BigInt(s) => Json::String(s.clone()),
-            Value::String(s) => Json::String(s.clone()),
             Value::Date(ms) => Json::Number(Number::from(*ms)),
-            Value::Url(s) | Value::RegExp(s, _) => Json::String(s.clone()),
-            Value::Array(a) => Json::Array(a.iter().map(|v| v.to_json()).collect()),
+            // String-keyed on the JSON side: BigInt rides its decimal string.
+            Value::BigInt(s) | Value::String(s) | Value::Url(s) | Value::RegExp(s, _) => {
+                Json::String(s.clone())
+            }
+            Value::Array(a) | Value::Set(a) => Json::Array(a.iter().map(Value::to_json).collect()),
             Value::Object(o) => {
                 let mut m = JsonMap::new();
                 for (k, v) in o {
@@ -154,10 +165,9 @@ impl Value {
                 }
                 Json::Object(m)
             }
-            Value::Set(items) => Json::Array(items.iter().map(|v| v.to_json()).collect()),
             Value::TypedArray(_, data) => Json::Array(
                 data.iter()
-                    .map(|b| Json::Number(Number::from(*b as u64)))
+                    .map(|b| Json::Number(Number::from(u64::from(*b))))
                     .collect(),
             ),
             Value::Error { name, message, .. } => {
@@ -166,7 +176,6 @@ impl Value {
                 m.insert("message".into(), Json::String(message.clone()));
                 Json::Object(m)
             }
-            Value::Ref(_) => Json::Null,
             Value::Deferred { id } => {
                 let mut m = JsonMap::new();
                 m.insert("__deferred".into(), Json::Number(Number::from(*id)));
@@ -179,11 +188,21 @@ impl Value {
 /// Encode a value to ODF bytes. Shared/cyclic references are detected automatically
 /// (repeated object/array identity becomes a `Ref`). `Value::Ref` values constructed
 /// by hand with invalid indices fail with `ODF-REF`.
+///
+/// # Errors
+///
+/// `ODF-DEPTH` past [`MAX_DEPTH`], `ODF-REF` on an invalid shared table or
+/// cycle marker, `ODF-SIZE` past [`MAX_BYTES`], `ODF-KEY` on a reserved
+/// object key, `ODF-TAG` on an invalid `BigInt` or typed-array payload.
 pub fn encode(value: &Value) -> Result<Vec<u8>> {
     encode::encode_with_preamble(value, &[])
 }
 
 /// Encode into a pooled `Bytes` buffer (cache feeds on bytes directly, §9.5).
+///
+/// # Errors
+///
+/// The [`encode`] refusals, unchanged.
 pub fn encode_to_bytes(value: &Value) -> Result<Bytes> {
     Ok(Bytes::from(encode(value)?))
 }
@@ -192,8 +211,13 @@ pub fn encode_to_bytes(value: &Value) -> Result<Bytes> {
 /// size limits and bounded reference tables; no prototype-polluting keys survive.
 ///
 /// `Value::Ref(i)` markers are returned intact; resolve them with
-/// [resolve_refs] (plain payloads) or [resolve_refs_with] +
-/// [decode_with_shared] (payloads carrying a shared preamble).
+/// [`resolve_refs`] (plain payloads) or [`resolve_refs_with`] +
+/// [`decode_with_shared`] (payloads carrying a shared preamble).
+///
+/// # Errors
+///
+/// The §17.1 hardening refusals: `ODF-SIZE`, `ODF-MAGIC`, `ODF-DEPTH`,
+/// `ODF-REF`, `ODF-TAG`, `ODF-KEY`, `ODF-TRUNC`.
 pub fn decode(bytes: &[u8]) -> Result<Value> {
     Ok(decode::decode_with_shared(bytes)?.0)
 }
@@ -204,6 +228,11 @@ pub fn decode(bytes: &[u8]) -> Result<Value> {
 /// The table must be dense: indices `0..shared.len()`, no duplicates; each entry
 /// becomes slot `i`, and `Value::Ref(i)` markers inside `value` point at it.
 /// Refs are also detected automatically against the shared entries.
+///
+/// # Errors
+///
+/// The [`encode`] refusals, plus `ODF-REF` for a shared table that is
+/// sparse, duplicated or past [`MAX_REFS`].
 pub fn encode_with_shared(value: &Value, shared: &[(u32, Value)]) -> Result<Vec<u8>> {
     encode::encode_with_preamble(value, shared)
 }
@@ -222,7 +251,8 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 /// Build a two-node cyclic structure for tests and golden fixtures:
 /// `a = { name: "a", peer: b }`, `b = { name: "b", back: Ref(0) }` where
 /// slot 0 is `a` itself. Encoding writes the back-edge as `Ref(0)`;
-/// [resolve_refs] keeps the back-edge marker so the cycle stays visible.
+/// [`resolve_refs`] keeps the back-edge marker so the cycle stays visible.
+#[must_use]
 pub fn cyclic_fixture() -> Value {
     let mut b = BTreeMap::new();
     b.insert("name".to_string(), Value::String("b".to_string()));
