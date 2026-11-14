@@ -38,6 +38,20 @@ pub mod islands;
 pub mod lexer;
 pub mod migrate;
 pub mod native;
+// §V2-C03/C04/C05: the native framework compilers, each behind its
+// feature flag (see `native/mod.rs` for the registry push list).
+#[cfg(feature = "native-vue")]
+pub mod vue {
+    pub use crate::native::vue::*;
+}
+#[cfg(feature = "native-svelte")]
+pub mod svelte {
+    pub use crate::native::svelte::*;
+}
+#[cfg(feature = "native-react-compiler")]
+pub mod react_compiler {
+    pub use crate::native::react_compiler::*;
+}
 mod oxc_backend;
 pub mod precompile_engine;
 
