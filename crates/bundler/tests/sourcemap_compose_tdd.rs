@@ -88,7 +88,7 @@ fn chunk_opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOp
 #[test]
 fn compose_identity_map_composes_to_itself() {
     let prev = [tok(0, 0, 0, 0, 0), tok(1, 0, 0, 1, 0), tok(2, 0, 0, 2, 0)];
-    let next = prev.clone();
+    let next = prev;
     assert_eq!(compose(&prev, &next), prev);
 }
 
