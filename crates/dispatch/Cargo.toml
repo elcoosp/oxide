@@ -105,6 +105,14 @@ name = "replay"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F15: criterion bench for the replay-RUNNER seam — the one-definition
+# orchestration (store load → stale-build verdict → executor → diff) the
+# `oxide replay` command drives.
+[[bench]]
+name = "replay_runner"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 # V2-A02: exposes the criterion bench harness (bench-support feature). The
 # synthetic route fixtures for the `ctx_table` group live behind the same
