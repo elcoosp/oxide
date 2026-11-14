@@ -78,8 +78,11 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CFG-001` | unknown config key `framwork` | did you mean `framework`? |
 | `CFG-AVIF` | `images.avifSpeed` must be a whole number in 1..=10 (ravif's encoder speed) — got `{got}` | set `images.avifSpeed` to a whole number in 1..=10 (the default is 6) |
 | `CFG-BACKEND` | `framework.compilerBackend` must be one of `auto`, `native`, `node` — got `{got}` | set `framework.compilerBackend` to `auto` (the default), `native` or `node` |
+| `CFG-DEPLOY` | the `deploy` section carries a bad knob: {msg} | spell the section `deploy: { skewWindow: '15m', generations: 3 }` — the window grammar is `<n>s|m|h|d`, plain integers are seconds |
 | `CFG-EXTENDS` | extends chain too deep at `{spec}` (cycle?) | — |
 | `CFG-IO` | read {}: {e} | — |
+| `CFG-LLMS` | the `llms` section carries a bad knob: {msg} | fix the `llms` section — `enabled` is the unquoted boolean master switch and `include` an array of absolute site-path patterns like `/docs/**` |
+| `CFG-REC` | the `record` key is `false`, `'all'`, `'errors'` or `{ sample, onError }` | spell the key `record: false`, `record: 'all'`, `record: 'errors'` or `record: { sample: 0.001, onError: true }` |
 | `CFG-SCHEMA` | serialize defaults: {e} | — |
 | `CFG-SEC` | `security.{key}` must be one of {valid} — got `{got}` | Set `security.{key}` to one of the valid spellings |
 | `CFG-SIZE` | invalid size `{s}`: empty string | — |
@@ -195,10 +198,11 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `RND-PPR` | unterminated boundary tag | — |
 | `RND-SCRIPT` | <Script> requires either a `src` or inline `content` | — |
 | `RND-UTF8` | render stream was not UTF-8: {e} | — |
-| `RPL-001` | cannot write the record {}: {e} | check the project root's writability; a record id must be a single path-safe segment |
+| `RPL-001` | cannot write or load the record {}: {e} | check the project root's writability; a record id must be a single path-safe segment |
 | `RPL-002` | Replay saw an outbound call that is not in the record | Re-record, or the code path changed |
 | `RPL-003` | Record was made on an older build id | Replay continues; results may differ |
 | `RPL-004` | Replay exhausted the recorded non-deterministic sequence | Re-record; the replay observed more than the record captured |
+| `RPL-005` | cannot load the record: schema version {} is not one this build reads (version 1) | re-record the request with the current build; the record schema changed |
 | `RTR-001` | routes directory not found: {} | — |
 | `RTR-002` | invalid route directory `{name}`: {msg} | — |
 | `RTR-100` | failed to serialize route archive: {e} | — |
