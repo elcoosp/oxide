@@ -16,6 +16,11 @@ tracing = { workspace = true }
 oxide-fw-diagnostics = { workspace = true }
 oxide-fw-graph = { workspace = true }
 oxide-fw-compiler = { workspace = true }
+# V2-C06: the composed plugin maps ride `HookTransformOutput.map` as
+# oxc_sourcemap maps — the same crate and 9.0.0 pin the compiler's
+# `TransformOutput` already carries, so no second sourcemap implementation
+# enters the graph.
+oxc_sourcemap = "9.0.0"
 oxc_resolver = { workspace = true }
 rolldown = { workspace = true }
 rolldown_common = { workspace = true }
@@ -62,6 +67,14 @@ required-features = ["bench-util"]
 
 [[bench]]
 name = "integrity"
+harness = false
+required-features = ["bench-util"]
+
+# V2-C06: the composition rides every plugin transform on the build path —
+# the pure fold (`compose`) and the JS-plugin wire round trip
+# (`compose_v3_json`) must stay noise next to the bundling itself.
+[[bench]]
+name = "sourcemap_compose"
 harness = false
 required-features = ["bench-util"]
 
