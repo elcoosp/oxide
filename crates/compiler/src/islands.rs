@@ -22,6 +22,7 @@
 //!   contract keeps its sequencing).
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 /// One resolved island: the source path (relative to the project
@@ -128,10 +129,11 @@ impl IslandBootPlan {
         // The named `adapter` export stays the neutral-IR form for tests and the
         // §22 conformance suite, so its `hydrateIsland` continues to work against
         // the fake DOM.
-        out.push_str(&format!(
-            "import {{ clientAdapter }} from '@oxide-fw/{}';\n",
+        let _ = writeln!(
+            out,
+            "import {{ clientAdapter }} from '@oxide-fw/{}';",
             self.project_framework
-        ));
+        );
         out.push_str(
             "import { bootWithRouter, installBootRuntime } from '@oxide-fw/core/client/boot';\n",
         );
@@ -139,17 +141,18 @@ impl IslandBootPlan {
         if self.mixed {
             out.push_str("\nconst adapters = {\n");
             for (fw, specifier) in &self.adapters {
-                out.push_str(&format!("  {fw}: () => import('{specifier}'),\n"));
+                let _ = writeln!(out, "  {fw}: () => import('{specifier}'),");
             }
             out.push_str("};\n\n");
             out.push_str("const islands = {\n");
             for (name, island) in &self.islands {
                 let abs = root.join(&island.src);
-                out.push_str(&format!(
-                    "  {name:?}: {{ fw: '{}', load: () => import({:?}) }},\n",
+                let _ = writeln!(
+                    out,
+                    "  {name:?}: {{ fw: '{}', load: () => import({:?}) }},",
                     island.framework,
                     abs.to_string_lossy()
-                ));
+                );
             }
             out.push_str("};\n");
             out.push_str("installBootRuntime({ adapters, islands });\n");
@@ -167,15 +170,12 @@ impl IslandBootPlan {
                         })
                         .collect::<String>()
                 );
-                out.push_str(&format!(
-                    "import {ident} from {:?};\n",
-                    abs.to_string_lossy()
-                ));
+                let _ = writeln!(out, "import {ident} from {:?};", abs.to_string_lossy());
                 idents.push((name.clone(), ident));
             }
             out.push_str("\nconst modules = {\n");
             for (name, ident) in &idents {
-                out.push_str(&format!("  {name:?}: {ident},\n"));
+                let _ = writeln!(out, "  {name:?}: {ident},");
             }
             out.push_str("};\n\n");
             out.push_str("installBootRuntime();\n");
@@ -195,44 +195,12 @@ impl IslandBootPlan {
         // root key is `/`. No trailing slash on non-root keys — the matcher
         // compares segment-by-segment, so `/blog/[slug]` matches `/blog/x`
         // (the old literal-prefix key `/blog/[slug]/` matched nothing).
-        if !loading.is_empty() {
-            let mut loading_idents: Vec<(String, String)> = Vec::new();
-            for (route_id, src) in loading {
-                // `routes/blog/[slug]/loading` → `/blog/[slug]` (bracket tokens
-                // preserved verbatim). `routes/loading` → `/`.
-                let dir = route_id
-                    .strip_suffix("/loading")
-                    .unwrap_or(route_id)
-                    .strip_prefix("routes")
-                    .unwrap_or(route_id)
-                    .to_string();
-                let url_key = if dir.is_empty() { "/".to_string() } else { dir };
-                let abs = root.join(src);
-                let ident = format!(
-                    "__loading_{}",
-                    route_id
-                        .chars()
-                        .map(|c| if c.is_ascii_alphanumeric() || c == '_' {
-                            c
-                        } else {
-                            '_'
-                        })
-                        .collect::<String>()
-                );
-                out.push_str(&format!(
-                    "import {ident} from {:?};\n",
-                    abs.to_string_lossy()
-                ));
-                loading_idents.push((url_key, ident));
-            }
-            out.push_str("\nconst __loading_map = {\n");
-            for (url_prefix, ident) in &loading_idents {
-                out.push_str(&format!("  {url_prefix:?}: {ident},\n"));
-            }
-            out.push_str("};\n\n");
-        } else {
+        if loading.is_empty() {
             out.push_str("\nconst __loading_map = {};\n\n");
+        } else {
+            push_loading_map(&mut out, root, loading);
         }
+
         if !self.mixed {
             out.push_str(
                 "window.__oxideRegisterAdapter(clientAdapter, async (chunk) => {\n  \
@@ -290,4 +258,43 @@ impl IslandBootPlan {
         }
         out
     }
+}
+
+/// The §8.4 loading-map emission: a `route directory → loading
+/// component` map keyed by ABSOLUTE PATH whose segments may be `[name]`
+/// tokens (the matcher compares segment-by-segment; the longest key
+/// wins; the root key is `/`). Each loading module rides a static
+/// import and a `__loading_<ident>` binding.
+fn push_loading_map(out: &mut String, root: &Path, loading: &BTreeMap<String, std::path::PathBuf>) {
+    let mut loading_idents: Vec<(String, String)> = Vec::new();
+    for (route_id, src) in loading {
+        // `routes/blog/[slug]/loading` → `/blog/[slug]` (bracket tokens
+        // preserved verbatim). `routes/loading` → `/`.
+        let dir = route_id
+            .strip_suffix("/loading")
+            .unwrap_or(route_id)
+            .strip_prefix("routes")
+            .unwrap_or(route_id)
+            .to_string();
+        let url_key = if dir.is_empty() { "/".to_string() } else { dir };
+        let abs = root.join(src);
+        let ident = format!(
+            "__loading_{}",
+            route_id
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                })
+                .collect::<String>()
+        );
+        let _ = writeln!(out, "import {ident} from {:?};", abs.to_string_lossy());
+        loading_idents.push((url_key, ident));
+    }
+    let _ = writeln!(out, "\nconst __loading_map = {{");
+    for (url_prefix, ident) in &loading_idents {
+        let _ = writeln!(out, "  {url_prefix:?}: {ident},");
+    }
+    out.push_str("};\n\n");
 }
