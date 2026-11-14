@@ -20,6 +20,7 @@
 
 pub mod head;
 mod minify;
+pub mod pwa;
 mod resolve;
 mod rolldown_backend;
 pub mod sourcemap_compose;
