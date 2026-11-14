@@ -67,6 +67,7 @@ oxide-fw-dispatch = { workspace = true }
 oxide-fw-graph = { workspace = true }
 oxide-fw-compiler = { workspace = true }
 oxide-fw-bundler = { workspace = true }
+oxide-rustfn = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }
 oxide-fw-jshost = { workspace = true }
