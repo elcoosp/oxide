@@ -39,11 +39,24 @@ const SKIP_DIRS: &[&str] = &[
 const SKIP_FILES: &[&str] = &[".oxide-tsconfig.json"];
 
 /// Fingerprint every tracked input for a build of `root` in `mode`.
-pub fn fingerprint(root: &Path, mode: &str, static_export: bool) -> String {
+///
+/// `backend_hint` folds the `framework.compilerBackend` selection in
+/// (§V2-C01 tail): the whole-build skip must invalidate when the backend
+/// flips, because a native compile emits different JS than the pool — an
+/// early cutoff that skipped the recompile would ship stale output. The
+/// config *file* is already an input (the walk hashes it), so the hint
+/// carries the `OXIDE_COMPILER_BACKEND` env override (and the default
+/// spelling when unset), which the walk cannot see. Both call sites
+/// compute the hint identically so the stored fingerprint matches the
+/// next build's computation.
+pub fn fingerprint(root: &Path, mode: &str, static_export: bool, backend_hint: &str) -> String {
     let mut h = blake3::Hasher::new();
     h.update(b"oxide-build-fingerprint-v1");
     h.update(mode.as_bytes());
     h.update(&[static_export as u8]);
+    // §V2-C01: the compiler-backend selection is a build input.
+    h.update(backend_hint.as_bytes());
+    h.update(&[0]);
 
     // A rebuilt CLI must invalidate the cache. Hashing the ~140 MB binary is
     // too expensive, so size + mtime of the running executable stands in.
@@ -120,6 +133,17 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(p);
         }
     }
+}
+
+/// The `framework.compilerBackend` fingerprint hint (§V2-C01 tail): the
+/// `OXIDE_COMPILER_BACKEND` env override when set, the default spelling
+/// otherwise. The config file's own value is an input through the file
+/// walk; the env override is the one layer the walk cannot see, so both
+/// [`fingerprint`] call sites fold this in — flipping the backend (file
+/// or env) invalidates the whole-build skip.
+#[must_use]
+pub fn compiler_backend_hint() -> String {
+    std::env::var("OXIDE_COMPILER_BACKEND").unwrap_or_else(|_| "auto".to_string())
 }
 
 fn fingerprint_path(root: &Path) -> PathBuf {
@@ -256,12 +280,12 @@ mod tests {
         write(dir.path(), "src/a.ts", "export const a = 1;\n");
         write(dir.path(), "oxide.config.ts", "export default {};\n");
 
-        let a = fingerprint(dir.path(), "production", false);
-        let b = fingerprint(dir.path(), "production", false);
+        let a = fingerprint(dir.path(), "production", false, "auto");
+        let b = fingerprint(dir.path(), "production", false, "auto");
         assert_eq!(a, b, "same inputs must fingerprint identically");
 
         write(dir.path(), "src/a.ts", "export const a = 2;\n");
-        let c = fingerprint(dir.path(), "production", false);
+        let c = fingerprint(dir.path(), "production", false, "auto");
         assert_ne!(a, c, "a changed source file must change the fingerprint");
     }
 
@@ -269,18 +293,18 @@ mod tests {
     fn fingerprint_ignores_output_and_vendor_dirs() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "src/a.ts", "export const a = 1;\n");
-        let base = fingerprint(dir.path(), "production", false);
+        let base = fingerprint(dir.path(), "production", false, "auto");
 
         // Writes under skipped dirs must NOT change the fingerprint.
         write(dir.path(), "dist/client/x.js", "junk");
         write(dir.path(), "node_modules/pkg/index.js", "junk");
         write(dir.path(), ".oxide/cache/blob", "junk");
-        let after = fingerprint(dir.path(), "production", false);
+        let after = fingerprint(dir.path(), "production", false, "auto");
         assert_eq!(base, after, "output/vendor writes must not invalidate");
 
         // A real source write DOES change it.
         write(dir.path(), "src/b.ts", "export const b = 1;\n");
-        let real = fingerprint(dir.path(), "production", false);
+        let real = fingerprint(dir.path(), "production", false, "auto");
         assert_ne!(base, real);
     }
 
@@ -288,9 +312,9 @@ mod tests {
     fn fingerprint_tracks_mode_and_static_flag() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "src/a.ts", "export const a = 1;\n");
-        let prod = fingerprint(dir.path(), "production", false);
-        let dev = fingerprint(dir.path(), "development", false);
-        let stat = fingerprint(dir.path(), "production", true);
+        let prod = fingerprint(dir.path(), "production", false, "auto");
+        let dev = fingerprint(dir.path(), "development", false, "auto");
+        let stat = fingerprint(dir.path(), "production", true, "auto");
         assert_ne!(prod, dev);
         assert_ne!(prod, stat);
     }
@@ -299,14 +323,14 @@ mod tests {
     fn store_and_is_up_to_date_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "src/a.ts", "export const a = 1;\n");
-        let fp = fingerprint(dir.path(), "production", false);
+        let fp = fingerprint(dir.path(), "production", false, "auto");
 
         assert!(!is_up_to_date(dir.path(), &fp), "nothing stored yet");
         store(dir.path(), &fp).unwrap();
         assert!(is_up_to_date(dir.path(), &fp), "stored fp matches");
 
         write(dir.path(), "src/a.ts", "export const a = 2;\n");
-        let fp2 = fingerprint(dir.path(), "production", false);
+        let fp2 = fingerprint(dir.path(), "production", false, "auto");
         assert!(!is_up_to_date(dir.path(), &fp2), "changed input mismatches");
     }
 
@@ -319,14 +343,14 @@ mod tests {
         // build.
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "src/page.server.ts", "export const load = 1;\n");
-        let before = fingerprint(dir.path(), "production", false);
+        let before = fingerprint(dir.path(), "production", false, "auto");
 
         write(
             dir.path(),
             "src/.page.server.ts.deadbeef.oxide.ts",
             "// compiled temp",
         );
-        let after = fingerprint(dir.path(), "production", false);
+        let after = fingerprint(dir.path(), "production", false, "auto");
         assert_eq!(
             before, after,
             "a *.oxide.ts temp must not change the fingerprint"
@@ -334,7 +358,35 @@ mod tests {
 
         // A real source edit still does.
         write(dir.path(), "src/page.server.ts", "export const load = 2;\n");
-        let edited = fingerprint(dir.path(), "production", false);
+        let edited = fingerprint(dir.path(), "production", false, "auto");
         assert_ne!(before, edited);
+    }
+
+    #[test]
+    fn fingerprint_folds_the_compiler_backend_hint() {
+        // §V2-C01 tail: a `framework.compilerBackend` flip must invalidate
+        // the whole-build skip — a native compile emits different JS than
+        // the pool, so an early cutoff that skipped the recompile would
+        // ship the stale backend's output. The env override is the layer
+        // the file walk cannot see, so it rides the hint argument both
+        // call sites compute identically.
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "src/a.ts", "export const a = 1;\n");
+        let auto = fingerprint(dir.path(), "production", false, "auto");
+        let native = fingerprint(dir.path(), "production", false, "native");
+        let node = fingerprint(dir.path(), "production", false, "node");
+        assert_ne!(auto, native, "auto → native invalidates");
+        assert_ne!(native, node, "native → node invalidates");
+        assert_eq!(
+            auto,
+            fingerprint(dir.path(), "production", false, "auto"),
+            "same hint fingerprints identically"
+        );
+        // The `OXIDE_COMPILER_BACKEND` arm of `compiler_backend_hint` is
+        // deliberately not exercised here: `set_var` is unsafe under this
+        // edition and mutating process env in parallel tests races every
+        // other reader. The override path is one `unwrap_or_else`, and the
+        // end-to-end override behavior is pinned by the config suite
+        // (`tests/compiler_backend_config.rs`).
     }
 }
