@@ -48,6 +48,11 @@ use sha2::{Digest, Sha256};
 /// store directory could not be created.
 pub const RPL_RECORD_IO: &str = "RPL-001";
 
+/// The diagnostic code for a record whose schema version this build does
+/// not read (the version gate at the load door — the replay side "refuses
+/// a record whose version it does not know").
+pub const RPL_RECORD_VERSION: &str = "RPL-005";
+
 /// The records directory under the project root (§V2-F15).
 pub const RECORDS_DIR: &str = ".oxide/records";
 
@@ -69,6 +74,14 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 fn rpl_io(msg: impl Into<String>) -> OxideError {
     OxideError(Box::new(Diagnostic::error(RPL_RECORD_IO, msg).with_fix(
         "check the project root's writability, or use a store key without path separators",
+    )))
+}
+
+/// The load-side `RPL-001` (the read half of the same store failure): the
+/// fix is the record's remedy, not the store directory's.
+fn rpl_load(msg: impl Into<String>) -> OxideError {
+    OxideError(Box::new(Diagnostic::error(RPL_RECORD_IO, msg).with_fix(
+        "re-record the request, or check the records directory's readability",
     )))
 }
 
@@ -319,6 +332,22 @@ pub trait RecordSink: Send + Sync {
     fn write(&self, record: &RequestRecord) -> Result<(), OxideError>;
 }
 
+/// The read seam (§V2-F15): where records come back from — the first step
+/// the `oxide replay <id>` command and the MCP `replay.run` tool take.
+/// [`DirRecordStore`] implements both sides; an in-memory store (tests,
+/// the MCP surface) drops in behind the same trait pair.
+pub trait RecordSource: Send + Sync {
+    /// Load one finished record by its request id.
+    ///
+    /// # Errors
+    ///
+    /// [`OxideError`] with `RPL-001` when the id is not a store key, the
+    /// record is missing or not parseable, and `RPL-005` when the
+    /// record's schema version is one this build does not read (the
+    /// version gate — a foreign record never reaches the replay).
+    fn load(&self, request_id: &str) -> Result<RequestRecord, OxideError>;
+}
+
 /// A store key: the request id, taken byte-exact — it must be a single
 /// path-safe segment (no separators, no `..`, non-empty).
 fn store_key(request_id: &str) -> Result<String, OxideError> {
@@ -377,6 +406,40 @@ impl RecordSink for DirRecordStore {
             rpl_io(format!("cannot finalize {}: {e}", target.display()))
         })?;
         Ok(())
+    }
+}
+
+impl RecordSource for DirRecordStore {
+    fn load(&self, request_id: &str) -> Result<RequestRecord, OxideError> {
+        let key = store_key(request_id)?;
+        let path = self.dir.join(format!("{key}.json"));
+        let bytes = std::fs::read(&path).map_err(|e| {
+            rpl_load(format!(
+                "cannot load the record {request_id}: {}: {e}",
+                path.display()
+            ))
+        })?;
+        let record: RequestRecord = serde_json::from_slice(&bytes).map_err(|e| {
+            rpl_load(format!(
+                "cannot load the record {request_id}: {} is not a record this build parses: {e}",
+                path.display()
+            ))
+        })?;
+        if record.version != RECORD_VERSION {
+            return Err(OxideError(Box::new(
+                Diagnostic::error(
+                    RPL_RECORD_VERSION,
+                    format!(
+                        "cannot load the record {request_id}: schema version {} is not one this build reads (version {RECORD_VERSION})",
+                        record.version
+                    ),
+                )
+                .with_fix(
+                    "re-record the request with the current build; the record schema changed",
+                ),
+            )));
+        }
+        Ok(record)
     }
 }
 
@@ -440,9 +503,36 @@ impl Recording {
     }
 
     /// Capture one loader call (input + output serialized verbatim).
+    ///
+    /// A shape that will not serialize still lands in the record as the
+    /// JSON `Null` — the op is never silently dropped (a dropped loader
+    /// call would break the ordered replay) — but the fallback is LOUD
+    /// (the house convention: silent fallbacks warn), so a non-serializable
+    /// loader shape is visible in the logs instead of a mystery `Null` in
+    /// the record.
     pub fn record_loader(&mut self, input: &LoaderRunInput, output: &LoaderOutput) {
-        let input = serde_json::to_value(input).unwrap_or(serde_json::Value::Null);
-        let output = serde_json::to_value(output).unwrap_or(serde_json::Value::Null);
+        let input = match serde_json::to_value(input) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    code = RPL_RECORD_IO,
+                    error = %e,
+                    "the loader input failed to serialize; the record captures Null for it"
+                );
+                serde_json::Value::Null
+            }
+        };
+        let output = match serde_json::to_value(output) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    code = RPL_RECORD_IO,
+                    error = %e,
+                    "the loader output failed to serialize; the record captures Null for it"
+                );
+                serde_json::Value::Null
+            }
+        };
         self.loaders.push(LoaderCall {
             module_path: input
                 .get("module_path")
