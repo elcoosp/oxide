@@ -109,6 +109,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DEV-NOTIFY` | create watcher: {e} | — |
 | `DEV-QR` | QR generation failed: {e} | — |
 | `DEV-TLS` | certificate params failed: {e} | — |
+| `DEV-WS-001` | workspace discovery failed for {path}: {err_msg} | Check the manifest's shape — pnpm-workspace.yaml `packages:` is a list of glob entries (block or flow), package.json `workspaces` is a list of globs — and run the package manager's install so linked packages resolve under node_modules |
 | `DOC-001` | config keys carry no schema description; the page refuses to render (E11 acceptance) | add a `description` in `crates/config/src/schema.rs`, then regenerate the pages |
 | `DOC-002` | docs/errors.toml carries an entry the strict registry format rejects (the diagnostic names the line) | fix the entry the diagnostic names (the format is `[CODE]` + `message`/`fix`/`spec_only`) |
 | `DOC-003` | a docs/reference page is missing or stale against the running binary | regenerate with `cargo run -p oxide-fw-cli -- docs generate` |
