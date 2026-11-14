@@ -299,8 +299,6 @@ pub struct LlmsConfig {
     pub include: Vec<String>,
 }
 
-
-
 /// S-09: opt-in toggle for the OG rasterization endpoint.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
