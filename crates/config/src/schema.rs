@@ -69,6 +69,7 @@ pub fn config_schema() -> Value {
             "brownout": brownout_schema(),
             "search": search_schema(),
             "prefetch": prefetch_schema(),
+            "llms": llms_schema(),
             "interactionReplay": {
                 "type": "boolean",
                 "default": true,
@@ -417,6 +418,36 @@ fn prefetch_schema() -> Value {
                 "maximum": 1.0,
                 "default": 0.35,
                 "description": "V2-F13: the client prefetcher's threshold — an edge whose /_oxide/nav probability is at or above this value gets its chunks (and, for param-free route ids, its data) prefetched after idle. Out-of-range values fail the load (DSP-115)."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `llms` section (V2-E07 — the llms.txt emission
+/// knobs; extracted so [`config_schema`] stays legible).
+#[must_use]
+fn llms_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "V2-E07: emit dist/llms.txt (title, summary, the included routes with their meta descriptions) and dist/llms-full.txt (the routes' text from the content collections, Markdown) at build. Default false: neither file is written. A bad include pattern fails the load (CFG-LLMS)."
+            },
+            "title": {
+                "type": "string",
+                "description": "The llms.txt H1 title. Defaults to the site name (the siteUrl host or the project directory name) when omitted."
+            },
+            "summary": {
+                "type": "string",
+                "description": "The blockquote summary under the title."
+            },
+            "include": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Route patterns the files cover — glob-lite: ** matches any run of segments, * within one segment ('/docs/**' = every /docs page). Empty means every prerendered page."
             }
         }
     })
