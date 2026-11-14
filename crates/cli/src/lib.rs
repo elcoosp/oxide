@@ -2306,6 +2306,12 @@ async fn build_client_bundle(
         std::fs::create_dir_all(&boot_dir)?;
         let boot_path = boot_dir.join("island-boot.mjs");
         std::fs::write(&boot_path, boot_src)?;
+        // §V2-F01: the tooling payload rides the boot entry (the same
+        // resolution, so the overlay's facts match what the client hydrates).
+        std::fs::write(
+            boot_dir.join("islands.json"),
+            islands_json_source(rootp, &framework, &cfg.framework.islands),
+        )?;
         client_entries.insert("__boot__".to_string(), boot_path);
     }
 
@@ -4321,7 +4327,8 @@ async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyh
                                             String,
                                             String,
                                         > = std::collections::BTreeMap::new();
-                                        for (name, rel_path) in &cfg.framework.islands {
+                                        for (name, spec) in &cfg.framework.islands {
+                                            let rel_path = spec.src();
                                             let full_path = rootp.join(rel_path);
                                             if full_path.is_file() {
                                                 islands
@@ -12008,8 +12015,26 @@ impl oxide_fw_server::ServerFnDispatcher for ServerFnDispatcherImpl {
 
 /// Build the dispatcher when a pool and an SSR entry are both present.
 /// Otherwise `None`, and the pipeline answers every `/_oxide/fn/*` request
-/// with a clean `FN-NO-DISPATCHER` 404.
+/// with a clean `FN-NO-DISPATCHER` 404. The §V2-F08 consult rides on
+/// top: the native `*.server.rs` host (the libraries mounted under
+/// `.oxide/rust/`) answers its §9.4 ids before the JS pool is asked.
 fn build_server_fn_dispatcher(
+    rootp: &Path,
+    pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::ServerFnDispatcher>> {
+    let native = mount_native_fn_source(rootp);
+    let js = build_js_server_fn_dispatcher(rootp, pool);
+    if native.is_none() && js.is_none() {
+        return None;
+    }
+    Some(std::sync::Arc::new(
+        oxide_fw_server::RustFirstDispatcher::new(native, js),
+    ))
+}
+
+/// The pre-F08 dispatcher (the JS pool backed by the render isolate),
+/// unchanged in shape — the consult's fallback half.
+fn build_js_server_fn_dispatcher(
     rootp: &Path,
     pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
 ) -> Option<std::sync::Arc<dyn oxide_fw_server::ServerFnDispatcher>> {
@@ -12026,6 +12051,124 @@ fn build_server_fn_dispatcher(
         host: oxide_fw_jshost::ServerFnHost::new(std::sync::Arc::clone(pool)),
         entry_path,
     }))
+}
+
+/// §V2-F08: the native `*.server.rs` source behind the consult — the
+/// libraries the build loop loaded into `.oxide/rust/` (`lib-<n>`),
+/// mounted into the [`oxide_fw_rustfn::RustFnHost`] and keyed by the
+/// §9.4 ids the `.server.rs` stub generator used. The `#[server_fn]`
+/// macro recorded `file!()` per export in the library's types side
+/// export, so the id triple reconstructs without a Rust AST scan.
+/// `None` when nothing is mounted: the consult degrades to the pure
+/// JS pool. A broken library degrades loud-but-not-fatal (the `RFN-003`
+/// warn names it; the JS pool still answers).
+fn mount_native_fn_source(
+    rootp: &Path,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::NativeFnSource>> {
+    let rust_dir = rootp.join(".oxide/rust");
+    if !rust_dir.is_dir() {
+        return None;
+    }
+    let secret = match build_secret(rootp) {
+        Ok(secret) => secret,
+        Err(e) => {
+            tracing::warn!(
+                code = "RFN-LOAD",
+                error = %e,
+                "the build secret is unavailable; the native server functions stay unmounted"
+            );
+            return None;
+        }
+    };
+    let mut host = oxide_fw_rustfn::RustFnHost::new();
+    let mut registered = 0usize;
+    let entries = match std::fs::read_dir(&rust_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::warn!(
+                code = oxide_fw_rustfn::host::RFN_LOAD,
+                dir = %rust_dir.display(),
+                error = %e,
+                "the native function library directory is unreadable"
+            );
+            return None;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext, "so" | "dll" | "dylib") {
+            continue;
+        }
+        let lib = match oxide_fw_rustfn::RustFnLibrary::load(&path, &rust_dir) {
+            Ok(lib) => lib,
+            Err(e) => {
+                tracing::warn!(
+                    code = oxide_fw_rustfn::host::RFN_LOAD,
+                    path = %path.display(),
+                    error = %e.0.message,
+                    "native function library failed to mount"
+                );
+                continue;
+            }
+        };
+        let index = host.mount(lib);
+        let types = host.types_json();
+        if let Some(types) = types {
+            match serde_json::from_str::<oxide_fw_rustfn::types::TypesPayload>(&types) {
+                Ok(payload) => {
+                    for f in &payload.fns {
+                        let id = oxide_fw_compiler::server_fn_id(&f.file, &f.name, &secret);
+                        host.register(id, index, &f.name);
+                        registered += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        code = oxide_fw_rustfn::types::TYPES_JSON,
+                        path = %path.display(),
+                        error = %e,
+                        "the native function types payload did not parse; its exports stay unrouted"
+                    );
+                }
+            }
+        }
+    }
+    if registered == 0 {
+        return None;
+    }
+    Some(std::sync::Arc::new(NativeFnSourceImpl {
+        host: std::sync::Arc::new(host),
+    }))
+}
+
+/// The consult's native half: `oxide-rustfn`'s registry behind the
+/// server crate's `NativeFnSource` seam (the registry error kinds map
+/// onto the same envelope shapes the JS pool produces).
+struct NativeFnSourceImpl {
+    host: std::sync::Arc<oxide_fw_rustfn::RustFnHost>,
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_server::NativeFnSource for NativeFnSourceImpl {
+    fn has(&self, id: &str) -> bool {
+        self.host.has(id)
+    }
+    async fn call(
+        &self,
+        id: &str,
+        args_json: &[u8],
+    ) -> std::result::Result<Vec<u8>, oxide_fw_server::DispatchError> {
+        use oxide_fw_rustfn::RustFnRegistry as _;
+        self.host
+            .call(id, args_json)
+            .await
+            .map_err(|e| oxide_fw_server::DispatchError {
+                status: e.status(),
+                code: e.envelope_code().into(),
+                message: e.message,
+            })
+    }
 }
 
 /// §9.3: a `LoaderRunner`-shaped bridge to the worker's `action:run` op.
@@ -13121,7 +13264,8 @@ async fn start_server_inner_full(
         // doesn't produce a boot entry with a missing import.
         let mut islands: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
-        for (name, rel_path) in &cfg.framework.islands {
+        for (name, spec) in &cfg.framework.islands {
+            let rel_path = spec.src();
             let full_path = rootp.join(rel_path);
             if full_path.is_file() {
                 islands.insert(name.clone(), format!("/{rel_path}"));
