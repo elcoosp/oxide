@@ -156,6 +156,10 @@ fn framework_schema() -> Value {
                         ]
                     },
                     "description": "§10.3 islands registry: component name → source file (V2-F01: string, or { src, framework? } for a mixed-framework island). The CLI emits a synthetic __boot__ client entry that registers each island with its own framework's adapter; `<Island chunk=\"X\">` on a page resolves to X in this map."
+                },
+                "autoIslands": {
+                    "type": "boolean",
+                    "description": "V2-F02: the auto-islands gate. When true the build runs the compiler's interactivity scan over the client tree, writes .oxide/island-manifest.json and hydrates exactly the components the scanner found interactive; an explicit islands registration always wins and a pure classification is the only skip. Default false — the spec defers by default because a wrong inference silently breaks interactivity."
                 }
             }
         })
