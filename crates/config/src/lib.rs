@@ -255,6 +255,45 @@ pub struct OxideConfig {
     /// before the typed parse).
     #[serde(default)]
     pub offline: OfflineConfig,
+    /// V2-C11 (§V2-C11): the `check` section — the typecheck backend
+    /// `oxide check` runs. `off` skips the typecheck arm entirely (the
+    /// loud-SKIPPED convention still applies to the lint arm, which has
+    /// no backend switch). A bad spelling fails the load with
+    /// `CFG-CHECK` (the raw-`Value` validation pass runs before the
+    /// typed parse).
+    #[serde(default)]
+    pub check: CheckConfig,
+}
+
+/// V2-C11 (§V2-C11): the `check` knobs. Unknown keys are rejected
+/// (`deny_unknown_fields`, enforced by the `CFG-CHECK` pass) so a typo'd
+/// knob cannot silently change what `oxide check` runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct CheckConfig {
+    /// The typecheck backend: `tsgo` (the default), `oxlint`
+    /// (`oxlint --type-aware --type-check`, which orchestrates the
+    /// Go-based `tsgolint` — `oxide doctor` says so), `tsrs` (opt-in,
+    /// experimental), `tsc` or `off`.
+    pub typecheck: TypecheckBackend,
+}
+
+/// V2-C11 (§V2-C11): the `check.typecheck` backend switch. Serialized
+/// lowercase to match the config-file spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TypecheckBackend {
+    /// `tsgo --noEmit` (the P1-17 default).
+    #[default]
+    Tsgo,
+    /// `oxlint --type-aware --type-check` (orchestrates `tsgolint`).
+    Oxlint,
+    /// The `tsrs` checker — opt-in and labelled experimental.
+    Tsrs,
+    /// Plain `tsc --noEmit`.
+    Tsc,
+    /// Skip the typecheck arm entirely.
+    Off,
 }
 
 /// V2-F14 (Appendix V2.L): the `offline` knobs. Unknown keys are
@@ -687,6 +726,7 @@ impl Default for OxideConfig {
             record: RecordConfig::default(),
             deploy: DeployConfig::default(),
             offline: OfflineConfig::default(),
+            check: CheckConfig::default(),
         }
     }
 }
