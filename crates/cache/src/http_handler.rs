@@ -125,7 +125,21 @@ impl crate::CacheHandler for HttpCacheHandler {
     async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
         let url = format!("{}/tag/{tag}", self.base);
         match self.request("GET", &url, None).await {
-            Ok((200, body)) => Ok(serde_json::from_slice(&body).unwrap_or_default()),
+            Ok((200, body)) => match serde_json::from_slice(&body) {
+                // A corrupt tag-key list self-heals on the next write,
+                // but the invalidation gap must be VISIBLE (the house
+                // convention: loud, not silent).
+                Ok(keys) => Ok(keys),
+                Err(e) => {
+                    tracing::warn!(
+                        code = "CACHE-HTTP",
+                        tag = %tag,
+                        error = %e,
+                        "the tag-key response did not parse as a JSON list; treating as empty"
+                    );
+                    Ok(Vec::new())
+                }
+            },
             _ => Ok(Vec::new()),
         }
     }
@@ -134,10 +148,23 @@ impl crate::CacheHandler for HttpCacheHandler {
         let url = format!("{}/invalidate/{tag}", self.base);
         let body = serde_json::to_vec(&serde_json::json!({ "soft": soft })).unwrap_or_default();
         match self.request("POST", &url, Some(&body)).await {
-            Ok((200, b)) => Ok(serde_json::from_slice::<serde_json::Value>(&b)
-                .ok()
-                .and_then(|v| v.get("count").and_then(|c| c.as_u64()))
-                .unwrap_or(0) as usize),
+            Ok((200, b)) => {
+                // A malformed count reports 0 — behavior unchanged —
+                // but the malformed ANSWER is visible, not silent.
+                if let Some(count) = serde_json::from_slice::<serde_json::Value>(&b)
+                    .ok()
+                    .and_then(|v| v.get("count").and_then(serde_json::Value::as_u64))
+                {
+                    Ok(usize::try_from(count).unwrap_or(usize::MAX))
+                } else {
+                    tracing::warn!(
+                        code = "CACHE-HTTP",
+                        tag = %tag,
+                        "the invalidate response carried no `count`; reporting 0"
+                    );
+                    Ok(0)
+                }
+            }
             _ => Ok(0),
         }
     }
