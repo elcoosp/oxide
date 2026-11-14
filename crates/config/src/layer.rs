@@ -49,10 +49,12 @@ const KNOWN_KEYS: &[&str] = &[
     "live",
     "stream",
     "brownout",
+    "deploy",
     "search",
     "interactionReplay",
     "prefetch",
     "llms",
+    "record",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -444,6 +446,24 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     if let Some(v) = map.get("llms") {
         validate_llms(v)?;
     }
+    // V2-F15: the `record` key gets the same raw-`Value` treatment — the
+    // union shape `false | 'all' | 'errors' | { sample, onError }` with
+    // the sample a real fraction in 0.0..=1.0 and `onError` a real
+    // boolean; a bad spelling or shape gets the `CFG-REC` diagnostic
+    // naming the valid spellings instead of a bare serde type error at
+    // the typed boundary.
+    if let Some(v) = map.get("record") {
+        validate_record(v)?;
+    }
+    // V2-F10: the `deploy` section gets the same raw-`Value` treatment —
+    // the window a §14 duration literal that parses and is physically
+    // useful, the generation count a whole number ≥ 1, and the section's
+    // keys exactly `skewWindow` and `generations`; a bad spelling or
+    // shape gets the `CFG-DEPLOY` diagnostic naming the grammar instead
+    // of a bare serde type error at the typed boundary.
+    if let Some(v) = map.get("deploy") {
+        validate_deploy(v)?;
+    }
     // V2-C01: the compiler-backend switch (D26) gets the same raw-`Value`
     // treatment — a bad `compilerBackend` spelling names the three valid
     // modes (CFG-BACKEND) instead of a bare serde type error at the typed
@@ -819,7 +839,11 @@ fn validate_llms(value: &Value) -> Result<()> {
         )));
     }
     for key in ["title", "summary"] {
+        // `null` is the serialized default (`Option<String>` = None rides
+        // the wire as null) — absent, not wrong. Any other non-string is
+        // an authoring bug.
         if let Some(v) = map.get(key)
+            && !v.is_null()
             && !v.is_string()
         {
             return Err(cfg_llms(&format!(
@@ -862,6 +886,138 @@ fn cfg_llms(msg: &str) -> OxideError {
     d.fix = Some(
         "fix the `llms` section — `enabled` is the unquoted boolean master switch and \
          `include` an array of absolute site-path patterns like `/docs/**`"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-F15: the `record` key's raw-`Value` validation — the spec's union
+/// shape `false | 'errors' | 'all' | { sample, onError }`, with the
+/// sample a real fraction in 0.0..=1.0 and `onError` a real boolean. The
+/// raw pass runs before the typed parse, so `record: true`, a quoted
+/// `"0.5"`, an out-of-range roll or a typo'd knob gets the `CFG-REC`
+/// diagnostic (naming the valid spellings) instead of a bare serde type
+/// error at the typed boundary.
+fn validate_record(value: &Value) -> Result<()> {
+    match value {
+        Value::Bool(false) => Ok(()),
+        Value::Bool(true) => Err(cfg_rec(
+            "`record: true` is not a mode — the boolean spelling is `false` (recording off); \
+             use `all`, `errors` or `{ sample, onError }`",
+        )),
+        Value::String(s) if matches!(s.as_str(), "all" | "errors") => Ok(()),
+        Value::String(s) => Err(cfg_rec(&format!(
+            "`record` must be `all`, `errors`, `false` or `{{ sample, onError }}` — got `'{s}'`"
+        ))),
+        Value::Object(map) => {
+            for (key, knob) in map {
+                match (key.as_str(), knob) {
+                    ("sample", Value::Number(n)) => {
+                        let rate = n.as_f64().unwrap_or(f64::NAN);
+                        if !(0.0..=1.0).contains(&rate) {
+                            return Err(cfg_rec(&format!(
+                                "`record.sample` must be a fraction in 0.0..=1.0 — got `{n}`"
+                            )));
+                        }
+                    }
+                    ("sample", other) => {
+                        return Err(cfg_rec(&format!(
+                            "`record.sample` must be a real number (a fraction in 0.0..=1.0) — got `{other}`"
+                        )));
+                    }
+                    ("onError", Value::Bool(_)) => {}
+                    ("onError", other) => {
+                        return Err(cfg_rec(&format!(
+                            "`record.onError` must be a real boolean — got `{other}`"
+                        )));
+                    }
+                    (unknown, _) => {
+                        return Err(cfg_rec(&format!(
+                            "`record` carries the knob `{unknown}` — the section's keys are `sample` and `onError`"
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        }
+        other => Err(cfg_rec(&format!(
+            "`record` is `false`, `'all'`, `'errors'` or `{{ sample, onError }}` — got `{other}`"
+        ))),
+    }
+}
+
+/// The `CFG-REC` diagnostic for a bad `record` value (V2-F15).
+fn cfg_rec(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("CFG-REC", msg);
+    d.fix = Some(
+        "spell the key `record: false`, `record: 'all'`, `record: 'errors'` or \
+         `record: { sample: 0.001, onError: true }`"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-F10: the `deploy` section's raw-`Value` validation — the window a
+/// §14 duration literal that parses ([`crate::parse_duration_secs`]) and
+/// is physically useful (a zero window expires the previous generation
+/// before a single request crosses the deploy), the generation count a
+/// whole number ≥ 1, and the section's keys exactly `skewWindow` and
+/// `generations`. The raw pass runs before the typed parse, so a bad
+/// literal or shape gets the `CFG-DEPLOY` diagnostic (naming the
+/// grammar) instead of a bare serde type error at the typed boundary.
+fn validate_deploy(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Err(cfg_deploy(&format!(
+            "`deploy` is an object with the knobs `skewWindow` and `generations` — got `{value}`"
+        )));
+    };
+    for (key, _) in map {
+        if key != "skewWindow" && key != "generations" {
+            return Err(cfg_deploy(&format!(
+                "`deploy` carries the knob `{key}` — the section's keys are `skewWindow` and `generations`"
+            )));
+        }
+    }
+    if let Some(v) = map.get("skewWindow") {
+        let Some(window) = v.as_str() else {
+            return Err(cfg_deploy(&format!(
+                "`deploy.skewWindow` must be a duration string (the grammar `<n>s|m|h|d`, e.g. `15m`) — got `{v}`"
+            )));
+        };
+        let secs = crate::parse_duration_secs(window).map_err(|_| {
+            cfg_deploy(&format!(
+                "`deploy.skewWindow` `{window}` is not a duration literal — the grammar is `<n>s|m|h|d`, plain integers are seconds"
+            ))
+        })?;
+        if secs == 0 {
+            return Err(cfg_deploy(
+                "`deploy.skewWindow` of zero expires the previous generation before a single \
+                 request crosses the deploy — use `1s` or more",
+            ));
+        }
+    }
+    if let Some(v) = map.get("generations") {
+        let Some(count) = v.as_u64() else {
+            return Err(cfg_deploy(&format!(
+                "`deploy.generations` must be a whole number ≥ 1 — got `{v}`"
+            )));
+        };
+        if count == 0 {
+            return Err(cfg_deploy(
+                "`deploy.generations` must be ≥ 1 — zero keeps no past generation and every \
+                 old tab 409s immediately",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The `CFG-DEPLOY` diagnostic for a bad `deploy` value (V2-F10).
+fn cfg_deploy(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("CFG-DEPLOY", msg);
+    d.fix = Some(
+        "spell the section `deploy: { skewWindow: '15m', generations: 3 }` — the window \
+         grammar is `<n>s|m|h|d`, plain integers are seconds"
             .into(),
     );
     OxideError(Box::new(d))
