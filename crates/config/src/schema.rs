@@ -70,6 +70,8 @@ pub fn config_schema() -> Value {
             "search": search_schema(),
             "prefetch": prefetch_schema(),
             "llms": llms_schema(),
+            "record": record_schema(),
+            "deploy": deploy_schema(),
             "interactionReplay": {
                 "type": "boolean",
                 "default": true,
@@ -448,6 +450,70 @@ fn llms_schema() -> Value {
                 "type": "array",
                 "items": { "type": "string" },
                 "description": "Route patterns the files cover — glob-lite: ** matches any run of segments, * within one segment ('/docs/**' = every /docs page). Empty means every prerendered page."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `record` section (V2-F15) — the spec's union
+/// shape, so editor tooling completes the word modes and the sampled
+/// object alike.
+#[must_use]
+fn record_schema() -> Value {
+    json!({
+        "description": "V2-F15: the request recorder (the record-and-replay substrate). false (the default) records nothing; 'all' captures every request, 'errors' captures failed (5xx) requests, and { sample, onError } is the prod sampling shape. The key is inert at the wiring until the CLI's record/replay adoption lands. A bad spelling, an out-of-range sample or a wrong-typed knob fails the load (CFG-REC).",
+        "anyOf": [
+            {
+                "type": "boolean",
+                "enum": [false],
+                "description": "`record: false` records nothing — the default (recording is opt-in)."
+            },
+            {
+                "type": "string",
+                "enum": ["all", "errors"],
+                "description": "'all' captures every request; 'errors' captures failed (5xx) requests."
+            },
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "sample": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "default": 0.001,
+                        "description": "The fraction of healthy traffic captured (the caller rolls one uniform sample per request; the decision stays pure)."
+                    },
+                    "onError": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Capture 5xx responses regardless of the sample roll."
+                    }
+                }
+            }
+        ]
+    })
+}
+
+/// Schema fragment for the `deploy` section (V2-F10) — the skew-window
+/// and generation-count knobs the deploy/serving machinery reads.
+#[must_use]
+fn deploy_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "V2-F10/F11: the deploy machinery's knobs. Inert at the wiring until the F10 CLI adoption lands (booting the serving pools from dist/ + the F11 releases/ layout, the promote-on-reload, the 30 s expiry task, the F12 brownout trigger); the engine-side default stays the plumbing default and this section is its config face. A window literal that does not parse, a zero window or a zero generation count fails the load (CFG-DEPLOY).",
+        "properties": {
+            "skewWindow": {
+                "type": "string",
+                "default": "15m",
+                "description": "How long a demoted generation keeps serving after the promote — the duration grammar <n>s|m|h|d, plain integers are seconds ('15m' is the spec default). Parsed by parse_duration_secs and validated at load (CFG-DEPLOY); a zero window is refused."
+            },
+            "generations": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 3,
+                "description": "How many past generations stay roll-back-able (the F11 releases/ retention; the spec's N=3 default). CFG-DEPLOY refuses zero."
             }
         }
     })
