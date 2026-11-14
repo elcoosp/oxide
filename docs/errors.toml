@@ -414,6 +414,10 @@ fix = "Inspect the server logs; the dispatch failed inside the host"
 message = "no server function with that id is registered in this build"
 fix = "Rebuild, or check the id the client posts to `/_oxide/fn/<id>`"
 
+[FN-TIMEOUT]
+message = "the native function `{name}` exceeded its {secs}s budget"
+fix = "Raise the call budget or make the function faster; long work belongs in a background job"
+
 [FN-THREW]
 message = "the server function threw; the envelope carries the function's own error message"
 
@@ -652,9 +656,24 @@ fix = "Add it to `config.permissions` or remove the call"
 spec_only = true
 
 [RFN-001]
-message = "Rust function library ABI version mismatch"
+message = "native function library speaks ABI {saw}, the host speaks ABI {want}; rebuild the user crate with the matching oxide-rustfn version"
 fix = "Rebuild the user crate with the matching `oxide-rustfn` version"
-spec_only = true
+
+[RFN-003]
+message = "native function library failed to load: {e}"
+fix = "Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type = [\"cdylib\"]` shape)"
+
+[RFN-004]
+message = "native function payload did not convert: {e}"
+fix = "The client stub sends JSON args; the host converts to ODF at the boundary — check the args shape against the generated types"
+
+[RFN-PANIC]
+message = "a native function panicked; the host answers 500 and the library never unwinds across the boundary"
+fix = "Inspect the server log for the panic backtrace; panics are a bug in the function body"
+
+[RFN-TYPES]
+message = "the native function types payload did not parse: {e}"
+fix = "Rebuild the user crate with the matching `oxide-rustfn` version"
 
 [RFN-002]
 message = "`*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08)"
