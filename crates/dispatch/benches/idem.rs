@@ -72,7 +72,7 @@ fn bench_stage(c: &mut Criterion) {
             n += 1;
             let key = format!("submit-{n}");
             runtime.block_on(async {
-                let verdict = stage_idempotency(black_box(&store), Some(&key), || handler())
+                let verdict = stage_idempotency(black_box(&store), Some(&key), handler)
                     .await
                     .expect("the bench stage runs");
                 assert!(
@@ -104,7 +104,7 @@ fn bench_stage(c: &mut Criterion) {
             .expect("the bench runtime");
         b.iter(|| {
             runtime.block_on(async {
-                let verdict = stage_idempotency(black_box(&warm), Some("submit"), || handler())
+                let verdict = stage_idempotency(black_box(&warm), Some("submit"), handler)
                     .await
                     .expect("the bench stage runs");
                 assert!(matches!(verdict, IdempotencyVerdict::Replayed(_)));
@@ -120,7 +120,7 @@ fn bench_stage(c: &mut Criterion) {
             .expect("the bench runtime");
         b.iter(|| {
             runtime.block_on(async {
-                let verdict = stage_idempotency(black_box(&store), None, || handler())
+                let verdict = stage_idempotency(black_box(&store), None, handler)
                     .await
                     .expect("the bench stage runs");
                 assert!(matches!(verdict, IdempotencyVerdict::Executed(_)));
