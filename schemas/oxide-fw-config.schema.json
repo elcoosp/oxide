@@ -458,6 +458,10 @@
           ],
           "type": "string"
         },
+        "autoIslands": {
+          "description": "V2-F02: the auto-islands gate. When true the build runs the compiler's interactivity scan over the client tree, writes .oxide/island-manifest.json and hydrates exactly the components the scanner found interactive; an explicit islands registration always wins and a pure classification is the only skip. Default false — the spec defers by default because a wrong inference silently breaks interactivity.",
+          "type": "boolean"
+        },
         "compiler": {
           "description": "C01: the native compiler pass for the adapter. true prefers the native backend when its toolchain is healthy; the node backend is the fallback (C01 / `compilerBackend`).",
           "type": "boolean"
