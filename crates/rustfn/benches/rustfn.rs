@@ -6,7 +6,7 @@
 //! - `shim_call`: the in-process shim round trip (decode → call →
 //!   encode over the C ABI) — the floor the cdylib path inherits.
 //! - `host_registry_hit`: the full registry call (id lookup, the
-//!   semaphore permit, the spawn_blocking hop, the timeout arm) — the
+//!   semaphore permit, the `spawn_blocking` hop, the timeout arm) — the
 //!   per-call overhead the dispatcher consult adds.
 
 use std::hint::black_box;
@@ -89,7 +89,7 @@ fn bench_bridge(c: &mut Criterion) {
                 serde_json::from_slice(black_box(&args)).expect("bench args parse");
             let value = oxide_fw_odf::Value::from_json(&raw);
             black_box(oxide_fw_odf::encode(&value).expect("bench value encodes"))
-        })
+        });
     });
 }
 
@@ -102,16 +102,16 @@ fn bench_shim(c: &mut Criterion) {
     c.bench_function("shim_call", |b| {
         b.iter(|| {
             let mut out = RawBuf::empty();
-            let status = thumbnail_shim(args.as_ptr(), args.len(), &mut out);
+            let status = thumbnail_shim(args.as_ptr(), args.len(), &raw mut out);
             debug_assert_eq!(status, 0);
             // SAFETY: the shim allocated exactly this buffer.
             black_box(unsafe { out.as_slice() }.len())
-        })
+        });
     });
 }
 
 fn bench_host_registry(c: &mut Criterion) {
-    let mut rt = tokio::runtime::Builder::new_current_thread()
+    let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("the bench runtime");
@@ -126,7 +126,7 @@ fn bench_host_registry(c: &mut Criterion) {
             let args = args.clone();
             rt.block_on(host.call("bench-id", black_box(&args)))
                 .expect("the bench call succeeds")
-        })
+        });
     });
 }
 
