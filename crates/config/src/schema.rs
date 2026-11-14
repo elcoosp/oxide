@@ -105,6 +105,17 @@ pub fn config_schema() -> Value {
                 "description": "§13.5: dev-server options (https, host, qr, open, proxy)."
             },
             "content": content_schema(),
+            "check": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "typecheck": {
+                        "type": "string",
+                        "enum": ["tsgo", "oxlint", "tsrs", "tsc", "off"],
+                        "description": "V2-C11: the typecheck backend `oxide check` runs. `tsgo` (the default) runs `tsgo --noEmit`; `oxlint` runs `oxlint --type-aware --type-check` (it orchestrates the Go-based tsgolint — `oxide doctor` says so); `tsrs` is opt-in and experimental; `tsc` runs plain `tsc --noEmit`; `off` skips the typecheck arm. A bad spelling fails the load with CFG-CHECK."
+                    }
+                }
+            },
             "static": {
                 "type": "object",
                 "additionalProperties": false,
