@@ -211,6 +211,59 @@ pub struct OxideConfig {
     /// before the typed parse).
     #[serde(default)]
     pub llms: LlmsConfig,
+    /// V2-F15 (Appendix V2.L): the `record` key — the request recorder's
+    /// face (`false | 'all' | 'errors' | { sample, onError }`). Off by
+    /// default: with the key absent nothing records — recording is
+    /// opt-in (the R05 posture: records are dev-only unless sampled with
+    /// redaction forced on). The key is inert at the wiring until the
+    /// CLI's record/replay adoption lands; the substrate's `RecordPolicy`
+    /// is the decision this key feeds. A bad spelling, an out-of-range
+    /// `sample` or a wrong-typed knob fails the load (`CFG-REC`; the
+    /// raw-`Value` validation pass runs before the typed parse).
+    #[serde(default)]
+    pub record: RecordConfig,
+    /// V2-F10 (Appendix V2.L): the `deploy` section — the skew-window
+    /// and generation-count knobs (`deploy.skewWindow`, the spec's
+    /// `'15m'` default; `deploy.generations`, the F11 `releases/`
+    /// retention count, default 3). Inert at the wiring until the F10
+    /// CLI adoption lands (booting the serving pools from `dist/` +
+    /// F11's `releases/` layout, the promote-on-reload, the 30 s expiry
+    /// task, the F12 brownout trigger) — the engine-side default
+    /// (`DEFAULT_SKEW_WINDOW`, `crates/adapters`) stays the plumbing
+    /// default and this typed key is its config face (the RFN-002
+    /// pattern). A window literal that does not parse, a zero window
+    /// (the previous generation would expire before a single request
+    /// crosses the deploy) or a zero generation count fails the load
+    /// (`CFG-DEPLOY`; the raw-`Value` validation pass runs before the
+    /// typed parse).
+    #[serde(default)]
+    pub deploy: DeployConfig,
+}
+
+/// V2-F10 (Appendix V2.L): the `deploy` knobs. Unknown keys are rejected
+/// (`deny_unknown_fields`, enforced by the `CFG-DEPLOY` pass) so a typo'd
+/// knob cannot silently disable skew protection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct DeployConfig {
+    /// How long a demoted generation keeps serving after the promote —
+    /// the §14 duration grammar (`'15m'`, `'1h'`, plain seconds),
+    /// parsed by [`parse_duration_secs`] and validated at load
+    /// (`CFG-DEPLOY`; a zero window is refused).
+    pub skew_window: String,
+    /// How many past generations stay roll-back-able (the F11
+    /// `releases/` retention; the spec's N=3 default; ≥ 1, `CFG-DEPLOY`
+    /// on zero).
+    pub generations: u32,
+}
+
+impl Default for DeployConfig {
+    fn default() -> Self {
+        Self {
+            skew_window: "15m".into(),
+            generations: 3,
+        }
+    }
 }
 
 /// V2-F09 (Appendix V2.L): the `search` config key. The key shape is the
@@ -297,6 +350,109 @@ pub struct LlmsConfig {
     /// Route patterns (glob-lite: `**` any run, `*` within a segment) the
     /// files include. Empty means every prerendered page.
     pub include: Vec<String>,
+}
+
+/// V2-F15 (Appendix V2.L): the `record` config key — the request
+/// recorder's face. The spec's union shape:
+/// `false | 'errors' | 'all' | { sample, onError }`.
+///
+/// Inert at the wiring until the CLI's record/replay adoption lands (the
+/// deferred A01-phase-3 half): the substrate's `RecordPolicy` is the
+/// decision, this typed key is its config input — the same RFN-002
+/// pattern the `search` key used. Bad spellings, an out-of-range
+/// `sample` and wrong-typed knobs fail the load (`CFG-REC`; the
+/// raw-`Value` validation pass runs before the typed parse).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RecordConfig {
+    /// `record: false` (the key absent is the same default): nothing
+    /// records. `true` reaches this arm only to be refused at load with
+    /// `CFG-REC` — the boolean spelling that exists is `false`.
+    Off(bool),
+    /// `record: 'all'` — every request is captured.
+    All,
+    /// `record: 'errors'` — failed (5xx) requests are captured.
+    Errors,
+    /// `record: { sample, onError }` — the prod sampling shape.
+    Sampled {
+        /// The fraction of healthy traffic captured.
+        sample: f64,
+        /// Capture 5xx responses regardless of the roll.
+        on_error: bool,
+    },
+}
+
+/// The sampled shape's parse helper (`record: { sample, onError }`).
+/// Defaults are the spec's prod example (`{ sample: 0.001, onError:
+/// true }`), so `{}` is the spec shape verbatim. Unknown keys are
+/// rejected (`deny_unknown_fields`) so a typo'd knob cannot silently
+/// change what gets recorded; the public face is the flat
+/// [`RecordConfig::Sampled`] variant.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub(crate) struct RecordSampleConfig {
+    /// The fraction of healthy traffic captured (`roll < sample`); the
+    /// caller rolls one uniform sample per request, keeping the decision
+    /// pure.
+    sample: f64,
+    /// Capture 5xx responses regardless of the sample roll.
+    on_error: bool,
+}
+
+impl Default for RecordSampleConfig {
+    fn default() -> Self {
+        Self {
+            sample: 0.001,
+            on_error: true,
+        }
+    }
+}
+
+impl Default for RecordConfig {
+    fn default() -> Self {
+        Self::Off(false)
+    }
+}
+
+impl Serialize for RecordConfig {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Off(b) => b.serialize(serializer),
+            Self::All => "all".serialize(serializer),
+            Self::Errors => "errors".serialize(serializer),
+            Self::Sampled { sample, on_error } => RecordSampleConfig {
+                sample: *sample,
+                on_error: *on_error,
+            }
+            .serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for RecordConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Bool(b) => Ok(Self::Off(b)),
+            serde_json::Value::String(s) => match s.as_str() {
+                "all" => Ok(Self::All),
+                "errors" => Ok(Self::Errors),
+                other => Err(serde::de::Error::custom(format!(
+                    "unknown record mode `{other}` (expected `all` or `errors`)"
+                ))),
+            },
+            value @ serde_json::Value::Object(_) => RecordSampleConfig::deserialize(value)
+                .map(|RecordSampleConfig { sample, on_error }| Self::Sampled { sample, on_error })
+                .map_err(serde::de::Error::custom),
+            other => Err(serde::de::Error::custom(format!(
+                "the `record` key is `false`, `'all'`, `'errors'` or an object — got `{other}`"
+            ))),
+        }
+    }
 }
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
@@ -471,6 +627,8 @@ impl Default for OxideConfig {
             search: SearchConfig::default(),
             prefetch: PrefetchConfig::default(),
             llms: LlmsConfig::default(),
+            record: RecordConfig::default(),
+            deploy: DeployConfig::default(),
         }
     }
 }
@@ -1231,6 +1389,41 @@ pub fn resolve_workspace_preset(dir: &Path, spec: &str) -> Option<PathBuf> {
 /// non-finite value, or an unknown unit.
 pub fn parse_size(s: &str) -> Result<u64> {
     size::parse(s)
+}
+
+/// Parse a duration literal — the §14 literal grammar extended to time:
+/// plain integers are seconds, `<n>s|m|h|d` spell the unit (`'15m'`,
+/// `'1h'`, `'30s'`, plain `30`). The F10 `deploy.skewWindow` literal
+/// rides this: validated at load (`CFG-DEPLOY` on a bad spelling), and
+/// the wiring converts the validated window into the pool's expiry
+/// duration with one call.
+///
+/// # Errors
+///
+/// [`OxideError`] with `CFG-DEPLOY` when the literal is not the grammar
+/// (a wrong unit, a signed or fractional count, an overflow).
+pub fn parse_duration_secs(literal: &str) -> Result<u64> {
+    let split = literal
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(literal.len());
+    let (digits, unit) = literal.split_at(split);
+    let bad = || {
+        err(
+            "CFG-DEPLOY",
+            format!(
+                "`{literal}` is not a duration literal — the grammar is `<n>s|m|h|d`, plain integers are seconds"
+            ),
+        )
+    };
+    let n: u64 = digits.parse().map_err(|_| bad())?;
+    let secs = match unit {
+        "" | "s" => Some(n),
+        "m" => n.checked_mul(60),
+        "h" => n.checked_mul(3600),
+        "d" => n.checked_mul(86_400),
+        _ => None,
+    };
+    secs.ok_or_else(bad)
 }
 
 /// Load + layer the full config for `dir` in `mode`.
