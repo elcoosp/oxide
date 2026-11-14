@@ -5280,6 +5280,7 @@ dependencies = [
  "blake3",
  "criterion",
  "oxc_resolver",
+ "oxc_sourcemap",
  "oxide-fw-compiler",
  "oxide-fw-diagnostics",
  "oxide-fw-graph",
