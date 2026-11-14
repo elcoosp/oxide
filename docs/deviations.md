@@ -2607,6 +2607,89 @@ engine unchanged.
 
 ## V2-E07 deltas (feat/llms-mcp-registry)
 
-- **`replay.run` is not in the MCP registry.** The spec's tool list includes `replay.run` (F15 record-and-replay), but F15 is still `todo` in Appendix V2.O — a tool with no backing capability would be a stub. The registry ships the seven tools with real sources today; `replay.run` joins when F15 lands.
+- **`replay.run` is not in the MCP registry.** The spec's tool list includes `replay.run` (F15 record-and-replay). The F15 substrate (record + replay, `crates/dispatch`) has landed — see the V2-F15 record below — but the tool's source would be the `oxide replay` CLI command, which is the deferred A01-phase-3 half; a tool with no backing capability would be a stub. The registry ships the seven tools with real sources today; `replay.run` joins when the CLI command lands.
 - **`llms-full.txt` reads the prerendered page text, not the content collections.** The spec's source is "route text content from content collections, Markdown", but `content.collections` carries no collection→route-URL mapping today, so a collection entry cannot be attached to its route honestly. The emission walks the prerendered pages (the sitemap's own ground truth) and extracts the visible text (script/style stripped) instead.
 - **`-W pedantic` vs `-W clippy::pedantic`.** clippy 1.100 refuses the bare `pedantic` spelling under `-D warnings` (renamed-and-removed-lints); the gate runs `-W clippy::pedantic` (the same lint group).
+
+## V2-F15 — the record-and-replay substrate (feat/dispatch-record-substrate + feat/dispatch-replay-substrate, 2026-11-14)
+
+**What lands.** The V8-free capture and playback halves of §V2-F15, in `crates/dispatch`:
+
+- `crates/dispatch/src/record.rs` — the versioned `RequestRecord` schema
+  (camelCase, `version: 1`): the request line-set with the secret trio
+  (`authorization`/`cookie`/`set-cookie`) redacted to `sha256:<12 hex>` —
+  the D30 cross-implementation digest, so the TS side hashes the same
+  bytes with the same truncation — the matched route id and params, the
+  middleware locals, each loader input and output serialized verbatim
+  (the ODF-bearing shapes), each outbound fetch op (status, redacted
+  headers, body base64, capped at 1 MB with a `truncated` marker — a
+  dropped op would break the ordered replay, so oversized bodies are
+  kept partial instead), cache op results, the build id, and the
+  `Date.now()`/`Math.random()`/`crypto.randomUUID()` observation
+  sequences. The `RecordPolicy` is the spec's "dev always when
+  `record: 'errors' | 'all'`, prod sampled `record: { sample: 0.001,
+  onError: true }`" as a pure decision (`All` / `Errors` /
+  `Sampled { sample_rate, on_error }`, 5xx counting as the error the
+  `onError` override and the `'errors'` mode capture — a 4xx is a
+  legitimate client outcome, not a repro bug). The `RecordSink` seam
+  stores records; `DirRecordStore` writes
+  `<root>/.oxide/records/<request-id>.json` atomically (temp + rename,
+  the F11 pointer convention) and refuses traversal-shaped ids with
+  `RPL-001`. The `RecordingLoaderRunner` is the wire-up seam: a
+  `LoaderRunner` decorator the dispatch closure wraps its real runner
+  in, so every load the §9.2 graph drives lands in the record without
+  the runner, the graph or the loaders knowing about recording.
+- `crates/dispatch/src/replay.rs` — the playback half: the
+  `ReplayMatcher` plays the record's fetch ops IN ORDER (method + URL +
+  request body — the spec's "body hash" identity as decoded-byte
+  equality — and a mismatch or exhausted record refuses `RPL-002`
+  naming both the call the replay made and the call the record
+  expected; a failed take consumes nothing, so the corrected call plays
+  on), the `ReplaySequences` streams the recorded non-deterministic
+  values in observation order (`RPL-004` on a drained stream),
+  `warn_stale_build` is the `RPL-003` warn-but-run verdict, and
+  `replay_diff` is the `--diff` comparison: the nonce normalization
+  blanks every `nonce="<32 hex>"` value (the per-request
+  `server::nonce_for` shape), the header compare skips the re-derived
+  trio (`content-security-policy` — the L0 cache already treats it as
+  re-derivable state, `date`, `set-cookie`), and the
+  `ReplayDiff { ok, divergences }` shape serializes camelCase for the
+  `--json` surface.
+
+The `RPL-001` registry row is added and `RPL-002`/`RPL-003` flip off
+`spec_only` (they have production call sites now); `RPL-004` is new.
+10 capture pins (`tests/record_tdd.rs`) + 8 playback pins
+(`tests/replay_tdd.rs`), the `record`/`replay` criterion groups and the
+`record_capture`/`replay_replay` walkthrough examples ride along. The
+regeneration of `docs/reference/errors.md` also closed a pre-existing
+drift: the page was missing the `AST-SVG-001..003` rows and the
+`DEP-URL` message update, and listed `RPL-002`/`RPL-003`/`BLD-409`/
+`OX-SRC-001`/`PRM-001`/`RFN-001` as landed while the registry marks
+them `spec_only`.
+
+**Deltas.**
+
+1. **The 1 MB cap truncates rather than drops.** The spec's "body
+   base64, up to 1 MB" reads as a cap; dropping the op would break the
+   ordered replay contract, so oversized bodies keep their first 1 MB
+   and the `truncated` markers say so — the replay consumer knows the
+   bytes are partial.
+2. **The sampling roll is caller-supplied.** The decision stays a pure
+   function of `(mode, status, roll)`; the wiring mints one uniform
+   roll per request (testable, no hidden RNG in the substrate). The
+   `record:` config key that feeds it is the deferred CLI half.
+3. **The diff skips the re-derived header trio.** The spec says
+   "compares to the recorded response (normalizing the nonce)" and no
+   more; a strict compare would flag every response — the CSP header is
+   re-derived per request (the L0 cache's own convention: stored
+   bodies carry no CSP header), `date` is the wall clock and
+   `set-cookie` may legitimately re-mint. The nonce normalization
+   covers the body half exactly as written.
+
+**To unclose.** The worker's `globalThis.__oxide_replay` install (the
+`OXIDE_REPLAY=<file>` env and the fetch/clock overrides), the
+`oxide replay <id> [--diff] [--json]` CLI command, the MCP `replay.run`
+tool (it joins when the CLI command exists — the E07 note above), and
+the `record:` config key with its schema entry and the E11
+config-reference regeneration — all A01-phase-3 slices on a V8-capable
+host, same deferral shape as the `chain`/`locals`/`pools` substrates.
