@@ -1,0 +1,38 @@
+[package]
+name = "oxide-rustfn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "V2-F08 native server functions: the host side (loader, registry, ODF C-ABI bridge)"
+
+[lints]
+workspace = true
+
+[dependencies]
+oxide-fw-odf = { workspace = true }
+oxide-fw-diagnostics = { workspace = true }
+oxide-macros = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+libloading = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[features]
+# V2-B09: exposes the criterion bench harness (plain `cargo test` never
+# pays the criterion build).
+bench-util = []
+
+[[bench]]
+name = "rustfn"
+harness = false
+required-features = ["bench-util"]
