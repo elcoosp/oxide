@@ -2,7 +2,7 @@
 //! of the discovery walks the `oxide migrate` command runs once the CLI
 //! wiring lands.
 //!
-//! The shapes: the SvelteKit plan (the walk over the route tree + the
+//! The shapes: the `SvelteKit` plan (the walk over the route tree + the
 //! hooks read + the rename discovery) over a synthetic routes tree at
 //! two sizes, and the apply half (the collision pre-check + the moves)
 //! on a fresh fixture copy per iteration — the copy rides inside the
@@ -37,7 +37,7 @@ fn copy_tree(src: &Path, dst: &Path) {
     }
 }
 
-/// A synthetic SvelteKit tree with `routes` route files spread over
+/// A synthetic `SvelteKit` tree with `routes` route files spread over
 /// nested dirs (the discovery walk's shape at scale).
 fn synthetic_sveltekit(root: &Path, routes: usize) {
     fs::create_dir_all(root).expect("the synthetic tree root");
@@ -50,7 +50,7 @@ fn synthetic_sveltekit(root: &Path, routes: usize) {
         let dir = root
             .join("src/routes")
             .join(format!("section{}", i % 8))
-            .join(format!("page{}", i));
+            .join(format!("page{i}"));
         fs::create_dir_all(&dir).expect("the synthetic route dir");
         fs::write(dir.join("+page.svelte"), format!("<h1>{i}</h1>")).expect("the route writes");
     }
