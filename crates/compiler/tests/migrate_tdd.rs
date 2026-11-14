@@ -17,7 +17,7 @@
 //!   `renames` / `rewrites` / `config` / `manual` data. The plan is
 //!   deterministic: two runs over the same tree serialize byte-identical
 //!   (sorted everywhere, no map iteration order).
-//! - The **SvelteKit** planner is the pure path mapping the spec pins:
+//! - The **`SvelteKit`** planner is the pure path mapping the spec pins:
 //!   every `+`-prefixed route basename loses its marker (`+page.svelte`
 //!   → `page.svelte`, `+server.ts` → `route.ts`), a plain
 //!   `hooks.server.ts` becomes the `middleware.ts` rename, a `sequence`
@@ -100,7 +100,7 @@ fn serialize(plan: &MigrationPlan) -> String {
 /// `plan.json`. The goldens are reviewed artifacts — after a regen,
 /// diff them before committing.
 #[test]
-#[ignore]
+#[ignore = "the golden-regen path runs explicitly: cargo test -p oxide-fw-compiler --test migrate_tdd -- --ignored regen_goldens"]
 fn regen_goldens() {
     for fw in ["sveltekit", "next", "nuxt", "vite"] {
         let plan = plan_for(&fixture_root(fw)).expect("the regen plan");
@@ -263,16 +263,13 @@ fn sveltekit_hooks_plain_becomes_the_middleware_rename() {
         plan.renames
     );
     assert!(
-        !plan
-            .manual
-            .iter()
-            .any(|n| n.file == PathBuf::from("src/hooks.server.ts")),
+        !plan.manual.iter().any(|n| n.file == *"src/hooks.server.ts"),
         "the plain hooks file carries no manual note"
     );
 }
 
 /// A `sequence`-composed hooks file flags manual instead of renaming
-/// (the spec's one SvelteKit manual note).
+/// (the spec's one `SvelteKit` manual note).
 #[test]
 fn sveltekit_hooks_sequence_flags_manual() {
     let (tmp, root) = copy_fixture("sveltekit");
@@ -285,7 +282,7 @@ fn sveltekit_hooks_sequence_flags_manual() {
     let note = plan
         .manual
         .iter()
-        .find(|n| n.file == PathBuf::from("src/hooks.server.ts"))
+        .find(|n| n.file == *"src/hooks.server.ts")
         .expect("the sequence hooks note");
     assert_eq!(note.line, 1, "the note names the import line");
     assert!(
@@ -358,7 +355,7 @@ fn next_use_client_reports_island_candidates() {
     let note = plan
         .manual
         .iter()
-        .find(|n| n.file == PathBuf::from("app/page.tsx"))
+        .find(|n| n.file == *"app/page.tsx")
         .expect("the use-client note");
     assert!(note.text.contains("island candidate"), "{}", note.text);
 }
@@ -371,15 +368,13 @@ fn next_config_and_pages_router_notes() {
     let images = plan
         .manual
         .iter()
-        .find(|n| {
-            n.file == PathBuf::from("next.config.js") && n.text.contains("images.remotePatterns")
-        })
+        .find(|n| n.file == *"next.config.js" && n.text.contains("images.remotePatterns"))
         .expect("the images.remotePatterns mapping note");
     assert_eq!(images.line, 2, "the note names the key's line");
     let pages = plan
         .manual
         .iter()
-        .find(|n| n.file == PathBuf::from("pages"))
+        .find(|n| n.file == *"pages")
         .expect("the pages-router note");
     assert!(pages.text.contains("not migrated"), "{}", pages.text);
 }
@@ -431,13 +426,13 @@ fn nuxt_data_fetching_flags_manual() {
     let note = plan
         .manual
         .iter()
-        .find(|n| n.file == PathBuf::from("pages/index.vue"))
+        .find(|n| n.file == *"pages/index.vue")
         .expect("the useFetch note");
     assert!(note.text.contains("load"), "{}", note.text);
     assert!(
         plan.manual
             .iter()
-            .any(|n| n.file == PathBuf::from("pages/users/[id].vue")),
+            .any(|n| n.file == *"pages/users/[id].vue"),
         "the useAsyncData file carries a note too"
     );
 }
@@ -460,7 +455,7 @@ fn vite_plan_golden() {
 
 // ---------------------------------------------------------- apply pins
 
-/// Apply performs the SvelteKit renames for real: the sources are gone,
+/// Apply performs the `SvelteKit` renames for real: the sources are gone,
 /// the targets carry the bytes, and the report counts the work while
 /// leaving the config keys and notes pending.
 #[test]
