@@ -67,6 +67,15 @@
 //!   load → stale-build warn → re-execute through the injected executor
 //!   → diff (the command and the tool are the thin CLI wrappers, deferred
 //!   with the rest of the A01 phase-3 wiring, see `docs/deviations.md`).
+//! - [`idem`]: the offline-first server substrate (V2-F14) — the
+//!   `stage_idempotency` data-plane stage the offline outbox's
+//!   `x-oxide-idem` replay key drives: a store hit replays the stored
+//!   response (status, headers minus `set-cookie`, body; the handler
+//!   never ran), a miss runs the handler and stores 2xx/4xx for 24 h
+//!   (`IDEM_TTL_SECS`), a store failure degrades loud-then-run
+//!   (`DSP-116`) — the [`idem::IdempotencyStore`] seam is the L1 tier's
+//!   shape, the PWA worker and the client outbox are the other F14
+//!   halves (CLI adoption deferred, see `docs/deviations.md`).
 //!
 //! Acceptance (spec V2-A02): `cargo test -p oxide-fw-dispatch` finishes in
 //! under 20 seconds after dependencies are built, and
@@ -76,6 +85,7 @@ pub mod build;
 pub mod chain;
 pub mod experiments;
 pub mod flow;
+pub mod idem;
 pub mod loads;
 pub mod locals;
 pub mod pools;
