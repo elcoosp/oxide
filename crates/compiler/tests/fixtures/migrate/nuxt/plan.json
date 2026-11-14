@@ -1,0 +1,47 @@
+{
+  "renames": [
+    [
+      "error.vue",
+      "src/routes/error.vue"
+    ],
+    [
+      "layouts/default.vue",
+      "src/routes/layout.vue"
+    ],
+    [
+      "pages/about.vue",
+      "src/routes/about/page.vue"
+    ],
+    [
+      "pages/index.vue",
+      "src/routes/page.vue"
+    ],
+    [
+      "pages/users/[id].vue",
+      "src/routes/users/[id]/page.vue"
+    ],
+    [
+      "pages/users.vue",
+      "src/routes/users/layout.vue"
+    ]
+  ],
+  "rewrites": [],
+  "config": [],
+  "manual": [
+    {
+      "file": "middleware/auth.ts",
+      "line": 1,
+      "text": "a named Nuxt middleware runs inside ONE Oxide `middleware.ts` chain — merge it by hand (the §8.5 chain runner takes one module)"
+    },
+    {
+      "file": "pages/index.vue",
+      "line": 2,
+      "text": "`useFetch` has no Oxide equivalent — convert the call to a `page.server.ts` `load` export (the data moves server-side)"
+    },
+    {
+      "file": "pages/users/[id].vue",
+      "line": 2,
+      "text": "`useAsyncData` has no Oxide equivalent — convert the call to a `page.server.ts` `load` export (the data moves server-side)"
+    }
+  ]
+}
