@@ -1128,8 +1128,14 @@ pub async fn dev_component_sources(
         framework,
         None,
         env!("CARGO_PKG_VERSION"),
+        // The dev component map stays pool-only for now (the C01 seam's
+        // build-path adoption): no registry is constructed here, so the
+        // pick arm never fires.
+        None,
+        oxide_fw_compiler::native::Backend::Auto,
     )
-    .await;
+    .await
+    .unwrap_or_default();
     let comp_dir = project_root.join(".oxide/components");
     let mut out = std::collections::BTreeMap::new();
     for (id, src) in entries {
