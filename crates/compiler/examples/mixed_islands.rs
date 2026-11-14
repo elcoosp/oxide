@@ -35,7 +35,11 @@ fn main() {
     println!("mixed = {}\n", mixed.mixed);
     println!(
         "{}",
-        mixed.boot_entry_source(Path::new("/proj"), &Default::default(), false)
+        mixed.boot_entry_source(
+            Path::new("/proj"),
+            &std::collections::BTreeMap::default(),
+            false
+        )
     );
     println!("// .oxide/islands.json:");
     println!("{}", mixed.islands_json());
@@ -53,7 +57,11 @@ fn main() {
     println!("\nmixed = {}", plan.mixed);
     println!(
         "legacy shape: {}",
-        plan.boot_entry_source(Path::new("/proj"), &Default::default(), false)
-            .contains("const modules = {")
+        plan.boot_entry_source(
+            Path::new("/proj"),
+            &std::collections::BTreeMap::default(),
+            false
+        )
+        .contains("const modules = {")
     );
 }
