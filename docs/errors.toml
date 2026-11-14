@@ -636,15 +636,21 @@ message = "<Script> requires either a `src` or inline `content`"
 [RND-UTF8]
 message = "render stream was not UTF-8: {e}"
 
+[RPL-001]
+message = "cannot write the record {}: {e}"
+fix = "check the project root's writability; a record id must be a single path-safe segment"
+
 [RPL-002]
 message = "Replay saw an outbound call that is not in the record"
 fix = "Re-record, or the code path changed"
-spec_only = true
 
 [RPL-003]
 message = "Record was made on an older build id"
 fix = "Replay continues; results may differ"
-spec_only = true
+
+[RPL-004]
+message = "Replay exhausted the recorded non-deterministic sequence"
+fix = "Re-record; the replay observed more than the record captured"
 
 [RTR-001]
 message = "routes directory not found: {}"
