@@ -2693,3 +2693,136 @@ tool (it joins when the CLI command exists — the E07 note above), and
 the `record:` config key with its schema entry and the E11
 config-reference regeneration — all A01-phase-3 slices on a V8-capable
 host, same deferral shape as the `chain`/`locals`/`pools` substrates.
+
+## V2-F15 — the replay-runner seam + the `record:` config key (feat/replay-runner-seam, 2026-11-14)
+
+**What lands.** The V8-free completion of §V2-F15 — everything the
+feature still needs that does not link V8 — in two halves:
+
+- `crates/dispatch` — the replay-RUNNER seam, the one-definition
+  orchestration the `oxide replay <id> [--diff]` command and the MCP
+  `replay.run` tool drive once the CLI wiring lands:
+  `crates/dispatch/src/record.rs` grows the read side of the store seam
+  (`RecordSource::load` — the write side's `store_key` traversal guard
+  shared, the missing record a load-shaped `RPL-001`, and the record
+  module's "the replay side refuses a record whose version it does not
+  know" contract now ENFORCED at the only door a record enters through:
+  a foreign schema version refuses `RPL-005`, naming the version it saw
+  and the version this build reads); `crates/dispatch/src/replay.rs`
+  grows the `ReplayExecutor` trait (the re-execution seam — the CLI's
+  real implementation drives the captured line-set, route id, params and
+  locals back through the V8 pipeline; test and example hosts implement
+  it over fakes, keeping the runner V8-free) and the `ReplayRunner`
+  (load → the `RPL-003` stale-build warn-but-run verdict → re-execute
+  → `replay_diff`), returning the `ReplayOutcome` (record + executed
+  response + staleness + diff, camelCase-serialized; the executed body
+  rides base64 on the wire, the record's own convention). The
+  executor's and the store's refusals surface unchanged — the runner
+  never wraps them.
+- `crates/config` — the `record:` config key (Appendix V2.L:
+  `false | 'errors' | 'all' | { sample, onError }`): the typed
+  `RecordConfig` (flat enum, `Off(bool)`/`All`/`Errors`/`Sampled`), the
+  raw-`Value` load validator (`CFG-REC` names `record: true` — the
+  boolean spelling that exists is `false` — an unknown word, an
+  out-of-range or non-number `sample`, a non-boolean `onError` and an
+  unknown knob, each with the valid spellings as the fix), the
+  `KNOWN_KEYS` typo-suggestion entry and the schema section (the union
+  shape, so editors complete the word modes and the sampled object
+  alike). The key is inert at the wiring until the CLI's record/replay
+  adoption lands — the same RFN-002 shape the `search` key used — and
+  its defaults are the spec's prod example verbatim
+  (`{ sample: 0.001, onError: true }`, so `{}` is the spec shape).
+
+The `RPL-005` registry row is added, `RPL-001`'s message widens to the
+store's two operations ("cannot write or load"), and `CFG-REC` joins
+the registry — which closed a pre-existing drift: `CFG-LLMS` had
+production call sites (`validate_llms`) and NO registry row (the
+coverage gate is a V8-linked CLI test, so the omission was invisible in
+the constrained sandbox). 10 runner pins (`tests/replay_runner_tdd.rs`)
++ 13 config pins (`tests/record_config.rs`), the `replay_runner`
+criterion group and the `replay_runner` walkthrough example ride along.
+The schema regeneration also closed a second pre-existing drift: the
+committed `schemas/oxide-fw-config.schema.json` was missing the whole
+`llms` section (E07 landed without regenerating it), and
+`docs/reference/config.md` was missing both the `llms` and — until this
+milestone — the `record` sections (hand-patched in the generator's
+format, to be confirmed byte-identical by `docs generate --check` on a
+capable host).
+
+**Deltas.**
+
+1. **`RPL-001`'s message widened, not a new code for load.** The store
+   failure is one code across both operations; the message now names
+   both ("cannot write or load"), the FIX is per-operation (the write
+   side's writability hint vs the load side's re-record hint).
+2. **`record: true` parses, then refuses at load.** The untagged-union
+   deserializer accepts the boolean into `Off(bool)` and the raw pass
+   refuses it with `CFG-REC` naming the valid spellings — an authoring
+   bug gets the house diagnostic instead of a bare serde type error.
+3. **A pre-existing green-gate bug fixed on the way** (not a delta of
+   this feature, recorded here because the suite exposed it):
+   `validate_llms` rejected the `null` `title`/`summary` the serialized
+   `OxideConfig::default()` carries — every default-config load failed
+   `CFG-LLMS`, and `crates/config`'s `brownout_config` loads were
+   failing on pristine HEAD. Null is now treated as absent (the
+   serialized `Option::None`), and the brownout loads are green again.
+
+**To unclose.** The worker's `globalThis.__oxide_replay` install (the
+`OXIDE_REPLAY=<file>` env and the fetch/clock overrides), the
+`oxide replay <id> [--diff] [--json]` CLI command and the MCP
+`replay.run` tool — all three are now THIN wrappers over the landed
+`ReplayRunner`/`RecordSource` seams, and remain A01-phase-3 slices on a
+V8-capable host, same deferral shape as the
+`chain`/`locals`/`pools` substrates. The `record:` key's wiring into
+`RecordPolicy` rides with them.
+
+## V2-F10 — the `deploy:` config key (feat/config-deploy-key, 2026-11-14)
+
+**What lands.** F10's config half — the `deploy:` section the spec's
+Appendix V2.L names (`deploy?: { skewWindow?: string; generations?:
+number } // F10, F11 (defaults '15m', 3)`), in `crates/config`:
+
+- the typed `DeployConfig` (`skewWindow` the duration string, `generations`
+  the F11 `releases/` retention count; `deny_unknown_fields` so a typo'd
+  knob cannot silently disable skew protection), with the spec's defaults
+  verbatim (`'15m'`, `3`);
+- `parse_duration_secs` — the §14 literal grammar extended to time
+  (`<n>s|m|h|d`, plain integers = seconds; checked arithmetic), the
+  public parse the wiring converts the validated window into the pools'
+  expiry duration with;
+- the raw-`Value` load validator (`CFG-DEPLOY`): the window must parse
+  the grammar and be physically useful (a zero window expires the
+  previous generation before a single request crosses the deploy — the
+  DSP-112 shape), the generation count a whole number ≥ 1, unknown
+  knobs named, wrong-typed knobs refused;
+- the schema section (described, defaults declared — the E11 DOC-001
+  gate), the `KNOWN_KEYS` typo-suggestion entry, the regenerated
+  committed schema, the `CFG-DEPLOY` registry row + reference-page row
+  and the `docs/reference/config.md` section (hand-patched in the
+  generator's format, `docs generate --check` to confirm on a capable
+  host).
+
+12 TDD pins (`tests/deploy_config.rs`: the spec defaults, the camelCase
+parse, the grammar table, the refusal table, the typo surface, the
+schema shape). The section is inert at the wiring until the F10 CLI
+adoption lands — the same RFN-002 shape the `search`/`record` keys
+used; the engine-side default (`DEFAULT_SKEW_WINDOW`,
+`crates/adapters` `PruneOptions::window`) stays the plumbing default.
+
+**Deltas.**
+
+1. **The window stays a string literal, not a seconds number.** The
+   spec types `skewWindow?: string` (and the F10 body names `'15m'`);
+   `StreamConfig`'s `ttl_secs` precedent (a seconds number) would have
+   silently changed the documented shape — the string + the parser
+   keeps the spec shape and gives the wiring a validated conversion.
+2. **Zero is refused, not clamped.** A zero window (and a zero
+   generation count) is an authoring bug with a silent-no-op failure
+   mode; the load refuses with the reason instead of letting the
+   machinery expire instantly.
+
+**To unclose.** The F10 CLI adoption (booting the pools from `dist/` +
+F11's `releases/` layout, promote on `cmd_dev` reload, the 30 s expiry
+task, the F12 brownout trigger calling `evict_oldest()`) and the
+`tests/skew.sh` e2e — A01-phase-3 slices on a V8-capable host; the
+config key is the face they read.
