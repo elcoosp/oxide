@@ -29,7 +29,7 @@ fn json_args(width: u32) -> Vec<u8> {
     format!(r#"{{"url":"a.png","width":{width}}}"#).into_bytes()
 }
 
-extern "C" extern "C" fn free_impl(buf: RawBuf) {
+extern "C" fn free_impl(buf: RawBuf) {
     if buf.ptr.is_null() || buf.cap == 0 {
         return;
     }
