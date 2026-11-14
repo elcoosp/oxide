@@ -158,7 +158,7 @@ pub fn leak_name(name: &'static str) -> *const c_char {
     // An interior NUL cannot appear in a Rust identifier; the empty
     // name keeps a hand-built table from dereferencing garbage.
     match std::ffi::CString::new(name) {
-        Ok(c) => c.into_raw() as *const c_char,
-        Err(_) => std::ffi::CString::default().into_raw() as *const c_char,
+        Ok(c) => c.into_raw().cast_const(),
+        Err(_) => std::ffi::CString::default().into_raw().cast_const(),
     }
 }
