@@ -1,0 +1,48 @@
+{
+  "renames": [],
+  "rewrites": [
+    {
+      "file": "app/blog/[slug]/page.tsx",
+      "from": "next/link",
+      "to": "@oxide/react"
+    },
+    {
+      "file": "app/page.tsx",
+      "from": "next/image",
+      "to": "@oxide/react"
+    }
+  ],
+  "config": [
+    {
+      "key": "routes.compat",
+      "value": "\"next\""
+    }
+  ],
+  "manual": [
+    {
+      "file": "app/page.tsx",
+      "line": 1,
+      "text": "`'use client'` file — an island candidate for the compat conventions (register it in `islands` explicitly; the migration does not guess)"
+    },
+    {
+      "file": "middleware.ts",
+      "line": 2,
+      "text": "a middleware `matcher` with a complex regex goes to manual — port it to an Oxide `rules` entry by hand"
+    },
+    {
+      "file": "next.config.js",
+      "line": 2,
+      "text": "map `next.config` `images.remotePatterns` to `images.remotePatterns` in `oxide.config.ts` (carry the value by hand; the planner does not evaluate JS)"
+    },
+    {
+      "file": "next.config.js",
+      "line": 3,
+      "text": "map `next.config` `redirects` to `redirects` in `oxide.config.ts` (carry the value by hand; the planner does not evaluate JS)"
+    },
+    {
+      "file": "pages",
+      "line": 1,
+      "text": "the `pages` router is not migrated — port each `pages/**` file to a `routes/**` page by hand, or move the project to the app router first"
+    }
+  ]
+}
