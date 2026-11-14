@@ -204,6 +204,13 @@ pub struct OxideConfig {
     /// raw-`Value` validation pass runs before the typed parse).
     #[serde(default)]
     pub prefetch: PrefetchConfig,
+    /// V2-E07 (Appendix V2.L): the `llms.txt` emission knobs. Inert by
+    /// default — with `enabled: false` the build writes neither
+    /// `dist/llms.txt` nor `dist/llms-full.txt`. A bad `include` pattern
+    /// fails the load (`CFG-LLMS`; the raw-`Value` validation pass runs
+    /// before the typed parse).
+    #[serde(default)]
+    pub llms: LlmsConfig,
 }
 
 /// V2-F09 (Appendix V2.L): the `search` config key. The key shape is the
@@ -271,6 +278,28 @@ impl Default for PrefetchConfig {
         }
     }
 }
+
+/// V2-E07 (Appendix V2.L): the `llms` config key — `dist/llms.txt` and
+/// `dist/llms-full.txt` emission at build. Inert by default: with
+/// `enabled: false` (the default) the build writes neither file. `include`
+/// names the route patterns the files cover (`/docs/**`-style globs; empty
+/// means every prerendered page). Unknown keys are rejected
+/// (`deny_unknown_fields`) so a typo cannot silently disable the emission.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct LlmsConfig {
+    /// Master switch. `false` (the default) means no `dist/llms*.txt`.
+    pub enabled: bool,
+    /// The `llms.txt` H1 title. Defaults to the site name when omitted.
+    pub title: Option<String>,
+    /// The blockquote summary under the title.
+    pub summary: Option<String>,
+    /// Route patterns (glob-lite: `**` any run, `*` within a segment) the
+    /// files include. Empty means every prerendered page.
+    pub include: Vec<String>,
+}
+
+
 
 /// S-09: opt-in toggle for the OG rasterization endpoint.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -443,6 +472,7 @@ impl Default for OxideConfig {
             interaction_replay: true,
             search: SearchConfig::default(),
             prefetch: PrefetchConfig::default(),
+            llms: LlmsConfig::default(),
         }
     }
 }
