@@ -27,14 +27,17 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `AST-I18N-TYPE` | MessageFormat: a placeholder value has the wrong type | Pass the value type the template expects (string, number or date) |
 | `AST-IDX` | index serialization failed: {e} | — |
 | `AST-IMG` | failed to decode source image: {e} | — |
-| `AST-IMG-REQ` | `url` query parameter is empty | — |
 | `AST-JOBS` | the image encoder panicked: {join} | inspect the encoder diagnostic; the next request retries the encode |
+| `AST-IMG-REQ` | `url` query parameter is empty | — |
 | `AST-LIV-001` | a route opts into `live: true` but target `{}` does not support live loaders (§18 capability matrix) | Use `live.transport: 'poll'` or change target |
 | `AST-OG` | usvg parse failed: {e} | — |
 | `AST-QUERY` | asset specifier must be a non-empty path optionally followed by `?query` | — |
 | `AST-REF` | collection `{}` entry `{}` links to `{target}` but no entry with slug `{stem}` exists | — |
 | `AST-SCH` | collection `{}` entry `{}` has no frontmatter; external schema requires content | — |
 | `AST-SRC-001` | `search` is configured but target `{}` does not support the built-in search capability (§18 capability matrix) | Use static JSON search or a Binary or Docker target |
+| `AST-SVG-001` | the optimized SVG output violated a preservation rule: {rule}; the source is kept | Narrow the optimizer preset (the bundled backend already runs the correctness preset) or file an upstream issue; the build degrades to the unoptimized source |
+| `AST-SVG-002` | `svg.optimize: true` requires the `svg-oxvg` feature, which is not compiled into this build of oxide-fw-assets | Rebuild with `--features svg-oxvg`, or set `svg.optimize: false` |
+| `AST-SVG-003` | the SVG optimizer failed on the document: {e} | Check the document is well-formed XML; the build keeps the unoptimized source |
 | `AST-WEBP` | webp encode unavailable in this image build; emitted PNG instead: {e} | — |
 | `ATT-CANON` | the provenance file is not canonical JSON (whitespace tamper) | Rewrite the provenance in canonical form; `oxide verify --rebuild` re-checks |
 | `ATT-DIST` | the dist is missing, `dist/build-id` is absent, or a subject digest does not match the dist on disk | Run `oxide build --attest` first |
@@ -95,7 +98,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DEP-POINTER` | the deploy pointer (current) is corrupt: {detail} | — |
 | `DEP-ROOT` | dist root {} is not a directory | Pass the build's dist directory (the `oxide build` output) |
 | `DEP-ROLLBACK` | cannot roll back: no previous build id is recorded | Deploy first: every deploy records the pointer's previous value |
-| `DEP-URL` | `https://example` is not a deploy target URL: known schemes are s3, r2, file and mem | Use s3://bucket/prefix, r2://bucket/prefix?endpoint=... (the endpoint query parameter is required for r2), file:///path or mem://label |
+| `DEP-URL` | `{}` is not a deploy target URL: {} | Use s3://bucket/prefix, r2://bucket/prefix?endpoint=... (the endpoint query parameter is required for r2), file:///path or mem://label |
 | `DEV-BUNDLE` | rebuild failed for {pstr}: {err_msg} | — |
 | `DEV-HMR-001` | HMR fell back to a full reload: {reason} | — |
 | `DEV-HMR-002` | {} is not imported by any module | — |
@@ -192,6 +195,10 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `RND-PPR` | unterminated boundary tag | — |
 | `RND-SCRIPT` | <Script> requires either a `src` or inline `content` | — |
 | `RND-UTF8` | render stream was not UTF-8: {e} | — |
+| `RPL-001` | cannot write the record {}: {e} | check the project root's writability; a record id must be a single path-safe segment |
+| `RPL-002` | Replay saw an outbound call that is not in the record | Re-record, or the code path changed |
+| `RPL-003` | Record was made on an older build id | Replay continues; results may differ |
+| `RPL-004` | Replay exhausted the recorded non-deterministic sequence | Re-record; the replay observed more than the record captured |
 | `RTR-001` | routes directory not found: {} | — |
 | `RTR-002` | invalid route directory `{name}`: {msg} | — |
 | `RTR-100` | failed to serialize route archive: {e} | — |
@@ -233,5 +240,3 @@ Defined by the spec for work packages that have not landed; no call site raises 
 | `OX-SRC-001` | Search params failed `searchSchema` validation | Fix the URL or add defaults to the schema |
 | `PRM-001` | A route used a capability outside its declared permissions (F19) | Add it to `config.permissions` or remove the call |
 | `RFN-001` | Rust function library ABI version mismatch | Rebuild the user crate with the matching `oxide-rustfn` version |
-| `RPL-002` | Replay saw an outbound call that is not in the record | Re-record, or the code path changed |
-| `RPL-003` | Record was made on an older build id | Replay continues; results may differ |
