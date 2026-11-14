@@ -38,66 +38,18 @@ pub fn server_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let f = parse_macro_input!(item as ItemFn);
     let name = &f.sig.ident;
     let name_str = name.to_string();
-    let shim_ident = format_ident!("__oxide_shim_{name}");
-    let entry_ident = format_ident!("__oxide_entry_{name}");
-    let types_ident = format_ident!("__oxide_types_{name}");
 
-    if f.sig.asyncness.is_some() {
-        return syn::Error::new(
-            f.sig.asyncness.span(),
-            "`#[server_fn]` bodies are sync — the host runs them on blocking threads",
-        )
-        .to_compile_error()
-        .into();
-    }
-
-    // One typed input or none (the spec's shapes).
-    let mut inputs = f.sig.inputs.iter();
-    let input_ty: Option<&Type> = match inputs.next() {
-        None => None,
-        Some(syn::FnArg::Typed(pat)) => {
-            if inputs.next().is_some() {
-                return syn::Error::new(
-                    f.sig.inputs.span(),
-                    "`#[server_fn]` takes one input argument or none",
-                )
-                .to_compile_error()
-                .into();
-            }
-            Some(&pat.ty)
-        }
-        Some(syn::FnArg::Receiver(r)) => {
-            return syn::Error::new(r.span(), "`#[server_fn]` does not support methods")
-                .to_compile_error()
-                .into();
-        }
-    };
-
-    // The return must be `Result<Ok, _>` — the shim maps `Ok` to
-    // status 0 and `Err: Display` to status 1.
-    let ok_ty: &Type = match &f.sig.output {
-        syn::ReturnType::Default => {
-            return syn::Error::new(
-                f.sig.output.span(),
-                "`#[server_fn]` must return `Result<Out, E>`",
-            )
-            .to_compile_error()
-            .into();
-        }
-        syn::ReturnType::Type(_, ty) => match result_ok_ty(ty) {
-            Some(ok) => ok,
-            None => {
-                return syn::Error::new(ty.span(), "`#[server_fn]` must return `Result<Out, E>`")
-                    .to_compile_error()
-                    .into();
-            }
-        },
+    // One typed input or none, and a `Result<Ok, _>` return — the two
+    // shapes the shim's decode/call/encode closure can spell.
+    let shapes = match server_fn_shapes(&f) {
+        Ok(shapes) => shapes,
+        Err(err) => return err.to_compile_error().into(),
     };
 
     // The call inside the shim closure: decode the ODF input, run the
     // function, encode the result — every failure flattened to the
     // message string `run_shim` turns into the status-1 payload.
-    let call = if let Some(ty) = input_ty {
+    let call = if let Some(ty) = shapes.input_ty {
         quote! {
             let args: #ty = match oxide_rustfn::bridge::decode_odf(bytes) {
                 Ok(args) => args,
@@ -118,7 +70,7 @@ pub fn server_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let (input_annots, input_decls) = match input_ty {
+    let (input_annots, input_decls) = match shapes.input_ty {
         Some(ty) => (
             quote! { vec![<#ty as oxide_rustfn::types::TsType>::ts_type_name()] },
             quote! { let mut decls = <#ty as oxide_rustfn::types::TsType>::ts_decls(); },
@@ -129,6 +81,102 @@ pub fn server_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
         ),
     };
 
+    let names = GeneratedNames {
+        shim: format_ident!("__oxide_shim_{name}"),
+        entry: format_ident!("__oxide_entry_{name}"),
+        types: format_ident!("__oxide_types_{name}"),
+        name_str,
+    };
+    emit_server_fn_expansion(&f, &names, &shapes, &call, &input_annots, &input_decls)
+}
+
+/// The input/output shapes `server_fn` accepts: one typed input or
+/// none, and a `Result<Ok, _>` return (the shim maps `Ok` to status 0
+/// and `Err: Display` to status 1).
+struct ServerFnShapes<'a> {
+    input_ty: Option<&'a Type>,
+    ok_ty: &'a Type,
+}
+
+/// The generated item idents (the shim, the entry accessor, the types
+/// record) and the source name they carry.
+struct GeneratedNames {
+    shim: proc_macro2::Ident,
+    entry: proc_macro2::Ident,
+    types: proc_macro2::Ident,
+    name_str: String,
+}
+
+/// Validate a `#[server_fn]` function's signature: sync, one typed
+/// input or none, `Result<Ok, E>` return. Every refusal names the fix.
+fn server_fn_shapes(f: &ItemFn) -> Result<ServerFnShapes<'_>, syn::Error> {
+    if let Some(asyncness) = &f.sig.asyncness {
+        return Err(syn::Error::new(
+            asyncness.span(),
+            "`#[server_fn]` bodies are sync — the host runs them on blocking threads",
+        ));
+    }
+    let mut inputs = f.sig.inputs.iter();
+    let input_ty: Option<&Type> = match inputs.next() {
+        None => None,
+        Some(syn::FnArg::Typed(pat)) => {
+            if inputs.next().is_some() {
+                return Err(syn::Error::new(
+                    f.sig.inputs.span(),
+                    "`#[server_fn]` takes one input argument or none",
+                ));
+            }
+            Some(&pat.ty)
+        }
+        Some(syn::FnArg::Receiver(r)) => {
+            return Err(syn::Error::new(
+                r.span(),
+                "`#[server_fn]` does not support methods",
+            ));
+        }
+    };
+    let ok_ty: &Type = match &f.sig.output {
+        syn::ReturnType::Default => {
+            return Err(syn::Error::new(
+                f.sig.output.span(),
+                "`#[server_fn]` must return `Result<Out, E>`",
+            ));
+        }
+        syn::ReturnType::Type(_, ty) => match result_ok_ty(ty) {
+            Some(ok) => ok,
+            None => {
+                return Err(syn::Error::new(
+                    ty.span(),
+                    "`#[server_fn]` must return `Result<Out, E>`",
+                ));
+            }
+        },
+    };
+    Ok(ServerFnShapes { input_ty, ok_ty })
+}
+
+/// Emit the three generated items beside the untouched function: the
+/// C-ABI shim (input bytes in, the output buffer filled, the status
+/// returned), the entry accessor (the name + shim pair the
+/// `export_table!` static carries) and the types record (the inline
+/// annotations and declaration blocks `oxide_fn_types_json`
+/// serializes).
+fn emit_server_fn_expansion(
+    f: &ItemFn,
+    names: &GeneratedNames,
+    shapes: &ServerFnShapes<'_>,
+    call: &proc_macro2::TokenStream,
+    input_annots: &proc_macro2::TokenStream,
+    input_decls: &proc_macro2::TokenStream,
+) -> TokenStream {
+    let GeneratedNames {
+        shim: shim_ident,
+        entry: entry_ident,
+        types: types_ident,
+        name_str,
+    } = names;
+    let ServerFnShapes { input_ty: _, ok_ty } = shapes;
+    let ok_ty = *ok_ty;
     quote! {
         #f
 
@@ -216,6 +264,12 @@ fn result_ok_ty(ty: &Type) -> Option<&Type> {
 /// `export type` union. Nested field types must implement [`TsType`]
 /// too (their declaration blocks ride the parent's) — the primitives
 /// implement it already.
+///
+/// # Panics
+///
+/// Panics only on the macro's own malformed synthesis: a named-field
+/// struct whose field ident is somehow absent (`expect("named field")`)
+/// — unreachable for input that parsed as `Fields::Named`.
 #[proc_macro_derive(TsType)]
 pub fn ts_type_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -230,7 +284,7 @@ pub fn ts_type_derive(input: TokenStream) -> TokenStream {
                 for f in &named.named {
                     let fname = f.ident.as_ref().expect("named field");
                     let ts = type_to_ts(&f.ty);
-                    lines.push(format!("{}: {}", fname, ts));
+                    lines.push(format!("{fname}: {ts}"));
                     nested.push(&f.ty);
                 }
                 (
