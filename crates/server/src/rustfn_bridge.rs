@@ -58,10 +58,10 @@ impl RustFirstDispatcher {
 #[async_trait::async_trait]
 impl ServerFnDispatcher for RustFirstDispatcher {
     async fn dispatch(&self, id: &str, args_json: &[u8]) -> Result<Vec<u8>, DispatchError> {
-        if let Some(native) = &self.native {
-            if native.has(id) {
-                return native.call(id, args_json).await;
-            }
+        if let Some(native) = &self.native
+            && native.has(id)
+        {
+            return native.call(id, args_json).await;
         }
         if let Some(js) = &self.js {
             return js.dispatch(id, args_json).await;
