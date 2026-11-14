@@ -44,6 +44,10 @@ criterion = { workspace = true }
 # V2-B07: the engine pins drive async runtimes (the overlap and
 # determinism behaviors are only observable under concurrent tasks).
 tokio = { workspace = true }
+# V2-E03: the migrate pins copy the committed fixture projects into
+# fresh tempdirs for the apply half (the fixtures themselves stay
+# read-only).
+tempfile = { workspace = true }
 
 [features]
 # V2-C01: exposes the criterion bench harness for the native-registry
@@ -58,6 +62,13 @@ required-features = ["bench-util"]
 # V2-B07: the parallel-precompile engine bench, behind the same opt-in.
 [[bench]]
 name = "precompile_engine"
+harness = false
+required-features = ["bench-util"]
+
+# V2-E03: the migrate planner bench (the discovery walk + the apply
+# half), behind the same opt-in.
+[[bench]]
+name = "migrate"
 harness = false
 required-features = ["bench-util"]
 
