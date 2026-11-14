@@ -22,6 +22,7 @@ pub mod head;
 mod minify;
 mod resolve;
 mod rolldown_backend;
+pub mod sourcemap_compose;
 pub mod sri;
 pub mod svg_react;
 
@@ -216,7 +217,23 @@ impl std::fmt::Debug for CssTransformHook {
 /// newtype's `Debug` prints only that a hook is present (never its
 /// internals, which are a loaded WASM component in the CLI's case).
 /// The callback type `TransformHook` wraps (see `CssTransformFn`).
-pub type TransformFn = dyn Fn(&str, &str) -> Result<String> + Send + Sync;
+///
+/// V2-C06: the result carries an optional V3 sourcemap (a JSON string)
+/// alongside the rewritten code, so a plugin that rewrites positions no
+/// longer breaks the chain from the final output back to the original
+/// source — see [`sourcemap_compose`].
+pub type TransformFn = dyn Fn(&str, &str) -> Result<TransformOutput> + Send + Sync;
+
+/// §15.1 / V2-C06: what a plugin transform returns. `code` is the rewritten
+/// source; `map` is the optional V3 sourcemap (a JSON string) mapping the
+/// rewritten code back to the hook's input. `None` means the plugin's
+/// rewrite is position-preserving (or it does not track maps) — the chain
+/// treats such a plugin as transparent and keeps the map accumulated so far.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TransformOutput {
+    pub code: String,
+    pub map: Option<String>,
+}
 
 #[derive(Clone)]
 pub struct TransformHook(pub std::sync::Arc<TransformFn>);
@@ -225,14 +242,36 @@ impl TransformHook {
     /// Wrap a closure so `BundleOptions` can hold it.
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(&str, &str) -> Result<String> + Send + Sync + 'static,
+        F: Fn(&str, &str) -> Result<TransformOutput> + Send + Sync + 'static,
     {
         Self(std::sync::Arc::new(f))
     }
 
+    /// Wrap a code-only closure: the hook produces no map of its own (the
+    /// WASM plugin bridge and the dev paths — their rewrites are the hook's
+    /// whole contract, positions included, but they do not carry V3 maps).
+    pub fn new_code<F>(f: F) -> Self
+    where
+        F: Fn(&str, &str) -> Result<String> + Send + Sync + 'static,
+    {
+        Self(std::sync::Arc::new(move |id, source| {
+            f(id, source).map(|code| TransformOutput { code, map: None })
+        }))
+    }
+
     /// Run the hook.
-    pub fn call(&self, id: &str, source: &str) -> Result<String> {
+    pub fn call(&self, id: &str, source: &str) -> Result<TransformOutput> {
         (self.0)(id, source)
+    }
+
+    /// Run the hook and keep only the code — the shape the dev transform
+    /// handler (the jshost `TransformHandler` contract) serves.
+    ///
+    /// # Errors
+    ///
+    /// The hook's own error, unchanged.
+    pub fn call_code(&self, id: &str, source: &str) -> Result<String> {
+        (self.0)(id, source).map(|out| out.code)
     }
 }
 
@@ -1070,6 +1109,10 @@ impl ChunkBundler {
         let mut bodies: BTreeMap<String, String> = BTreeMap::new();
         for b in &built {
             let mut body = String::new();
+            // V2-C06: the composed per-module map pieces of THIS chunk, with
+            // the line each module's body starts at — stitched into one
+            // chunk-level map at the emission site below.
+            let mut module_maps: Vec<(oxc_sourcemap::OwnedSourceMap, u32)> = Vec::new();
             for dep in &b.imports {
                 if let Some(dep_file) = file_of.get(dep) {
                     body.push_str(&format!("import \"./{dep_file}\";\n"));
@@ -1082,7 +1125,8 @@ impl ChunkBundler {
                 let m = &by_path[p];
                 let rewritten =
                     rewrite_imports(&m.source, &b.name, m, options, &chunk_of, &file_of, self);
-                let lowered = lower_module_to_js(
+                let start_line = body.matches('\n').count() as u32;
+                let (lowered_code, lowered_map) = lower_module_to_js(
                     &rewritten,
                     &m.resolved,
                     options.env,
@@ -1090,7 +1134,10 @@ impl ChunkBundler {
                     options.jsx_import_source.as_deref(),
                     &mut diagnostics,
                 );
-                body.push_str(&lowered);
+                if let Some(map) = lowered_map {
+                    module_maps.push((map, start_line));
+                }
+                body.push_str(&lowered_code);
                 if !body.ends_with('\n') {
                     body.push('\n');
                 }
@@ -1114,7 +1161,32 @@ impl ChunkBundler {
             };
             if options.sourcemap {
                 body.push_str(&format!("//# sourceMappingURL={}.map\n", b.file));
-                std::fs::write(options.out_dir.join(format!("{}.map", b.file)), "{}\n")
+                // V2-C06: a REAL chunk map, not the old `{}` stub (which was
+                // not a valid V3 document at all). The per-module compiler
+                // maps are stitched at their chunk line offsets; a minified
+                // chunk withholds the tokens (the in-house minifier moves
+                // positions it cannot describe) but still writes a valid,
+                // empty V3 document browsers accept.
+                let map_json = if options.minify || module_maps.is_empty() {
+                    sourcemap_compose::v3_from_toks(
+                        &[],
+                        Some(b.file.clone()),
+                        Vec::new(),
+                        Vec::new(),
+                    )
+                    .to_json_string()
+                } else {
+                    let maps = module_maps
+                        .into_iter()
+                        .map(|(m, offset)| (m.into_inner(), offset))
+                        .collect();
+                    let mut map =
+                        oxc_sourcemap::ConcatSourceMapBuilder::from_owned_sourcemaps(maps)
+                            .into_owned_sourcemap();
+                    map.set_file(&b.file);
+                    map.to_json_string()
+                };
+                std::fs::write(options.out_dir.join(format!("{}.map", b.file)), map_json)
                     .map_err(|e| io_err("sourcemap write failed", e))?;
             }
             std::fs::write(options.out_dir.join(&b.file), &body)
@@ -1433,7 +1505,7 @@ fn lower_module_to_js(
     build_secret: &str,
     jsx_import_source: Option<&str>,
     diagnostics: &mut Vec<Diagnostic>,
-) -> String {
+) -> (String, Option<oxc_sourcemap::OwnedSourceMap>) {
     let input = TransformInput {
         path: resolved.to_string_lossy().to_string(),
         code: code.to_string(),
@@ -1446,11 +1518,11 @@ fn lower_module_to_js(
     match OxcTransformer.transform(&input) {
         Ok(out) => {
             diagnostics.extend(out.diagnostics);
-            out.code
+            (out.code, out.map)
         }
         Err(e) => {
             diagnostics.push(*e.0);
-            code.to_string()
+            (code.to_string(), None)
         }
     }
 }
