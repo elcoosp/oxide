@@ -64,7 +64,15 @@ fn code_of<T>(r: oxide_fw_odf::Result<T>) -> String {
 fn row_list(rows: usize) -> Value {
     Value::Array(
         (0..rows)
-            .map(|k| obj(&[("i", n(k as f64)), ("name", s(&format!("row-{k}")))]))
+            .map(|k| {
+                obj(&[
+                    (
+                        "i",
+                        n(f64::from(u32::try_from(k).expect("row index fits u32"))),
+                    ),
+                    ("name", s(&format!("row-{k}"))),
+                ])
+            })
             .collect(),
     )
 }
@@ -399,7 +407,7 @@ fn apply_on_unchanged_ops_returns_the_base() {
 
 // ---------- property: apply(a, diff(a, b)) == b ----------
 
-/// JSON-ish leaves (NaN excluded: `Value::Number(f64)` PartialEq makes
+/// JSON-ish leaves (NaN excluded: `Value::Number(f64)` `PartialEq` makes
 /// `NaN != NaN`, so a NaN leaf would pin a Set that `apply` cannot re-equal).
 fn arb_leaf() -> impl Strategy<Value = Value> {
     prop_oneof![
@@ -680,7 +688,8 @@ fn a_2000_row_append_sends_a_patch_under_five_percent_of_the_full_payload() {
     let ops = diff(&oxide_fw_odf::decode(&full).expect("decodes"), &new_rows);
     assert_eq!(ops.len(), 1, "one append is exactly one Splice");
     let patch = encode_patch(&base_id(&full), &ops).expect("patch encodes");
-    let ratio = patch.len() as f64 / new_full.len() as f64;
+    let ratio = f64::from(u32::try_from(patch.len()).expect("sizes fit u32"))
+        / f64::from(u32::try_from(new_full.len()).expect("sizes fit u32"));
     assert!(
         ratio < 0.05,
         "patch is {ratio:.4} of the full payload ({} vs {} bytes) — over the 5% bound",
@@ -704,7 +713,7 @@ fn the_op_cap_constant_matches_the_spec_bound() {
 fn an_empty_diff_still_round_trips_as_a_tiny_patch() {
     let v = obj(&[("a", n(1.0))]);
     let ops = diff(&v, &v);
-    assert!(ops.is_empty());
+    assert_eq!(ops, [] as [Op; 0]);
     let full = oxide_fw_odf::encode(&v).expect("encodes");
     let patch = encode_patch(&base_id(&full), &ops).expect("encodes");
     let (b, got) = decode_patch(&patch).expect("decodes");
