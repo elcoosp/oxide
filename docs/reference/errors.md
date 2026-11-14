@@ -25,6 +25,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `AST-I18N` | MessageFormat parse failed: {} | — |
 | `AST-I18N-ARG` | MessageFormat: a value is missing for a placeholder argument | Pass a `values` entry for every placeholder in the message template |
 | `AST-I18N-TYPE` | MessageFormat: a placeholder value has the wrong type | Pass the value type the template expects (string, number or date) |
+| `AST-ISL-001` | the island manifest side-car is not the expected `{ file: { interactive, reasons } }` JSON map: {e} | Rebuild (the build rewrites `.oxide/island-manifest.json`), or delete the stale side-car when the auto-islands gate is off |
 | `AST-IDX` | index serialization failed: {e} | — |
 | `AST-IMG` | failed to decode source image: {e} | — |
 | `AST-JOBS` | the image encoder panicked: {join} | inspect the encoder diagnostic; the next request retries the encode |
