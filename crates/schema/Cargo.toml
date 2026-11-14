@@ -10,7 +10,6 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
-homepage.workspace = true
 
 [dependencies]
 serde = { workspace = true }
