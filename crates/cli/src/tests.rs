@@ -8329,8 +8329,11 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
         Some("react"),
         None,
         env!("CARGO_PKG_VERSION"),
+        None,
+        oxide_fw_compiler::native::Backend::Auto,
     )
-    .await;
+    .await
+    .unwrap();
 
     // Normalize keys so the bundler's resolver-form lookups hit.
     let precompiled: std::collections::BTreeMap<std::path::PathBuf, String> = precompiled
