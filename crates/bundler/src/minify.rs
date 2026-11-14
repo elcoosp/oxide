@@ -167,7 +167,17 @@ pub fn minify(src: &str) -> String {
         }
     }
     flush_line(&mut out, &mut line, false);
-    String::from_utf8(out).unwrap_or_default()
+    match String::from_utf8(out) {
+        Ok(minified) => minified,
+        // Unreachable by construction — the pass copies the input's own
+        // bytes (a valid UTF-8 `&str`) and inserts ASCII structure, so the
+        // output is UTF-8 too. A silent empty minified bundle would be the
+        // worst failure mode, so degrade to the source loudly instead.
+        Err(_) => {
+            tracing::warn!("the JS minifier produced invalid UTF-8; serving the unminified source");
+            src.to_string()
+        }
+    }
 }
 
 #[cfg(test)]
