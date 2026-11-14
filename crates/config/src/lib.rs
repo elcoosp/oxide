@@ -952,6 +952,18 @@ pub struct FrameworkConfig {
     /// `<Island component="Counter" chunk="Counter">` — the `chunk` prop is
     /// an *island id* (a key into this map), not a runtime URL.
     pub islands: std::collections::BTreeMap<String, crate::islands::IslandSpec>,
+    /// V2-F02: the auto-islands gate. When `true`, the build runs the
+    /// compiler's interactivity scan (`oxide_fw_compiler::interactivity`)
+    /// over the client tree, writes the `.oxide/island-manifest.json`
+    /// side-car and hydrates exactly the components the scanner found
+    /// interactive — an explicit `islands` registration always wins, and
+    /// a pure classification is the only skip. Default `false` (the
+    /// spec's own default: "a wrong inference silently breaks
+    /// interactivity, so the default is to defer"). Inert at the wiring
+    /// until the CLI adoption lands (the RFN-002 pattern the
+    /// `search`/`deploy` keys used).
+    #[serde(default)]
+    pub auto_islands: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
