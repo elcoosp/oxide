@@ -20,6 +20,8 @@ mod extract;
 mod refusal;
 pub mod schema;
 
+pub mod islands;
+pub use islands::{IslandSpec, island_framework};
 pub use refusal::{FeatureReport, ProjectFacts};
 
 /// Test-only wrapper around the minimal-config extractor. Production code
@@ -949,7 +951,7 @@ pub struct FrameworkConfig {
     /// with the framework adapter's `hydrateIsland`. A page writes
     /// `<Island component="Counter" chunk="Counter">` — the `chunk` prop is
     /// an *island id* (a key into this map), not a runtime URL.
-    pub islands: std::collections::BTreeMap<String, String>,
+    pub islands: std::collections::BTreeMap<String, crate::islands::IslandSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
