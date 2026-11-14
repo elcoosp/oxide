@@ -39,10 +39,11 @@ pub(crate) fn validate_bigint(s: &str) -> bool {
 }
 
 /// Map a wire kind byte onto a typed-array kind. The byte is the declaration
-/// ordinal of [`TypedArrayKind`] (0 = I8 … 10 = BigUint64), little-endian
+/// ordinal of [`TypedArrayKind`] (0 = I8 … 10 = `BigUint64`), little-endian
 /// element order on the wire for all multi-byte kinds.
 impl TypedArrayKind {
     /// Size of one element in bytes (spec §9.5 "typed arrays").
+    #[must_use]
     pub fn element_size(self) -> usize {
         match self {
             TypedArrayKind::I8 | TypedArrayKind::U8 | TypedArrayKind::U8Clamped => 1,
@@ -79,44 +80,25 @@ impl TypedArrayKind {
 ///
 /// Iterative over an explicit stack (§17.1): comparing hostile `MAX_DEPTH`-deep
 /// values must not overflow the host thread's stack.
+#[must_use]
 pub fn bitexact_eq(a: &Value, b: &Value) -> bool {
+    /// A non-container: its derived `PartialEq` already compares bit-exactly
+    /// (every payload field is an exact type — no `f64` field anywhere), so
+    /// same-variant leaves need no per-type arm here.
+    fn is_leaf(v: &Value) -> bool {
+        !matches!(
+            v,
+            Value::Array(_) | Value::Object(_) | Value::Map(_) | Value::Set(_)
+        )
+    }
+
     let mut stack: Vec<(&Value, &Value)> = vec![(a, b)];
     while let Some((x, y)) = stack.pop() {
         match (x, y) {
-            (Value::Null, Value::Null) => {}
-            (Value::Undefined, Value::Undefined) => {}
-            (Value::Bool(u), Value::Bool(v)) => {
-                if u != v {
-                    return false;
-                }
-            }
+            // The one leaf whose `PartialEq` is value-, not bit-, equality:
+            // `NaN == NaN` must hold (same payload) and `0.0 != -0.0`.
             (Value::Number(u), Value::Number(v)) => {
                 if u.to_bits() != v.to_bits() {
-                    return false;
-                }
-            }
-            (Value::BigInt(u), Value::BigInt(v)) => {
-                if u != v {
-                    return false;
-                }
-            }
-            (Value::String(u), Value::String(v)) => {
-                if u != v {
-                    return false;
-                }
-            }
-            (Value::Date(u), Value::Date(v)) => {
-                if u != v {
-                    return false;
-                }
-            }
-            (Value::Url(u), Value::Url(v)) => {
-                if u != v {
-                    return false;
-                }
-            }
-            (Value::RegExp(s1, f1), Value::RegExp(s2, f2)) => {
-                if s1 != s2 || f1 != f2 {
                     return false;
                 }
             }
@@ -146,34 +128,15 @@ pub fn bitexact_eq(a: &Value, b: &Value) -> bool {
                     stack.push((v1, v2));
                 }
             }
-            (Value::TypedArray(k1, d1), Value::TypedArray(k2, d2)) => {
-                if k1 != k2 || d1 != d2 {
-                    return false;
-                }
-            }
-            (
-                Value::Error {
-                    name: n1,
-                    message: m1,
-                    stack: s1,
-                },
-                Value::Error {
-                    name: n2,
-                    message: m2,
-                    stack: s2,
-                },
-            ) => {
-                if n1 != n2 || m1 != m2 || s1 != s2 {
-                    return false;
-                }
-            }
-            (Value::Ref(u), Value::Ref(v)) => {
-                if u != v {
-                    return false;
-                }
-            }
-            (Value::Deferred { id: u }, Value::Deferred { id: v }) => {
-                if u != v {
+            // Same-variant leaves (Null, Undefined, Bool, BigInt, String,
+            // Date, Url, RegExp, TypedArray, Error, Ref, Deferred): the
+            // derived `PartialEq` IS the bit-exact comparison.
+            (x, y)
+                if std::mem::discriminant(x) == std::mem::discriminant(y)
+                    && is_leaf(x)
+                    && is_leaf(y) =>
+            {
+                if x != y {
                     return false;
                 }
             }
@@ -194,6 +157,20 @@ pub(crate) fn write_varu(out: &mut Vec<u8>, mut v: u32) {
         }
         out.push(b | 0x80);
     }
+}
+
+/// Append one length prefix: a host `usize` that does not fit the wire's
+/// `u32` varuint is refused with `ODF-SIZE` instead of silently truncating
+/// (a truncated length would desynchronize the payload, not just shrink it).
+pub(crate) fn write_len(out: &mut Vec<u8>, len: usize) -> Result<()> {
+    let n = u32::try_from(len).map_err(|_| {
+        err(
+            "ODF-SIZE",
+            format!("length prefix {len} exceeds the u32 wire limit"),
+        )
+    })?;
+    write_varu(out, n);
+    Ok(())
 }
 
 /// Sequential reader over a payload slice. All multi-byte scalars are
@@ -235,7 +212,9 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn i64_le(&mut self) -> Result<i64> {
-        Ok(self.u64_le()? as i64)
+        let mut b = [0u8; 8];
+        b.copy_from_slice(self.take(8)?);
+        Ok(i64::from_le_bytes(b))
     }
 
     /// LEB128 varuint, at most 5 bytes for a `u32`. Overlong or overflowing
@@ -253,7 +232,7 @@ impl<'a> Reader<'a> {
                     return Err(err("ODF-TAG", "varuint overflows u32"));
                 }
             }
-            result |= ((b & 0x7F) as u32) << shift;
+            result |= u32::from(b & 0x7F) << shift;
             if b & 0x80 == 0 {
                 return Ok(result);
             }
@@ -358,7 +337,10 @@ mod tests {
             TypedArrayKind::BigUint64,
         ];
         for (i, k) in all.iter().enumerate() {
-            assert_eq!(TypedArrayKind::from_byte(i as u8), Some(*k));
+            assert_eq!(
+                TypedArrayKind::from_byte(u8::try_from(i).expect("kind ordinal fits u8")),
+                Some(*k)
+            );
         }
         assert_eq!(TypedArrayKind::from_byte(11), None);
         assert_eq!(TypedArrayKind::U8.element_size(), 1);
