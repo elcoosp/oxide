@@ -1,4 +1,4 @@
-//! The migrate-planner walkthrough (§V2-E03): the committed SvelteKit
+//! The migrate-planner walkthrough (§V2-E03): the committed `SvelteKit`
 //! fixture project is planned (the dry run's data — renames, rewrites,
 //! config keys, manual notes), printed in the order the `oxide migrate`
 //! command will print it, then applied to a TEMPDIR COPY of the fixture
