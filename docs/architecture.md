@@ -23,7 +23,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `graph` | Demand-driven incremental engine, early cutoff (§5.1), tracked inputs (§5.2), CAS (blake3+redb+zstd, §5.4), cancellation (§5.6), RemoteCache trait | §5, D6 |
 | `config` | Typed config, layering (defaults→preset→file→mode→env→CLI), env files, `PUBLIC_` split, static extraction with V8 fallback flag, typo diagnostics, `live` transport knobs + DSP-111 (§V2-F05), `experiments` + DSP-110 (§V2-F04), `stream.resume` bounds + DSP-112 (§V2-F07), `brownout` thresholds + DSP-113 (§V2-F12), `interactionReplay` + DSP-114 (§V2-F03), `search` key + the §18 refusal arm (§V2-F09), `prefetch` + DSP-115 (§V2-F13), `deploy` + CFG-DEPLOY (V2-F10), `record` + CFG-REC (V2-F15), `offline` + CFG-OFFLINE (V2-F14) | §14, D14, V2-F03, V2-F04, V2-F05, V2-F07, V2-F09, V2-F12, V2-F13, V2-F14 |
 | `cache` | L0/L1/L2 tiers, weighted LRU memory tier, redb disk tier, tags, TTL/SWR/stale-if-error, single-flight, build seeding, HTTP conditional semantics, canonical `build_id_of_dist` (A04) | §11, V2-A04 |
-| `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection, why-dynamic reason engine (`infer_reasons`, §V2-F16); the V2-E03 migrate planner substrate (`migrate`: the spec-verbatim `MigrationPlan` data model, the object-safe `MigrationPlanner` seam with the SvelteKit/Next/Nuxt/Vite planners, `detect_framework`, `apply_plan` — the collision pre-check, the renames, the span-surgery import rewrites) | §6.2–6.4, §9, V2-F16, V2-E03 |
+| `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection, why-dynamic reason engine (`infer_reasons`, §V2-F16); the V2-F02 auto-islands inference substrate (`interactivity`: the spec-verbatim `scan_interactivity` per-framework detection, the `{ file: { interactive, reasons } }` manifest (`IslandManifest`, the `.oxide/island-manifest.json` side-car contract, `AST-ISL-001`), the transitive same-project import fixpoint and the `hydrates` decision — explicit wins, pure is the only skip); the V2-E03 migrate planner substrate (`migrate`: the spec-verbatim `MigrationPlan` data model, the object-safe `MigrationPlanner` seam with the SvelteKit/Next/Nuxt/Vite planners, `detect_framework`, `apply_plan` — the collision pre-check, the renames, the span-surgery import rewrites) | §6.2–6.4, §9, V2-F16, V2-F02, V2-E03 |
 | `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests; the V2-E04 SRI pass (`sri_digest`/`integrity_map` — the chunk path digests the bytes in hand, the rolldown path reads the persisted files back) recording `client.manifest.json`'s `integrity: { file: value }`; the strict re-digest walk (`verify_integrity_map`) and the adapter-level head producer (`head::HeadProducer`/`ManifestHeadProducer`, the manifest→modulepreload/stylesheet projection); the V2-F14 PWA worker emitter (`pwa`: the object-safe `ShellSource` seam over the prerendered route shells, the pure `plan_precache` fold over the typed `sw:`/`offline:` keys — the build-id-versioned cache name, the deduped byte-sorted precache list per the `offline.precache` breadth's own docs, the resolved offline fallback — the deterministic `sw_source` render and the `dist/sw.js` emission) | §6.4, §16.6, V2-E04, V2-F14 |
 | `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
@@ -408,6 +408,19 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   written by `oxide routes`/`oxide build` (never the rkyv archive the hot
   path reads). Codemods (`--fix`) are deferred — see
   `docs/deviations.md`.
+
+- **`compiler` + `config`**: the auto-islands inference substrate
+  (V2-F02) — `compiler::interactivity` (`scan_interactivity`, the
+  spec-verbatim direct detection per framework with the conservative
+  arms pointing the safe direction: unparsed classifies interactive,
+  missing data hydrates), the `{ file: { interactive, reasons } }`
+  manifest (`IslandManifest`, the `.oxide/island-manifest.json` side-car
+  contract with the typed `AST-ISL-001` refusal), the transitive
+  same-project import fixpoint (relative specifiers only) and the
+  `hydrates` decision (an explicit registry entry always wins, a pure
+  classification is the only skip). The typed `framework.autoIslands`
+  gate is inert at the wiring until the CLI call-site lands (scan →
+  side-car → registry merge) — see `docs/deviations.md`.
 
 - **`config` + `render` + `cli` + `jshost`**: the F03 Rust config
   surface — `interactionReplay` boolean key with DSP-114 validation, the
