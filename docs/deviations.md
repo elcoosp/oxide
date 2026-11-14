@@ -2826,3 +2826,101 @@ F11's `releases/` layout, promote on `cmd_dev` reload, the 30 s expiry
 task, the F12 brownout trigger calling `evict_oldest()`) and the
 `tests/skew.sh` e2e — A01-phase-3 slices on a V8-capable host; the
 config key is the face they read.
+
+## V2-E12 — the workspace-links substrate (feat/workspace-links-substrate, 2026-11-14)
+
+**What lands.** E12's dev-side substrate — `crates/dev/src/workspace.rs`,
+V8-free end to end:
+
+- the injectable `WorkspaceLinks` seam with the production
+  `ManifestWorkspaceLinks`: the nearest workspace manifest above the app
+  (`pnpm-workspace.yaml`'s `packages:` block or flow list — parsed
+  glob-lite, no YAML dependency — or `package.json` `workspaces`, the
+  npm/yarn classic shape) owns the candidate set; the link set is the
+  candidates the app actually declares as dependencies, resolved through
+  `oxc_resolver` with its symlink-resolving defaults (the spec's
+  `preserveSymlinks: false`), so `LinkedPackage::real_root` is the REAL
+  package tree and never the `node_modules` link;
+- the watcher wire-up: `Watcher::with_workspace_links(roots, links,
+  app_root)` extends the watch set with each link's `watch_root` (the
+  package's `src/` when present, else the package root), deduplicated —
+  the spec's "add those real paths to the watcher roots" (§13: an edit to
+  `../packages/ui/src` invalidates the app, and unrelated siblings are
+  not watched the way the coarse SPEC-16 sibling walk watches them);
+- `real_path` — the package-edge bridge the importers-graph harvest runs
+  per resolved node: a `node_modules`-arrived path canonicalizes onto the
+  real tree so graph nodes and watcher events agree and the boundary
+  planner (§V2-E01) walks across the package edge;
+- the error contract: a workspace manifest that exists but does not parse
+  the two supported shapes refuses loudly (`DEV-WS-001`, registry row +
+  reference page row, the fix naming both shapes and the install remedy);
+  an uninstalled dependency skips with a warn (the install has not run —
+  fatal would be wrong); a broken candidate package.json skips with a
+  warn (a broken sibling must not kill the dev boot).
+
+11 TDD pins (`tests/workspace_tdd.rs`: the real-root pin through a
+`node_modules` symlink, the watcher-roots pin, the non-workspace and
+undeclared-dependency negatives, the candidate-glob isolation, the
+uninstalled-dep skip, the loud `DEV-WS-001`, the deterministic order, the
+`real_path` bridge and the `package.json`-workspaces shape), the
+`workspace_links` criterion group (discovery over an 8/16-package
+workspace ≈ 99/153 µs, the `real_path` probe) and the
+`workspace_links` walkthrough example ride along; the crate README lists
+the seam. `oxc_resolver` rides the pinned workspace version — no new dep.
+
+**Deltas.** None against the spec text; the discovery is glob-lite on
+purpose (literal segments and one-segment `*` — the shapes the spec's
+fixture and this repo's own `pnpm-workspace.yaml` use), documented in the
+module header.
+
+**To unclose.** The CLI adoption — `cmd_dev` replacing the coarse
+SPEC-16 sibling walk with `Watcher::with_workspace_links`, the importers
+harvest bridging package edges through `real_path`, and the two build-path
+halves (`--filter` and the package-name+content-hash CAS key) — all
+A01-phase-3 slices on a V8-capable host; the seam is the face they call.
+
+## V2-A02 tail — the odf pedantic pass and the manifest drift (feat/workspace-links-substrate, 2026-11-14)
+
+**What lands.** The recorded "next crate-owned hygiene pass" (the
+V2-A02 root-Cargo.toml note: "the remaining V8-free crates adopt pedantic
+in a dedicated hygiene pass"):
+
+- `oxide-fw-odf` adopts `[lints] workspace = true` (the `warnings =
+  "deny"` + `pedantic` policy) and is clean under
+  `cargo clippy -p oxide-fw-odf --all-targets --all-features -- -D
+  warnings` — the ~75 pre-existing pedantic findings fixed by
+  construction, not suppressed: the wire length prefixes encode through a
+  checked `write_len` (`ODF-SIZE` on a `usize` that does not fit the
+  wire's `u32` — a truncated length would desynchronize the payload, not
+  just shrink it), `i64_le` decodes through `i64::from_le_bytes`, the
+  `to_json` integral bridge converts through the guard-bounded decimal
+  parse (std has no fallible `f64`→`i64`; the guard bounds |n| ≤ 2^53
+  where `f64` Display prints exact integer digits), the missing `# Errors`
+  / `# Panics` rustdoc sections exist, the long wire-table functions split
+  (`read_record`/`open_container`, `write_typed_array`/`write_error`, the
+  fixture tables into section builders — byte-identical output, pinned by
+  the golden tests), `bitexact_eq`'s twelve per-type leaf arms collapse to
+  one guarded arm (derived `PartialEq` IS bit-exact for every non-Number
+  leaf; `Number` keeps its bits arm), and the test/bench casts convert
+  through `try_from` with the invariant named;
+- the manifest drift the toolchain flagged repo-wide: the unused
+  `workspace.package.description` field (every member ships its own
+  literal description) and the `homepage.workspace = true` inheritance on
+  every member (redundant with `repository` since cargo 1.100's
+  `redundant_homepage` lint) — both removed, root and 20 members;
+- `oxide-fw-dev`'s unused `oxide-fw-graph` and `rustls` dependencies
+  dropped (the toolchain's `unused_dependencies` lint named them);
+- the JS minifier's silent `unwrap_or_default()` on `String::from_utf8`
+  (`crates/bundler/src/minify.rs`) — a silent empty minified bundle was
+  the worst failure mode — now degrades to the unminified source loudly.
+
+**Why no `match_same_arms` exception.** A crate-local `[lints.clippy]`
+allow cannot survive the command-line `-W clippy::pedantic` sweep (the
+CLI lint level overrides crate tables), so the remaining cross-type
+identical-body pairs are restructured instead of allowed: the repo's
+zero-`#[allow]` rule holds with no new exceptions anywhere.
+
+**To unclose.** The remaining non-opted V8-free crates (server, bundler,
+assets, cache, graph, plugin, core-wasm, dev, cli) — each is its own
+recorded pass in the same shape; `server` alone carries ~480 findings.
+The `missing [lints]` manifest advisories name them on every build.
