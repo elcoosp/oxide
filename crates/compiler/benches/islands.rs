@@ -10,10 +10,12 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use oxide_fw_compiler::islands::{ResolvedIsland, plan_island_boot};
 
 fn registry(n: usize, mixed: bool) -> std::collections::BTreeMap<String, ResolvedIsland> {
-    let frameworks = if mixed {
-        ["vue", "solid", "svelte", "react"]
+    // `&[&str]` (not bare arrays): the two arms have different lengths,
+    // which no array type unifies — the bench did not compile before.
+    let frameworks: &[&str] = if mixed {
+        &["vue", "solid", "svelte", "react"]
     } else {
-        ["react"]
+        &["react"]
     };
     (0..n)
         .map(|i| {
@@ -33,17 +35,25 @@ fn bench_islands(c: &mut Criterion) {
     c.bench_function("island_boot_plan_single_8", |b| {
         b.iter(|| {
             let plan = plan_island_boot("react", black_box(&registry(8, false)));
-            black_box(plan.boot_entry_source(Path::new("/proj"), &Default::default(), false))
-        })
+            black_box(plan.boot_entry_source(
+                Path::new("/proj"),
+                &std::collections::BTreeMap::default(),
+                false,
+            ));
+        });
     });
     c.bench_function("island_boot_plan_mixed_32", |b| {
         b.iter(|| {
             let plan = plan_island_boot("react", black_box(&registry(32, true)));
             black_box((
-                plan.boot_entry_source(Path::new("/proj"), &Default::default(), false),
+                plan.boot_entry_source(
+                    Path::new("/proj"),
+                    &std::collections::BTreeMap::default(),
+                    false,
+                ),
                 plan.islands_json(),
-            ))
-        })
+            ));
+        });
     });
 }
 
