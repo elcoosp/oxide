@@ -5282,6 +5282,7 @@ dependencies = [
  "oxc_resolver",
  "oxc_sourcemap",
  "oxide-fw-compiler",
+ "oxide-fw-config",
  "oxide-fw-diagnostics",
  "oxide-fw-graph",
  "rolldown",
