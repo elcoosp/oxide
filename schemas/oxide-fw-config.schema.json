@@ -262,6 +262,24 @@
       },
       "type": "object"
     },
+    "deploy": {
+      "additionalProperties": false,
+      "description": "V2-F10/F11: the deploy machinery's knobs. Inert at the wiring until the F10 CLI adoption lands (booting the serving pools from dist/ + the F11 releases/ layout, the promote-on-reload, the 30 s expiry task, the F12 brownout trigger); the engine-side default stays the plumbing default and this section is its config face. A window literal that does not parse, a zero window or a zero generation count fails the load (CFG-DEPLOY).",
+      "properties": {
+        "generations": {
+          "default": 3,
+          "description": "How many past generations stay roll-back-able (the F11 releases/ retention; the spec's N=3 default). CFG-DEPLOY refuses zero.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "skewWindow": {
+          "default": "15m",
+          "description": "How long a demoted generation keeps serving after the promote — the duration grammar <n>s|m|h|d, plain integers are seconds ('15m' is the spec default). Parsed by parse_duration_secs and validated at load (CFG-DEPLOY); a zero window is refused.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "dev": {
       "additionalProperties": true,
       "description": "§13.5: dev-server options (https, host, qr, open, proxy).",
@@ -602,6 +620,32 @@
       },
       "type": "object"
     },
+    "llms": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "V2-E07: emit dist/llms.txt (title, summary, the included routes with their meta descriptions) and dist/llms-full.txt (the routes' text from the content collections, Markdown) at build. Default false: neither file is written. A bad include pattern fails the load (CFG-LLMS).",
+          "type": "boolean"
+        },
+        "include": {
+          "description": "Route patterns the files cover — glob-lite: ** matches any run of segments, * within one segment ('/docs/**' = every /docs page). Empty means every prerendered page.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "description": "The blockquote summary under the title.",
+          "type": "string"
+        },
+        "title": {
+          "description": "The llms.txt H1 title. Defaults to the site name (the siteUrl host or the project directory name) when omitted.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "manifest": {
       "additionalProperties": true,
       "description": "§16.3: web app manifest (PWA). Present -> oxide build emits manifest.webmanifest + a service worker.",
@@ -670,6 +714,44 @@
         }
       },
       "type": "object"
+    },
+    "record": {
+      "anyOf": [
+        {
+          "description": "`record: false` records nothing — the default (recording is opt-in).",
+          "enum": [
+            false
+          ],
+          "type": "boolean"
+        },
+        {
+          "description": "'all' captures every request; 'errors' captures failed (5xx) requests.",
+          "enum": [
+            "all",
+            "errors"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "onError": {
+              "default": true,
+              "description": "Capture 5xx responses regardless of the sample roll.",
+              "type": "boolean"
+            },
+            "sample": {
+              "default": 0.001,
+              "description": "The fraction of healthy traffic captured (the caller rolls one uniform sample per request; the decision stays pure).",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "description": "V2-F15: the request recorder (the record-and-replay substrate). false (the default) records nothing; 'all' captures every request, 'errors' captures failed (5xx) requests, and { sample, onError } is the prod sampling shape. The key is inert at the wiring until the CLI's record/replay adoption lands. A bad spelling, an out-of-range sample or a wrong-typed knob fails the load (CFG-REC)."
     },
     "render": {
       "additionalProperties": false,
