@@ -2603,3 +2603,10 @@ the pool call stay inside the per-job pass, exactly the spec's
 **To unclose.** C01's CLI adoption (native compilers plugging in at
 `compile_one` with `width = available_parallelism()`) consumes the same
 engine unchanged.
+
+
+## V2-E07 deltas (feat/llms-mcp-registry)
+
+- **`replay.run` is not in the MCP registry.** The spec's tool list includes `replay.run` (F15 record-and-replay), but F15 is still `todo` in Appendix V2.O — a tool with no backing capability would be a stub. The registry ships the seven tools with real sources today; `replay.run` joins when F15 lands.
+- **`llms-full.txt` reads the prerendered page text, not the content collections.** The spec's source is "route text content from content collections, Markdown", but `content.collections` carries no collection→route-URL mapping today, so a collection entry cannot be attached to its route honestly. The emission walks the prerendered pages (the sitemap's own ground truth) and extracts the visible text (script/style stripped) instead.
+- **`-W pedantic` vs `-W clippy::pedantic`.** clippy 1.100 refuses the bare `pedantic` spelling under `-D warnings` (renamed-and-removed-lints); the gate runs `-W clippy::pedantic` (the same lint group).
