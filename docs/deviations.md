@@ -3157,3 +3157,81 @@ A01 phase-3 wiring on a V8-capable host). The `MixedIslands` capability
 row is unaffected; the spike's 15%-JS-saving measurement runs after the
 call-site lands (the scanner is deterministic and V8-free — the build-time
 side of the spike is done).
+
+## V2-C01 tail + C03/C04/C05/C10 + C11 — the Wave C batch (2026-11-14)
+
+**What landed.** The C01 tail (the CLI adoption): `compile_one` consults
+`NativeRegistry::pick` ahead of the pool branch on `spawn_blocking` (the
+registry rides an `Arc`, cloned into the blocking closure — no
+`unsafe`), `PrecompileKey::tool_version` folds `cas_tool_version()`
+(`native:{id}@{version}` — D40) for the native arm, the build
+fingerprint folds the `framework.compilerBackend` selection
+(`build_cache::compiler_backend_hint` — the `OXIDE_COMPILER_BACKEND`
+env layer the file walk cannot see), `oxide doctor` prints one
+`native compiler <id> <version> ok|unhealthy` line per registry entry
+and fails when `compilerBackend: 'native'` has nothing compiled in, and
+`CMP-NAT-001` refuses end-to-end (`precompile_entries` fails the build
+under the `native` hard request instead of degrading to the pool). C03
+(`verter_core` 0.0.1-beta.1 behind `native-vue`), C04 (`svelte-compiler`
+0.1.4 behind `native-svelte`) and C05 (`oxc_react_compiler` 0.143.0
+behind `native-react-compiler`) landed as native backends with spike
+tests, criterion groups and the `scripts/compiler-equiv.sh` gate. C11
+landed `check.typecheck` (typed, schema'd, `CFG-CHECK`, KNOWN_KEYS,
+regenerated schema), `oxide fmt [--check]` (oxfmt → biome format → loud
+SKIPPED, `OXIDE_CHECK_STRICT=1` fails), `resolve_tool` (node_modules/.bin
+→ PATH), the doctor tool inventory and the fake-executable test suite.
+
+**Spec deltas (recorded, not silent).**
+
+1. **The brief's §0a voids D27, so C02 is killed where the spec sketches
+   vendoring.** `docs/decisions/C02-solid-kill.md`: the crate does not
+   exist on crates.io and the solidjs/solid monorepo carries zero
+   `Cargo.toml` — unpublished, unmirrored, nothing a `rev` can pin.
+2. **No feature flag without a backend behind it** (§0d): the brief's
+   C01 bullet asked for all four forwarded features; only the three
+   landed backends' features exist (`native-vue`, `native-svelte`,
+   `native-react-compiler`) — a `native-solid` flag with no code
+   reading it is a gate failure, not scaffolding.
+3. **`precompile_entries` returns `Result` now** (additive): the
+   `native` hard request must fail the build (`CMP-NAT-001`), while
+   `auto`/`node` keep the §6.3 best-effort warn-and-skip per file.
+4. **`verter_span` is lockfile-pinned to 0.0.1-beta.1**: the published
+   beta line is internally skewed (beta.6 builds against oxc_span 0.151,
+   verter_core beta.1 against 0.117 — 101 errors in the published
+   pair); the `--precise` pin unifies 0.117. A workspace
+   `[dependencies]` entry cannot override a transitive requirement.
+5. **C05's oxc skew rides package-renamed aliases** (`oxc_parser_0_143`
+   et al.): one `[dependencies]` table cannot carry the same crate
+   twice, and the workspace's 0.155 stays the transform's stack. The
+   string-in/string-out seam is what makes the two majors coexist.
+6. **C10 is spiked-killed** (`docs/decisions/C10-mdx-kill.md`): the
+   candidate emits a JSX module — adapter neutrality (the spec's own
+   condition (a)) fails for the Vue/Svelte adapters. No code change.
+7. **The dev server's `dev_component_sources` stays pool-only** for
+   now (the C01 seam's build-path adoption; the file list the WP owns
+   does not include the dev-shim wiring) — recorded so the gap is
+   explicit.
+8. **Baseline repair (pre-existing breakage at the starting commit,
+   not WP work, all recorded):** nine stale `oxide_fw_rustfn` imports
+   in `crates/cli/src/lib.rs` (the crate is `oxide-rustfn`); the
+   islands migration left `generate_island_boot_entry` on
+   `BTreeMap<String, String>` while callers pass the typed
+   `IslandSpec` registry, and the `islands_json_source` helper the
+   call site references was never added (added: it resolves each
+   entry through `island_framework` and delegates to
+   `plan_island_boot(..).islands_json()`); two discovery-test
+   fixtures wrote files into directories that did not exist and
+   imported components with wrong relative paths (the walk is
+   import-driven — the fixtures now import what they assert on).
+9. **The typecheck-tool runner is a helper** (`run_tool`) so the fake
+   executables can drive the OK/FAILED outcomes without a real
+   toolchain on PATH; the `OXIDE_COMPILER_BACKEND` arm of
+   `compiler_backend_hint` is pinned by the config suite instead of a
+   mutating test (edition-2024 `set_var` is unsafe and parallel tests
+   race env reads).
+
+**To unclose.** The equivalence harness's Playwright leg (the island
+click spec) runs in CI's jshost-e2e (browsers installed); the cold-build
+≥3× acceptance number needs the release build with the features on a
+dedicated machine — the criterion groups carry the per-backend
+compile-time shape meanwhile.
