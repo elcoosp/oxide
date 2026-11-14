@@ -50,6 +50,36 @@ warnings = "deny"
 pedantic = { level = "warn", priority = -1 }
 
 [workspace.dependencies]
+# V2-C03 (§V2-C03 spike): the native Vue SFC compiler — crates.io latest
+# (0.0.1-beta.1, 2026-03-16; the upstream artifact of the verter project).
+# Pins its own oxc 0.117 stack; the NativeCompiler seam is string-in /
+# string-out, so the skew never shares a type boundary (§0b(3) is about
+# shared public types — there are none across this seam).
+verter_core = "0.0.1-beta.1"
+# The published 0.0.1-beta line is internally skewed: verter_core
+# beta.1 compiles against oxc_span 0.117 while its sibling
+# `verter_span ^0.0.1-beta.1` resolves to beta.6 (built against oxc_span
+# 0.151) — 101 type-mismatch errors in the published pair. Pinning the
+# sibling to the matching beta.1 unifies the oxc_span versions. The
+# pin lives in Cargo.lock (cargo update -p verter_span --precise
+# 0.0.1-beta.1) — a workspace [dependencies] entry cannot override a
+# transitive requirement.
+# V2-C04 (§V2-C04 spike): the native Svelte compiler — crates.io latest
+# (0.1.4, 2026-03-16). Same string-boundary rule: it pins oxc 0.118.
+svelte-compiler = "0.1.4"
+# V2-C05 (§V2-C05 spike): the React Compiler port — crates.io latest
+# (0.143.0, 2026-08-03; fresh). It pins the oxc 0.143 stack while the
+# workspace transforms ride oxc 0.155; the seam hands it source text and
+# takes emitted text back (parse with its own parser, compile, print).
+oxc_react_compiler = "0.143.0"
+# V2-C10 (§V2-C10 MDX spike): the probe's dev-dependency — the decision is
+# adapter neutrality, and the spike test is the only consumer. If the
+# decision is `keep`, the runtime dep lands in the assets crate behind its
+# own feature; if `kill`, this line is the one thing left so the next
+# agent can re-run `crates/assets/tests/mdx_native_spike.rs` after a dep
+# bump. (snapfire_fsr_mdx 0.2.3, 2026-11-09 — fresh; pins oxc 0.155,
+# matching the workspace.)
+snapfire_fsr_mdx = "0.2.3"
 # Internal crates (spec §23)
 oxide-fw-diagnostics = { path = "crates/diagnostics" }
 oxide-fw-odf = { path = "crates/odf" }
