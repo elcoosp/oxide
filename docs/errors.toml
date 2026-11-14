@@ -257,6 +257,10 @@ message = "read {}: {e}"
 message = "the `llms` section carries a bad knob: {msg}"
 fix = "fix the `llms` section — `enabled` is the unquoted boolean master switch and `include` an array of absolute site-path patterns like `/docs/**`"
 
+[CFG-OFFLINE]
+message = "the `offline` section carries a bad knob: {msg}"
+fix = "spell the section `offline: { enabled: true, precache: 'routes', outbox: true }` — `precache` is `'routes'` (the shell + prerendered routes) or `'all'` (every hashed asset)"
+
 [CFG-REC]
 message = "the `record` key is `false`, `'all'`, `'errors'` or `{ sample, onError }`"
 fix = "spell the key `record: false`, `record: 'all'`, `record: 'errors'` or `record: { sample: 0.001, onError: true }`"
@@ -391,6 +395,10 @@ fix = "Set `interactionReplay` to the unquoted boolean `true` or `false`"
 message = "invalid `prefetch` section (a non-boolean `learned`, or a `minProbability` outside 0.0-1.0)"
 fix = "Fix the `prefetch` section"
 
+[DSP-116]
+message = "the idempotency store refused `{key}`: {detail}"
+fix = "Check the store backend's availability — the stage degrades loud-then-run, so the request itself is unaffected"
+
 [EDGE-101]
 message = "routes manifest must be an array of route rows or {\"routes\": [...]} (router typegen §8.3)"
 
@@ -521,6 +529,18 @@ message = "tokio rt: {e}"
 
 [JSH-V8KIND]
 message = "V8 backend incompatible with the server code (JSH-V8KIND)"
+
+[MIG-DETECT]
+message = "no migratable framework detected in {root} (the signature surface: package.json dependency names, next.config.*, nuxt.config.*, svelte.config.js with `kit`)"
+fix = "Point `oxide migrate` at the project root, or migrate by hand — supported: sveltekit, next, nuxt, vite"
+
+[MIG-IO]
+message = "{what}: {e}"
+fix = "Check the path's permissions and re-run `oxide migrate`"
+
+[MIG-TARGET]
+message = "rename target {to} already exists; the migration would overwrite it"
+fix = "Resolve the collision (the source is {from}), or apply in a clean git tree"
 
 [NOT-FOUND]
 message = "JSH-ACTION"
