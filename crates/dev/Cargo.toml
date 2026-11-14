@@ -9,11 +9,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }
-oxide-fw-graph = { workspace = true }
 notify = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -21,13 +19,16 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 # Content-hash confirmation for the watcher (§5.5, D6) — workspace-pinned, no new dep.
 blake3 = { workspace = true }
-rustls = { workspace = true }
 local-ip-address = { workspace = true }
 qrcode = { workspace = true }
 rcgen = { workspace = true }
 # V2-E01: `hmr_boundary` spans on the planner (§V2-E01) — workspace-pinned,
 # no new dep.
 tracing = { workspace = true }
+# V2-E12: the workspace-links seam resolves linked packages to their REAL
+# trees (symlink-resolving defaults, the spec's `preserveSymlinks: false`)
+# — the pinned workspace version the bundler/jshost resolvers already use.
+oxc_resolver = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -60,6 +61,15 @@ required-features = ["bench-util"]
 # batches 1/16/64, the full-reload clear path, the verdict's own serde).
 [[bench]]
 name = "state"
+harness = false
+required-features = ["bench-util"]
+
+# V2-E12: criterion bench for the workspace-links seam — the discovery pass
+# the dev boot runs once (glob expansion over the workspace + the resolver
+# work per linked dependency) and the real-path probe the graph harvest
+# runs per node.
+[[bench]]
+name = "workspace"
 harness = false
 required-features = ["bench-util"]
 
