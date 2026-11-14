@@ -30,7 +30,10 @@ pub struct HookTransformHandler {
 #[async_trait::async_trait]
 impl oxide_fw_jshost::TransformHandler for HookTransformHandler {
     async fn transform(&self, id: &str, source: &str) -> oxide_fw_diagnostics::Result<String> {
-        self.hook.call(id, source)
+        // V2-C06: the hook now returns code + optional map; the dev
+        // transform contract serves code only (the dev wire has no map
+        // field), so this keeps the code half.
+        self.hook.call_code(id, source)
     }
 }
 
