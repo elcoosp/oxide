@@ -54,9 +54,13 @@ export function resolveForeign(
           const attrs = m[1] + m[2]
           const get = (k: string) => new RegExp(k + "='([^']*)'").exec(attrs)?.[1] ?? ''
           const html = await render(get('data-ox-fw'), get('data-ox-island'), get('data-ox-props'))
-          // The pending flag rides the captured attrs; strip it before
-          // the splice (the resolved island is no longer pending).
-          const resolved = attrs.replace(/\s*data-ox-pending='1'\s*/, ' ')
+          // The pending flag sat BETWEEN the two captured sides — the
+          // match consumed it, so the splice collapses the seam it left
+          // behind (the before-side's trailing space against the
+          // after-side's leading space) into the single separator the
+          // resolved island carries. A pending flag that rode inside a
+          // captured side is stripped too.
+          const resolved = `${m[1].trimEnd()} ${m[2].trimStart()}`.replace(/\s*data-ox-pending='1'\s*/, ' ')
           parts.push('<ox-island' + resolved + '>' + html + '</ox-island>')
           last = m.index + m[0].length
         }
