@@ -55,10 +55,10 @@ struct SignupHandler {
 }
 
 impl SignupHandler {
-    async fn run(&self) -> Result<ExecutedResponse, OxideError> {
+    fn run(&self) -> ExecutedResponse {
         let run = self.runs.fetch_add(1, Ordering::SeqCst) + 1;
         println!("    handler run #{run} (the insert)");
-        Ok(ExecutedResponse {
+        ExecutedResponse {
             status: 201,
             headers: vec![
                 ("content-type".to_string(), "application/json".to_string()),
@@ -68,8 +68,32 @@ impl SignupHandler {
                 ),
             ],
             body: br#"{"created":true}"#.to_vec(),
-        })
+        }
     }
+}
+
+/// The 5xx handler: a failing submit is never pinned, so the next
+/// flush really retries (the count is the story).
+struct FlakyHandler {
+    runs: AtomicUsize,
+}
+
+impl FlakyHandler {
+    fn run(&self) -> ExecutedResponse {
+        let run = self.runs.fetch_add(1, Ordering::SeqCst) + 1;
+        ExecutedResponse {
+            status: 503,
+            headers: Vec::new(),
+            body: format!("unavailable (run {run})").into_bytes(),
+        }
+    }
+}
+
+/// The caller-side adapter: the stage's closure returns a future of
+/// `Result`, and the double's body is synchronous (always succeeds —
+/// the 503 status IS the response).
+fn flaky_run(handler: &FlakyHandler) -> ExecutedResponse {
+    handler.run()
 }
 
 fn main() {
@@ -86,9 +110,11 @@ fn main() {
         // `x-oxide-idem: submit-1`; connectivity is back, the flush
         // replays it.
         println!("=== first submit (the outbox flush replays the queued action)");
-        let first = stage_idempotency(&store, Some("submit-1"), || handler.run())
-            .await
-            .expect("the first submit runs");
+        let first = stage_idempotency(&store, Some("submit-1"), || {
+            std::future::ready(Ok(handler.run()))
+        })
+        .await
+        .expect("the first submit runs");
         let IdempotencyVerdict::Executed(response) = first else {
             panic!("the first submit executes");
         };
@@ -101,9 +127,11 @@ fn main() {
         // lost). The stage answers from the store — the handler never
         // runs, so the signup inserts exactly once.
         println!("=== the retry (same idempotency key, the ack was lost)");
-        let second = stage_idempotency(&store, Some("submit-1"), || handler.run())
-            .await
-            .expect("the replay is answered");
+        let second = stage_idempotency(&store, Some("submit-1"), || {
+            std::future::ready(Ok(handler.run()))
+        })
+        .await
+        .expect("the replay is answered");
         let IdempotencyVerdict::Replayed(replayed) = second else {
             panic!("the retry replays from the store");
         };
@@ -124,26 +152,15 @@ fn main() {
         // The 5xx rule: a failing submit is never pinned, so the next
         // flush really retries.
         println!("=== a 5xx submit (the server never pins the failure)");
-        struct FlakyHandler {
-            runs: AtomicUsize,
-        }
-        impl FlakyHandler {
-            async fn run(&self) -> Result<ExecutedResponse, OxideError> {
-                let run = self.runs.fetch_add(1, Ordering::SeqCst) + 1;
-                Ok(ExecutedResponse {
-                    status: 503,
-                    headers: Vec::new(),
-                    body: format!("unavailable (run {run})").into_bytes(),
-                })
-            }
-        }
         let flaky = Arc::new(FlakyHandler {
             runs: AtomicUsize::new(0),
         });
         for _ in 0..2 {
-            stage_idempotency(&store, Some("flaky"), || flaky.run())
-                .await
-                .expect("the flaky submits run");
+            stage_idempotency(&store, Some("flaky"), || {
+                std::future::ready(Ok(flaky_run(&flaky)))
+            })
+            .await
+            .expect("the flaky submits run");
         }
         println!(
             "    the handler ran {} time(s) — the 5xx was not stored, the retry really ran",
