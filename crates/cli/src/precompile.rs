@@ -14,6 +14,7 @@
 
 use crate::precompile_cache::{PrecompileCache, PrecompileKey};
 use anyhow::Context;
+use oxide_fw_compiler::native::{Backend, CompileRequest, Generate, NativeRegistry};
 use oxide_fw_compiler::precompile_engine::{PrecompileJob, compile_jobs, width_for};
 use oxide_fw_jshost::{CallInput, EntryRef, Pool};
 use serde_json::json;
@@ -347,14 +348,77 @@ fn discover_jobs(
 /// consulted first (the CAS short-circuit), then the kind dispatch over
 /// the existing pool compilers. `mdx` keeps its optional shape: a compile
 /// that yields no JS adds no row (`Ok(None)`).
+///
+/// §V2-C01 tail: when a native registry is supplied, `pick` is consulted
+/// **ahead of the pool branch** for the three SFC kinds (`solid`, `vue`,
+/// `svelte` — `mdx` has no native backend yet, C10). A pick under
+/// [`Backend::Native`] that finds no healthy backend refuses with
+/// `CMP-NAT-001`; the refusal is propagated so the build fails — `native`
+/// is the config author's hard request, and a silent pool fallback would
+/// defeat it (D26). `auto`/`node` never surface a registry error.
 async fn compile_one(
     pool: &Arc<dyn Pool>,
+    native: Option<&Arc<NativeRegistry>>,
+    backend: Backend,
     job: &PrecompileJob,
     svelte_generate: &str,
     cache: Option<&PrecompileCache>,
     tool_version: &str,
 ) -> anyhow::Result<Option<String>> {
     let PrecompileJob { path, kind, source } = job;
+    // The D40 tool-version fold: a native pick keys its artifacts under
+    // `native:{id}@{version}`, the pool under the CLI's version string —
+    // switching `compilerBackend` never reuses a stale artifact.
+    if !matches!(*kind, "mdx")
+        && let Some(reg) = native
+    {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        match reg.pick(kind, ext, backend) {
+            Ok(Some(compiler)) => {
+                let native_tool_version = oxide_fw_compiler::native::cas_tool_version(compiler);
+                let key = cache_key_for(path, source, kind, svelte_generate, &native_tool_version);
+                let reg = Arc::clone(reg);
+                let kind = *kind;
+                let ext = ext.to_string();
+                let path = path.clone();
+                let source = source.to_string();
+                let generate = if svelte_generate == "ssr" {
+                    Generate::Ssr
+                } else {
+                    Generate::Dom
+                };
+                return cached_compile(cache, key, || async move {
+                    // The compile is synchronous and CPU bound: the registry
+                    // is held in an `Arc`, cloned into the blocking closure,
+                    // and `pick` runs INSIDE it so the borrowed backend
+                    // reference never has to be `'static` (the C01 note —
+                    // no `unsafe`).
+                    tokio::task::spawn_blocking(move || {
+                        let picked = reg
+                            .pick(kind, &ext, backend)
+                            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("native backend vanished mid-compile")
+                            })?;
+                        picked
+                            .compile(&CompileRequest {
+                                path: &path,
+                                source: &source,
+                                generate,
+                                dev: false,
+                            })
+                            .map(|o| o.js)
+                            .map_err(|e| anyhow::anyhow!("{} {}", e.0.code, e.0.message))
+                    })
+                    .await?
+                })
+                .await
+                .map(Some);
+            }
+            Ok(None) => { /* no healthy native backend — the pool compiles */ }
+            Err(e) => return Err(anyhow::anyhow!("{} {}", e.0.code, e.0.message)),
+        }
+    }
     match *kind {
         "solid" => {
             let ssr = svelte_generate == "ssr";
@@ -404,6 +468,14 @@ async fn compile_one(
 /// `pool.stats().workers * 2`; the output map is deterministic (input
 /// order folded into the BTreeMap) and the pass stays best-effort per
 /// file (§6.3): a compile failure warns and drops its own row only.
+///
+/// §V2-C01 tail: `native` is the compiled-in registry the per-file
+/// `pick` consults ahead of the pool (`None` — the C01 default tree —
+/// skips the native arm entirely), and `backend` is the resolved
+/// `framework.compilerBackend`. Best-effort stays the rule for
+/// `auto`/`node`; under `native` a registry refusal (`CMP-NAT-001`) is
+/// the build's failure — the config author asked for the native path,
+/// and a silent fallback would defeat the hard request.
 pub async fn precompile_entries(
     pool: Option<&Arc<dyn Pool>>,
     entries: &BTreeMap<String, PathBuf>,
@@ -411,16 +483,33 @@ pub async fn precompile_entries(
     framework: Option<&str>,
     cache: Option<&PrecompileCache>,
     tool_version: &str,
-) -> BTreeMap<PathBuf, String> {
+    native: Option<Arc<NativeRegistry>>,
+    backend: Backend,
+) -> anyhow::Result<BTreeMap<PathBuf, String>> {
     let Some(pool) = pool else {
-        return BTreeMap::new();
+        return Ok(BTreeMap::new());
     };
     let jobs = discover_jobs(entries, framework);
     let width = width_for(pool.stats().workers);
     let pool_ref = Arc::clone(pool);
+    // Copy the borrow out first: the registry is only ever read through
+    // the `Arc`, and a `&Arc` is `Copy` so the per-job closures capture it
+    // without moving the caller's handle.
+    let native_ref = native.as_ref();
     let results = compile_jobs(jobs, width, |job| {
         let pool = Arc::clone(&pool_ref);
-        async move { compile_one(&pool, &job, svelte_generate, cache, tool_version).await }
+        async move {
+            compile_one(
+                &pool,
+                native_ref,
+                backend,
+                &job,
+                svelte_generate,
+                cache,
+                tool_version,
+            )
+            .await
+        }
     })
     .await;
     let mut out = BTreeMap::new();
@@ -437,15 +526,22 @@ pub async fn precompile_entries(
             }
             Ok(None) => { /* an mdx file that compiles to nothing adds no row */ }
             Err(e) => {
+                // The `native` hard request: the registry's `CMP-NAT-001`
+                // refusal fails the build instead of degrading to the
+                // pool. Every other error stays the §6.3 best-effort skip.
+                if backend == Backend::Native {
+                    return Err(e);
+                }
                 tracing::warn!(path = %path.display(), error = %e, "framework precompile failed");
             }
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
 mod bug_mapkey_tests {
+
     //! BUG-MAPKEY: `resolve_relative` produces the precompiled-map keys. The
     //! historical failure: the lexical join kept the specifier's `..`
     //! segments, the bundler resolved the same import to the normalized path,
@@ -552,9 +648,12 @@ mod discovery_tests {
         )
         .unwrap();
         let page = root.join("src/routes/index/page.vue");
+        // `fs::write` does not create parents — the `index` route dir must
+        // exist first (the pre-existing pins wrote straight into it).
+        std::fs::create_dir_all(page.parent().unwrap()).unwrap();
         std::fs::write(
             &page,
-            "<script>import '../components/outer.svelte';</script><template><p/></template>",
+            "<script>import '../../components/outer.svelte';</script><template><p/></template>",
         )
         .unwrap();
         page
@@ -580,7 +679,16 @@ mod discovery_tests {
         let root = tmp.path();
         std::fs::create_dir_all(root.join("src/routes")).unwrap();
         std::fs::create_dir_all(root.join("src/components")).unwrap();
-        std::fs::write(root.join("src/routes/index/page.vue"), "<template />").unwrap();
+        // `fs::write` does not create parents — the `index` route dir
+        // must exist before the page lands in it.
+        std::fs::create_dir_all(root.join("src/routes/index")).unwrap();
+        // The components are only discovered when the entry REACHES them (the
+        // walk is import-driven), so the page imports both fixtures.
+        std::fs::write(
+            root.join("src/routes/index/page.vue"),
+            "<script>import '../../components/a.svelte';import '../../components/b.mdx';</script><template />",
+        )
+        .unwrap();
         std::fs::write(root.join("src/components/a.svelte"), "<p/>").unwrap();
         std::fs::write(root.join("src/components/b.mdx"), "# x").unwrap();
         std::fs::write(root.join("src/components/plain.ts"), "export {}").unwrap();
@@ -641,5 +749,245 @@ mod discovery_tests {
         paths.sort();
         paths.dedup();
         assert_eq!(paths.len(), first.len(), "no duplicate jobs");
+    }
+}
+
+#[cfg(test)]
+mod native_pick_tests {
+    //! §V2-C01 tail pins: the CLI's `compile_one` consults the registry
+    //! ahead of the pool branch, folds the D40 tool version into the CAS
+    //! key (`native:{id}@{version}` — a backend upgrade or a
+    //! `compilerBackend` flip re-compiles instead of reusing the pool's
+    //! artifact), and the `native` hard request refuses end-to-end with
+    //! `CMP-NAT-001` instead of silently degrading to the pool.
+
+    use super::*;
+    use bytes::Bytes;
+    use oxide_fw_compiler::native::{CompileOutput, NativeCompiler};
+    use oxide_fw_jshost::{CallStream, PoolConfig, ScriptedPool};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A healthy fake Vue backend: the emitted JS carries the request so
+    /// the plumbing pins can tell a native compile from a pool compile,
+    /// and every real compile bumps the shared counter (the cache-hit
+    /// pins read it: a cache hit must NOT re-compile).
+    struct FakeVueNative {
+        id: &'static str,
+        version: &'static str,
+        compile_calls: Arc<AtomicUsize>,
+    }
+
+    impl NativeCompiler for FakeVueNative {
+        fn framework(&self) -> &'static str {
+            "vue"
+        }
+        fn id(&self) -> &'static str {
+            self.id
+        }
+        fn version(&self) -> String {
+            self.version.to_string()
+        }
+        fn handles(&self, ext: &str) -> bool {
+            ext == "vue"
+        }
+        fn compile(&self, req: &CompileRequest<'_>) -> oxide_fw_compiler::Result<CompileOutput> {
+            self.compile_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(CompileOutput {
+                js: format!("native js for {}", req.source),
+                css: None,
+                warnings: Vec::new(),
+            })
+        }
+        fn health_fixture(&self) -> (&'static str, &'static str) {
+            ("fixture.vue", "<template />")
+        }
+    }
+
+    /// A scripted Node pool: every call answers `{"js": "pool js"}` and
+    /// bumps the shared counter, so a pin can prove the pool was (or was
+    /// not) consulted.
+    fn scripted_pool(calls: Arc<AtomicUsize>) -> Arc<dyn Pool> {
+        Arc::new(ScriptedPool::new(
+            Arc::new(move |_entry, _req| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(CallStream::Complete(Bytes::from(
+                    serde_json::json!({ "js": "pool js" }).to_string(),
+                )))
+            }),
+            PoolConfig::default(),
+        ))
+    }
+
+    /// One `.vue` entry under a temp root (the discovery walk reads it).
+    fn vue_entries(root: &Path) -> BTreeMap<String, PathBuf> {
+        let page = root.join("src/routes/index/page.vue");
+        std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+        std::fs::write(&page, "<template><p>hi</p></template>").unwrap();
+        let mut entries = BTreeMap::new();
+        entries.insert("routes/index".to_string(), page);
+        entries
+    }
+
+    #[tokio::test]
+    async fn native_pick_beats_the_pool_and_the_tool_version_folds_into_the_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entries = vue_entries(tmp.path());
+        let pool_calls = Arc::new(AtomicUsize::new(0));
+        let pool = scripted_pool(Arc::clone(&pool_calls));
+
+        let native_calls = Arc::new(AtomicUsize::new(0));
+        let mut reg = NativeRegistry::empty();
+        reg.register(Box::new(FakeVueNative {
+            id: "vue-native",
+            version: "0.1.2",
+            compile_calls: Arc::clone(&native_calls),
+        }));
+        let reg = Arc::new(reg);
+
+        // First run: the native backend compiles; the pool is never called.
+        let out = precompile_entries(
+            Some(&pool),
+            &entries,
+            "dom",
+            Some("vue"),
+            None,
+            "0.0.0-test",
+            Some(Arc::clone(&reg)),
+            Backend::Auto,
+        )
+        .await
+        .expect("native pick compiles");
+        assert_eq!(pool_calls.load(Ordering::SeqCst), 0, "pool not consulted");
+        // The fake counts the once-only health probe (the registry's
+        // `pick` compiles the fixture first) plus the real compile: 2.
+        assert_eq!(native_calls.load(Ordering::SeqCst), 2);
+        let js = out.values().next().expect("one compiled row");
+        assert!(js.contains("native js"), "the native output landed");
+
+        // Second run over the same warm CAS: the folded
+        // `native:vue-native@0.1.2` key hits; neither the backend nor the
+        // pool re-compiles.
+        let cache_dir = tempfile::tempdir().unwrap();
+        let cache = PrecompileCache::open_soft(cache_dir.path());
+        let out2 = precompile_entries(
+            Some(&pool),
+            &entries,
+            "dom",
+            Some("vue"),
+            cache.as_ref(),
+            "0.0.0-test",
+            Some(Arc::clone(&reg)),
+            Backend::Auto,
+        )
+        .await
+        .expect("second run compiles (cold cache)");
+        // Cold cache: the real compile again, but the health verdict is
+        // cached on the same registry instance — no new probe.
+        assert_eq!(native_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(pool_calls.load(Ordering::SeqCst), 0);
+        let js2 = out2.values().next().unwrap().clone();
+        let out3 = precompile_entries(
+            Some(&pool),
+            &entries,
+            "dom",
+            Some("vue"),
+            cache.as_ref(),
+            "0.0.0-test",
+            Some(Arc::clone(&reg)),
+            Backend::Auto,
+        )
+        .await
+        .expect("third run");
+        assert_eq!(
+            native_calls.load(Ordering::SeqCst),
+            3,
+            "the warm CAS hit — no re-compile"
+        );
+        assert_eq!(out3.values().next(), Some(&js2), "cached output reused");
+
+        // A backend VERSION bump changes the D40 tool version, so the key
+        // misses and the (new-version) backend re-compiles — a stale
+        // artifact from the old backend is never reused. The upgraded
+        // registry probes its own fixture first (1) then compiles (2).
+        let upgraded_calls = Arc::new(AtomicUsize::new(0));
+        let mut upgraded = NativeRegistry::empty();
+        upgraded.register(Box::new(FakeVueNative {
+            id: "vue-native",
+            version: "0.1.3",
+            compile_calls: Arc::clone(&upgraded_calls),
+        }));
+        precompile_entries(
+            Some(&pool),
+            &entries,
+            "dom",
+            Some("vue"),
+            cache.as_ref(),
+            "0.0.0-test",
+            Some(Arc::new(upgraded)),
+            Backend::Auto,
+        )
+        .await
+        .expect("upgraded backend compiles");
+        assert_eq!(
+            upgraded_calls.load(Ordering::SeqCst),
+            2,
+            "version bump ⇒ key miss ⇒ re-compile (plus the fresh instance's health probe)"
+        );
+        assert_eq!(pool_calls.load(Ordering::SeqCst), 0, "never the pool");
+    }
+
+    #[tokio::test]
+    async fn cmp_nat_001_refuses_end_to_end_under_native() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entries = vue_entries(tmp.path());
+        let pool_calls = Arc::new(AtomicUsize::new(0));
+        let pool = scripted_pool(Arc::clone(&pool_calls));
+        // The default build's registry: nothing compiled in.
+        let reg = Arc::new(NativeRegistry::from_enabled_features());
+        let e = precompile_entries(
+            Some(&pool),
+            &entries,
+            "dom",
+            Some("vue"),
+            None,
+            "0.0.0-test",
+            Some(Arc::clone(&reg)),
+            Backend::Native,
+        )
+        .await
+        .err()
+        .expect("`native` with no compiled-in backend fails the pass");
+        assert!(
+            e.to_string().contains("CMP-NAT-001"),
+            "the registry refusal surfaces end-to-end, got: {e}"
+        );
+        assert_eq!(
+            pool_calls.load(Ordering::SeqCst),
+            0,
+            "no silent pool fallback behind the author's hard request"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_without_a_backend_still_uses_the_pool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entries = vue_entries(tmp.path());
+        let pool_calls = Arc::new(AtomicUsize::new(0));
+        let pool = scripted_pool(Arc::clone(&pool_calls));
+        let reg = Arc::new(NativeRegistry::from_enabled_features());
+        let out = precompile_entries(
+            Some(&pool),
+            &entries,
+            "dom",
+            Some("vue"),
+            None,
+            "0.0.0-test",
+            Some(reg),
+            Backend::Auto,
+        )
+        .await
+        .expect("the pool compiles");
+        assert_eq!(out.values().next(), Some(&"pool js".to_string()));
+        assert_eq!(pool_calls.load(Ordering::SeqCst), 1);
     }
 }
