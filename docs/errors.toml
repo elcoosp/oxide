@@ -59,6 +59,10 @@ fix = "Pass a `values` entry for every placeholder in the message template"
 message = "MessageFormat: a placeholder value has the wrong type"
 fix = "Pass the value type the template expects (string, number or date)"
 
+[AST-ISL-001]
+message = "the island manifest side-car is not the expected `{ file: { interactive, reasons } }` JSON map: {e}"
+fix = "Rebuild (the build rewrites `.oxide/island-manifest.json`), or delete the stale side-car when the auto-islands gate is off"
+
 [AST-IDX]
 message = "index serialization failed: {e}"
 
