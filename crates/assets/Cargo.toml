@@ -49,6 +49,9 @@ tracing = { workspace = true }
 lol_html = { workspace = true }
 
 [dev-dependencies]
+# V2-C10 MDX spike probe (the ONLY consumer — see
+# crates/assets/tests/mdx_native_spike.rs and docs/decisions/C10-mdx-kill.md).
+snapfire_fsr_mdx = { workspace = true }
 tempfile = { workspace = true }
 # V2-C09: the image_jobs pins drive an async runtime (the lane + single-flight
 # behavior is only observable under concurrent tasks).
