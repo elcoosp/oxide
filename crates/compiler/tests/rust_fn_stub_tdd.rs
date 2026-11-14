@@ -48,7 +48,7 @@ fn stub_ids_match_the_server_ts_transform_for_the_same_triple() {
     let (code, _) =
         rust_fn_stub_source("src/thumb.server.rs", &["thumbnail"], Env::Client, "secret");
     let (ts_code, ts_stubs) = oxide_fw_compiler::transform_server_fn_stubs(
-        &format!("export const thumbnail = serverFn(async (i: number) => i);"),
+        "export const thumbnail = serverFn(async (i: number) => i);",
         "src/thumb.server.rs",
         Env::Client,
         "secret",
@@ -107,7 +107,7 @@ fn two_exports_produce_two_distinct_ids() {
 #[test]
 fn empty_exports_render_the_header_only() {
     let (code, stubs) = rust_fn_stub_source("src/empty.server.rs", &[], Env::Client, "s1");
-    assert!(stubs.is_empty());
+    assert_eq!(stubs.len(), 0);
     assert!(!code.contains("__oxide_call_fn"));
     assert!(!code.contains("import {"));
     assert!(
