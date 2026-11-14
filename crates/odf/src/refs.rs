@@ -21,6 +21,11 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Resolve `Value::Ref(i)` markers against the value's own virtual shared
 /// table (the i-th inline container in pre-order). Use
 /// [`resolve_refs_with`] for payloads decoded via [`crate::decode_with_shared`].
+///
+/// # Errors
+///
+/// `ODF-CYCLE` when the expansion unrolls a shared/acyclic structure past
+/// [`crate::MAX_DEPTH`]; `ODF-REF` when a `Ref` points outside the table.
 pub fn resolve_refs(value: &Value) -> Result<Value> {
     resolve_refs_with(value, &[])
 }
@@ -28,6 +33,11 @@ pub fn resolve_refs(value: &Value) -> Result<Value> {
 /// Resolve `Value::Ref(i)` markers where slots `0..shared.len()` refer to a
 /// pre-resolved shared table (as produced by [`crate::encode_with_shared`])
 /// and later slots refer to inline containers of `value` in pre-order.
+///
+/// # Errors
+///
+/// `ODF-CYCLE` when the expansion unrolls a shared/acyclic structure past
+/// [`crate::MAX_DEPTH`]; `ODF-REF` when a `Ref` points outside the table.
 pub fn resolve_refs_with(value: &Value, shared: &[Value]) -> Result<Value> {
     Resolver {
         shared,
@@ -161,7 +171,7 @@ impl<'a> Resolver<'a> {
                     return Err(Self::too_deep());
                 }
                 if strict {
-                    self.push_anon(stack, node, child_depth)?;
+                    Self::push_anon(stack, node, child_depth)?;
                 } else {
                     self.push_inline(stack, node, child_depth)?;
                 }
@@ -204,8 +214,9 @@ impl<'a> Resolver<'a> {
     }
 
     /// Push an interior container of a shared entry: no slot, strict depth
-    /// accounting, result used once and discarded.
-    fn push_anon(&mut self, stack: &mut Vec<Frame<'a>>, v: &'a Value, depth: u32) -> Result<()> {
+    /// accounting, result used once and discarded. No `self` — the frame
+    /// carries the slot kind, so the resolver state is untouched.
+    fn push_anon(stack: &mut Vec<Frame<'a>>, v: &'a Value, depth: u32) -> Result<()> {
         if depth > MAX_DEPTH {
             return Err(Self::too_deep());
         }
