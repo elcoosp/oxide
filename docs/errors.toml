@@ -243,11 +243,23 @@ fix = "set `images.avifSpeed` to a whole number in 1..=10 (the default is 6)"
 message = "`framework.compilerBackend` must be one of `auto`, `native`, `node` — got `{got}`"
 fix = "set `framework.compilerBackend` to `auto` (the default), `native` or `node`"
 
+[CFG-DEPLOY]
+message = "the `deploy` section carries a bad knob: {msg}"
+fix = "spell the section `deploy: { skewWindow: '15m', generations: 3 }` — the window grammar is `<n>s|m|h|d`, plain integers are seconds"
+
 [CFG-EXTENDS]
 message = "extends chain too deep at `{spec}` (cycle?)"
 
 [CFG-IO]
 message = "read {}: {e}"
+
+[CFG-LLMS]
+message = "the `llms` section carries a bad knob: {msg}"
+fix = "fix the `llms` section — `enabled` is the unquoted boolean master switch and `include` an array of absolute site-path patterns like `/docs/**`"
+
+[CFG-REC]
+message = "the `record` key is `false`, `'all'`, `'errors'` or `{ sample, onError }`"
+fix = "spell the key `record: false`, `record: 'all'`, `record: 'errors'` or `record: { sample: 0.001, onError: true }`"
 
 [CFG-SCHEMA]
 message = "serialize defaults: {e}"
@@ -637,7 +649,7 @@ message = "<Script> requires either a `src` or inline `content`"
 message = "render stream was not UTF-8: {e}"
 
 [RPL-001]
-message = "cannot write the record {}: {e}"
+message = "cannot write or load the record {}: {e}"
 fix = "check the project root's writability; a record id must be a single path-safe segment"
 
 [RPL-002]
@@ -651,6 +663,10 @@ fix = "Replay continues; results may differ"
 [RPL-004]
 message = "Replay exhausted the recorded non-deterministic sequence"
 fix = "Re-record; the replay observed more than the record captured"
+
+[RPL-005]
+message = "cannot load the record: schema version {} is not one this build reads (version 1)"
+fix = "re-record the request with the current build; the record schema changed"
 
 [RTR-001]
 message = "routes directory not found: {}"
