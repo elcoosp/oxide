@@ -10,8 +10,8 @@
 //! In-progress (ancestor) slots are skipped during the dedup scan: aliasing an
 //! ancestor would collapse distinct structure and lose information on resolve.
 
-use crate::wire::{tags, write_varu};
-use crate::{MAX_BYTES, MAX_DEPTH, MAX_REFS, Result, Value, err};
+use crate::wire::{tags, write_len, write_varu};
+use crate::{MAX_BYTES, MAX_DEPTH, MAX_REFS, Result, TypedArrayKind, Value, err};
 
 /// How many recently registered slots the dedup scan inspects. A fixed window
 /// keeps encoding linear and deterministic; duplicates further apart are
@@ -49,7 +49,7 @@ pub(crate) fn encode_with_preamble(root: &Value, shared: &[(u32, Value)]) -> Res
         active: vec![false; n],
     };
     enc.out.extend_from_slice(&crate::MAGIC);
-    write_varu(&mut enc.out, n as u32);
+    write_len(&mut enc.out, n)?;
 
     // preamble: pre-resolved shared entries, written verbatim (their internal
     // containers occupy no slots; refs inside entries must target 0..n).
@@ -95,7 +95,7 @@ impl Encoder {
             return Ok(());
         }
         let mut stack: Vec<EFrame<'_>> = Vec::new();
-        self.push_frame(&mut stack, root, depth, register)?;
+        self.push_frame(&mut stack, root, depth, register);
         while stack.last().is_some() {
             let next = stack.last_mut().expect("just checked").advance();
             let Some((child, key)) = next else {
@@ -116,12 +116,12 @@ impl Encoder {
                         format!("reserved object key `{k}` (§17.1: use a Map for data-level keys)"),
                     ));
                 }
-                write_varu(&mut self.out, k.len() as u32);
+                write_len(&mut self.out, k.len())?;
                 self.out.extend_from_slice(k.as_bytes());
             }
-            let child_depth = stack.last().map(|f| f.depth + 1).unwrap_or(1);
+            let child_depth = stack.last().map_or(1, |f| f.depth + 1);
             if self.visit(child, child_depth, register)? {
-                self.push_frame(&mut stack, child, child_depth, register)?;
+                self.push_frame(&mut stack, child, child_depth, register);
             }
         }
         Ok(())
@@ -163,7 +163,7 @@ impl Encoder {
                 continue; // never alias an in-progress ancestor
             }
             if crate::bitexact_eq(&self.table[slot], v) {
-                self.write_ref(slot as u32)?;
+                self.write_ref(u32::try_from(slot).expect("slot is bounded by MAX_REFS"));
                 return Ok(Some(true));
             }
         }
@@ -189,7 +189,7 @@ impl Encoder {
         v: &'a Value,
         depth: u32,
         register: bool,
-    ) -> Result<()> {
+    ) {
         // `register` trees number this container as the latest slot (the
         // dedup step just pushed it); preamble trees occupy no slots.
         let slot_to_close = if register {
@@ -198,7 +198,6 @@ impl Encoder {
             None
         };
         stack.push(EFrame::for_value(v, depth, slot_to_close));
-        Ok(())
     }
 
     /// Write a container's tag + entry count. Children follow from the
@@ -207,29 +206,28 @@ impl Encoder {
         match v {
             Value::Array(items) => {
                 self.out.push(tags::ARRAY);
-                write_varu(&mut self.out, items.len() as u32);
+                write_len(&mut self.out, items.len())?;
             }
             Value::Set(items) => {
                 self.out.push(tags::SET);
-                write_varu(&mut self.out, items.len() as u32);
+                write_len(&mut self.out, items.len())?;
             }
             Value::Object(map) => {
                 self.out.push(tags::OBJECT);
-                write_varu(&mut self.out, map.len() as u32);
+                write_len(&mut self.out, map.len())?;
             }
             Value::Map(pairs) => {
                 self.out.push(tags::MAP);
-                write_varu(&mut self.out, pairs.len() as u32);
+                write_len(&mut self.out, pairs.len())?;
             }
             other => unreachable!("write_header called on {other:?}"),
         }
         Ok(())
     }
 
-    fn write_ref(&mut self, slot: u32) -> Result<()> {
+    fn write_ref(&mut self, slot: u32) {
         self.out.push(tags::REF);
         write_varu(&mut self.out, slot);
-        Ok(())
     }
 
     /// Non-container payload (primitives, leaves, refs, deferred).
@@ -239,7 +237,7 @@ impl Encoder {
             Value::Undefined => self.out.push(tags::UNDEFINED),
             Value::Bool(b) => {
                 self.out.push(tags::BOOL);
-                self.out.push(*b as u8);
+                self.out.push(u8::from(*b));
             }
             Value::Number(x) => {
                 self.out.push(tags::NUMBER);
@@ -253,12 +251,12 @@ impl Encoder {
                     ));
                 }
                 self.out.push(tags::BIGINT);
-                write_varu(&mut self.out, s.len() as u32);
+                write_len(&mut self.out, s.len())?;
                 self.out.extend_from_slice(s.as_bytes());
             }
             Value::String(s) => {
                 self.out.push(tags::STRING);
-                write_varu(&mut self.out, s.len() as u32);
+                write_len(&mut self.out, s.len())?;
                 self.out.extend_from_slice(s.as_bytes());
             }
             Value::Date(ms) => {
@@ -267,52 +265,22 @@ impl Encoder {
             }
             Value::Url(s) => {
                 self.out.push(tags::URL);
-                write_varu(&mut self.out, s.len() as u32);
+                write_len(&mut self.out, s.len())?;
                 self.out.extend_from_slice(s.as_bytes());
             }
             Value::RegExp(source, flags) => {
                 self.out.push(tags::REGEXP);
-                write_varu(&mut self.out, source.len() as u32);
+                write_len(&mut self.out, source.len())?;
                 self.out.extend_from_slice(source.as_bytes());
-                write_varu(&mut self.out, flags.len() as u32);
+                write_len(&mut self.out, flags.len())?;
                 self.out.extend_from_slice(flags.as_bytes());
             }
-            Value::TypedArray(kind, data) => {
-                let size = kind.element_size();
-                if data.len() % size != 0 {
-                    return Err(err(
-                        "ODF-TAG",
-                        format!(
-                            "typed array payload length {} is not a multiple of the {}-byte element size",
-                            data.len(),
-                            size
-                        ),
-                    ));
-                }
-                self.out.push(tags::TYPED_ARRAY);
-                self.out.push(*kind as u8);
-                write_varu(&mut self.out, data.len() as u32);
-                self.out.extend_from_slice(data);
-            }
+            Value::TypedArray(kind, data) => self.write_typed_array(*kind, data)?,
             Value::Error {
                 name,
                 message,
                 stack,
-            } => {
-                self.out.push(tags::ERROR);
-                write_varu(&mut self.out, name.len() as u32);
-                self.out.extend_from_slice(name.as_bytes());
-                write_varu(&mut self.out, message.len() as u32);
-                self.out.extend_from_slice(message.as_bytes());
-                match stack {
-                    Some(s) => {
-                        self.out.push(1);
-                        write_varu(&mut self.out, s.len() as u32);
-                        self.out.extend_from_slice(s.as_bytes());
-                    }
-                    None => self.out.push(0),
-                }
-            }
+            } => self.write_error(name, message, stack.as_deref())?,
             Value::Ref(i) => {
                 if *i == u32::MAX {
                     return Err(err(
@@ -329,7 +297,7 @@ impl Encoder {
                         ),
                     ));
                 }
-                self.write_ref(*i)?;
+                self.write_ref(*i);
             }
             Value::Deferred { id } => {
                 self.out.push(tags::DEFERRED);
@@ -339,6 +307,45 @@ impl Encoder {
             Value::Array(_) | Value::Object(_) | Value::Map(_) | Value::Set(_) => {
                 unreachable!("write_leaf called on a container")
             }
+        }
+        Ok(())
+    }
+
+    /// The typed-array record: kind byte, then the length-prefixed payload.
+    fn write_typed_array(&mut self, kind: TypedArrayKind, data: &[u8]) -> Result<()> {
+        let size = kind.element_size();
+        if !data.len().is_multiple_of(size) {
+            return Err(err(
+                "ODF-TAG",
+                format!(
+                    "typed array payload length {} is not a multiple of the {}-byte element size",
+                    data.len(),
+                    size
+                ),
+            ));
+        }
+        self.out.push(tags::TYPED_ARRAY);
+        self.out.push(kind as u8);
+        write_len(&mut self.out, data.len())?;
+        self.out.extend_from_slice(data);
+        Ok(())
+    }
+
+    /// The error record: name, message, and the optional stack (flagged by
+    /// one byte so the absent case is distinguishable from empty).
+    fn write_error(&mut self, name: &str, message: &str, stack: Option<&str>) -> Result<()> {
+        self.out.push(tags::ERROR);
+        write_len(&mut self.out, name.len())?;
+        self.out.extend_from_slice(name.as_bytes());
+        write_len(&mut self.out, message.len())?;
+        self.out.extend_from_slice(message.as_bytes());
+        match stack {
+            Some(s) => {
+                self.out.push(1);
+                write_len(&mut self.out, s.len())?;
+                self.out.extend_from_slice(s.as_bytes());
+            }
+            None => self.out.push(0),
         }
         Ok(())
     }
