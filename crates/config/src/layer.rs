@@ -52,6 +52,7 @@ const KNOWN_KEYS: &[&str] = &[
     "search",
     "interactionReplay",
     "prefetch",
+    "llms",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -436,6 +437,13 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     if let Some(v) = map.get("prefetch") {
         validate_prefetch(v)?;
     }
+    // V2-E07: the `llms` knobs get the same raw-`Value` treatment —
+    // `enabled` a real boolean, `title`/`summary` strings, and every
+    // `include` pattern an absolute route path (starts with '/') with only
+    // the documented glob characters in it (CFG-LLMS names the offender).
+    if let Some(v) = map.get("llms") {
+        validate_llms(v)?;
+    }
     // V2-C01: the compiler-backend switch (D26) gets the same raw-`Value`
     // treatment — a bad `compilerBackend` spelling names the three valid
     // modes (CFG-BACKEND) instead of a bare serde type error at the typed
@@ -786,6 +794,74 @@ fn dsp_115(msg: &str) -> OxideError {
     d.fix = Some(
         "fix the `prefetch` section — `learned` is the unquoted boolean master switch \
          and `minProbability` a number between 0.0 and 1.0 (default 0.35)"
+            .into(),
+    );
+    OxideError(Box::new(d))
+}
+
+/// V2-E07: the `llms` knobs are bounds-validated at load (the DSP-115
+/// pattern, CFG code): `enabled` must be a real boolean, `title`/`summary`
+/// strings, and every `include` pattern an absolute route path — starts
+/// with `/`, and only the documented glob characters (`*`, `**`) beyond
+/// path text. The emission walks the prerendered route list, so a pattern
+/// like `docs/**` (missing the leading slash) would silently match nothing.
+fn validate_llms(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Ok(()); // not an object — the typed parse reports the shape
+    };
+    if let Some(enabled) = map.get("enabled")
+        && !enabled.is_boolean()
+    {
+        return Err(cfg_llms(&format!(
+            "`llms.enabled` must be a boolean (true or false) — got {enabled}. The flag \
+             switches the dist/llms.txt + dist/llms-full.txt emission on; quoting it \
+             (\"true\") or passing a number (0/1) does not"
+        )));
+    }
+    for key in ["title", "summary"] {
+        if let Some(v) = map.get(key)
+            && !v.is_string()
+        {
+            return Err(cfg_llms(&format!(
+                "`llms.{key}` must be a string — got {v}"
+            )));
+        }
+    }
+    if let Some(include) = map.get("include") {
+        let Some(patterns) = include.as_array() else {
+            return Err(cfg_llms(&format!(
+                "`llms.include` must be an array of route patterns — got {include}"
+            )));
+        };
+        for p in patterns {
+            let Some(pat) = p.as_str() else {
+                return Err(cfg_llms(&format!(
+                    "`llms.include` entries must be strings — got {p}"
+                )));
+            };
+            if !pat.starts_with('/') {
+                return Err(cfg_llms(&format!(
+                    "`llms.include` pattern `{pat}` must start with `/` — the patterns are \
+                     site paths matched against the prerendered route list"
+                )));
+            }
+            if pat.contains("**/") && pat.replace("**/", "").contains("**") {
+                return Err(cfg_llms(&format!(
+                    "`llms.include` pattern `{pat}` has more than one `**` run — one \
+                     any-segments glob per pattern is the documented shape"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `CFG-LLMS` diagnostic for an invalid `llms` section (V2-E07).
+fn cfg_llms(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("CFG-LLMS", msg);
+    d.fix = Some(
+        "fix the `llms` section — `enabled` is the unquoted boolean master switch and \
+         `include` an array of absolute site-path patterns like `/docs/**`"
             .into(),
     );
     OxideError(Box::new(d))
