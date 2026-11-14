@@ -440,7 +440,7 @@ fn transform_hook_runs_before_the_compiler_passes() {
     // for a module the plugin does not recognise.
     let seen_ids = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let seen_ids_for_hook = Arc::clone(&seen_ids);
-    let hook = TransformHook::new(move |id: &str, source: &str| {
+    let hook = TransformHook::new_code(move |id: &str, source: &str| {
         seen_ids_for_hook.lock().unwrap().push(id.to_string());
         calls_for_hook.fetch_add(1, Ordering::SeqCst);
         if source.contains("ORIGINAL") {
@@ -497,7 +497,7 @@ fn transform_hook_error_does_not_fail_the_build() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "src/index.js", "export const a = 1;\n");
 
-    let hook = TransformHook::new(|_id: &str, _source: &str| {
+    let hook = TransformHook::new_code(|_id: &str, _source: &str| {
         Err(oxide_fw_bundler::err(
             "PLG-TEST",
             "simulated plugin failure",
@@ -510,6 +510,68 @@ fn transform_hook_error_does_not_fail_the_build() {
         .bundle(&o)
         .expect("a plugin error must not fail the bundle");
     assert!(!out.chunks.is_empty(), "the chunk is still emitted");
+}
+
+#[test]
+fn rolldown_banner_plugin_map_survives_to_the_emitted_chunk_map() {
+    // V2-C06 acceptance: a plugin that prepends a banner line yields a final
+    // `.map` whose first original-code token still points at line 1 of the
+    // source file (asserted by decoding the emitted `.map`). The hook is a
+    // Rust closure returning the same `{ code, map }` shape the JS plugin
+    // protocol carries, so no engine is needed.
+    use oxide_fw_bundler::sourcemap_compose::{Tok, parse_v3, toks_of, v3_from_toks};
+
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "src/index.js",
+        "export const a = 1;\nexport const b = 2;\n",
+    );
+
+    let tok = |gen_line: u32, gen_col: u32, src_line: u32, src_col: u32| Tok {
+        gen_line,
+        gen_col,
+        src: 0,
+        src_line,
+        src_col,
+    };
+    // The banner shifts every original line down by one; the plugin's map
+    // says exactly that (its `sources` name the module it rewrote).
+    let plugin_map = v3_from_toks(
+        &[tok(1, 0, 0, 0), tok(2, 0, 0, 1)],
+        Some("index.js".to_string()),
+        vec!["src/index.js".to_string()],
+        Vec::new(),
+    )
+    .to_json_string();
+
+    let hook = TransformHook::new(move |_id: &str, source: &str| {
+        Ok(oxide_fw_bundler::TransformOutput {
+            code: format!("/* OXIDE-BANNER */\n{source}"),
+            map: Some(plugin_map.clone()),
+        })
+    });
+    let mut o = opts(dir.path(), BundleEnv::Client, &[("index", "src/index.js")]);
+    o.sourcemap = true;
+    o.transform_hook = Some(hook);
+
+    let out = RolldownBundler::new(dir.path())
+        .bundle(&o)
+        .expect("bundle with a banner plugin + sourcemap");
+    let entry = out
+        .chunks
+        .iter()
+        .find(|c| c.kind == ChunkKind::Entry)
+        .expect("entry chunk");
+    let map_json =
+        std::fs::read_to_string(dir.path().join("dist").join(format!("{}.map", entry.file)))
+            .expect("rolldown wrote the chunk map");
+    let map = parse_v3(&map_json).expect("a valid V3 chunk map");
+    let toks = toks_of(&map).expect("tokens decode");
+    assert!(
+        toks.iter().any(|t| t.src_line == 0),
+        "the composed chain still maps back to line 1 of the source (tokens: {toks:?})"
+    );
 }
 
 // ---------------------------------------------------------------------------
