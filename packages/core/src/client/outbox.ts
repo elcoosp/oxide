@@ -22,6 +22,21 @@ type Item = {
   tries: number
 }
 
+/** The queue item without its generated fields — the input `enqueue`
+ * takes and the offline wire (`enhance.ts`) forwards. */
+export type OutboxItem = {
+  url: string
+  method: string
+  body: string
+  headers: Record<string, string>
+}
+
+/** The outbox slice the offline wire consumes — structural, so this
+ * module's own `enqueue` satisfies it verbatim and tests inject fakes. */
+export interface OutboxQueue {
+  enqueue(it: OutboxItem): Promise<string>
+}
+
 const DB = 'ox-outbox'
 
 async function db(): Promise<IDBDatabase> {
@@ -37,7 +52,7 @@ async function db(): Promise<IDBDatabase> {
 // idempotency key (the server dedupes on it — a retry after a timeout
 // that actually delivered cannot insert twice). Returns the id so the
 // caller can correlate the eventual replay.
-export async function enqueue(it: Omit<Item, 'id' | 'tries'>): Promise<string> {
+export async function enqueue(it: OutboxItem): Promise<string> {
   const id = crypto.randomUUID()
   const d = await db()
   await new Promise<void>((res, rej) => {
@@ -83,4 +98,42 @@ async function del(d: IDBDatabase, id: string) {
 // so the module imports cleanly outside a browser (the node tests).
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => void flush())
+}
+
+// The message the emitted worker (`crates/bundler/src/pwa.rs`, the
+// activate step) fans out to its clients — a build swap is a flush
+// point: queued actions replay once the new generation is live.
+export const SW_FLUSH_MESSAGE = 'OXIDE_OUTBOX_FLUSH'
+
+/** Structural service-worker registration surface (the real
+ * `navigator.serviceWorker` or a test fake). */
+export interface SwRegistration {
+  addEventListener(type: string, fn: (e: unknown) => void): void
+  removeEventListener(type: string, fn: (e: unknown) => void): void
+}
+
+/**
+ * Answer the worker's flush fan-out by replaying the queue. The default
+ * flush is this module's `flush()`; the registration defaults to
+ * `navigator.serviceWorker` when the page has one. Returns a disposer.
+ * Import-safe outside a browser (no service worker): a no-op disposer —
+ * the same module-safety contract the `online` listener above keeps.
+ */
+export function onSwFlushMessage(
+  flushFn: () => Promise<void> = () => flush(),
+  reg: SwRegistration | null = swRegistration(),
+): () => void {
+  if (!reg) return () => {}
+  const onMessage = (e: unknown): void => {
+    const data = (e as { data?: { type?: string } }).data
+    if (data && data.type === SW_FLUSH_MESSAGE) void flushFn()
+  }
+  reg.addEventListener('message', onMessage)
+  return () => reg.removeEventListener('message', onMessage)
+}
+
+function swRegistration(): SwRegistration | null {
+  if (typeof navigator === 'undefined') return null
+  const sw = (navigator as { serviceWorker?: SwRegistration }).serviceWorker
+  return sw ?? null
 }
