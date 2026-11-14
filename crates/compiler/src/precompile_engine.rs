@@ -63,43 +63,45 @@ pub fn width_for(workers: usize) -> usize {
 /// rides its own row (the failure-isolation contract — the pass is
 /// best-effort per file, the §6.3 convention).
 ///
-/// `compile` is the injected per-job pass. Panics inside a pass cancel
-/// the whole batch (a panicking compiler is a bug, not a user-file
-/// problem — the panic surfaces instead of being swallowed per-row).
+/// `compile` is the injected per-job pass, generic over the SUCCESS type:
+/// the pins run plain `Result<String, _>` fakes, while the CLI's
+/// `compile_one` — whose mdx kind may compile to nothing — drops in as
+/// `Result<Option<String>, _>` unchanged. Panics inside a pass cancel the
+/// whole batch (a panicking compiler is a bug, not a user-file problem —
+/// the panic surfaces instead of being swallowed per-row).
 ///
 /// The window is clamped to `width.max(1)`: a zero-width request still
 /// compiles, sequentially.
-pub async fn compile_jobs<F, Fut, E>(
+pub async fn compile_jobs<F, Fut, T, E>(
     jobs: Vec<PrecompileJob>,
     width: usize,
     compile: F,
-) -> Vec<(PathBuf, Result<String, E>)>
+) -> Vec<(PathBuf, Result<T, E>)>
 where
     F: Fn(PrecompileJob) -> Fut,
-    Fut: Future<Output = Result<String, E>>,
+    Fut: Future<Output = Result<T, E>>,
 {
     let compile_ref = &compile;
-    let results: Vec<(usize, PathBuf, Result<String, E>)> =
-        stream::iter(jobs.into_iter().enumerate())
-            .map(|(i, job)| {
-                let path = job.path.clone();
-                // The pass is shared by reference: `compile_jobs` is generic over
-                // `Fn` (an immutable pass — the cache + pool sit behind `&self`),
-                // so every future borrows the same closure.
-                async move {
-                    let out = compile_ref(job).await;
-                    (i, path, out)
-                }
-            })
-            .buffer_unordered(width.max(1))
-            .collect()
-            .await;
+    let results: Vec<(usize, PathBuf, Result<T, E>)> = stream::iter(jobs.into_iter().enumerate())
+        .map(|(i, job)| {
+            let path = job.path.clone();
+            // The pass is shared by reference: `compile_jobs` is generic over
+            // `Fn` (an immutable pass — the cache + pool sit behind `&self`),
+            // so every future borrows the same closure.
+            async move {
+                let out = compile_ref(job).await;
+                (i, path, out)
+            }
+        })
+        .buffer_unordered(width.max(1))
+        .collect()
+        .await;
 
     // Fold back to input order: the deterministic row order the caller's
     // map fold (and the determinism pin) rely on. The indices are unique
     // by construction (one per input job), so the sort is total and the
     // fold is panic-free.
-    let mut results: Vec<(usize, PathBuf, Result<String, E>)> = results;
+    let mut results: Vec<(usize, PathBuf, Result<T, E>)> = results;
     results.sort_by_key(|(i, _, _)| *i);
     results
         .into_iter()
