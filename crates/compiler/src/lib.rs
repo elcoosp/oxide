@@ -34,6 +34,7 @@ pub mod cjs_exports;
 pub mod framework;
 pub mod generate_params;
 pub mod lexer;
+pub mod migrate;
 pub mod native;
 mod oxc_backend;
 pub mod precompile_engine;
@@ -44,6 +45,10 @@ pub use framework::{
     ToolingDispatcher, compiler_for,
 };
 pub use generate_params::{GenerateParamsResult, extract_generate_params};
+pub use migrate::{
+    ApplyReport, ConfigKey, ImportRewrite, MIG_DETECT, MIG_IO, MIG_TARGET, MigrationPlan,
+    MigrationPlanner, Note, apply_plan, detect_framework, plan_for, planner_for,
+};
 pub use native::{Backend, CompileOutput, CompileRequest, NativeCompiler, NativeRegistry};
 pub use oxc_backend::{
     OxcTransformer, inject_react_refresh, lower_to_js, lower_to_js_with_refresh,
