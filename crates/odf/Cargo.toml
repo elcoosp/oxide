@@ -9,7 +9,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-homepage.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }
@@ -28,6 +27,9 @@ criterion = { workspace = true }
 [features]
 # V2-F06: exposes the criterion bench harness.
 bench-util = []
+
+[lints]
+workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
