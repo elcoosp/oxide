@@ -347,7 +347,9 @@ mod tests {
     fn empty_array_is_literal_empty() {
         let src = "export const generateParams = [];";
         match extract_generate_params(src) {
-            GenerateParamsResult::Literal(v) => assert_eq!(v, Vec::new()),
+            GenerateParamsResult::Literal(v) => {
+                assert_eq!(v, Vec::<BTreeMap<String, String>>::new())
+            }
             other => panic!("expected Literal(empty), got {other:?}"),
         }
     }
