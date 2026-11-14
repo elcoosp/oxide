@@ -1,0 +1,40 @@
+{
+  "renames": [
+    [
+      "src/hooks.server.ts",
+      "src/middleware.ts"
+    ],
+    [
+      "src/routes/+layout.svelte",
+      "src/routes/layout.svelte"
+    ],
+    [
+      "src/routes/+page.svelte",
+      "src/routes/page.svelte"
+    ],
+    [
+      "src/routes/about/+page.server.ts",
+      "src/routes/about/page.server.ts"
+    ],
+    [
+      "src/routes/about/+page.svelte",
+      "src/routes/about/page.svelte"
+    ],
+    [
+      "src/routes/api/+server.ts",
+      "src/routes/api/route.ts"
+    ],
+    [
+      "src/routes/blog/[slug]/+page.svelte",
+      "src/routes/blog/[slug]/page.svelte"
+    ]
+  ],
+  "rewrites": [],
+  "config": [
+    {
+      "key": "tsconfig.paths.$lib",
+      "value": "[\"./src/lib\"]"
+    }
+  ],
+  "manual": []
+}
