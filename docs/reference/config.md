@@ -50,6 +50,11 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `content.collections[].dir` — `string` — default —: §16.5: the content directory (Markdown + typed frontmatter) the collection maps to.
 - `content.collections[].indexedFields` — `string[]` — default —: §16.5: the frontmatter fields the per-collection static JSON index includes.
 - `content.collections[].name` — `string` — default —: §16.5: the collection name (also the static JSON index file's stem).
+### `deploy`
+
+- `deploy` — `object` — default —: V2-F10/F11: the deploy machinery's knobs. Inert at the wiring until the F10 CLI adoption lands (booting the serving pools from dist/ + the F11 releases/ layout, the promote-on-reload, the 30 s expiry task, the F12 brownout trigger); the engine-side default stays the plumbing default and this section is its config face. A window literal that does not parse, a zero window or a zero generation count fails the load (CFG-DEPLOY).
+- `deploy.generations` — `integer` — default `3`: How many past generations stay roll-back-able (the F11 releases/ retention; the spec's N=3 default). CFG-DEPLOY refuses zero.
+- `deploy.skewWindow` — `string` — default `"15m"`: How long a demoted generation keeps serving after the promote — the duration grammar <n>s|m|h|d, plain integers are seconds ('15m' is the spec default). Parsed by parse_duration_secs and validated at load (CFG-DEPLOY); a zero window is refused.
 ### `dev`
 
 - `dev` — `object` — default —: §13.5: dev-server options (https, host, qr, open, proxy).
@@ -104,6 +109,12 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 ### `interactionReplay`
 
 - `interactionReplay` — `boolean` — default `true`: V2-F03: the pre-hydration interaction replay opt-out. Default true (flag absent = enabled): the boot capture records interactions until each island hydrates and replays them on done. false advertises interactionReplay:false in window.__oxide so boot skips startReplay. A non-boolean value fails the load (DSP-114).
+### `llms`
+
+- `llms.enabled` — `boolean` — default `false`: V2-E07: emit dist/llms.txt (title, summary, the included routes with their meta descriptions) and dist/llms-full.txt (the routes' text from the content collections, Markdown) at build. Default false: neither file is written. A bad include pattern fails the load (CFG-LLMS).
+- `llms.include` — `string[]` — default —: Route patterns the files cover — glob-lite: ** matches any run of segments, * within one segment ('/docs/**' = every /docs page). Empty means every prerendered page.
+- `llms.summary` — `string` — default —: The blockquote summary under the title.
+- `llms.title` — `string` — default —: The llms.txt H1 title. Defaults to the site name (the siteUrl host or the project directory name) when omitted.
 ### `live`
 
 - `live` — `object` — default —: V2-F05: live-loader transport knobs (the SSE hub's capacity, cadence and transport). Defaults are inert - with no route opting in (page.server.ts live: true) nothing listens and no hub is constructed. Validation (DSP-111): keepaliveSeconds >= 1, maxSubscribers >= 1, maxRerunsPerSecond >= 1, perIpMax <= maxSubscribers.
@@ -133,6 +144,9 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 
 - `prefetch.learned` — `boolean` — default `false`: V2-F13: the learned prefetcher. Default false: no nav graph is constructed, the data plane observes nothing and GET /_oxide/nav answers 404. true keeps the aggregate route-transition graph (route ids only, k-anonymity floor 20 observations, half-life 7 days, hourly snapshot to .oxide/nav-graph.json) and answers GET /_oxide/nav?from=<route> with the top edges as probabilities. A non-boolean value fails the load (DSP-115).
 - `prefetch.minProbability` — `number` — default `0.35`: V2-F13: the client prefetcher's threshold — an edge whose /_oxide/nav probability is at or above this value gets its chunks (and, for param-free route ids, its data) prefetched after idle. Out-of-range values fail the load (DSP-115).
+### `record`
+
+- `record` — `any` — default —: V2-F15: the request recorder (the record-and-replay substrate). false (the default) records nothing; 'all' captures every request, 'errors' captures failed (5xx) requests, and { sample, onError } is the prod sampling shape. The key is inert at the wiring until the CLI's record/replay adoption lands. A bad spelling, an out-of-range sample or a wrong-typed knob fails the load (CFG-REC).
 ### `render`
 
 - `render.default` — `enum: `"auto"` \| `"static"` \| `"isr"` \| `"dynamic"` \| `"spa"` \| `"islands"`` — default —: §10.1: the render mode routes inherit when `page.server.ts` exports none (`auto` infers per route).
