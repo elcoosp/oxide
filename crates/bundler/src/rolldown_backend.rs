@@ -23,8 +23,9 @@ use rolldown_common::{BundlerTransformOptions, Either, JsxOptions as RolldownJsx
 use rolldown_common::{ModuleType, Output};
 use rolldown_plugin::{
     HookLoadArgs, HookLoadOutput, HookLoadReturn, HookResolveIdArgs, HookResolveIdOutput,
-    HookResolveIdReturn, HookTransformArgs, HookTransformOutput, HookTransformReturn, HookUsage,
-    Plugin, PluginContext, Pluginable, SharedLoadPluginContext, SharedTransformPluginContext,
+    HookResolveIdReturn, HookTransformArgs, HookTransformOutput, HookTransformOutputMap,
+    HookTransformReturn, HookUsage, Plugin, PluginContext, Pluginable, SharedLoadPluginContext,
+    SharedTransformPluginContext,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1275,7 +1276,13 @@ impl Plugin for OxidePassesPlugin {
         // failure. `replacement` is computed eagerly (the passes are sync),
         // so the error is produced here and propagated inside the future.
         let mut pass_error: Option<String> = None;
-        let replacement: Option<String> = if self.should_transform(args.id) {
+        // V2-C06: the plugin chain's composed map (a V3 JSON string from the
+        // hook result's `map` field). Valid only when the passes leave the
+        // hook's output byte-identical — the passes produce no map of their
+        // own, so once they move positions the plugin's map cannot describe
+        // the final code and is withheld.
+        let mut plugin_map: Option<String> = None;
+        let replacement: Option<(String, Option<String>)> = if self.should_transform(args.id) {
             // §15.1: run a plugin transform first. It sees the original
             // source, so a plugin's own rewriting (a macro expansion, a
             // custom directive) happens before the framework passes look
@@ -1283,25 +1290,30 @@ impl Plugin for OxidePassesPlugin {
             let mut source = args.code.to_string();
             if let Some(hook) = &self.transform_hook {
                 match hook.call(args.id, &source) {
-                    Ok(rewritten) => source = rewritten,
-                    // A plugin error is a build error; surface it as a
-                    // transform failure. Rolldown reports diagnostics from
-                    // a hook that returns `Err`, but this hook returns
-                    // `Ok(None)` on internal errors by design — so the
-                    // message is dropped onto stderr here. That is the
-                    // honest minimum until the diagnostic pipeline is
-                    // extended to carry a plugin code.
+                    Ok(out) => {
+                        source = out.code;
+                        plugin_map = out.map;
+                    }
+                    // A plugin error is reported and skipped; the build
+                    // continues with the module's original source (the
+                    // failing-build policy is a deliberate follow-up — see
+                    // the `transform_hook_error_does_not_fail_the_build`
+                    // pin). The structured event replaces the old bare
+                    // `eprintln!`: the code and module id ride the tracing
+                    // fields like every other plugin diagnostic.
                     Err(e) => {
-                        eprintln!(
-                            "plugin transform failed for {}: {} {}",
-                            args.id, e.0.code, e.0.message
+                        tracing::warn!(
+                            code = %e.0.code,
+                            id = %args.id,
+                            "plugin transform failed: {}",
+                            e.0.message
                         );
                     }
                 }
             }
             let input = oxide_fw_compiler::TransformInput {
                 path: args.id.to_string(),
-                code: source,
+                code: source.clone(),
                 env: self.env,
                 lang: Self::lang_of(args.id),
                 build_secret: self.build_secret.clone(),
@@ -1309,7 +1321,17 @@ impl Plugin for OxidePassesPlugin {
                 jsx_import_source: None,
             };
             match oxide_fw_compiler::OxcTransformer.transform_passes_only(&input) {
-                Ok(code) if code != args.code.as_str() => Some(code),
+                Ok(code) if code != args.code.as_str() => {
+                    // The passes moved positions whenever their output
+                    // differs from the hook's; a plugin map describes the
+                    // final code only when they did not.
+                    let map = if code == source {
+                        plugin_map.take()
+                    } else {
+                        None
+                    };
+                    Some((code, map))
+                }
                 // Unchanged output: return `None` so Rolldown keeps its own
                 // copy and any downstream map it has already built.
                 Ok(_) => None,
@@ -1341,10 +1363,35 @@ impl Plugin for OxidePassesPlugin {
                 return Err(anyhow::anyhow!("{msg}"));
             }
             match replacement {
-                Some(code) => Ok(Some(HookTransformOutput {
-                    code: Some(code),
-                    ..Default::default()
-                })),
+                Some((code, map)) => {
+                    let map = match map {
+                        Some(json) => {
+                            match crate::sourcemap_compose::oxc_source_map_from_json(&json) {
+                                Ok(sm) => HookTransformOutputMap::Sourcemap(Box::new(sm)),
+                                // A malformed plugin map never fails the
+                                // build: warn-degrade to an explicit `null`
+                                // (the same rule the SVG optimizer and the
+                                // font subsetter follow for their refusals).
+                                Err(e) => {
+                                    tracing::warn!(
+                                        code = crate::sourcemap_compose::BLD_SMAP,
+                                        id = %args.id,
+                                        "plugin map refused: {}",
+                                        e.0.message
+                                    );
+                                    HookTransformOutputMap::Null
+                                }
+                            }
+                        }
+                        None => HookTransformOutputMap::Omitted,
+                    };
+                    Ok(Some(HookTransformOutput {
+                        code: Some(code),
+                        map,
+                        side_effects: None,
+                        module_type: None,
+                    }))
+                }
                 None => Ok(None),
             }
         }
