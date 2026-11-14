@@ -50,16 +50,23 @@
 //!   redacted request, route id + params, locals, loader inputs/outputs,
 //!   capped base64 fetch ops, cache ops, the non-deterministic
 //!   sequences), the [`record::RecordPolicy`] sampling decision, the
-//!   [`record::RecordSink`] storage seam over
-//!   `.oxide/records/<request-id>.json` and the
+//!   [`record::RecordSink`] + [`record::RecordSource`] storage-seam pair
+//!   over `.oxide/records/<request-id>.json` (the write side atomic
+//!   temp+rename, the read side version-gated `RPL-005`) and the
 //!   [`record::RecordingLoaderRunner`] decorator the dispatch closure
-//!   wraps its runner in (CLI adoption deferred, see `docs/deviations.md`).
+//!   wraps its runner in (CLI adoption deferred, see
+//!   `docs/deviations.md`).
 //! - [`replay`]: the record-and-replay playback substrate (V2-F15 replay
 //!   half) — the ordered [`replay::ReplayMatcher`] (`RPL-002` on an
 //!   unexpected call), the [`replay::ReplaySequences`] playback
 //!   (`RPL-004` on a drained stream), the `RPL-003` stale-build warning
 //!   and the [`replay::replay_diff`] verdict the `oxide replay --diff`
-//!   JSON surface emits (CLI adoption deferred, see `docs/deviations.md`).
+//!   JSON surface emits; the [`replay::ReplayRunner`] +
+//!   [`replay::ReplayExecutor`] seam is the one-definition orchestration
+//!   the `oxide replay` command and the MCP `replay.run` tool drive —
+//!   load → stale-build warn → re-execute through the injected executor
+//!   → diff (the command and the tool are the thin CLI wrappers, deferred
+//!   with the rest of the A01 phase-3 wiring, see `docs/deviations.md`).
 //!
 //! Acceptance (spec V2-A02): `cargo test -p oxide-fw-dispatch` finishes in
 //! under 20 seconds after dependencies are built, and
