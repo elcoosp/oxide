@@ -111,9 +111,9 @@ impl CountingHandler {
         })
     }
 
-    async fn run(&self) -> Result<ExecutedResponse, OxideError> {
+    fn run(&self) -> ExecutedResponse {
         self.runs.fetch_add(1, Ordering::SeqCst);
-        Ok(self.response.clone())
+        self.response.clone()
     }
 }
 
@@ -129,12 +129,16 @@ async fn replay_of_the_same_key_returns_identical_bytes_and_runs_once() {
         &[("content-type", "application/json")],
         br#"{"inserted":1}"#,
     ));
-    let first = stage_idempotency(&store, Some("submit-1"), || handler.run())
-        .await
-        .expect("the first submit runs");
-    let second = stage_idempotency(&store, Some("submit-1"), || handler.run())
-        .await
-        .expect("the replay is answered");
+    let first = stage_idempotency(&store, Some("submit-1"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the first submit runs");
+    let second = stage_idempotency(&store, Some("submit-1"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the replay is answered");
     assert!(
         matches!(first, IdempotencyVerdict::Executed(_)),
         "the first submit executes"
@@ -156,10 +160,10 @@ async fn replay_of_the_same_key_returns_identical_bytes_and_runs_once() {
 async fn different_keys_run_separately() {
     let store = MemoryStore::default();
     let handler = CountingHandler::new(executed(200, &[], b"ok"));
-    stage_idempotency(&store, Some("a"), || handler.run())
+    stage_idempotency(&store, Some("a"), || std::future::ready(Ok(handler.run())))
         .await
         .expect("key a runs");
-    stage_idempotency(&store, Some("b"), || handler.run())
+    stage_idempotency(&store, Some("b"), || std::future::ready(Ok(handler.run())))
         .await
         .expect("key b runs");
     assert_eq!(handler.runs.load(Ordering::SeqCst), 2, "each key ran");
@@ -172,12 +176,16 @@ async fn different_keys_run_separately() {
 async fn five_hundreds_are_never_stored() {
     let store = MemoryStore::default();
     let handler = CountingHandler::new(executed(503, &[], b"unavailable"));
-    stage_idempotency(&store, Some("flaky"), || handler.run())
-        .await
-        .expect("the 5xx runs");
-    stage_idempotency(&store, Some("flaky"), || handler.run())
-        .await
-        .expect("the retry runs");
+    stage_idempotency(&store, Some("flaky"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the 5xx runs");
+    stage_idempotency(&store, Some("flaky"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the retry runs");
     assert_eq!(
         handler.runs.load(Ordering::SeqCst),
         2,
@@ -191,12 +199,16 @@ async fn five_hundreds_are_never_stored() {
 async fn four_hundreds_are_stored() {
     let store = MemoryStore::default();
     let handler = CountingHandler::new(executed(422, &[], b"invalid"));
-    stage_idempotency(&store, Some("bad"), || handler.run())
-        .await
-        .expect("the 4xx runs");
-    let replay = stage_idempotency(&store, Some("bad"), || handler.run())
-        .await
-        .expect("the replay answers");
+    stage_idempotency(&store, Some("bad"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the 4xx runs");
+    let replay = stage_idempotency(&store, Some("bad"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the replay answers");
     assert!(
         matches!(replay, IdempotencyVerdict::Replayed(ref r) if r.status == 422),
         "the 4xx replay is pinned: {replay:?}"
@@ -216,9 +228,11 @@ async fn the_stored_response_strips_set_cookie() {
         ],
         b"<html/>",
     ));
-    let first = stage_idempotency(&store, Some("login"), || handler.run())
-        .await
-        .expect("the login runs");
+    let first = stage_idempotency(&store, Some("login"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the login runs");
     let IdempotencyVerdict::Executed(response) = first else {
         panic!("the first login executes");
     };
@@ -229,9 +243,11 @@ async fn the_stored_response_strips_set_cookie() {
             .any(|(k, _)| k.eq_ignore_ascii_case("set-cookie")),
         "the first execution keeps its Set-Cookie"
     );
-    let second = stage_idempotency(&store, Some("login"), || handler.run())
-        .await
-        .expect("the replay answers");
+    let second = stage_idempotency(&store, Some("login"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the replay answers");
     let IdempotencyVerdict::Replayed(replayed) = second else {
         panic!("the replay answers from the store");
     };
@@ -258,7 +274,7 @@ async fn the_stored_response_strips_set_cookie() {
 async fn a_missing_header_runs_the_handler() {
     let store = MemoryStore::default();
     let handler = CountingHandler::new(executed(200, &[], b"ok"));
-    let verdict = stage_idempotency(&store, None, || handler.run())
+    let verdict = stage_idempotency(&store, None, || std::future::ready(Ok(handler.run())))
         .await
         .expect("the pass-through runs");
     assert!(
@@ -279,9 +295,11 @@ async fn a_missing_header_runs_the_handler() {
 async fn a_store_failure_degrades_and_runs_the_handler() {
     let store = BrokenStore;
     let handler = CountingHandler::new(executed(200, &[], b"ok"));
-    let verdict = stage_idempotency(&store, Some("degraded"), || handler.run())
-        .await
-        .expect("the degraded stage still serves");
+    let verdict = stage_idempotency(&store, Some("degraded"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the degraded stage still serves");
     assert!(
         matches!(verdict, IdempotencyVerdict::Executed(_)),
         "the handler ran"
@@ -300,9 +318,11 @@ fn the_l1_key_is_the_idem_prefix() {
 async fn the_put_carries_the_day_ttl() {
     let store = MemoryStore::default();
     let handler = CountingHandler::new(executed(200, &[], b"ok"));
-    stage_idempotency(&store, Some("ttl"), || handler.run())
-        .await
-        .expect("the stage runs");
+    stage_idempotency(&store, Some("ttl"), || {
+        std::future::ready(Ok(handler.run()))
+    })
+    .await
+    .expect("the stage runs");
     let (_, ttl) = store
         .entries
         .lock()
@@ -338,14 +358,16 @@ fn the_stored_shape_roundtrips_through_json() {
 async fn a_handler_error_is_not_stored() {
     struct FailingHandler;
     impl FailingHandler {
-        async fn run(&self) -> Result<ExecutedResponse, OxideError> {
+        fn run() -> Result<ExecutedResponse, OxideError> {
             Err(OxideError::new("RT-500", "the loader exploded"))
         }
     }
     let store = MemoryStore::default();
-    let err = stage_idempotency(&store, Some("boom"), || FailingHandler.run())
-        .await
-        .expect_err("the handler error surfaces");
+    let err = stage_idempotency(&store, Some("boom"), || {
+        std::future::ready(FailingHandler::run())
+    })
+    .await
+    .expect_err("the handler error surfaces");
     assert_eq!(err.0.code, "RT-500");
     assert!(
         store.entries.lock().unwrap().is_empty(),
@@ -364,5 +386,5 @@ fn the_stored_response_converts_to_the_executed_shape() {
     };
     let executed = stored.to_executed();
     assert_eq!(executed.status, 204);
-    assert!(executed.body.is_empty());
+    assert_eq!(executed.body, [] as [u8; 0]);
 }
