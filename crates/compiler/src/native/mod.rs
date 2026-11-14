@@ -46,6 +46,14 @@
 //! the A02/A05/A06 substrates (see `docs/deviations.md`).
 
 use crate::{OxideError, Result};
+
+// §V2-C03/C04/C05: the landed backends, each behind its feature.
+#[cfg(feature = "native-react-compiler")]
+pub mod react_compiler;
+#[cfg(feature = "native-svelte")]
+pub mod svelte;
+#[cfg(feature = "native-vue")]
+pub mod vue;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -173,16 +181,27 @@ pub struct NativeRegistry {
 impl NativeRegistry {
     /// The registry of backends compiled into this binary.
     ///
-    /// No native backend is compiled in yet: C02–C04 land the real
-    /// backends behind their own features (`native-solid`,
-    /// `native-vue`, `native-svelte`) with their vendored upstreams
-    /// (D27) and push them here. Until then the registry is empty —
-    /// `auto` answers the Node pool for every framework and `native`
-    /// refuses with [`native_err`], which is the C01 contract the TDD
-    /// pins hold.
+    /// The compiled-in set is the feature-gated push list below
+    /// (`native-vue`, `native-svelte`, `native-react-compiler` — the
+    /// C02 Solid backend is killed upstream, see
+    /// `docs/decisions/C02-solid-kill.md`). A default build compiles
+    /// none of them: `auto` answers the Node pool for every framework
+    /// and `native` refuses with [`native_err`], which is the C01
+    /// contract the TDD pins hold.
     #[must_use]
     pub fn from_enabled_features() -> Self {
-        Self::empty()
+        #[allow(unused_mut)]
+        let mut reg = Self::empty();
+        // §V2-C03/C04/C05: the backends compiled into this binary. Each
+        // rides its own feature (default builds stay lean; the release
+        // recipe turns them on) and pushes itself here.
+        #[cfg(feature = "native-vue")]
+        reg.register(Box::new(super::native::vue::VueNative));
+        #[cfg(feature = "native-svelte")]
+        reg.register(Box::new(super::native::svelte::SvelteNative));
+        #[cfg(feature = "native-react-compiler")]
+        reg.register(Box::new(super::native::react_compiler::ReactCompilerNative));
+        reg
     }
 
     /// An empty registry (the injection seam's starting point).
