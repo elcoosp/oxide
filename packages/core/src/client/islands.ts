@@ -224,3 +224,155 @@ function defaultLoadChunk(chunk: string): Promise<unknown> {
     return undefined
   })
 }
+
+// ---------------------------------------------------------------------------
+// §V2-F01: the mixed-framework registry
+// ---------------------------------------------------------------------------
+
+/** One registry island: its framework and its own lazy module load. */
+export interface MixedIslandEntry {
+  fw: string
+  load: () => Promise<unknown>
+}
+
+/** The mixed registry the generated `__boot__` entry hands to
+ *  `installBootRuntime({ adapters, islands })` (§V2-F01): one lazy
+ *  adapter per framework present, one entry per island. */
+export interface MixedIslandRegistry {
+  adapters: Record<string, () => Promise<{ clientAdapter: IslandsAdapter }>>
+  islands: Record<string, MixedIslandEntry>
+}
+
+/** Mark a host with the hydration error (the attribute the devtools
+ *  overlay and tests read). */
+function markMixedError(host: IslandHost, message: string): void {
+  host.setAttribute?.('data-ox-hydrated', 'error')
+  host.setAttribute?.('data-ox-error', message)
+}
+
+/** Hydrate one island through the MIXED registry (§V2-F01's
+ *  `hydrateOne`): look the island up by name, load the module and the
+ *  island's own adapter in parallel, decode the props, dispatch into
+ *  `hydrateIsland`. An unknown island marks an error — never a wrong
+ *  adapter's hydration. */
+export async function hydrateMixedIsland(
+  host: IslandHost,
+  reg: MixedIslandRegistry,
+): Promise<(() => void) | undefined> {
+  const el = host as IslandHost & { 'data-ox-hydrated'?: unknown }
+  const state = el.getAttribute('data-ox-hydrated')
+  if (state === 'pending' || state === 'done') return undefined // guard
+  const name = host.getAttribute('data-ox-island') ?? ''
+  const entry = reg.islands[name]
+  if (!entry) {
+    markMixedError(host, 'unknown island ' + name)
+    return undefined
+  }
+  el.setAttribute?.('data-ox-hydrated', 'pending')
+  try {
+    const lazy = reg.adapters[entry.fw]
+    if (!lazy) throw new Error('no adapter registered for framework ' + entry.fw)
+    const [mod, adapterMod] = await Promise.all([entry.load(), lazy()])
+    const adapter = adapterMod.clientAdapter
+    const propsAttr = host.getAttribute('data-ox-props')
+    const props = propsAttr ? decodeIslandProps(propsAttr) : undefined
+    let disposer: (() => void) | undefined
+    if (typeof adapter.hydrateIsland === 'function') {
+      disposer = await Promise.resolve(adapter.hydrateIsland(host as unknown as Element, mod, props))
+    } else if (typeof adapter.hydrate === 'function') {
+      disposer = adapter.hydrate(host as unknown as Element, { props, mod })
+    }
+    el.setAttribute?.('data-ox-hydrated', 'done')
+    replayFor(host)
+    return disposer
+  } catch (e) {
+    markMixedError(host, e instanceof Error ? e.message : String(e))
+    return undefined
+  }
+}
+
+/** Scan every `<ox-island[data-ox-chunk]>` under `doc` and hydrate
+ *  through the mixed registry, by the same strategy schedule the
+ *  single-adapter path uses (§10.3). Returns the disposer. */
+export function hydrateMixedIslands(
+  reg: MixedIslandRegistry,
+  opts: {
+    doc?: IslandsDoc
+    requestIdleCallback?: IslandsOptions['requestIdleCallback']
+    matchMedia?: IslandsOptions['matchMedia']
+    IntersectionObserver?: IslandsOptions['IntersectionObserver']
+  },
+): () => void {
+  const doc = opts.doc ?? (globalThis as { document?: IslandsDoc }).document
+  if (!doc) throw new TypeError('hydrateMixedIslands: no document (pass one in non-browser tests)')
+  const ric = opts.requestIdleCallback ?? ((cb: () => void) => {
+    const g = globalThis as { requestIdleCallback?: (cb: () => void) => unknown }
+    return g.requestIdleCallback ? g.requestIdleCallback(cb) : setTimeout(cb, 1)
+  })
+  const cancelled = { value: false }
+  const schedule = (el: IslandHost): void => {
+    const strategy = parseStrategy(el.getAttribute('data-ox-strategy'))
+    const run = () => {
+      if (cancelled.value) return
+      void hydrateMixedIsland(el, reg)
+    }
+    switch (strategy.kind) {
+      case 'load':
+        run()
+        break
+      case 'idle':
+        ric(() => run())
+        break
+      case 'visible': {
+        const IO =
+          opts.IntersectionObserver ??
+          (globalThis as { IntersectionObserver?: IslandsOptions['IntersectionObserver'] })
+            .IntersectionObserver
+        if (!IO) {
+          run()
+          break
+        }
+        const io = new IO((entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              io.unobserve(entry.target)
+              run()
+            }
+          }
+        })
+        io.observe(el)
+        disposers.push(() => io.unobserve(el))
+        break
+      }
+      case 'media': {
+        const mq = (opts.matchMedia ?? defaultMatchMedia)(strategy.query)
+        if (mq.matches) {
+          run()
+        } else {
+          const onChange = (e: { matches: boolean }): void => {
+            if (e.matches && !cancelled.value) {
+              mq.removeEventListener?.('change', onChange)
+              run()
+            }
+          }
+          mq.addEventListener?.('change', onChange)
+          disposers.push(() => mq.removeEventListener?.('change', onChange))
+        }
+        break
+      }
+    }
+  }
+  const disposers: Array<() => void> = []
+  const hosts = doc.querySelectorAll('ox-island[data-ox-chunk]')
+  for (const host of hosts) schedule(host)
+  return () => {
+    cancelled.value = true
+    for (const d of disposers) d()
+  }
+}
+
+function defaultMatchMedia(query: string): { matches: boolean; addEventListener?(t: string, cb: (e: { matches: boolean }) => void): void; removeEventListener?(t: string, cb: (e: { matches: boolean }) => void): void } {
+  const g = globalThis as { matchMedia?: (q: string) => { matches: boolean; addEventListener?(t: string, cb: (e: { matches: boolean }) => void): void; removeEventListener?(t: string, cb: (e: { matches: boolean }) => void): void } }
+  if (typeof g.matchMedia !== 'function') return { matches: false }
+  return g.matchMedia(query)
+}
