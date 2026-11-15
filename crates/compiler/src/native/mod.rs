@@ -415,23 +415,13 @@ mod tests {
         // the exact feature-to-registry mapping under any feature
         // combination (the compiled-in set is exactly the features on).
         let reg = NativeRegistry::from_enabled_features();
-        let mut expected = 0usize;
-        #[cfg(feature = "native-solid")]
-        {
-            expected += 1;
-        }
-        #[cfg(feature = "native-vue")]
-        {
-            expected += 1;
-        }
-        #[cfg(feature = "native-svelte")]
-        {
-            expected += 1;
-        }
-        #[cfg(feature = "native-react-compiler")]
-        {
-            expected += 1;
-        }
+        // `cfg!` compiles the count under any feature combination without a
+        // `mut` (the bare `let mut` broke the default-feature test build with
+        // `-D unused-mut` — none of the `#[cfg]` arms compiled in then).
+        let expected = cfg!(feature = "native-solid") as usize
+            + cfg!(feature = "native-vue") as usize
+            + cfg!(feature = "native-svelte") as usize
+            + cfg!(feature = "native-react-compiler") as usize;
         assert_eq!(reg.len(), expected, "the registry is the compiled-in set");
         assert_eq!(reg.report().len(), expected);
         assert_eq!(reg.is_empty(), expected == 0);
