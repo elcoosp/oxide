@@ -40,6 +40,8 @@ pub(crate) struct ArchEntry {
     pub slot: Option<String>,
     /// V2-F05: the per-route live opt-in (additive, like `needs_parent`).
     pub live: Option<crate::RouteLive>,
+    /// V2-F12: the route's overload priority (additive, like `live`).
+    pub priority: Option<String>,
 }
 
 impl From<&RouteEntry> for ArchEntry {
@@ -55,6 +57,7 @@ impl From<&RouteEntry> for ArchEntry {
             needs_parent: e.needs_parent,
             slot: e.slot.clone(),
             live: e.live,
+            priority: e.priority.clone(),
         }
     }
 }
@@ -95,6 +98,7 @@ pub(crate) fn entry_from_arch(a: &ArchivedArchEntry) -> RouteEntry {
             // little-endian type converts back losslessly.
             debounce_ms: l.debounce_ms.as_ref().map(|v| u32::from(*v)),
         }),
+        priority: arch_opt_to_owned(&a.priority),
     }
 }
 
@@ -317,6 +321,7 @@ mod tests {
             slot: None,
             needs_parent: false,
             live: None,
+            priority: None,
         });
         let manifest = tmp.path().join("routes.manifest");
         tree.archive_to(&manifest).unwrap();
