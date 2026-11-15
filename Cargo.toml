@@ -80,6 +80,19 @@ oxc_react_compiler = "0.143.0"
 # bump. (snapfire_fsr_mdx 0.2.3, 2026-11-09 — fresh; pins oxc 0.155,
 # matching the workspace.)
 snapfire_fsr_mdx = "0.2.3"
+# V2-C02 (the C02 dependency arm, 2026-11-15): Solid 2.0's official
+# Oxc-based Rust compiler core — the Rust crate behind npm's
+# `@solidjs/compiler` 2.0.0-rc.21, now published in the `solidjs/solid`
+# `next` tree at `packages/compiler`. Pinned to the full SHA the branch
+# resolved at (a Cargo git dependency takes `rev` OR `branch`, not both —
+# the rev IS the branch pin). `default-features = false` drops the `node`
+# NAPI feature (no Node host in the Rust build) and the `tsrx` feature
+# (which would drag a second, git-pinned oxc 0.140 fork). It pins its own
+# oxc 0.144 stack while the workspace transforms ride oxc 0.155; the seam
+# is string in / string out, so no oxc type crosses (the C01 seam rule —
+# the same shape as verter_core's 0.117 and oxc_react_compiler's 0.143
+# skews above).
+solidjs-compiler = { git = "https://github.com/solidjs/solid", dir = "packages/compiler", rev = "7ea2a02e9edc976e4be4d060c7e65ba85d10b42c", default-features = false }
 # Internal crates (spec §23)
 oxide-fw-diagnostics = { path = "crates/diagnostics" }
 oxide-fw-odf = { path = "crates/odf" }
