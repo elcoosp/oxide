@@ -11,6 +11,10 @@ export {
   type DeferGlue, type DeferGlueOptions, type SwapDetail, type WireOptions,
 } from './defer-glue.ts'
 export { enhance, type EnhanceForm, type EnhanceOptions, type EnhanceSubmitEvent } from './enhance.ts'
+// §V2-F07: the resumable-fetch lifecycle — the router's data fetch rides it,
+// and app code calling a streamed `route.ts` endpoint marked
+// `resumable(...)` imports it here.
+export { resumableFetch, type ResumableFetchOptions } from './resume.ts'
 export {
   decodeOdf, decodeOdfToJson, decodeOdfOrPatch, applyPatch, sha256Hex16,
   OdfError, MAX_BYTES, MAX_DEPTH, MAX_REFS,
