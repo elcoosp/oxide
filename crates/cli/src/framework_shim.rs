@@ -1121,19 +1121,19 @@ pub async fn dev_component_sources(
     entries: std::collections::BTreeMap<String, std::path::PathBuf>,
     pool: Option<&Arc<dyn oxide_fw_jshost::Pool>>,
 ) -> std::collections::BTreeMap<String, String> {
-    let precompiled = crate::precompile::precompile_entries(
+    let precompiled = crate::precompile::precompile_entries(crate::precompile::PrecompilePlan {
         pool,
-        &entries,
-        "ssr",
+        entries: &entries,
+        svelte_generate: "ssr",
         framework,
-        None,
-        env!("CARGO_PKG_VERSION"),
+        cache: None,
+        tool_version: env!("CARGO_PKG_VERSION"),
         // The dev component map stays pool-only for now (the C01 seam's
         // build-path adoption): no registry is constructed here, so the
         // pick arm never fires.
-        None,
-        oxide_fw_compiler::native::Backend::Auto,
-    )
+        native: None,
+        backend: oxide_fw_compiler::native::Backend::Auto,
+    })
     .await
     .unwrap_or_default();
     let comp_dir = project_root.join(".oxide/components");
