@@ -115,6 +115,16 @@ export interface ClientInput {
   /** SPEC-10: the resolved request locale for this route, when the project
    *  configures i18n. Absent otherwise. */
   locale?: string
+  /**
+   * §V2-F05: the route is live-opted — the server re-runs its loaders when
+   * a cache tag it depends on is revalidated and pushes the snapshots over
+   * `GET /__oxide/live`. The hydration bootstrap sets it for an SSR load
+   * (`window.__oxide.live`) and the `/__data` envelope carries it for a
+   * navigation, so the boot lifecycle opens the connection for the route
+   * the page is on and closes it when the page navigates away. Absent for
+   * every non-live route.
+   */
+  live?: boolean
   /** §17.1 / §7.1: the CSP nonce for this render. An adapter stamps it on
    *  any `<script>` it emits — notably the deferred-boundary swapper. Under
    *  `strict-dynamic` a script without it is blocked. Absent when the
