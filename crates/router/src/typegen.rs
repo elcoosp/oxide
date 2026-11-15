@@ -614,6 +614,7 @@ mod tests {
             slot: None,
             needs_parent: false,
             live: None,
+            priority: None,
         }
     }
 
