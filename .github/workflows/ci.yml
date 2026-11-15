@@ -427,6 +427,18 @@ jobs:
         run: |
           cargo build -p oxide-fw-cli
           ./tests/skew.sh
+      - name: Run the live SSE e2e (V2-F05/F06)
+        # The live-loader endpoint on the wire against the smoke app's
+        # `ox-live` fixture: the same-origin gate (403 for cross-origin and
+        # evidence-less requests), the full-snapshot connect frame (the F05
+        # invariant), and the revalidate fan-out — the `bump` action's
+        # `revalidate.path` event reaches the hub, the runner re-runs the
+        # SAME data-route path as /__data with the stored headers, and the
+        # stream pushes the NEW snapshot (F06: an ODF full or an ODP1 patch
+        # chained from it). #[ignore] e2e — V8-capable host only, same
+        # convention.
+        run: |
+          cargo test -p oxide-fw-cli --lib live_pushes_snapshots_over_the_wire -- --ignored --test-threads=1
 
   playwright:
     name: Playwright e2e (§22) — ${{ matrix.browser }} / ${{ matrix.os }}
