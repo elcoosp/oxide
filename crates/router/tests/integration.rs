@@ -216,7 +216,7 @@ proptest! {
                 slot: None,
                 needs_parent: false,
                 live: None,
-            });
+                priority: None,            });
         }
         let path = if segs.is_empty() { "/".to_string() } else { format!("/{}", segs.join("/")) };
         let _ = tree.match_path(&path);
@@ -244,7 +244,7 @@ proptest! {
             slot: None,
             needs_parent: false,
             live: None,
-        });
+            priority: None,        });
         let path = format!("/{}", segs.join("/"));
         let m = tree
             .match_path(&path)
@@ -258,4 +258,44 @@ proptest! {
         // …but the empty path does not match a one-or-more catch-all.
         assert!(tree.match_path("/").is_none());
     }
+}
+
+// §V2-F12: the scanner reads `config.priority` from `page.server.ts` into
+// the route tree (the enforcement stage consults it per request).
+#[test]
+fn scan_reads_the_brownout_priority() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let routes = dir.path().join("routes/slow");
+    std::fs::create_dir_all(&routes).expect("mkdir");
+    std::fs::write(
+        routes.join("page.tsx"),
+        "export default function Page() { return null }",
+    )
+    .expect("write page");
+    std::fs::write(
+        routes.join("page.server.ts"),
+        "export const config = { priority: 'low' }\nexport const load = () => ({})",
+    )
+    .expect("write server");
+    std::fs::write(routes.join("layout.tsx"), "").expect("write layout");
+
+    let tree = oxide_fw_router::RouteTree::scan(&dir.path().join("routes")).expect("scan");
+    let m = tree.match_path("/slow").expect("the route matches");
+    assert_eq!(
+        m.route.priority.as_deref(),
+        Some("low"),
+        "the declaration scans into the entry"
+    );
+
+    // A route without the declaration stays None (the `normal` default is
+    // the enforcement stage's read, not the tree's).
+    std::fs::create_dir_all(dir.path().join("routes/fast")).expect("mkdir fast");
+    std::fs::write(
+        dir.path().join("routes/fast/page.tsx"),
+        "export default function Page() { return null }",
+    )
+    .expect("write fast page");
+    let tree = oxide_fw_router::RouteTree::scan(&dir.path().join("routes")).expect("rescan");
+    let m = tree.match_path("/fast").expect("fast matches");
+    assert_eq!(m.route.priority, None, "undeclared stays None");
 }
