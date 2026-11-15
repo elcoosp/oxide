@@ -56,6 +56,11 @@ oxc_span_0_143 = { package = "oxc_span", version = "0.143.0", optional = true }
 oxc_diagnostics_0_143 = { package = "oxc_diagnostics", version = "0.143.0", optional = true }
 oxc_semantic_0_143 = { package = "oxc_semantic", version = "0.143.0", optional = true }
 oxc_codegen_0_143 = { package = "oxc_codegen", version = "0.143.0", optional = true }
+# V2-C02 (the dependency arm): Solid 2.0's official Oxc-based Rust
+# compiler core (git-pinned `solidjs/solid@next`, `packages/compiler`).
+# Its oxc 0.144 stack stays internal to the crate — the seam hands it
+# source text and takes emitted text back, no oxc type crosses.
+solidjs-compiler = { workspace = true, optional = true }
 
 [dev-dependencies]
 # V2-C01: criterion harness for the `native` bench (the pick/health cache
@@ -94,17 +99,18 @@ native-react-compiler = [
     "dep:oxc_span_0_143",
     "dep:oxc_diagnostics_0_143",
 ]
-# V2-C02 (§V2-C02, re-opened): the native Solid JSX compiler. The upstream
-# artifact is real (`@solidjs/compiler` 2.0.0-rc.21 on npm — the official
-# Solid 2.0 Oxc JSX compiler) but its Rust core is not sourceable for a
-# Cargo build (no crates.io crate; the solidjs/solid `main` tree carries no
-# `packages/compiler`), so the transform is implemented in-repo over the
-# workspace oxc stack this crate already pins (see
-# `docs/decisions/C02-solid-native.md`). No external dependency rides the
-# feature — it gates the in-repo backend only. Off by default — the fast
-# dev build never pays the extra stack; the release recipe turns the
+# V2-C02 (§V2-C02, the dependency arm, 2026-11-15): the native Solid
+# compiler. The backend is a thin adapter around Solid 2.0's official
+# Oxc-based Rust compiler core — the `solidjs-compiler` crate, git-pinned
+# at `solidjs/solid@next` `packages/compiler` (rev 7ea2a02e, the tree
+# behind npm `@solidjs/compiler` 2.0.0-rc.21). The earlier kill/re-open
+# records (`docs/decisions/C02-solid-*.md`) pinned "no sourceable Cargo
+# tree" as the blocker; the `next` branch now publishes the crate, the
+# re-run condition the re-open record set, so the in-repo JSX/reactivity
+# transform was deleted and the seam wraps upstream. Off by default — the
+# fast dev build never pays the extra stack; the release recipe turns the
 # landed backends on.
-native-solid = []
+native-solid = ["dep:solidjs-compiler"]
 
 [[bench]]
 name = "islands"
