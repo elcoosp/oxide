@@ -59,6 +59,16 @@ use crate::OxideResponse;
 /// The response header carrying the stream id (§V2-F07 wiring step 1).
 pub const STREAM_HEADER: &str = "x-oxide-stream";
 
+/// The opt-in marker a `route.ts` sets through the `oxide/server`
+/// `resumable` helper (§V2-F07: "sets `x-oxide-resumable: 1`"). The
+/// wiring tees only streamed endpoint responses carrying it — a plain
+/// `Response(stream)` without the marker streams out unbuffered, exactly
+/// as before.
+pub const RESUMABLE_HEADER: &str = "x-oxide-resumable";
+
+/// The `x-oxide-resumable` value the helper sets.
+pub const RESUMABLE_VALUE: &str = "1";
+
 /// The response header marking a completed-buffer reattach (§V2-F07
 /// wiring step 2: "A completed buffer with `n == len` returns `200`, empty
 /// body, `x-oxide-stream-complete: 1`").
@@ -322,6 +332,28 @@ impl StreamStore {
 /// held for a single copy-out; no method re-enters.
 fn chunks_of(buf: &StreamBuf) -> std::sync::MutexGuard<'_, Vec<Bytes>> {
     buf.chunks.lock().expect("stream chunks mutex poisoned")
+}
+
+/// The housekeeping task the wiring boots once at serve start (§V2-F07
+/// wiring step 3: "A background task checks every 30 s"): call
+/// [`StreamStore::sweep`] every `cadence`, so a buffer whose TTL passed is
+/// reclaimed even if no reattach ever arrives to trigger the check
+/// lazily. The spec's cadence is 30 s; the wiring passes the value (the
+/// pins shrink it to real-clock scale). The handle aborts nothing by
+/// itself — dropping it detaches the task, exactly like the skew expiry
+/// task's `_` binding at boot.
+#[must_use]
+pub fn spawn_sweep(store: Arc<StreamStore>, cadence: Duration) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(cadence);
+        // `interval` fires immediately by default; skip the zero-th tick
+        // so a boot-time sweep does not run before any buffer exists.
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            store.sweep();
+        }
+    })
 }
 
 /// The bytes at or after `offset`, concatenated from the held chunks
