@@ -29,6 +29,12 @@ tracing = { workspace = true }
 # trees (symlink-resolving defaults, the spec's `preserveSymlinks: false`)
 # — the pinned workspace version the bundler/jshost resolvers already use.
 oxc_resolver = { workspace = true }
+# V2-F08 dev-loop half: the loop loads the rebuilt cdylibs through the
+# host crate's loader gates and swaps them into the swappable host state.
+oxide-rustfn = { workspace = true }
+# The §9.4 id bindings re-derive through the ONE `server_fn_id`
+# definition (§9.4, D6) — never a second digest implementation.
+oxide-fw-compiler = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -70,6 +76,16 @@ required-features = ["bench-util"]
 # runs per node.
 [[bench]]
 name = "workspace"
+harness = false
+required-features = ["bench-util"]
+
+# V2-F08 dev-loop half: criterion bench for the server-lib loop — the
+# per-tick watch cost over a quiet native crate (the poll every dev tick
+# pays), one full fake step (build → load → bindings → swap), the host-state
+# swap at 4/16 bindings, the types-payload binding derivation and the
+# event filter.
+[[bench]]
+name = "server_lib"
 harness = false
 required-features = ["bench-util"]
 
