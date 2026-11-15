@@ -219,6 +219,7 @@ mod tests {
             has_server_module: false,
             needs_parent: false,
             live: None,
+            priority: None,
             slot: None,
         }
     }
