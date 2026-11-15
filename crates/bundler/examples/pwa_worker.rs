@@ -13,10 +13,11 @@
 //!    build-id-versioned cache name, the deduped byte-sorted precache
 //!    list (the `offline.precache` breadth's own docs, implemented
 //!    verbatim) and the resolved offline fallback.
-//! 3. [`oxide_fw_bundler::pwa::emit_pwa`] — the write to the dist root
-//!    (`/sw.js`, the scope the navigation fallback needs). The call-site
-//!    gate (`offline.enabled && sw.enabled` over a produced manifest) is
-//!    the CLI build's one-liner; the module itself is total.
+//! 3. [`oxide_fw_bundler::pwa::emit_pwa`] — the writes to the dist root
+//!    (`/sw.js`, the scope the navigation fallback needs, plus
+//!    `/pwa-register.js`, the registration snippet the boot entry loads).
+//!    The call-site gate (`offline.enabled && sw.enabled` over a produced
+//!    manifest) is the CLI build's one-liner; the module itself is total.
 //!
 //! Run it:
 //!
@@ -24,7 +25,7 @@
 //! cargo run -p oxide-fw-bundler --example pwa_worker
 //! ```
 
-use oxide_fw_bundler::pwa::{ShellSource, emit_pwa, plan_precache, sw_source};
+use oxide_fw_bundler::pwa::{ShellSource, emit_pwa, plan_precache, pwa_register_source, sw_source};
 use oxide_fw_bundler::{ClientManifest, RouteBundle};
 use oxide_fw_config::{OfflineConfig, OfflinePrecache, SwConfig};
 use std::collections::{BTreeMap, BTreeSet};
@@ -122,6 +123,9 @@ fn main() {
     // 2. Emit: the worker source is deterministic — the same plan emits
     //    byte-identical bytes on every build (the reproducibility
     //    contract), so a rebuild swaps only when the build id changes.
+    //    The registration snippet rides the same emission: the boot entry
+    //    loads `/pwa-register.js`, so a worker without it could never
+    //    register.
     let dir = tempfile::tempdir().expect("tempdir");
     emit_pwa(dir.path(), &plan).expect("emit sw.js");
     let written = std::fs::read_to_string(dir.path().join("sw.js")).expect("read sw.js");
@@ -132,4 +136,12 @@ fn main() {
         written.len()
     );
     println!("{written}");
+    let reg = std::fs::read_to_string(dir.path().join("pwa-register.js")).expect("read register");
+    debug_assert_eq!(reg, pwa_register_source());
+    println!(
+        "--- emitted {} ({} bytes) ---",
+        dir.path().join("pwa-register.js").display(),
+        reg.len()
+    );
+    println!("{reg}");
 }
