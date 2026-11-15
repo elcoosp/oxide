@@ -3098,6 +3098,70 @@ config + the prerender walk into `emit_pwa`) and the boot's
 A01 phase-3 wiring on a V8-capable host). The `Offline` matrix row stays
 Degraded until they land.
 
+## Offline-first wire-through — the CLI emission, the boot registration + the flush listener (`feat/pwa-boot-wire`, 2026-11-15)
+
+**What lands.** The F14 tail the two records above deferred — every
+remaining call-site, wired; nothing new sits behind a seam. The CLI
+build's `emit_pwa_worker` (`crates/cli/src/lib.rs`) drives the bundler
+seam at the gate the config docs state (`offline.enabled && sw.enabled`
+over the produced client manifest — `offline.enabled = false` installs no
+worker, silently, because that is the default posture; `sw.enabled =
+false` refuses loudly, a configured-but-refused feature is worth a line;
+a manifest-shape mismatch is loud, a bundler/CLI contract bug), with the
+call-site `PrerenderedShells` walk implementing the `ShellSource` seam
+over `dist/prerendered/**.html` in the navigation URL spelling
+(`url_path_from_rel` — the sitemap walk's ground-truth rule, shared
+verbatim). `emit_pwa` writes BOTH dist files now: `sw.js` and the
+registration snippet `pwa-register.js` (`pwa_register_source`,
+deterministic — a page cannot register the worker without it, so the two
+files exist together). The boot-entry generator's registration injection
+rides the SAME gate at both callers (it was `cfg.manifest.is_some()`:
+registering a worker the build did not emit 404s, emitting one no page
+registers is dead). The boot module (`packages/core/src/client/boot.ts`)
+answers the worker's activate fan-out: a module-scope, page-lifetime
+`onSwFlushMessage` listener (guarded for the SSR/config-loader import; a
+no-op without a service-worker registration) replays the queue when
+`OXIDE_OUTBOX_FLUSH` arrives, and `flush` resolves empty instead of
+rejecting when the store is unavailable — the fire-and-forget trigger
+sites (the `online` listener, the fan-out) never surface an unhandled
+rejection. 6 CLI pins (the gate ×2, the seam happy path, the shell-URL
+spelling, the `all` breadth through the CLI, the offline fallback), 2
+bundler register pins, 4 TS pins (the boot listener ×3 + the flush
+no-op); the `pwa_worker` example walks the register emission too.
+
+**Deltas.**
+
+- The old CLI worker body (the hand-rolled SWR source over the JSON
+  snapshot, cache `oxide-<build>`, network-first navigations) is DELETED —
+  the superseded path; the bundler seam's worker (`ox-<build-id>`,
+  stale-while-revalidate `/__data`, the navigation fallback chain) is the
+  one implementation. The webmanifest emission (`emit_web_manifest`) is
+  the §16.3 piece and keeps its own `manifest:` gate — unrelated.
+- The boot listener is module-scope (evaluated once per document), not
+  wired into the `boot()`/`bootWithRouter` bodies: it is page-lifetime glue
+  exactly like the outbox module's own `online` listener, and the router
+  disposer does not own it — a torn-down router still receives the
+  worker's message. Module evaluation happens at most once per document,
+  so the listener cannot double-register.
+- The registration snippet's source is byte-identical to the old CLI's
+  (shipped pages keep their cache semantics); the gate that decides
+  whether it EXISTS is what changed.
+- The `SwConfig.enabled` doc comment claimed "default true when
+  `manifest` is present" — that gate no longer exists; the comment now
+  states the §V2-F14 gate (`offline.enabled` + `sw.enabled`).
+- The `Offline` capability-matrix cell was already `F` (the R02 rows
+  carried their target from day one); with the wire-through the declared
+  cell is BACKED by code end-to-end. The e2e execution (a real PWA build
+  through `oxide build` with a served page) rides CI — every CLI pin in
+  this milestone is compile-verified (the sandbox `cargo check -p
+  oxide-fw-cli --all-targets` is green) but runs on CI only (the
+  V8-linked link step).
+
+**What remains.** Nothing for F14 at the code level: the module, the
+config, the server stage, the client wire, the boot listener and both
+CLI call-sites are landed. CI executes the CLI pins + the conformance
+sweep.
+
 ## Auto-islands inference (V2-F02) — the scanner + manifest + gate landed, the CLI call-site is the deferred half (`feat/auto-islands-inference`, 2026-11-14)
 
 **What landed.** The §V2-F02 one-week-spike's V8-free substrate:
