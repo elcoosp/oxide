@@ -250,6 +250,12 @@ export function createRouter(opts: RouterOptions): Router {
     if (typeof d.locale === 'string' && d.locale.length > 0) {
       input.locale = d.locale
     }
+    // §V2-F05: the live advertisement rides the envelope — the boot
+    // lifecycle opens the SSE connection for a live route and closes it on
+    // navigation away (absent for non-live routes).
+    if (d.live === true) {
+      input.live = true
+    }
     // §8.2: the layout-id chain the new page nests inside — passed to the
     // adapter's `update` so the client re-renders `RootLayout(Slow)` matching
     // the SSR tree instead of a bare page.
