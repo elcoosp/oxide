@@ -29,6 +29,11 @@ export default defineConfig({
   // CPU-bound and unauthenticated. The Playwright `og.spec.ts` suite asserts
   // it end-to-end, so this fixture opts in.
   og: { enabled: true },
+  // §V2-F12: the brownout mode is on for the fixture so the e2e pin can
+  // flip the governor's level and pin the enforcement stage + the
+  // readiness flip on the wire. At `Normal` the mode is inert (one
+  // relaxed atomic per request), so the other smoke suites are unchanged.
+  brownout: { enabled: true },
   // §V2-F15: the ox-replay fixture's loader fetches the app's own health
   // endpoint through the SSRF-guarded op path; loopback is a blocked
   // range by default, so the fixture allow-lists it (dev fixture only).
