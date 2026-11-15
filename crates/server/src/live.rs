@@ -27,24 +27,25 @@
 //!   turns a rerun's full snapshot into an `ODP1` patch when the diff is
 //!   small enough — the payload the client's `decodeOdfOrPatch` sniffs.
 //!
-//! The endpoint itself (`GET /__oxide/live`: route lookup, same-origin
-//! enforcement via [`same_origin`], the build check via
-//! `oxide_fw_dispatch::build::stage_build_check`, and the rerun closure
-//! that calls the CLI's data-route path) is the A01-phase-3 CLI wiring —
-//! see `docs/deviations.md`.
+//! The endpoint itself (`GET /__oxide/live`) is the CLI's dispatch arm —
+//! it composes [`parse_live_query`], [`same_origin`], the A04 build check
+//! (`stage_check` reads the `build` query parameter on this path) and
+//! [`live_endpoint_response`]; the rerun closure that calls the same
+//! data-route path as `/__data` is the CLI's (`crates/cli/src/serve/live.rs`).
+//! The wiring deltas live in `docs/deviations.md`.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::net::IpAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use base64::Engine as _;
 use bytes::Bytes;
 use tokio::sync::{mpsc, watch};
 
-use crate::OxideResponse;
+use crate::{OxideRequest, OxideResponse};
 
 /// A retry-after hint (seconds) for the capacity `503` — short, because a
 /// dropped tab frees its slot within one keepalive period.
@@ -591,9 +592,115 @@ impl Runner {
 /// this connection's previous full ([`delta_payload`]) — the client sniffs
 /// the magic and applies accordingly.
 #[must_use = "the stream is the response body — dropping it ends the SSE response"]
-pub fn live_stream(
+pub fn live_stream(rx: watch::Receiver<Option<Bytes>>, keepalive: Duration) -> crate::BodyStream {
+    live_stream_core(rx, keepalive, None)
+}
+
+fn b64(data: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(data)
+}
+
+// ---------------------------------------------------------------------------
+// The endpoint wiring API (§V2-F05 steps 2/5): the pure pieces the dispatch
+// closure composes into `GET /__oxide/live`. V8-free — the arm itself (route
+// lookup, hub handle, revalidate hooks, the rerun closure that calls the
+// CLI's data-route path) is the CLI's; these functions hold everything the
+// arm needs so the V8-free pins cover the shape of what goes on the wire.
+// ---------------------------------------------------------------------------
+
+/// The parsed `GET /__oxide/live` query (§V2-F05 step 2): the route path the
+/// connection re-runs (`route`) and the page URL it was opened from (`url`).
+/// The build id is deliberately absent — the A04 stage owns it
+/// (`stage_check` consults the `build` query parameter on this path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveQuery {
+    /// The route path to re-run (what a navigation would pass to `/__data`).
+    pub route: String,
+    /// The page URL the connection was opened from (path + query).
+    pub url: String,
+}
+
+/// Parse the live endpoint's query string. Percent-decodes both values (the
+/// client sends `encodeURIComponent`-escaped parameters, the same spelling
+/// `/__data` parses). `None` when the mandatory `route` parameter is absent
+/// or empty.
+#[must_use]
+pub fn parse_live_query(query: &str) -> Option<LiveQuery> {
+    let route = query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("route="))
+        .filter(|v| !v.is_empty())?;
+    let url = query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("url="))
+        .unwrap_or("");
+    Some(LiveQuery {
+        route: crate::percent_decode(route),
+        url: crate::percent_decode(url),
+    })
+}
+
+/// Percent-encode a route path for the `route=` parameter — the client's
+/// `encodeURIComponent` spelling: unreserved bytes pass through, `/` and
+/// everything else become `%XX` (the browser sends `%2Fblog%2Frust`; the
+/// wire spelling the rerun reproduces byte-for-byte). `/__data`
+/// percent-decodes the value — the same round trip a navigation makes.
+fn encode_route_param(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("%{b:02X}"));
+            }
+        }
+    }
+    out
+}
+
+/// The rerun request (§V2-F05 step 5): `GET /__data?route=<route>` built
+/// from the subscriber — the dispatch closure runs it through the SAME
+/// data-route path a browser navigation takes, with the stored header
+/// snapshot (the cookie snapshot included, so cookie-gated loaders re-run
+/// per client). The peer address rides for honest rate limiting.
+#[must_use]
+pub fn rerun_request(sub: &Sub) -> OxideRequest {
+    OxideRequest {
+        method: "GET".to_string(),
+        url: format!("/__data?route={}", encode_route_param(&sub.route)),
+        headers: std::sync::Arc::new(sub.headers.clone()),
+        header_index: OnceLock::new(),
+        body: Bytes::new(),
+        request_id: crate::next_request_id(),
+        trace: None,
+        peer: sub.ip,
+        rewrite_hops: 0,
+        mw_resume_after: None,
+    }
+}
+
+/// Like [`live_stream`], but a cleared snapshot (the rerun worker's
+/// redirect/error path) emits `event: stale` carrying `build_id` and ends
+/// the stream (§V2-F05 step 5: "If the rerun redirects or errors, send
+/// `event: stale` and close so the client does a normal navigation"). The
+/// endpoint passes the CURRENT build id — the value the client reloads with.
+#[must_use = "the stream is the response body — dropping it ends the SSE response"]
+pub fn live_stream_with_stale(
+    rx: watch::Receiver<Option<Bytes>>,
+    keepalive: Duration,
+    build_id: &str,
+) -> crate::BodyStream {
+    live_stream_core(rx, keepalive, Some(build_id))
+}
+
+/// The stream body core behind [`live_stream`] / [`live_stream_with_stale`].
+/// `stale_build: Some(id)` arms the cleared-snapshot path.
+fn live_stream_core(
     mut rx: watch::Receiver<Option<Bytes>>,
     keepalive: Duration,
+    stale_build: Option<&str>,
 ) -> crate::BodyStream {
     // The first frame: whatever the channel holds right now.
     let initial = rx.borrow_and_update().clone();
@@ -602,14 +709,21 @@ pub fn live_stream(
     // ping-spammed before its first data frame).
     let start = tokio::time::Instant::now() + keepalive;
     let tick = tokio::time::interval_at(start, keepalive);
+    let stale = stale_build.map(str::to_string);
     let stream = futures::stream::unfold(
-        (rx, tick, initial, 0usize),
-        |(mut rx, mut tick, mut initial, mut seq)| async move {
+        (rx, tick, initial, 0usize, stale, false),
+        |(mut rx, mut tick, mut initial, mut seq, stale, done)| async move {
+            if done {
+                return None;
+            }
             loop {
                 if let Some(snapshot) = initial.take() {
                     let frame = sse_frame(DATA_EVENT, Some(seq), &b64(&snapshot));
                     seq += 1;
-                    return Some((Ok(Bytes::from(frame)), (rx, tick, initial, seq)));
+                    return Some((
+                        Ok(Bytes::from(frame)),
+                        (rx, tick, initial, seq, stale, false),
+                    ));
                 }
                 tokio::select! {
                     changed = rx.changed() => {
@@ -624,16 +738,27 @@ pub fn live_stream(
                         if let Some(snapshot) = snapshot {
                             let frame = sse_frame(DATA_EVENT, Some(seq), &b64(&snapshot));
                             seq += 1;
-                            return Some((Ok(Bytes::from(frame)), (rx, tick, initial, seq)));
+                            return Some((
+                                Ok(Bytes::from(frame)),
+                                (rx, tick, initial, seq, stale, false),
+                            ));
                         }
-                        // A cleared snapshot (failed rerun): the wiring
-                        // turns this into `event: stale` + close; the
-                        // substrate keeps the connection silent.
+                        // A cleared snapshot (failed rerun): the stale-armed
+                        // body emits `event: stale` + ends; the bare body
+                        // stays silent (the substrate contract the pins
+                        // held before the wiring landed).
+                        if let Some(build) = stale.as_deref() {
+                            let frame = sse_frame(STALE_EVENT, None, &build);
+                            return Some((
+                                Ok(Bytes::from(frame)),
+                                (rx, tick, initial, seq, stale, true),
+                            ));
+                        }
                     }
                     _ = tick.tick() => {
                         return Some((
                             Ok(Bytes::from(sse_frame(PING_EVENT, None, "1"))),
-                            (rx, tick, initial, seq),
+                            (rx, tick, initial, seq, stale, false),
                         ));
                     }
                 }
@@ -643,6 +768,56 @@ pub fn live_stream(
     Box::pin(stream)
 }
 
-fn b64(data: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(data)
+/// A body that holds the subscription [`Guard`] for the connection's
+/// lifetime: when the stream ends or the response body is dropped (client
+/// disconnect, stale end, sender drop) the guard drops and the hub
+/// unsubscribes — the endpoint-level [`Guard::Drop`](Guard) pin.
+struct GuardedBody {
+    inner: crate::BodyStream,
+    _guard: Option<Guard>,
+}
+
+impl futures::Stream for GuardedBody {
+    type Item = std::result::Result<Bytes, std::io::Error>;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        match std::pin::Pin::new(&mut self.inner).poll_next(cx) {
+            std::task::Poll::Ready(None) => {
+                self._guard = None;
+                std::task::Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+}
+
+/// The endpoint's response for one subscription attempt (§V2-F05 steps 2/4):
+/// `hub.subscribe` gates the capacity (the `Err` arm is the `503` +
+/// `retry-after` [`live_capacity_response`]); the `Ok` response carries the
+/// SSE head and a body that (a) streams the subscriber's snapshots, (b)
+/// emits `event: stale` + ends when a rerun fails (the wiring passes the
+/// current build id), and (c) releases the hub slot when the body ends.
+///
+/// `build_id: None` (tests, and callers with no generations handle) keeps
+/// the cleared-snapshot path silent — the pre-wiring substrate behavior.
+pub fn live_endpoint_response(
+    hub: &Arc<Hub>,
+    sub: Arc<Sub>,
+    keepalive: Duration,
+    build_id: Option<&str>,
+) -> Result<OxideResponse, OxideResponse> {
+    let guard = hub
+        .subscribe(Arc::clone(&sub))
+        .map_err(|_| live_capacity_response())?;
+    let rx = sub.tx.subscribe();
+    let stream = match build_id {
+        Some(b) => live_stream_with_stale(rx, keepalive, b),
+        None => live_stream(rx, keepalive),
+    };
+    Ok(live_response(Box::pin(GuardedBody {
+        inner: stream,
+        _guard: Some(guard),
+    })))
 }
