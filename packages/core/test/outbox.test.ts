@@ -149,3 +149,17 @@ test('flush replays every queued item in order with the stored headers', async (
     'POST /second 2 x-oxide-idem',
   ])
 })
+
+test('flush is a no-op when IndexedDB is unavailable', async () => {
+  // A browser with storage disabled (or the boot module's flush listener
+  // firing in an environment without the store) resolves empty instead of
+  // rejecting — the flush triggers (the `online` listener, the worker's
+  // OXIDE_OUTBOX_FLUSH fan-out) must never surface an unhandled rejection.
+  const saved = (globalThis as Record<string, unknown>).indexedDB
+  delete (globalThis as Record<string, unknown>).indexedDB
+  try {
+    await flush()
+  } finally {
+    ;(globalThis as Record<string, unknown>).indexedDB = saved
+  }
+})
