@@ -2139,6 +2139,12 @@ pub struct Pipeline {
     /// the CLI's `tokio::spawn` after `PageRenderer::warm()` returns.
     /// Defaults to `true` so tests and cache-only servers need no changes.
     pub render_ready: Arc<std::sync::atomic::AtomicBool>,
+    /// V2-F12: the brownout governor the sampler drives. `Some` only when
+    /// `brownout.enabled` is on — the readiness endpoint then answers 503
+    /// at `Emergency` (a balancer drains the node) and the health endpoint
+    /// reports the level as `x-oxide-brownout`; `None` keeps both
+    /// endpoints at their pre-F12 shapes.
+    pub brownout: Option<Arc<crate::governor::Governor>>,
     /// Prometheus metrics endpoint path (§20). `/_oxide/metrics` default;
     /// empty string disables.
     pub metrics_path: String,
@@ -2760,6 +2766,7 @@ impl Default for Pipeline {
             health_path: String::new(),
             ready_path: String::new(),
             render_ready: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            brownout: None,
             metrics_path: String::new(),
             metrics_auth_token: None,
             metrics: None,
@@ -4411,28 +4418,51 @@ impl Pipeline {
 
         // (3b) health endpoint (§12.2).
         if req.method.eq_ignore_ascii_case("GET") && path == self.health_path {
-            return NativePrefix::Raw(
-                OxideResponse::new(200, "ok")
-                    .with_header("content-type", "text/plain; charset=utf-8"),
-            );
+            // V2-F12: the level rides the liveness probe as
+            // `x-oxide-brownout` so an operator's scraper sees the
+            // governor without a second scrape of /_oxide/metrics. The
+            // body stays `ok` (liveness is liveness).
+            let mut r = OxideResponse::new(200, "ok")
+                .with_header("content-type", "text/plain; charset=utf-8");
+            if let Some(g) = self.brownout.as_ref() {
+                r = r.with_header(
+                    crate::governor::BROWNOUT_HEADER,
+                    (g.level() as u8).to_string(),
+                );
+            }
+            return NativePrefix::Raw(r);
         }
 
         // (3b') readiness endpoint (§6.4 / Wave M). 200 when the renderer
         // is warm; 503 with retry-after while warming. Distinct from
         // health — traffic can flow as soon as health is 200; readiness
         // is what an LB or a benchmark polls to avoid measuring warm-up.
+        // V2-F12: an `Emergency` brownout ALSO answers 503 (the spec's
+        // readiness contract — "returns 503 only at Emergency so a
+        // balancer can drain") through the governor's own
+        // [`governor::ready_status`]; the level rides the response as
+        // `x-oxide-brownout`.
         if !self.ready_path.is_empty()
             && req.method.eq_ignore_ascii_case("GET")
             && path == self.ready_path
         {
             let ready = self.render_ready.load(std::sync::atomic::Ordering::Relaxed);
-            let mut r = if ready {
+            let brownout_level = self.brownout.as_ref().map(|g| g.level());
+            let brownout_refuses = brownout_level
+                .map(|l| crate::governor::ready_status(l) != 200)
+                .unwrap_or(false);
+            let mut r = if ready && !brownout_refuses {
                 OxideResponse::new(200, "ok")
+            } else if brownout_refuses {
+                OxideResponse::new(503, "brownout emergency")
             } else {
                 OxideResponse::new(503, "warming")
             };
             r = r.with_header("content-type", "text/plain; charset=utf-8");
-            if !ready {
+            if let Some(l) = brownout_level {
+                r = r.with_header(crate::governor::BROWNOUT_HEADER, (l as u8).to_string());
+            }
+            if !ready || brownout_refuses {
                 r = r.with_header("retry-after", "1");
             }
             return NativePrefix::Raw(r);
