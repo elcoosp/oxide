@@ -98,14 +98,52 @@ impl L0Cache {
             return None; // beyond TTL + SWR
         }
         let stale = !entry.is_fresh(now);
-        // PERF-L0 (readiness): an envelope entry stores a seg_count of 0 for a
-        // body WITHOUT sentinels only when it went through `encode_segments`,
-        // which returns None for plain bodies — so a 0 count cannot occur.
-        // Belt and braces: treat a 0 count as corrupt and skip the entry.
+        Self::envelope_ok(&entry)?;
+        Some(CachedResponse { entry, stale })
+    }
+
+    /// V2-F12: the brownout lookup — the same read with the SWR bound
+    /// extended to `staleCeiling` × TTL (the spec's `Stale` level grant:
+    /// "the L0 lookup may serve entries past their SWR window (up to
+    /// `brownout.staleCeiling`, default 10x TTL) with
+    /// `warning: 110 - \"Response is Stale\"`, while a single-flight
+    /// regeneration proceeds"). The caller passes the ceiling as an
+    /// integer percent (100 × multiplier) so the bound math stays exact
+    /// under the zero-cast lints policy; the served entry is flagged
+    /// `stale` so the caller's existing SWR regeneration flow (the
+    /// background invalidate) proceeds unchanged.
+    pub async fn get_brownout(
+        &self,
+        route: &str,
+        params: &str,
+        vary: &str,
+        ceiling_pct: u64,
+    ) -> Option<CachedResponse> {
+        let key = self.key(route, params, vary);
+        let entry = self.handler.get_arc(&key).await.ok()??;
+        let now = now_ms();
+        // The brownout bound: `stored_at + TTL × ceiling`, computed in
+        // u128 so no side overflows and no cast truncates (the
+        // `exit_ratio_pct` precedent).
+        let ttl_ms = u128::from(entry.fresh_until().saturating_sub(entry.stored_at));
+        let bound = u128::from(entry.stored_at) + ttl_ms * u128::from(ceiling_pct) / 100;
+        if u128::from(now) > bound {
+            return None;
+        }
+        Self::envelope_ok(&entry)?;
+        Some(CachedResponse { entry, stale: true })
+    }
+
+    /// PERF-L0 (readiness): an envelope entry stores a seg_count of 0 for a
+    /// body WITHOUT sentinels only when it went through `encode_segments`,
+    /// which returns None for plain bodies — so a 0 count cannot occur.
+    /// Belt and braces: treat a 0 count as corrupt and skip the entry.
+    /// `None` on the corrupt shape, `Some(())` to continue.
+    fn envelope_ok(entry: &Entry) -> Option<()> {
         if entry.body.starts_with(L0_ENV_MAGIC) && seg_count_of(&entry.body) == 0 {
             return None;
         }
-        Some(CachedResponse { entry, stale })
+        Some(())
     }
 
     /// Store a response. The caller passes the body with [`NONCE_SENTINEL`] in
