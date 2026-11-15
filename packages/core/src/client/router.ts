@@ -12,6 +12,7 @@ import { decodeOdf } from './odf-decode.ts'
 import { handleStale, withBuild } from './build.ts'
 import { layoutChunksFor, type ClientManifestLike } from './route-manifest.ts'
 import { navRouteHeaders } from './prefetch.ts'
+import { resumableFetch } from './resume.ts'
 import type { ClientInput, ClientManifest, FrameworkAdapter } from '../types.ts'
 
 /** Minimal DOM surface the router needs (hand-rolled fakes in tests). */
@@ -222,14 +223,45 @@ export function createRouter(opts: RouterOptions): Router {
     if (navigation) {
       headers = { ...headers, ...navRouteHeaders(location.pathname, path, routeManifest) }
     }
-    const res = await doFetch(`/__data?route=${encodeURIComponent(path)}`, withBuild({
-      signal,
-      headers,
-    }))
+    // §V2-F07: the data fetch rides the resumable lifecycle — a response
+    // the server marked `x-oxide-stream: <id>` is pumped through onChunk
+    // (a mid-stream drop reattaches `GET /__oxide/stream/<id>` with the
+    // exact byte offset, five tries on the backoff ladder) and the router
+    // reassembles the chunks for the ODF decode. An unmarked response —
+    // every `/__data` the server produces today — passes through
+    // `resumableFetch` untouched and keeps the buffered read, so the
+    // pre-F07 byte shapes and pins hold.
+    let pumped: Uint8Array[] | undefined
+    const res = await resumableFetch(
+      `/__data?route=${encodeURIComponent(path)}`,
+      withBuild({
+        signal,
+        headers,
+      }),
+      (chunk) => {
+        ;(pumped ??= []).push(chunk)
+      },
+      { fetch: doFetch as typeof fetch },
+    )
     if (handleStale(res)) throw new Error(`router: stale build — reloading for ${path}`)
     if (!res.ok) throw new Error(`router: /__data responded ${res.status} for ${path}`)
-    const bytes = new Uint8Array(await res.arrayBuffer())
+    const bytes = pumped
+      ? concatBytes(pumped)
+      : new Uint8Array(await res.arrayBuffer())
     return decodeOdf(bytes) // §9.5: route data arrives as ODF bytes
+  }
+
+  /** Concatenate the reattach pump's chunks in order (§V2-F07 reassembly). */
+  function concatBytes(chunks: Uint8Array[]): Uint8Array {
+    let total = 0
+    for (const c of chunks) total += c.length
+    const out = new Uint8Array(total)
+    let off = 0
+    for (const c of chunks) {
+      out.set(c, off)
+      off += c.length
+    }
+    return out
   }
 
   function normalizeInput(decoded: unknown, path: string): ClientInput {
