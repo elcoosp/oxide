@@ -24,7 +24,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `config` | Typed config, layering (defaults→preset→file→mode→env→CLI), env files, `PUBLIC_` split, static extraction with V8 fallback flag, typo diagnostics, `live` transport knobs + DSP-111 (§V2-F05), `experiments` + DSP-110 (§V2-F04), `stream.resume` bounds + DSP-112 (§V2-F07), `brownout` thresholds + DSP-113 (§V2-F12), `interactionReplay` + DSP-114 (§V2-F03), `search` key + the §18 refusal arm (§V2-F09), `prefetch` + DSP-115 (§V2-F13), `deploy` + CFG-DEPLOY (V2-F10), `record` + CFG-REC (V2-F15), `offline` + CFG-OFFLINE (V2-F14) | §14, D14, V2-F03, V2-F04, V2-F05, V2-F07, V2-F09, V2-F12, V2-F13, V2-F14 |
 | `cache` | L0/L1/L2 tiers, weighted LRU memory tier, redb disk tier, tags, TTL/SWR/stale-if-error, single-flight, build seeding, HTTP conditional semantics, canonical `build_id_of_dist` (A04) | §11, V2-A04 |
 | `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection, why-dynamic reason engine (`infer_reasons`, §V2-F16); the V2-F02 auto-islands inference substrate (`interactivity`: the spec-verbatim `scan_interactivity` per-framework detection, the `{ file: { interactive, reasons } }` manifest (`IslandManifest`, the `.oxide/island-manifest.json` side-car contract, `AST-ISL-001`), the transitive same-project import fixpoint and the `hydrates` decision — explicit wins, pure is the only skip); the V2-E03 migrate planner substrate (`migrate`: the spec-verbatim `MigrationPlan` data model, the object-safe `MigrationPlanner` seam with the SvelteKit/Next/Nuxt/Vite planners, `detect_framework`, `apply_plan` — the collision pre-check, the renames, the span-surgery import rewrites) | §6.2–6.4, §9, V2-F16, V2-F02, V2-E03 |
-| `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests; the V2-E04 SRI pass (`sri_digest`/`integrity_map` — the chunk path digests the bytes in hand, the rolldown path reads the persisted files back) recording `client.manifest.json`'s `integrity: { file: value }`; the strict re-digest walk (`verify_integrity_map`) and the adapter-level head producer (`head::HeadProducer`/`ManifestHeadProducer`, the manifest→modulepreload/stylesheet projection); the V2-F14 PWA worker emitter (`pwa`: the object-safe `ShellSource` seam over the prerendered route shells, the pure `plan_precache` fold over the typed `sw:`/`offline:` keys — the build-id-versioned cache name, the deduped byte-sorted precache list per the `offline.precache` breadth's own docs, the resolved offline fallback — the deterministic `sw_source` render and the `dist/sw.js` emission) | §6.4, §16.6, V2-E04, V2-F14 |
+| `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests; the V2-E04 SRI pass (`sri_digest`/`integrity_map` — the chunk path digests the bytes in hand, the rolldown path reads the persisted files back) recording `client.manifest.json`'s `integrity: { file: value }`; the strict re-digest walk (`verify_integrity_map`) and the adapter-level head producer (`head::HeadProducer`/`ManifestHeadProducer`, the manifest→modulepreload/stylesheet projection); the V2-F14 PWA worker emitter (`pwa`: the object-safe `ShellSource` seam over the prerendered route shells, the pure `plan_precache` fold over the typed `sw:`/`offline:` keys — the build-id-versioned cache name, the deduped byte-sorted precache list per the `offline.precache` breadth's own docs, the resolved offline fallback — the deterministic `sw_source` render and the `emit_pwa` writes (`dist/sw.js` + the registration snippet `dist/pwa-register.js`, `pwa_register_source`)) | §6.4, §16.6, V2-E04, V2-F14 |
 | `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
 | `macros` | Proc macros behind the native server functions (V2-F08): the `#[server_fn]` shim generator the `export_table!`-built FnTable registers, the `TsType` derive (named-field structs + fieldless enums) and the optional `oxide_fn_types_json` side export the `.d.ts` renderer consumes | §9.4, V2-F08 |
@@ -42,23 +42,23 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 
 ## What changed since 2026-10-12
 
-- **`bundler` + `packages/core`**: the V2-F14 tail (`feat/pwa-precache-emitter` +
-  `feat/offline-enhance-outbox`). The build half: `bundler::pwa` — the
-  `ShellSource` seam (the prerendered route shells the CLI's walk reports),
-  `plan_precache` over the typed `sw:`/`offline:` keys (the build-id-versioned
-  cache name, the `offline.precache` breadth's own docs implemented verbatim,
-  the `SwConfig` fallback-resolution contract enforced), the deterministic
-  `sw_source` worker (install precache, activate's stale-`ox-` cache deletion
-  + the outbox flush fan-out, the `/__data` stale-while-revalidate arm, the
-  navigation fallback chain, the `/client/` cache-first arm) and `emit_pwa`'s
-  `dist/sw.js` write. The wire half: the offline `enhance` path enqueues a
-  submit the browser knows cannot reach the network (the probe or the
-  network-failure `TypeError`) into the outbox with the faithful headers,
-  dispatches `ox:form-queued`, and `onSwFlushMessage` answers the emitted
-  worker's activate fan-out with a queue flush. 14 Rust + 10 TS pins, the
-  `pwa` criterion group and the `pwa_worker` walkthrough example ride along;
-  the CLI call-site (`offline.enabled && sw.enabled` over a produced manifest)
-  and the boot's listener adoption are the remaining thin halves.
+- **`bundler` + `packages/core` + `cli`**: the V2-F14 wire-through
+  (`feat/pwa-boot-wire`). The CLI build's `emit_pwa_worker` drives the
+  bundler seam at the `offline.enabled && sw.enabled` gate over the
+  produced client manifest (the `offline.enabled = false` skip is silent —
+  the default posture; the `sw.enabled = false` refusal is loud), with the
+  call-site `PrerenderedShells` walk implementing `ShellSource` over
+  `dist/prerendered/**.html` in the navigation URL spelling. `emit_pwa`
+  writes BOTH `dist/sw.js` and the registration snippet
+  `dist/pwa-register.js` (`pwa_register_source`), and the boot-entry
+  generator's `/pwa-register.js` injection rides the same gate at both
+  callers (was `manifest.is_some()`). The boot module answers the
+  worker's activate fan-out with a module-scope page-lifetime
+  `onSwFlushMessage` listener (SSR-import-guarded) that replays the
+  outbox queue; `flush` resolves empty instead of rejecting on a
+  store-less environment. 6 rewritten CLI pins + 2 register pins + 4 TS
+  pins; the old hand-rolled CLI worker body is deleted (the bundler seam
+  is the one implementation).
 
 - **`adapters`**: the delta-deploy engine (§V2-F11, `feat/delta-deploy-engine`)
   — the capability matrix's `DeltaDeploy` row now has its engine.
