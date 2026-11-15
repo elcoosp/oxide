@@ -94,6 +94,17 @@ native-react-compiler = [
     "dep:oxc_span_0_143",
     "dep:oxc_diagnostics_0_143",
 ]
+# V2-C02 (§V2-C02, re-opened): the native Solid JSX compiler. The upstream
+# artifact is real (`@solidjs/compiler` 2.0.0-rc.21 on npm — the official
+# Solid 2.0 Oxc JSX compiler) but its Rust core is not sourceable for a
+# Cargo build (no crates.io crate; the solidjs/solid `main` tree carries no
+# `packages/compiler`), so the transform is implemented in-repo over the
+# workspace oxc stack this crate already pins (see
+# `docs/decisions/C02-solid-native.md`). No external dependency rides the
+# feature — it gates the in-repo backend only. Off by default — the fast
+# dev build never pays the extra stack; the release recipe turns the
+# landed backends on.
+native-solid = []
 
 [[bench]]
 name = "islands"
