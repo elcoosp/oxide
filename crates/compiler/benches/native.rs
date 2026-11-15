@@ -45,6 +45,7 @@ impl NativeCompiler for FakeSolid {
             js: req.source.to_string(),
             css: None,
             warnings: Vec::new(),
+            source_map: None,
         })
     }
     fn health_fixture(&self) -> (&'static str, &'static str) {
@@ -187,9 +188,10 @@ criterion_group!(
 );
 criterion_main!(benches);
 
-// §V2-C02 (re-opened): the in-repo Solid JSX transform's cold-compile
-// cost over the spec's spike fixture (a signal, an event handler, a
-// `<Show>`), the DOM target the precompile pass runs.
+// §V2-C02 (the dependency arm): the upstream-backed Solid compiler's
+// cold-compile cost (the adapter strip + compile + rewrite pipeline) over
+// the spec's spike fixture (a signal, an event handler, a `<Show>`), the
+// DOM target the precompile pass runs.
 #[cfg(feature = "native-solid")]
 fn bench_native_compile_solid(c: &mut Criterion) {
     use oxide_fw_compiler::native::{CompileRequest, Generate, NativeCompiler};
