@@ -98,6 +98,13 @@ fn main() {
         ]);
         rec.set_route("routes/ox-replay", &[("slug".to_string(), "a".to_string())]);
         rec.set_locals(serde_json::json!({ "session": { "user": "a" } }));
+        // The guard is dropped HERE, before the decorated load runs: the
+        // decorator's `run` re-locks the same accumulator under the hood
+        // (the CLI's wiring does exactly this — set fields under the
+        // guard, drop it, then let the pipeline call through the shared
+        // handle), and a held guard + a same-thread re-lock is a deadlock
+        // this walkthrough used to hang on.
+        drop(rec);
         // The loads run through the decorator — one captured call.
         let runner: Arc<dyn LoaderRunner> = Arc::new(RecordingLoaderRunner::new(
             Arc::new(FakeRunner),
