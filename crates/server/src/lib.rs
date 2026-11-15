@@ -5115,7 +5115,10 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// (`nonce_for`), L0 sentinel substitution and boot-tag stamping all key off
 /// this id, so one change point fixes all three consumers. Falls back to the
 /// counter only if the OS RNG fails (never on hosted platforms).
-fn next_request_id() -> String {
+///
+/// Public so the wiring's synthesized requests (the F05 live rerun rides
+/// `rerun_request`) carry the same id class a hyper-served request does.
+pub fn next_request_id() -> String {
     use ring::rand::SecureRandom as _;
     // P-13: one SystemRandom for the process, not one per request.
     static RNG: std::sync::OnceLock<ring::rand::SystemRandom> = std::sync::OnceLock::new();
