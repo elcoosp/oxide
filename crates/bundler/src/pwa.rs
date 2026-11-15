@@ -18,7 +18,9 @@
 //!    `SwConfig` comment's exact order).
 //! 3. [`sw_source`] / [`emit_pwa`] — the deterministic worker source and
 //!    its write to the dist root (`/sw.js`, the scope the worker needs to
-//!    answer navigations).
+//!    answer navigations) plus the registration snippet the page loads
+//!    (`/pwa-register.js`, [`pwa_register_source`] — a page cannot
+//!    register the worker without it, so the two files exist together).
 //!
 //! The worker's fetch contract is the spec's: `/__data` responses serve
 //! stale-while-revalidate; navigations fall back to the resolved route
@@ -250,13 +252,31 @@ pub fn sw_source(plan: &PrecachePlan) -> String {
     src
 }
 
-/// Write the worker to the dist root (`<out_dir>/sw.js` — the root scope
-/// a navigation-fallback worker needs). The write matches the client
-/// manifest's convention (one plain write at the end of the build step).
+/// The registration snippet the page loads (`/pwa-register.js`): a
+/// guarded `navigator.serviceWorker.register('/sw.js')` on the `load`
+/// event. A platform without the `serviceWorker` surface (or a page where
+/// registration fails) degrades to a no-op — the same module-safety
+/// contract the client outbox keeps. Deterministic: the same bytes every
+/// build (the reproducibility contract [`sw_source`] keeps).
+#[must_use]
+pub fn pwa_register_source() -> String {
+    "// Oxide PWA registration (§16.6).\n\
+if ('serviceWorker' in navigator) {\n\
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));\n\
+}\n"
+    .to_string()
+}
+
+/// Write the worker and its registration snippet to the dist root —
+/// `<out_dir>/sw.js` (the root scope a navigation-fallback worker needs)
+/// and `<out_dir>/pwa-register.js` (the page-side loader the boot entry
+/// injects). The writes match the client manifest's convention (plain
+/// writes at the end of the build step).
 ///
 /// # Errors
 ///
-/// Propagates the `sw.js` write's I/O error.
+/// Propagates the `sw.js` / `pwa-register.js` writes' I/O errors.
 pub fn emit_pwa(out_dir: &Path, plan: &PrecachePlan) -> std::io::Result<()> {
-    std::fs::write(out_dir.join("sw.js"), sw_source(plan))
+    std::fs::write(out_dir.join("sw.js"), sw_source(plan))?;
+    std::fs::write(out_dir.join("pwa-register.js"), pwa_register_source())
 }
