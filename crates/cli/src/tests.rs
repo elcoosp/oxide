@@ -7396,45 +7396,45 @@ fn parallel_load_savings_zero_when_equal_or_sequential() {
     assert!((parallel_load_savings_ms(-1.0, 20.0) - 0.0).abs() < 0.001);
 }
 
-// ------------------------------ §16.6: service worker emitter
+// ------------------------------ §16.6 / §V2-F14: service worker emitter
 
-/// §16.6: `emit_pwa_worker` writes an SW with SWR + an offline
-/// fallback. Tested directly (unit) rather than through `oxide build`:
-/// the build path needs node_modules for the framework config, but the
-/// emitter is a pure function of (cfg, dist, client_manifest) — the SW
-/// body is what a browser runs, and that is what this pins. The earlier
-/// integration version required a full build; the build exposed a real
-/// bug (the boot script's `import('/pwa-register.js')` was statically
-/// resolved by rolldown before the file existed), which is fixed in
-/// the same commit.
+/// §16.6 / §V2-F14: `emit_pwa_worker` drives the bundler's PWA emitter
+/// (`oxide_fw_bundler::pwa`) — the emission gate (`offline.enabled` +
+/// `sw.enabled` over the produced client manifest), the prerendered-shell
+/// walk (`ShellSource` at the call site) and the `dist/sw.js` +
+/// `dist/pwa-register.js` writes. Tested directly (unit) rather than
+/// through `oxide build`: the build path needs node_modules for the
+/// framework config, but the emitter is a pure function of
+/// (cfg, dist, client_manifest). The worker body itself is pinned in the
+/// bundler's `pwa_tdd` suite; these pins cover the call-site's own
+/// contract: the gate, the shell URLs' spelling and the register script.
 #[tokio::test]
-async fn sw_emitter_emits_swr_and_fallback() {
+async fn sw_emitter_emits_worker_and_register_over_the_bundler_seam() {
     let dir = tempfile::tempdir().unwrap();
     let dist = dir.path();
     std::fs::create_dir_all(dist.join("prerendered")).unwrap();
     // The offline fallback must exist for the emitter to prefer it over
     // the shell (`/`). We write prerendered/offline.html to trigger that.
     std::fs::write(dist.join("prerendered/offline.html"), "<h1>offline</h1>").unwrap();
+    std::fs::write(dist.join("prerendered/index.html"), "<h1>home</h1>").unwrap();
 
-    // Config with a manifest (triggers emission) and default sw config.
+    // V2-F14: the emission gate is `offline.enabled` + `sw.enabled` — the
+    // webmanifest block no longer arms it (the `OfflineConfig` docs:
+    // `enabled: false` "installs no service worker").
     let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
-        "manifest": {
-            "name": "Test App",
-            "short_name": "Test"
-        },
+        "offline": { "enabled": true },
     }))
     .expect("parse config");
 
-    // A hand-built client manifest — the shape `emit_pwa_worker` walks.
-    // One route with entry/preload/css; one asset. That's enough to prove
-    // the precache list is built correctly.
+    // A hand-built client manifest in the bundler's typed shape.
     let client_manifest = serde_json::json!({
-        "build_id": "test-build-abc",
+        "build_id": "b17e5f0a4c9d2e8f",
         "routes": {
             "routes/index": {
                 "entry_chunk": "index-abc.js",
                 "preload": ["chunk-def.js"],
-                "css": ["style-ghi.css"]
+                "css": ["style-ghi.css"],
+                "js_bytes": 0
             }
         },
         "assets": {
@@ -7445,78 +7445,79 @@ async fn sw_emitter_emits_swr_and_fallback() {
     let mut buf: Vec<u8> = Vec::new();
     emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
 
-    // ---- Assertions on the emitted sw.js ----
+    // ---- sw.js: the bundler seam's worker, planned from THIS call site's
+    // shells and config.
     let sw_path = dist.join("sw.js");
     assert!(sw_path.is_file(), "sw.js emitted");
     let body = std::fs::read_to_string(&sw_path).unwrap();
 
-    // Build-scoped cache name.
+    // Build-scoped cache name (D28): `ox-<build id>`.
     assert!(
-        body.contains("const CACHE = 'oxide-test-build-abc'"),
-        "cache name is build-scoped: {body}"
+        body.contains("const CACHE = 'ox-b17e5f0a4c9d2e8f'"),
+        "cache name is versioned by the build id: {body}"
     );
-    // Precache list contains the shell, the route's entry, preload, CSS,
-    // and the asset.
-    assert!(body.contains(r#"  "/","#), "shell in precache");
+    // The `routes` breadth (the default): EXACTLY the prerendered shells —
+    // the navigation-fallback surface, never client chunks.
+    assert!(body.contains(r#"  '/',"#), "the shell is precached: {body}");
     assert!(
-        body.contains(r#"  "/client/index-abc.js","#),
-        "entry in precache"
+        body.contains(r#"  '/offline',"#),
+        "the produced offline fallback route is precached: {body}"
     );
     assert!(
-        body.contains(r#"  "/client/chunk-def.js","#),
-        "preload in precache"
+        !body.contains("/client/index-abc.js"),
+        "the routes breadth never precaches client chunks: {body}"
     );
-    assert!(body.contains(r#"  "/style-ghi.css","#), "css in precache");
-    assert!(body.contains(r#"  "/logo.png","#), "asset in precache");
-    // SWR branch present.
     assert!(
-        body.contains("stale-while-revalidate") || body.contains("Stale-while-revalidate"),
-        "SWR mode documented"
+        !body.contains("/logo.png"),
+        "the routes breadth never precaches manifest assets: {body}"
     );
-    // Background revalidate stores the fresh copy.
+    // The resolved fallback (override → produced route → `/`): the build
+    // produced `/offline`, so the worker falls back to it.
     assert!(
-        body.contains("c.put(req, copy)"),
-        "background revalidation stores the new copy"
-    );
-    // Same-origin guard.
-    assert!(
-        body.contains("url.origin !== self.location.origin"),
-        "cross-origin not cached"
-    );
-    // Offline fallback picked up the existing route.
-    assert!(
-        body.contains(r#"const OFFLINE_FALLBACK = "/offline";"#),
-        "offline fallback is /offline (the route exists): {body}"
+        body.contains("const FALLBACK_ROUTE = '/offline';"),
+        "fallback resolution follows the config contract: {body}"
     );
 
-    // ---- pwa-register.js ----
+    // ---- pwa-register.js: the registration rides the same emission.
     let reg_path = dist.join("pwa-register.js");
     assert!(reg_path.is_file(), "pwa-register.js emitted");
     let reg = std::fs::read_to_string(&reg_path).unwrap();
-    assert!(reg.contains("/sw.js"), "registers /sw.js");
+    assert!(
+        reg.contains("navigator.serviceWorker.register('/sw.js')"),
+        "registers the emitted worker: {reg}"
+    );
 
     let out = String::from_utf8(buf).unwrap();
     assert!(out.contains("pwa: sw.js"), "build log line: {out}");
 }
 
 #[tokio::test]
-async fn sw_emitter_skips_when_manifest_absent() {
+async fn sw_emitter_skips_when_offline_disabled() {
     let dir = tempfile::tempdir().unwrap();
     let dist = dir.path();
-    std::fs::create_dir_all(dist).unwrap();
 
-    // No manifest — the emitter is a no-op.
-    let cfg: oxide_fw_config::OxideConfig =
-        serde_json::from_value(serde_json::json!({})).expect("parse config");
-
+    // No `offline` key — the default is `enabled: false`: the build
+    // installs no service worker, even with a webmanifest configured.
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
+        "manifest": { "name": "X", "short_name": "X" },
+    }))
+    .expect("parse config");
     let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
     let mut buf: Vec<u8> = Vec::new();
     emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
 
-    assert!(!dist.join("sw.js").exists(), "no manifest → no sw.js");
+    assert!(
+        !dist.join("sw.js").exists(),
+        "offline disabled → no sw.js (the OfflineConfig contract)"
+    );
     assert!(
         !dist.join("pwa-register.js").exists(),
-        "no manifest → no register script"
+        "offline disabled → no register script"
+    );
+    let out = String::from_utf8(buf).unwrap();
+    assert!(
+        out.trim().is_empty(),
+        "the skip is silent — not an error, not a warning: {out}"
     );
 }
 
@@ -7524,32 +7525,42 @@ async fn sw_emitter_skips_when_manifest_absent() {
 async fn sw_emitter_respects_sw_disabled() {
     let dir = tempfile::tempdir().unwrap();
     let dist = dir.path();
-    std::fs::create_dir_all(dist).unwrap();
 
-    let mut cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
-        "manifest": {"name": "X", "short_name": "X"},
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
+        "offline": { "enabled": true },
+        "sw": { "enabled": false },
     }))
     .expect("parse config");
-    cfg.sw.enabled = false;
-
     let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
     let mut buf: Vec<u8> = Vec::new();
     emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
 
-    assert!(!dist.join("sw.js").exists(), "sw.enabled=false → no sw.js");
+    assert!(
+        !dist.join("sw.js").exists(),
+        "sw.enabled=false → no sw.js even with offline enabled"
+    );
+    assert!(
+        !dist.join("pwa-register.js").exists(),
+        "sw.enabled=false → no register script"
+    );
     let out = String::from_utf8(buf).unwrap();
     assert!(out.contains("sw disabled"), "log line: {out}");
 }
 
 #[tokio::test]
-async fn sw_emitter_falls_back_to_shell_when_offline_route_missing() {
+async fn sw_emitter_precaches_the_prerendered_shell_urls() {
     let dir = tempfile::tempdir().unwrap();
     let dist = dir.path();
-    // No prerendered/offline.html — the fallback stays `/`.
-    std::fs::create_dir_all(dist.join("prerendered")).unwrap();
+    // The CLI's `ShellSource` walk reports the shells in the URL spelling
+    // a navigation requests — `prerendered/about.html` is cached as
+    // `/about`, `prerendered/index.html` as `/` — never the file spelling.
+    std::fs::create_dir_all(dist.join("prerendered/blog")).unwrap();
+    std::fs::write(dist.join("prerendered/index.html"), "<h1>home</h1>").unwrap();
+    std::fs::write(dist.join("prerendered/about.html"), "<h1>about</h1>").unwrap();
+    std::fs::write(dist.join("prerendered/blog/hello.html"), "<h1>hi</h1>").unwrap();
 
     let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
-        "manifest": {"name": "X", "short_name": "X"},
+        "offline": { "enabled": true },
     }))
     .expect("parse config");
     let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
@@ -7557,12 +7568,67 @@ async fn sw_emitter_falls_back_to_shell_when_offline_route_missing() {
     emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
 
     let body = std::fs::read_to_string(dist.join("sw.js")).unwrap();
+    for url in [r#"  '/',"#, r#"  '/about',"#, r#"  '/blog/hello',"#] {
+        assert!(body.contains(url), "the shell {url} is precached: {body}");
+    }
     assert!(
-        body.contains(r#"const OFFLINE_FALLBACK = "/";"#),
-        "no /offline route → fallback is /: {body}"
+        !body.contains("prerendered/"),
+        "the file spelling never leaks into the precache list: {body}"
     );
 }
 
+#[tokio::test]
+async fn sw_emitter_all_breadth_unions_the_manifest_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path();
+    std::fs::create_dir_all(dist.join("prerendered")).unwrap();
+    std::fs::write(dist.join("prerendered/index.html"), "<h1>home</h1>").unwrap();
+
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
+        "offline": { "enabled": true, "precache": "all" },
+    }))
+    .expect("parse config");
+    let client_manifest = serde_json::json!({
+        "build_id": "b17e5f0a4c9d2e8f",
+        "routes": {
+            "routes/index": {
+                "entry_chunk": "index-abc.js",
+                "preload": ["chunk-def.js"],
+                "css": ["style-ghi.css"],
+                "js_bytes": 0
+            }
+        },
+        "assets": {
+            "/logo.png": "logo-jkl.png"
+        }
+    });
+    let mut buf: Vec<u8> = Vec::new();
+    emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
+
+    let body = std::fs::read_to_string(dist.join("sw.js")).unwrap();
+    // The `all` breadth: the shells PLUS every hashed asset the manifest
+    // carries, in the head producer's `/client/<file>` spelling.
+    assert!(
+        body.contains(r#"  '/',"#),
+        "the shell rides `all` too: {body}"
+    );
+    assert!(
+        body.contains(r#"  '/client/index-abc.js',"#),
+        "the entry chunk joins: {body}"
+    );
+    assert!(
+        body.contains(r#"  '/client/chunk-def.js',"#),
+        "the preload chunks join: {body}"
+    );
+    assert!(
+        body.contains(r#"  '/client/style-ghi.css',"#),
+        "the css joins: {body}"
+    );
+    assert!(
+        body.contains(r#"  '/client/logo-jkl.png',"#),
+        "the manifest assets join: {body}"
+    );
+}
 // ------------------------------ §13 / r8 P1.7: dev-mode L0 divergence
 
 /// `start_server_inner_full` constructs `l0 = None` when `is_dev` (an
@@ -7754,12 +7820,13 @@ async fn request_trace_reaches_the_loader() {
     );
 }
 
-/// §16.6 / WP-r9-8: when the offline fallback route exists in the
-/// build, it must be in the precache list. `install` runs
+/// §16.6 / §V2-F14: when the offline fallback route exists in the build,
+/// it must be in the precache list. `install` runs
 /// `caches.addAll(PRECACHE)`; an offline navigation's
-/// `caches.match(OFFLINE_FALLBACK)` only hits if the fallback is cached.
-/// The fallback used to be resolved *after* the precache list was built,
-/// so it never entered the cache.
+/// `cache.match(FALLBACK_ROUTE)` only hits if the fallback is cached.
+/// The bundler's `plan_precache` owns the resolution (override → produced
+/// route → `/`); this pin proves the CLI's shell walk feeds it a produced
+/// `/offline` so the plan resolves to it.
 #[tokio::test]
 async fn sw_emitter_precaches_the_offline_fallback() {
     let dir = tempfile::tempdir().unwrap();
@@ -7768,7 +7835,7 @@ async fn sw_emitter_precaches_the_offline_fallback() {
     std::fs::write(dist.join("prerendered/offline.html"), "<h1>offline</h1>").unwrap();
 
     let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
-        "manifest": { "name": "X", "short_name": "X" },
+        "offline": { "enabled": true },
     }))
     .expect("parse config");
     let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
@@ -7776,14 +7843,14 @@ async fn sw_emitter_precaches_the_offline_fallback() {
     emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
 
     let body = std::fs::read_to_string(dist.join("sw.js")).unwrap();
-    // The fallback is the effective one (`/offline`, which exists) and is
-    // in PRECACHE.
+    // The fallback is the resolved one (`/offline`, which the build
+    // produced) and is in PRECACHE.
     assert!(
-        body.contains(r#"const OFFLINE_FALLBACK = "/offline";"#),
+        body.contains("const FALLBACK_ROUTE = '/offline';"),
         "fallback constant: {body}"
     );
     assert!(
-        body.contains(r#"  "/offline","#),
+        body.contains(r#"  '/offline',"#),
         "fallback route is precached: {body}"
     );
 }
