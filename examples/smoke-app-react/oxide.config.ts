@@ -29,6 +29,15 @@ export default defineConfig({
   // CPU-bound and unauthenticated. The Playwright `og.spec.ts` suite asserts
   // it end-to-end, so this fixture opts in.
   og: { enabled: true },
+  // §V2-F15: the ox-replay fixture's loader fetches the app's own health
+  // endpoint through the SSRF-guarded op path; loopback is a blocked
+  // range by default, so the fixture allow-lists it (dev fixture only).
+  security: { ssrfAllowList: ['127.0.0.1'] },
+  // §V2-F15: the ox-replay fixture records every request into
+  // `.oxide/records/` (the e2e pin replays one of them). The other smoke
+  // suites don't read the records dir; the e2e pin cleans it before and
+  // after its own run.
+  record: 'all',
   // §16.3 / §16 / K3: a web app manifest makes `oxide build` emit
   // `manifest.webmanifest` and a service worker, and the boot entry then
   // registers it. The Playwright `sw.spec.ts` suite is what asserts the
