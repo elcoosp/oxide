@@ -115,6 +115,8 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DEV-NOTIFY` | create watcher: {e} | — |
 | `DEV-QR` | QR generation failed: {e} | — |
 | `DEV-TLS` | certificate params failed: {e} | — |
+| `DEV-RFN-001` | the native fn crate {name} failed to build (cargo build --lib): {tail} | the compile error above is the fix; a successful build must produce the cdylib the [lib] crate-type declares |
+| `DEV-RFN-002` | the rebuilt library's types payload does not parse (the §9.4 id bindings cannot be re-derived): {e} | rebuild with the `export_table!` macro's `oxide_fn_types_json` side export; the loop refuses rather than swap with guessed ids |
 | `DEV-WS-001` | workspace discovery failed for {path}: {err_msg} | Check the manifest's shape — pnpm-workspace.yaml `packages:` is a list of glob entries (block or flow), package.json `workspaces` is a list of globs — and run the package manager's install so linked packages resolve under node_modules |
 | `DOC-001` | config keys carry no schema description; the page refuses to render (E11 acceptance) | add a `description` in `crates/config/src/schema.rs`, then regenerate the pages |
 | `DOC-002` | docs/errors.toml carries an entry the strict registry format rejects (the diagnostic names the line) | fix the entry the diagnostic names (the format is `[CODE]` + `message`/`fix`/`spec_only`) |
@@ -219,6 +221,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `RPL-003` | Record was made on an older build id | Replay continues; results may differ |
 | `RPL-004` | Replay exhausted the recorded non-deterministic sequence | Re-record; the replay observed more than the record captured |
 | `RPL-005` | cannot load the record: schema version {} is not one this build reads (version 1) | re-record the request with the current build; the record schema changed |
+| `RPL-006` | replay: the recorded request body of {method} {url} does not decode from base64: {e} | Re-record; the record's payload is corrupt (truncated or hand-edited) |
 | `RTR-001` | routes directory not found: {} | — |
 | `RTR-002` | invalid route directory `{name}`: {msg} | — |
 | `RTR-100` | failed to serialize route archive: {e} | — |
