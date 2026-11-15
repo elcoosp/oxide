@@ -104,6 +104,7 @@ impl NativeCompiler for VueNative {
             js: script.code.clone(),
             css: None,
             warnings: errors,
+            source_map: None,
         })
     }
 
