@@ -212,6 +212,18 @@ impl NativeRegistry {
     /// the default-feature build only.
     #[allow(unused_variables)]
     fn register_compiled_in(reg: &mut NativeRegistry) {
+        // The all-off build compiles every arm away and never dereferences
+        // the push list: a use that itself compiles away keeps `reg` used
+        // for the `warnings = "deny"` bar without an allow escape hatch
+        // (this rustc lints an unused `&mut` parameter under
+        // `unused_variables`).
+        #[cfg(not(any(
+            feature = "native-solid",
+            feature = "native-vue",
+            feature = "native-svelte",
+            feature = "native-react-compiler"
+        )))]
+        let _ = reg;
         // The C02 dependency arm: Solid 2.0's official Oxc compiler core
         // (`docs/decisions/C02-solid-native.md`).
         #[cfg(feature = "native-solid")]
