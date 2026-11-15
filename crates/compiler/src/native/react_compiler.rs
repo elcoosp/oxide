@@ -68,7 +68,7 @@ impl NativeCompiler for ReactCompilerNative {
                 .diagnostics
                 .iter()
                 .find(|d| d.severity == oxc_diagnostics::Severity::Error)
-                .map_or_else(|| "parse failed".to_string(), |d| d.to_string());
+                .map_or_else(|| "parse failed".to_string(), ToString::to_string);
             let mut d = oxide_fw_diagnostics::Diagnostic::error(
                 "CMP-RCC-001",
                 format!(
