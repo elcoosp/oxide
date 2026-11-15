@@ -1,8 +1,10 @@
-//! The native Solid JSX compiler walkthrough (§V2-C02, re-opened): how a
-//! Solid file compiles in-process to the `@solidjs/web` runtime on both
-//! targets, what the emitted module looks like, the D40 CAS version the
-//! precompile cache folds, and the loud refusal the v1 scope carries for
-//! constructs the Node tooling pool still compiles.
+//! The native Solid compiler walkthrough (§V2-C02, the dependency arm): how a
+//! Solid file compiles in-process through Solid 2.0's official Oxc-based
+//! Rust compiler core (the `solidjs-compiler` crate — the backend is a thin
+//! adapter) to the `@solidjs/web` runtime on both targets, what the emitted
+//! module looks like, the D40 CAS version the precompile cache folds, and
+//! the loud refusal the adapter maps onto `CMP-SOL-001` for a construct the
+//! upstream core refuses (the Node tooling pool still compiles it).
 //!
 //! Run with:
 //!
@@ -77,21 +79,23 @@ fn main() {
         );
     }
 
-    println!("\n=== the v1 refusal (loud, with the Node-pool fix) ===");
-    let spread = "export const A = (props) => <div {...props} />;";
+    println!("\n=== the refusal (loud, with the Node-pool fix) ===");
+    // `use:` was removed in Solid 2.0 — the upstream core refuses it with
+    // the migration note (spreads compile natively now, `_$spread`).
+    let use_directive = "export const A = () => <div use:tooltip />;";
     match backend.compile(&CompileRequest {
         path: std::path::Path::new("src/A.tsx"),
-        source: spread,
+        source: use_directive,
         generate: Generate::Dom,
         dev: false,
     }) {
-        Ok(_) => unreachable!("spreads refuse"),
+        Ok(_) => unreachable!("`use:` refuses"),
         Err(e) => {
             println!("{}: {}", e.0.code, e.0.message);
             println!("fix: {}", e.0.fix.as_deref().unwrap_or("-"));
         }
     }
     println!(
-        "\nEverything the v1 scope refuses compiles on the Node tooling pool —\n`framework.compilerBackend: 'auto'` falls back, `'native'` surfaces the refusal."
+        "\nEverything the upstream core refuses compiles on the Node tooling pool —\n`framework.compilerBackend: 'auto'` falls back, `'native'` surfaces the refusal."
     );
 }
