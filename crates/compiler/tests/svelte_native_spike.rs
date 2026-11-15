@@ -49,14 +49,14 @@ fn compile_fixture(source: &str, filename: &str, ssr: bool) -> CompileResult {
 
 /// Runes the smoke app / Atlas uses: `$state`, `$derived`, `$props`
 /// (the C04 kill criterion: any rune the crate rejects kills the WP).
-const RUNES: &str = r#"<script>
+const RUNES: &str = r"<script>
 let { start } = $props();
 let count = $state(start);
 let doubled = $derived(count * 2);
 </script>
 
 <button on:click={() => count += 1}>{count} / {doubled}</button>
-"#;
+";
 
 const WITH_STYLE: &str = r#"<p class="who">hello</p>
 
