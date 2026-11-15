@@ -23,6 +23,11 @@ type LoaderInputs = (
     bool,
     Option<String>,
     bool,
+    // V2-F05: the matched route is live-opted (`RouteEntry.live.is_some()`)
+    // — the /__data envelope advertises `live: true` so the client's router
+    // opens the SSE connection for the route it just navigated to. `false`
+    // keeps the envelope byte-identical for every non-live route.
+    bool,
 );
 
 type LayoutSideEffects = Vec<(Vec<String>, Vec<(String, String)>)>;
@@ -6319,6 +6324,9 @@ async fn write_prerender(args: PrerenderArgs<'_>) -> anyhow::Result<(String, u16
 }
 
 pub struct RouteDataArgs<'a> {
+    /// V2-F05: the matched route is live-opted — the envelope advertises
+    /// `live: true` (the client's connectLive gate after a navigation).
+    pub live: bool,
     pub req: &'a oxide_fw_server::OxideRequest,
     pub loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     pub module_path: Option<&'a std::path::Path>,
@@ -6351,6 +6359,7 @@ pub struct RouteDataArgs<'a> {
 /// short-circuit (`error()`/`redirect()`) propagates its status/location.
 async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_server::OxideResponse {
     let RouteDataArgs {
+        live,
         req,
         loader_runner,
         module_path,
@@ -6369,6 +6378,7 @@ async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_server::OxideR
 
     let request_id = req.request_id.clone();
     let resp = route_data_response_inner(RouteDataInnerArgs {
+        live,
         req,
         loader_runner,
         module_path,
@@ -6400,6 +6410,8 @@ async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_server::OxideR
     resp
 }
 pub struct RouteDataInnerArgs<'a> {
+    /// V2-F05: the matched route is live-opted (see [`RouteDataArgs`]).
+    pub live: bool,
     pub req: &'a oxide_fw_server::OxideRequest,
     pub loader_runner: Option<&'a std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     pub module_path: Option<&'a std::path::Path>,
@@ -6416,6 +6428,7 @@ pub struct RouteDataInnerArgs<'a> {
 
 async fn route_data_response_inner(args: RouteDataInnerArgs<'_>) -> oxide_fw_server::OxideResponse {
     let RouteDataInnerArgs {
+        live,
         req,
         loader_runner,
         module_path,
@@ -6656,7 +6669,7 @@ async fn route_data_response_inner(args: RouteDataInnerArgs<'_>) -> oxide_fw_ser
         .iter()
         .map(|(lid, _)| lid.clone())
         .collect();
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "route": route_label,
         "url": route_q,
         "params": params,
@@ -6665,6 +6678,13 @@ async fn route_data_response_inner(args: RouteDataInnerArgs<'_>) -> oxide_fw_ser
         "locale": locale,
         "layouts": layout_ids,
     });
+    // V2-F05: the live advertisement rides the envelope (the client's
+    // router opens/closes the SSE connection with the route it just
+    // navigated to). Absent for non-live routes — their envelopes stay
+    // byte-identical to the pre-F05 shapes.
+    if live {
+        payload["live"] = serde_json::Value::Bool(true);
+    }
     // §9.5 / D11: encode as ODF, the wire format the client decodes.
     let body = oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload))
         .unwrap_or_default();
@@ -8996,6 +9016,32 @@ async fn cmd_build(
     // identity cannot be stamped fails here — downstream consumers
     // (the data-plane check, attest) must never fall back to a guess.
     let stamped_build_id = oxide_fw_cache::stamp_build_id(&dist)?;
+    // V2-A04 delta closure (the deviation in docs/deviations.md): bake the
+    // CURRENT id into the prerendered shells. The prerender pass writes the
+    // legacy three-field bootstrap because every covered-set tail writer
+    // runs after it — an id baked there would be stale by serve time and
+    // 409-loop the page. NOW the id exists and no covered writer will run
+    // again (the shells live at dist/<page>.html, outside the covered
+    // client/server/routes-manifest set, so the baked bytes never re-stamp
+    // the identity) — each shell echoes an ACCEPTED id on the data plane
+    // instead of riding the headerless allowance.
+    let mut baked_shells = 0usize;
+    for rels in artifact.prerendered.values() {
+        for rel in rels {
+            let path = dist.join(rel);
+            let Ok(html) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if let Some(baked) = oxide_fw_render::bake_build_id(&html, &stamped_build_id)
+                && std::fs::write(&path, baked).is_ok()
+            {
+                baked_shells += 1;
+            }
+        }
+    }
+    if baked_shells > 0 {
+        outln!(w, "build-id baked into {baked_shells} prerendered shell(s)");
+    }
     outln!(
         w,
         "build ok — build-id {} — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
@@ -9224,6 +9270,14 @@ pub struct StartedServer {
     /// `SkewState::promote_from_dist`.
     pub(crate) generations:
         Option<std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>>,
+    /// V2-F05: the live hub + rerun channel, when `live.transport = "sse"`.
+    /// The e2e pins read the hub (`count()`), the inspector lists the
+    /// subscribers.
+    pub(crate) live: Option<std::sync::Arc<crate::serve::live::LiveState>>,
+    /// V2-F10 (the serving half): the per-generation pools the SIGHUP
+    /// promote boots into (`ServingPools::promote_booted`); `None` in dev
+    /// and when the boot snapshot failed (acceptance-only skew).
+    pub(crate) serving_pools: Option<std::sync::Arc<crate::serve::generations::ServingPools>>,
     /// V2-F09 (feature `search`): the hot-reload handle for the search
     /// index the serve side opened. The dev watcher swaps a rebuilt
     /// index in after re-emitting the corpus (the zero-downtime posture
@@ -9625,6 +9679,13 @@ fn build_dispatch(
         // `None` arm keeps the pre-A04 byte shapes, and the pins that need
         // the stage construct their own set.
         generations: None,
+        // No live hub either — the endpoint arm is inert and the envelope
+        // never advertises `live` (the pins that exercise it boot the real
+        // server, which builds the state from the config).
+        live: None,
+        // No serving pools — the route step is inert (the pre-pool byte
+        // shapes); the skew e2e boots the real server, which builds them.
+        serving_pools: None,
     })
 }
 
@@ -9699,6 +9760,17 @@ pub(crate) struct DispatchArgs {
     /// through the same `AcceptedGenerations` seam the 1-deep set uses.
     pub generations:
         Option<std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>>,
+    /// V2-F05: the live hub + rerun channel (`serve::live::LiveState`) —
+    /// `Some` on every real server boot with `live.transport = "sse"` (the
+    /// endpoint arm runs, the revalidation hooks fan out); `None` for the
+    /// `poll` transport and the test helper (the arm is inert).
+    pub live: Option<std::sync::Arc<crate::serve::live::LiveState>>,
+    /// V2-F10 (the serving half): a pool + loader runner + frozen loader
+    /// source root per generation. `Some` on every production serve boot
+    /// with a worker pool; `None` in dev and the test helper (the route
+    /// step is inert and the boot handles serve every generation, the
+    /// pre-pool byte shapes).
+    pub serving_pools: Option<std::sync::Arc<crate::serve::generations::ServingPools>>,
 }
 
 fn build_dispatch_swappable(
@@ -9728,6 +9800,8 @@ fn build_dispatch_swappable(
         record,
         recordings,
         generations,
+        live,
+        serving_pools,
     } = args;
 
     let boot_script_url_for_render = boot_script_url.clone();
@@ -9883,6 +9957,77 @@ fn build_dispatch_swappable(
                 });
             }
         }
+        // V2-F05 step 2: `GET /__oxide/live` — the SSE endpoint. Data plane
+        // (the wrapper's stage already checked the build id: EventSource
+        // cannot set headers, so the A04 stage reads the `build` query
+        // parameter on this path). The arm composes the substrate's pure
+        // pieces: the query parse, the same-origin gate, the live-route
+        // lookup, the subscribe-or-503 response, and the connect-time first
+        // snapshot (the runner re-runs the data route; the watch channel
+        // means a late receiver still sees it as its initial frame).
+        if raw == "/__oxide/live"
+            && let Some(live) = live.as_ref()
+        {
+            let not_accepted = |status: u16, msg: &'static str| -> BoxedResponse {
+                Box::pin(async move { oxide_fw_server::OxideResponse::html(status, msg) })
+            };
+            if !req.method.eq_ignore_ascii_case("GET") {
+                return not_accepted(405, "live: GET only");
+            }
+            if !oxide_fw_server::live::same_origin(
+                req.header("origin"),
+                req.header("sec-fetch-site"),
+                req.header("host"),
+            ) {
+                // §V2-F05 security: Origin check mandatory; missing evidence
+                // denies (`same_origin`'s contract — curl/tests included).
+                return not_accepted(403, "live: cross-origin connections are refused");
+            }
+            let query = req.url.split_once('?').map(|(_, q)| q).unwrap_or("");
+            let Some(parsed) = oxide_fw_server::live::parse_live_query(query) else {
+                return not_accepted(400, "live: missing route parameter");
+            };
+            // The route must exist AND be opted in (`live: true` in its
+            // `page.server.ts` config) — an unknown or non-live route is a
+            // plain 404, the same face an unmatched URL has.
+            let route_path = {
+                let stripped = parsed.route.trim_end_matches('/');
+                if stripped.is_empty() {
+                    "/".to_string()
+                } else {
+                    stripped.to_string()
+                }
+            };
+            let candidates: Vec<String> = if route_path == "/" {
+                vec!["/".to_string(), "/index".to_string()]
+            } else {
+                vec![route_path.clone()]
+            };
+            let matched = candidates.iter().find_map(|p| match &archived {
+                Some(a) => a.match_path(p),
+                None => tree.match_path(p),
+            });
+            if !matched.as_ref().is_some_and(|m| m.route.live.is_some()) {
+                return not_accepted(404, "live: no live route at that path");
+            }
+            // The header snapshot the rerun replays (cookies included; the
+            // class is log-guarded by `is_secret_key`). Tags seed with the
+            // route's own path tag — the fan-out surfaces both `tag` and
+            // `path` revalidate events (see `serve::live`).
+            let sub = std::sync::Arc::new(oxide_fw_server::live::Sub::new(
+                route_path,
+                parsed.url,
+                (*req.headers).clone(),
+                std::iter::once(oxide_fw_cache::tiers::path_tag(&parsed.route)),
+                req.peer,
+            ));
+            // The connect-time first snapshot: the runner re-runs the data
+            // route and pushes it (fresh connection ⇒ full snapshot — the
+            // subscriber has no base yet, so the F06 policy ships the full).
+            live.enqueue(std::sync::Arc::clone(&sub));
+            let resp = live.endpoint_response(sub, boot_build_id.as_deref());
+            return Box::pin(async move { resp });
+        }
         // Route conventions: the root page module is `index`, so `/` maps to
         // the `/index` pattern (spec §8.1); trailing slashes are folded too.
         let normalized = if raw.len() > 1 && raw.ends_with('/') {
@@ -9962,9 +10107,65 @@ fn build_dispatch_swappable(
             None => (404u16, "_unmatched".to_string()),
         };
 
+        // V2-F10 step 2 (the serving half, §V2-F10 "Routing by build"):
+        // resolve the generation this request's build id routes to, then
+        // shadow the boot handles — every loader/render/ESM execution below
+        // runs the ROUTED generation's pool, runner and frozen loader
+        // source root. Data-plane requests with an accepted demoted id run
+        // the OLD generation's handles (its loader bytes are the snapshot
+        // taken when that generation became current — the source tree
+        // cannot leak into an accepted old-build response); headerless
+        // requests and HTML navigations ride CURRENT; unknown ids never
+        // get here (the wrapper's stage answered 409). A `None` pools
+        // handle (dev, the test helper) keeps the boot handles — the
+        // pre-pool behavior, byte-identical.
+        let (routed_runner, routed_renderer, routed_pool, routed_routes_root): (
+            Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
+            Option<std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
+            Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
+            std::path::PathBuf,
+        ) = match serving_pools.as_ref() {
+            Some(sp) => {
+                let on_data_plane = oxide_fw_dispatch::build::is_data_plane_path(&normalized);
+                let id = if on_data_plane {
+                    req.header("x-oxide-build")
+                } else {
+                    // HTML navigations always go current (§V2-F10 step 2).
+                    None
+                };
+                match sp.route_for(id) {
+                    Some((generation, _)) => (
+                        generation.runner.clone(),
+                        page_renderer.clone(),
+                        Some(std::sync::Arc::clone(&generation.pool)),
+                        generation.routes_root.clone(),
+                    ),
+                    // The stage accepted an id the pools cannot route (a
+                    // poisoned lock): the boot handles serve rather than
+                    // refuse — the acceptance contract stays the stage's.
+                    None => (
+                        loader_runner.clone(),
+                        page_renderer.clone(),
+                        pool.clone(),
+                        routes_root.clone(),
+                    ),
+                }
+            }
+            None => (
+                loader_runner.clone(),
+                page_renderer.clone(),
+                pool.clone(),
+                routes_root.clone(),
+            ),
+        };
+        let loader_runner = routed_runner;
+        let page_renderer = routed_renderer;
+        let pool = routed_pool;
+        let routes_root = routed_routes_root;
+
         // Pre-compute the loader inputs synchronously so the async block
         // owns plain data (no borrow of `matched`).
-        let (module_path, route_id, params, has_server_module, render_mode, needs_parent): LoaderInputs = match &matched {
+        let (module_path, route_id, params, has_server_module, render_mode, needs_parent, is_live): LoaderInputs = match &matched {
             Some(m) => {
                 let has_srv = m.route.has_server_module;
                 // BUG: only produce a module_path when the route actually
@@ -9985,6 +10186,7 @@ fn build_dispatch_swappable(
                     has_srv,
                     m.route.render_mode.clone(),
                     m.route.needs_parent,
+                    m.route.live.is_some(),
                 )
             }
             None => (
@@ -9993,6 +10195,7 @@ fn build_dispatch_swappable(
                 std::collections::BTreeMap::new(),
                 false,
                 None,
+                false,
                 false,
             ),
         };
@@ -10231,6 +10434,10 @@ fn build_dispatch_swappable(
         };
         let flight_map = std::sync::Arc::clone(&flight_map);
         let ppr_for_request = ppr_for_render.clone();
+        // V2-F05: the revalidation hooks inside the block fan out through a
+        // clone — the block is `move`, and moving the captured handle out
+        // would demote the `Fn` dispatch closure.
+        let live_for_request = live.clone();
 
         Box::pin(async move {
             // §8.1 middleware.ts / §8.5: run the route's FULL ancestor
@@ -10486,6 +10693,7 @@ fn build_dispatch_swappable(
                     session_codec: session_codec.as_deref(),
                     middleware_ms,
                     waterfall: waterfall.as_ref(),
+                    live: is_live,
                 })
                 .await;
             }
@@ -10557,9 +10765,21 @@ fn build_dispatch_swappable(
                             match kind.as_str() {
                                 "tag" => {
                                     cache.invalidate_tag(value, true).await;
+                                    // V2-F05 step 6: the revalidation hook —
+                                    // every live connection that depends on
+                                    // the tag re-runs its loaders and pushes
+                                    // the new snapshot to its tab.
+                                    if let Some(live) = live_for_request.as_ref() {
+                                        live.notify_tag(value);
+                                    }
                                 }
                                 "path" => {
                                     cache.invalidate_path(value, true).await;
+                                    // The `path` spelling fans out under the
+                                    // `path:<url>` tag (`serve::live`).
+                                    if let Some(live) = live_for_request.as_ref() {
+                                        live.notify_path(value);
+                                    }
                                 }
                                 _ => {}
                             }
@@ -14079,6 +14299,53 @@ async fn start_server_inner_full(
         std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>,
     > = Some(skew_state.handle());
     let _generations_expiry = crate::serve::generations::spawn_expiry_task(skew_state.handle());
+    // V2-F10 (the serving half, steps 1-2): freeze the boot generation's
+    // loader sources and hold the boot handles as the CURRENT generation.
+    // The dispatch routes every request through these pools; the SIGHUP
+    // promote boots the next generation's stack and demotes these. Production
+    // serve only (dev's reload path re-scans sources by design; the
+    // id-level pool still owns the acceptance verdict in both).
+    let serving_pools: Option<std::sync::Arc<crate::serve::generations::ServingPools>> = if is_dev {
+        None
+    } else {
+        match stack.pool.clone() {
+            Some(boot_pool) => {
+                match crate::serve::generations::snapshot_generation_sources(&rootp, &build_id) {
+                    Ok(snapshot_root) => Some(crate::serve::generations::ServingPools::from_boot(
+                        &build_id,
+                        std::sync::Arc::new(crate::serve::generations::GenServing {
+                            pool: boot_pool,
+                            runner: stack.loader_runner.clone(),
+                            routes_root: snapshot_root,
+                        }),
+                        skew_state.window(),
+                        cfg.deploy.generations,
+                    )),
+                    Err(e) => {
+                        tracing::warn!(
+                            code = "SKW-SNAPSHOT",
+                            msg = e,
+                            "skew: the boot generation's loader sources could not be                                  frozen; the two-pool route step stays inert and the boot                                  handles serve every generation"
+                        );
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    };
+    // V2-F05: the live hub + rerun channel — built only for the `sse`
+    // transport (`poll` subscribers re-fetch /__data themselves; there is
+    // no endpoint and no hub to feed).
+    let live_state = if matches!(cfg.live.transport, oxide_fw_config::LiveTransport::Sse) {
+        Some(crate::serve::live::LiveState::new(
+            cfg.live.max_subscribers,
+            cfg.live.per_ip_max,
+            cfg.live.keepalive_seconds,
+        ))
+    } else {
+        None
+    };
     let dispatch = build_dispatch_swappable(DispatchArgs {
         swappable: swappable_tree.clone(),
         metrics: std::sync::Arc::clone(&metrics),
@@ -14110,6 +14377,8 @@ async fn start_server_inner_full(
         record: record_capture.clone(),
         recordings: std::sync::Arc::clone(&recordings),
         generations: generations.clone(),
+        live: live_state.clone(),
+        serving_pools: serving_pools.clone(),
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
@@ -14119,6 +14388,20 @@ async fn start_server_inner_full(
         Some(hub) => wrap_dispatch_with_stale_guard(dispatch, std::sync::Arc::clone(hub)),
         None => dispatch,
     };
+    // V2-F05 step 5: the rerun worker. The injected closure dispatches the
+    // SAME data-route path as `/__data` (the full pipeline — middleware,
+    // locals, layout loads, gating; no second implementation). `None` from
+    // a rerun (a redirect, an error, an empty body) clears the subscriber's
+    // snapshot: the stale-terminated body answers `event: stale` and the
+    // client reloads once.
+    if let Some(live) = live_state.as_ref() {
+        let spawned = live.spawn_runner(
+            std::time::Duration::from_millis(cfg.live.debounce_ms),
+            cfg.live.max_reruns_per_second,
+            crate::serve::live::rerun_closure(std::sync::Arc::clone(&dispatch)),
+        );
+        debug_assert!(spawned, "the live runner spawns exactly once per boot");
+    }
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     // Startup banner: the URL must be obvious on first run (Vite parity).
     eprintln!();
@@ -14209,6 +14492,8 @@ async fn start_server_inner_full(
         ppr_shells,
         swappable_tree,
         generations: generations.clone(),
+        live: live_state,
+        serving_pools,
         #[cfg(feature = "search")]
         hot_search,
     })
@@ -14248,6 +14533,12 @@ async fn cmd_serve(
         cfg.cache.handler = chosen;
     }
     // §11.2: `cache.handler` is honored inside the stack (see cmd_dev).
+    // The stack-building inputs are captured for the SIGHUP promote too —
+    // the next generation's pool + runner boot from the SAME recipe
+    // (§V2-F10 step 1: the second pool boots over the rebuilt dist).
+    let promote_config_path = config_path_opt.clone();
+    let promote_backend = cfg.server.backend;
+    let promote_cache_handler = cfg.cache.handler.clone();
     let stack = framework_shim::build_framework_stack(
         config_path_opt.as_deref(),
         cfg.server.backend,
@@ -14281,10 +14572,58 @@ async fn cmd_serve(
                     if let Some(gens) = &started.generations {
                         let dist = rootp.join("dist");
                         match crate::serve::generations::promote_handle_from_dist(gens, &dist) {
-                            Some(new_id) => outln!(
-                                w,
-                                "skew: build-id {new_id} is current — the previous generation stays accepted for its skew window"
-                            ),
+                            Some(new_id) => {
+                                outln!(
+                                    w,
+                                    "skew: build-id {new_id} is current — the previous generation stays accepted for its skew window"
+                                );
+                                // V2-F10 step 1 (the second pool): freeze the NEW
+                                // generation's loader sources, boot its stack over
+                                // the rebuilt dist (a fresh pool + runner), and
+                                // demote the boot handles together — accepted
+                                // old-build data-plane requests run the OLD
+                                // generation's handles (its loader bytes are the
+                                // frozen snapshot, not the edited sources).
+                                if let Some(sp) = &started.serving_pools {
+                                    match crate::serve::generations::snapshot_generation_sources(&rootp, &new_id) {
+                                        Ok(snapshot_root) => {
+                                            let next = crate::framework_shim::build_framework_stack(
+                                                promote_config_path.as_deref(),
+                                                promote_backend,
+                                                None,
+                                                Some(&promote_cache_handler),
+                                            )
+                                            .await;
+                                            match next.pool.clone() {
+                                                Some(pool) => {
+                                                    let next_gen = std::sync::Arc::new(
+                                                        crate::serve::generations::GenServing {
+                                                            pool,
+                                                            runner: next.loader_runner.clone(),
+                                                            routes_root: snapshot_root,
+                                                        },
+                                                    );
+                                                    if sp.promote_booted(&new_id, next_gen) {
+                                                        outln!(
+                                                            w,
+                                                            "skew: generation {new_id} booted over the rebuilt dist — its pool serves; the previous pool drains at window end"
+                                                        );
+                                                    }
+                                                }
+                                                None => tracing::warn!(
+                                                    code = "SKW-POOL",
+                                                    msg = "the promoted generation has no worker pool; the boot pool keeps serving every generation",
+                                                ),
+                                            }
+                                        }
+                                        Err(e) => tracing::warn!(
+                                            code = "SKW-SNAPSHOT",
+                                            msg = e,
+                                            "skew: the promoted generation's loader sources could not be frozen; the boot handles keep serving",
+                                        ),
+                                    }
+                                }
+                            }
                             None => outln!(w, "skew: dist unchanged — no generation promoted"),
                         }
                     }
