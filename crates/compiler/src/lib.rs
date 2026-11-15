@@ -38,8 +38,12 @@ pub mod islands;
 pub mod lexer;
 pub mod migrate;
 pub mod native;
-// §V2-C03/C04/C05: the native framework compilers, each behind its
+// §V2-C02/C03/C04/C05: the native framework compilers, each behind its
 // feature flag (see `native/mod.rs` for the registry push list).
+#[cfg(feature = "native-solid")]
+pub mod solid {
+    pub use crate::native::solid::*;
+}
 #[cfg(feature = "native-vue")]
 pub mod vue {
     pub use crate::native::vue::*;
