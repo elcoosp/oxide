@@ -1320,6 +1320,7 @@ fn html_escape(s: &str) -> String {
 /// walk-up over the module graph's importers, the self-accepting scanner
 /// and the full-reload diagnostics seam (§13.3, §V2-E01).
 pub mod boundary;
+pub mod server_lib;
 pub use boundary::{
     Plan, UpdateKind, full_reload_diagnostic, plan, plan_classified, schema_mismatch_diagnostic,
     source_self_accepts,
