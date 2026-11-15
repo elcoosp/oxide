@@ -27,9 +27,10 @@ search = ["dep:oxide-fw-search", "oxide-fw-server/search"]
 # (the `svg.optimize` knob refuses with `AST-SVG-002` without it — the
 # refusal names this flag).
 svg-oxvg = ["oxide-fw-assets/svg-oxvg"]
-# V2-C03/C04/C05: the native framework compilers, forwarded to the
+# V2-C02/C03/C04/C05: the native framework compilers, forwarded to the
 # compiler crate (§V2-C01: default dev builds keep them off; the release
 # recipe turns the landed ones on).
+native-solid = ["oxide-fw-compiler/native-solid"]
 native-vue = ["oxide-fw-compiler/native-vue"]
 native-svelte = ["oxide-fw-compiler/native-svelte"]
 native-react-compiler = ["oxide-fw-compiler/native-react-compiler"]
