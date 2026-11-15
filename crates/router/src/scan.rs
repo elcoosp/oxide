@@ -167,10 +167,19 @@ fn route_entry_for(
     let mut tags = Vec::new();
     // V2-F05: the `live` opt-in rides the same best-effort config read.
     let mut live = None;
+    // V2-F12: the route's overload priority rides the same read — the
+    // brownout enforcement stage consults it per request.
+    let mut priority = None;
     let has_server_module = match kind {
         RouteKind::Page => {
             if let Some(server) = &modules.page_server {
-                read_page_config(&dir.join(server), &mut render_mode, &mut tags, &mut live);
+                read_page_config(
+                    &dir.join(server),
+                    &mut render_mode,
+                    &mut tags,
+                    &mut live,
+                    &mut priority,
+                );
             }
             modules.page_server.is_some()
         }
@@ -203,6 +212,7 @@ fn route_entry_for(
         slot: slot.map(str::to_string),
         needs_parent,
         live,
+        priority,
     })
 }
 
@@ -475,12 +485,14 @@ fn read_page_config(
     render_mode: &mut Option<String>,
     tags: &mut Vec<String>,
     live: &mut Option<RouteLive>,
+    priority: &mut Option<String>,
 ) {
     static RENDER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static TAGS: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static QUOTED: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static LIVE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static DEBOUNCE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static PRIORITY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
@@ -525,6 +537,18 @@ fn read_page_config(
             }
         }
         *live = Some(parsed);
+    }
+    // V2-F12: `priority: 'low' | 'normal' | 'critical'` — the route's
+    // overload priority, read through the same best-effort literal
+    // contract as the other config keys (the compiler pass is
+    // authoritative; the load-validated grammar lives in the config
+    // crate, the governor's parse is the enforcement side).
+    let re = PRIORITY.get_or_init(|| {
+        regex::Regex::new(r#"\bpriority\s*:\s*["'](low|normal|critical)["']"#)
+            .expect("priority regex")
+    });
+    if let Some(c) = re.captures(&text) {
+        *priority = Some(c[1].to_string());
     }
 }
 
