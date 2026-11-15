@@ -41,7 +41,7 @@ interface BootWindow extends Window {
   /** §V2-F03: the hydration-bootstrap payload. `interactionReplay: false`
    *  (from `oxide.config.ts`) disables the pre-hydration interaction
    *  capture; absent/true keeps it on (the default). */
-  __oxide?: { interactionReplay?: boolean }
+  __oxide?: { interactionReplay?: boolean; search?: 'server' | 'static' }
 }
 
 /** A `Window` shaped object, or `undefined` in a non-browser environment. */
