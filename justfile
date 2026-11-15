@@ -12,4 +12,4 @@ wr1:
 # §V2-C01: the release recipe compiles the landed native framework
 # compilers in (default dev builds keep them off — fast compile).
 release-build:
-    cargo build --release -p oxide-fw-cli --features native-vue,native-svelte,native-react-compiler
+    cargo build --release -p oxide-fw-cli --features native-solid,native-vue,native-svelte,native-react-compiler
