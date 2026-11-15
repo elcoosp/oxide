@@ -179,12 +179,41 @@ fn bench_native(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    bench_native_compile_solid,
     bench_native_compile_vue,
     bench_native_compile_svelte,
     bench_native_compile_react_compiler,
     bench_native
 );
 criterion_main!(benches);
+
+// §V2-C02 (re-opened): the in-repo Solid JSX transform's cold-compile
+// cost over the spec's spike fixture (a signal, an event handler, a
+// `<Show>`), the DOM target the precompile pass runs.
+#[cfg(feature = "native-solid")]
+fn bench_native_compile_solid(c: &mut Criterion) {
+    use oxide_fw_compiler::native::{CompileRequest, Generate, NativeCompiler};
+    let mut group = c.benchmark_group("native_compile");
+    let src = include_str!("../tests/fixtures/native/solid/Counter.tsx");
+    let path = std::path::Path::new("src/components/Counter.tsx");
+    group.bench_function("solid", |b| {
+        b.iter(|| {
+            let backend = oxide_fw_compiler::solid::SolidNative;
+            let out = backend
+                .compile(&CompileRequest {
+                    path,
+                    source: src,
+                    generate: Generate::Dom,
+                    dev: false,
+                })
+                .expect("bench compile");
+            black_box(out);
+        });
+    });
+    group.finish();
+}
+#[cfg(not(feature = "native-solid"))]
+fn bench_native_compile_solid(_c: &mut Criterion) {}
 
 // §V2-C03/C04/C05: the per-backend native compile benches (the landed
 // backends' cold-compile cost for their health-fixture-shaped sources).
@@ -193,8 +222,8 @@ criterion_main!(benches);
 // the group compiles to nothing (cfg-eliminated).
 #[cfg(feature = "native-vue")]
 fn bench_native_compile_vue(c: &mut Criterion) {
-    let mut group = c.benchmark_group("native_compile");
     use oxide_fw_compiler::native::{CompileRequest, Generate, NativeCompiler};
+    let mut group = c.benchmark_group("native_compile");
     let src = "<script setup lang=\"ts\">import { ref } from 'vue'; const n = ref(1);</script>\n<template><b @click=\"n++\">{{ n }}</b></template>";
     let path = std::path::Path::new("src/components/Bench.vue");
     group.bench_function("vue", |b| {
@@ -209,7 +238,7 @@ fn bench_native_compile_vue(c: &mut Criterion) {
                 })
                 .expect("bench compile");
             black_box(out);
-        })
+        });
     });
     group.finish();
 }
@@ -218,8 +247,8 @@ fn bench_native_compile_vue(_c: &mut Criterion) {}
 
 #[cfg(feature = "native-svelte")]
 fn bench_native_compile_svelte(c: &mut Criterion) {
-    let mut group = c.benchmark_group("native_compile");
     use oxide_fw_compiler::native::{CompileRequest, Generate, NativeCompiler};
+    let mut group = c.benchmark_group("native_compile");
     let src = "<script>let n = $state(1);</script>\n<button on:click={() => n++}>{n}</button>";
     let path = std::path::Path::new("src/components/Bench.svelte");
     group.bench_function("svelte", |b| {
@@ -234,7 +263,7 @@ fn bench_native_compile_svelte(c: &mut Criterion) {
                 })
                 .expect("bench compile");
             black_box(out);
-        })
+        });
     });
     group.finish();
 }
@@ -243,8 +272,8 @@ fn bench_native_compile_svelte(_c: &mut Criterion) {}
 
 #[cfg(feature = "native-react-compiler")]
 fn bench_native_compile_react_compiler(c: &mut Criterion) {
-    let mut group = c.benchmark_group("native_compile");
     use oxide_fw_compiler::native::{CompileRequest, Generate, NativeCompiler};
+    let mut group = c.benchmark_group("native_compile");
     let src = "import { useState } from \"react\";\nexport function C() { const [n, set] = useState(0); return <button onClick={() => set(n + 1)}>{n}</button>; }\n";
     let path = std::path::Path::new("src/components/Bench.tsx");
     group.bench_function("react_compiler", |b| {
@@ -259,7 +288,7 @@ fn bench_native_compile_react_compiler(c: &mut Criterion) {
                 })
                 .expect("bench compile");
             black_box(out);
-        })
+        });
     });
     group.finish();
 }
