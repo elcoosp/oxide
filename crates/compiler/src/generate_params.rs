@@ -348,7 +348,7 @@ mod tests {
         let src = "export const generateParams = [];";
         match extract_generate_params(src) {
             GenerateParamsResult::Literal(v) => {
-                assert_eq!(v, Vec::<BTreeMap<String, String>>::new())
+                assert_eq!(v, Vec::<BTreeMap<String, String>>::new());
             }
             other => panic!("expected Literal(empty), got {other:?}"),
         }
