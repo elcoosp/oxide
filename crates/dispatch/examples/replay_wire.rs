@@ -34,10 +34,18 @@ use oxide_fw_server::{LoaderOutput, LoaderRunInput, LoaderRunner};
 /// the record without the runner knowing).
 struct FakeRunner;
 
+impl FakeRunner {
+    /// The backend name, as a genuinely static binding — the trait's
+    /// signature ties the return to `&self`'s lifetime, so the literal
+    /// rides a named const (clippy's `&'static str` suggestion does not
+    /// compile on a trait impl).
+    const NAME: &'static str = "fake";
+}
+
 #[async_trait::async_trait]
 impl LoaderRunner for FakeRunner {
     fn name(&self) -> &str {
-        "fake"
+        Self::NAME
     }
     async fn run(&self, input: LoaderRunInput) -> oxide_fw_server::Result<LoaderOutput> {
         Ok(LoaderOutput::ok(
@@ -80,14 +88,47 @@ impl ReplayExecutor for DivergentExecutor {
     }
 }
 
-fn main() {
-    let tmp = tempfile::tempdir().expect("the walkthrough root");
-    let request_id = "req-9f21";
+/// Step 2, parsed: one worker `replay:drain` reply in the worker's
+/// camelCase wire shape, straight into the substrate's capture shapes.
+fn drained_ops() -> (Vec<FetchOp>, Vec<CacheOp>, NonDetSequences) {
+    let drained_json = serde_json::json!({
+        "fetches": [{
+            "method": "GET",
+            "url": "https://api.example/data",
+            "requestBodyBase64": "",
+            "truncated": false,
+            "response": {
+                "status": 200,
+                "headers": [["content-type", "application/json"]],
+                "bodyBase64": base64::engine::general_purpose::STANDARD.encode(br#"{"ok":true}"#),
+                "truncated": false,
+            },
+        }],
+        "cacheOps": [{ "op": "l1.get", "key": "l1:routes/ox-replay", "hit": true }],
+        "sequences": {
+            "nowMs": [1_700_000_000_123u64],
+            "randoms": [0.42],
+            "uuids": ["00000000-0000-4000-8000-000000000009"],
+        },
+    });
+    let fetches: Vec<FetchOp> =
+        serde_json::from_value(drained_json["fetches"].clone()).expect("the drain's fetches parse");
+    let cache_ops: Vec<CacheOp> = serde_json::from_value(drained_json["cacheOps"].clone())
+        .expect("the drain's cache ops parse");
+    let sequences: NonDetSequences = serde_json::from_value(drained_json["sequences"].clone())
+        .expect("the drain's sequences parse");
+    (fetches, cache_ops, sequences)
+}
 
-    // ---- 1. The capture, behind the shared handle -----------------------
-    // The wiring constructs the accumulator at the top of the dispatch
-    // closure and shares it with the loader decorator and the response
-    // tee; the finish runs through the MutexGuard (`finish_shared`).
+/// Steps 1 + 3: the capture behind the shared handle (the wiring
+/// constructs the accumulator at the top of the dispatch closure and
+/// shares it with the loader decorator and the response tee), the drain
+/// folded in, the finish under the policy gate, the store write — and the
+/// redaction pin on the way out.
+fn capture_and_write(
+    root: &std::path::Path,
+    request_id: &str,
+) -> oxide_fw_dispatch::record::RequestRecord {
     let redactor = Redactor::new(false);
     let shared = Arc::new(Mutex::new(Recording::new(redactor, "GET", "/ox-replay")));
     {
@@ -118,38 +159,7 @@ fn main() {
         let _ = futures::executor::block_on(runner.run(input)).expect("the fake load runs");
     }
 
-    // ---- 2. The worker drain folds in ------------------------------------
-    // The CLI broadcasts `replay:drain` over the pool and parses each
-    // reply — the worker's camelCase wire shape — straight into the
-    // substrate's capture shapes.
-    let drained_json = serde_json::json!({
-        "fetches": [{
-            "method": "GET",
-            "url": "https://api.example/data",
-            "requestBodyBase64": "",
-            "truncated": false,
-            "response": {
-                "status": 200,
-                "headers": [["content-type", "application/json"]],
-                "bodyBase64": base64::engine::general_purpose::STANDARD.encode(br#"{"ok":true}"#),
-                "truncated": false,
-            },
-        }],
-        "cacheOps": [{ "op": "l1.get", "key": "l1:routes/ox-replay", "hit": true }],
-        "sequences": {
-            "nowMs": [1_700_000_000_123u64],
-            "randoms": [0.42],
-            "uuids": ["00000000-0000-4000-8000-000000000009"],
-        },
-    });
-    let fetches: Vec<FetchOp> =
-        serde_json::from_value(drained_json["fetches"].clone()).expect("the drain's fetches parse");
-    let cache_ops: Vec<CacheOp> = serde_json::from_value(drained_json["cacheOps"].clone())
-        .expect("the drain's cache ops parse");
-    let sequences: NonDetSequences = serde_json::from_value(drained_json["sequences"].clone())
-        .expect("the drain's sequences parse");
-
-    // ---- 3. The finish: drain folded, policy applied, record written -----
+    let (fetches, cache_ops, sequences) = drained_ops();
     let policy = RecordPolicy {
         mode: RecordMode::All,
         include_secrets: false,
@@ -195,7 +205,7 @@ fn main() {
         assert!(policy.should_record(record.response.status, roll));
         record
     };
-    let store = DirRecordStore::new(tmp.path());
+    let store = DirRecordStore::new(root);
     RecordSink::write(&store, &record).expect("the record writes");
     println!(
         "record {} written to {}",
@@ -222,8 +232,18 @@ fn main() {
         cookie.1.starts_with("sha256:"),
         "the secret trio is redacted"
     );
+    record
+}
 
-    // ---- 4. The replay: one definition, three endings ---------------------
+/// Step 4: the replay through ONE definition, three endings — the
+/// faithful byte-identical run, the stale build (`RPL-003` warns but
+/// runs), the divergent host (`RPL-002` in the diff) — plus the load
+/// door's `RPL-001` for a missing id.
+fn replay_walkthrough(
+    root: &std::path::Path,
+    record: &oxide_fw_dispatch::record::RequestRecord,
+    request_id: &str,
+) {
     let recorded_response = ExecutedResponse {
         status: record.response.status,
         headers: record.response.headers.clone(),
@@ -233,10 +253,7 @@ fn main() {
     };
 
     // (a) The faithful replay: byte-identical, not stale.
-    let runner = ReplayRunner::new(
-        Arc::new(DirRecordStore::new(tmp.path())),
-        "aaaaaaaaaaaaaaaa",
-    );
+    let runner = ReplayRunner::new(Arc::new(DirRecordStore::new(root)), "aaaaaaaaaaaaaaaa");
     let outcome = futures::executor::block_on(
         runner.run(request_id, &FaithfulExecutor(recorded_response.clone())),
     )
@@ -249,10 +266,7 @@ fn main() {
     assert!(!outcome.stale_build);
 
     // (b) The stale build: warns RPL-003 but RUNS — the diff still answers.
-    let runner = ReplayRunner::new(
-        Arc::new(DirRecordStore::new(tmp.path())),
-        "bbbbbbbbbbbbbbbb",
-    );
+    let runner = ReplayRunner::new(Arc::new(DirRecordStore::new(root)), "bbbbbbbbbbbbbbbb");
     let outcome = futures::executor::block_on(
         runner.run(request_id, &FaithfulExecutor(recorded_response.clone())),
     )
@@ -265,10 +279,7 @@ fn main() {
     assert!(outcome.diff.ok, "the warn never refuses the run");
 
     // (c) The divergent replay: an unrecorded fetch changes the body.
-    let runner = ReplayRunner::new(
-        Arc::new(DirRecordStore::new(tmp.path())),
-        "aaaaaaaaaaaaaaaa",
-    );
+    let runner = ReplayRunner::new(Arc::new(DirRecordStore::new(root)), "aaaaaaaaaaaaaaaa");
     let outcome = futures::executor::block_on(runner.run(request_id, &DivergentExecutor))
         .expect("the divergent replay runs");
     println!(
@@ -283,9 +294,16 @@ fn main() {
     );
 
     // The load door: a missing id is RPL-001, a foreign version RPL-005.
+    let store = DirRecordStore::new(root);
     let err = RecordSource::load(&store, "req-missing").expect_err("missing record refuses");
     println!("missing record → {}", err.0.code);
     assert_eq!(err.0.code, "RPL-001");
+}
 
+fn main() {
+    let tmp = tempfile::tempdir().expect("the walkthrough root");
+    let request_id = "req-9f21";
+    let record = capture_and_write(tmp.path(), request_id);
+    replay_walkthrough(tmp.path(), &record, request_id);
     println!("replay_wire walkthrough complete");
 }
