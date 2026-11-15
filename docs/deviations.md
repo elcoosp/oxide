@@ -3736,3 +3736,61 @@ misdiagnosed a corrupt record: a truncated request body compared as "not
 the recorded call" (`RPL-002`) and a truncated response body reported a
 spurious body divergence — both now surface the corruption (`RPL-006`, new
 registry + reference rows) instead of blaming the code path.
+
+## The F07 + F12 wiring lands — the A01-phase-3 deferrals close (`feat/f07-resume-wire` + `feat/f12-brownout-wire`, 2026-11-15)
+
+**F07.** The four deferrals listed above are wired: the tee in the dispatch closure's
+endpoint arm (a streamed response marked through the new `oxide/server` `resumable`
+helper is teed under `stream_id(request_id, counter)`; the recording tee composes
+OUTSIDE the stream tee, so the store and the recorder observe the same bytes in the
+same order), the `GET /__oxide/stream/<id>` reattach arm (GET-only, `parse_range_offset`
+with the absent-header default, `stream_resume_response`/`stream_gone_response`; the
+per-IP reattach limit rides a dedicated sharded `RateLimiter` bucket — 60/min, `429` +
+`retry-after` — so reattach pressure never shares a bucket with the search/OG
+endpoints), the store sweep task (`stream_store::spawn_sweep`, the spec's 30 s cadence,
+spawned at every serve boot over the typed `stream.resume` bounds via
+`serve::streams::StreamWiring::from_config`) and the client lifecycle
+(`fetchRouteData` rides `resumableFetch`; a stream-marked `/__data` response is pumped
+through the reattach protocol and reassembled for the ODF decode, unmarked responses
+keep the buffered read byte-identically; `resumableFetch` is exported from
+`@oxide-fw/core`, `resumable()` from `@oxide-fw/core/server`).
+
+**F07 delta (the e2e's producer shape).** The tee is pull-driven: a streamed producer
+only reaches the store while SOME consumer keeps pulling, so an e2e whose first client
+dies mid-stream needs the whole body pulled before the drop. The fixture emits the
+twenty lines in two eager batches (no inter-batch timer); the spec's timed-producer
+shape (20 lines at 50 ms) is pinned V8-free at the substrate level
+(`reattach_stream_emits_backlog_then_live_tail_until_done`), where a live reader drives
+the tail. The drop+reattach acceptance itself (kill after 8 lines → `Range: bytes=<n>-`
+→ the concatenation byte-for-byte) is the `#[ignore]` pin
+`stream_resume_reattach_delivers_the_missed_bytes` + its CI step.
+
+**F12.** The sampler (a 500 ms tick over `pool.stats()`'s queue-wait p99 ms→µs and
+in-flight, the 100 ms loop-lag probe's overshoot atomic, RSS from
+`/proc/self/statm` via `rss_mb()`), the enforcement stage in the dispatch closure after
+the route match (the route's `config.priority` × `serve_decision`; `Shed` answers
+`shed_response` BEFORE any loader/cache/render work; `ServeStale` arms the L0 lookup
+with the `staleCeiling` bound — `L0Cache::get_brownout`, the bound math in exact u128 —
+and stamps `warning: 110 - "Response is Stale"` on the served hit), the readiness flip
+(`/_oxide/ready` answers 503 only at `Emergency` through `ready_status`, both ops
+endpoints report the level as `x-oxide-brownout`), the scanner reading
+`config.priority` into the route tree (the same best-effort literal contract as
+`live`), and the e2e (`brownout_sheds_low_and_reports_the_level`, the governor's level
+driven through the SAME seam the sampler writes) + its CI step.
+
+**F12 deltas (2).** (1) The `Emergency` L0-hit/static-asset exemption ("only L0 hits,
+static assets and critical routes") is NOT implemented: the enforcement stage runs
+after the route match and BEFORE the cache lookup, so a route's cacheability is not
+yet known at the shed point — `Emergency` sheds `low` and `normal` routes entirely
+(the safe-side shape). The `governor::serve_decision` doc already reserves the
+exemption as the caller's; wiring it means the shed decision moves behind the L0
+lookup, which changes the hit path's hot shape. (2) The `rules` `NativeRule.priority`
+config surface is plumbed (the CLI already transfers it) but the per-URL rule priority
+is not consulted at enforcement time — the route tree's scanned `config.priority` is
+the declaration the stage reads; a rule-declared priority for a URL without a
+page-level declaration falls back to `normal`.
+
+**Deferred (unchanged):** the hedger (opt-in, off by default), the `overload.sh`
+`oha -c 500` load test (an ops script — its number is CI-measured), and the F10
+previous-generation early shrink (the brownout consults
+`oxide_pool_queue_wait_p99_us` against the F10 expiry task).
