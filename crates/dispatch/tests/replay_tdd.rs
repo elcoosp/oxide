@@ -333,3 +333,50 @@ fn the_diff_serializes_for_the_json_surface() {
     assert!(first.contains_key("kind"));
     assert!(first.contains_key("detail"));
 }
+
+/// `Server-Timing` is per-request measured state (the waterfall timings the
+/// pipeline stamps differ on every run by construction) — the same
+/// re-derived class the trio above belongs to. Its presence difference is
+/// not a divergence, in both directions.
+#[test]
+fn server_timing_is_re_derived_state_too() {
+    let record = fixture_record();
+    let recorded_body = String::from_utf8(
+        base64::engine::general_purpose::STANDARD
+            .decode(&record.response.body_base64)
+            .expect("the recorded body decodes"),
+    )
+    .expect("the recorded body is utf-8");
+
+    // The replay stamps timings the record does not carry.
+    let replayed = vec![
+        ("content-type".to_string(), "text/html".to_string()),
+        (
+            "server-timing".to_string(),
+            "match 0.1; load 12.0; render 8.0".to_string(),
+        ),
+    ];
+    let diff = replay_diff(&record, 200, &replayed, &recorded_body);
+    assert!(
+        diff.ok,
+        "a per-request Server-Timing stamp is not a divergence: {:?}",
+        diff.divergences
+    );
+
+    // The mirror direction: the record carries it, the replay does not.
+    let recorded_with_timing = vec![
+        ("content-type".to_string(), "text/html".to_string()),
+        (
+            "server-timing".to_string(),
+            "match 0.2; load 13.0; render 9.0".to_string(),
+        ),
+    ];
+    let mut record2 = fixture_record();
+    record2.response.headers = recorded_with_timing;
+    let diff2 = replay_diff(&record2, 200, &replayed, &recorded_body);
+    assert!(
+        diff2.ok,
+        "the record's own Server-Timing does not diverge either: {:?}",
+        diff2.divergences
+    );
+}
