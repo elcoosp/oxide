@@ -157,6 +157,14 @@ pub struct RouteEntry {
     /// when one of their cache tags is revalidated.
     #[serde(default)]
     pub live: Option<RouteLive>,
+    /// V2-F12: the route's overload priority from `page.server.ts` config
+    /// (`priority: 'low' | 'normal' | 'critical'`). `None` (the default)
+    /// reads as `normal` at the enforcement stage: shed at brownout level
+    /// `Shed`, kept at `Emergency`. The config-side grammar is validated at
+    /// load (`DSP-113`); the wiring maps the literal through
+    /// `oxide_fw_server::governor::parse_priority`.
+    #[serde(default)]
+    pub priority: Option<String>,
 }
 
 /// V2-F05: the per-route live configuration read from `page.server.ts`.
