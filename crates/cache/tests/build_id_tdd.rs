@@ -167,3 +167,93 @@ fn empty_trees_still_yield_a_deterministic_id() {
     let b = build_id_of_dist(&t2.path().join("dist")).expect("b");
     assert_eq!(a, b, "empty trees agree regardless of dir creation order");
 }
+
+// --- M1: the stamp/read half (A04 step 1 wiring) ---------------------------
+
+use oxide_fw_cache::{read_build_id, stamp_build_id};
+
+#[test]
+fn stamp_writes_both_files_and_read_round_trips() {
+    // The spec's shape: `dist/build-id` (plain text) and `.oxide/build-id`,
+    // both the canonical id `build_id_of_dist` computed over the final
+    // bytes; `read_build_id` is the one read site the boot consumes.
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    write(root, "dist/client/a.js", b"a");
+    let dist = root.join("dist");
+    let id = stamp_build_id(&dist).expect("stamp");
+    assert_eq!(id.len(), 16, "{id}");
+    assert_eq!(
+        fs::read_to_string(dist.join("build-id"))
+            .expect("dist/build-id")
+            .trim(),
+        id,
+        "dist/build-id carries the id"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".oxide/build-id"))
+            .expect(".oxide/build-id")
+            .trim(),
+        id,
+        ".oxide/build-id carries the id"
+    );
+    assert_eq!(read_build_id(&dist).expect("read"), id, "round trip");
+    assert_eq!(
+        read_build_id(&root.join("dist")).as_deref(),
+        Some(id.as_str())
+    );
+}
+
+#[test]
+fn stamp_is_idempotent_and_id_narrows_to_the_covered_set() {
+    // dist/build-id lives at the dist ROOT and .oxide/build-id at the
+    // project root — neither is inside the covered set (dist/client,
+    // dist/server, routes.manifest), so a second stamp over the same tree
+    // must yield the SAME id (a rebuild with no source change prints the
+    // same dist/build-id — the spec's observable proof).
+    let tmp = TempDir::new().expect("tmp");
+    let root = tmp.path();
+    write(root, "dist/client/a.js", b"a");
+    let dist = root.join("dist");
+    let first = stamp_build_id(&dist).expect("first");
+    let second = stamp_build_id(&dist).expect("second");
+    assert_eq!(first, second, "re-stamping an unchanged dist is stable");
+    // The stamped files did not leak into the digest: the id equals the
+    // bare computation over the same tree.
+    assert_eq!(first, build_id_of_dist(&dist).expect("bare"));
+    // One changed covered byte moves the id; a changed NON-covered file
+    // (outside dist/client, dist/server and routes.manifest — e.g. the
+    // stamped dist/build-id itself or a dist-root deploy note) does not.
+    write(root, "dist/client/a.js", b"b");
+    let third = stamp_build_id(&dist).expect("third");
+    assert_ne!(first, third, "a covered byte change moves the id");
+    write(root, "dist/deploy-note.txt", b"uncovered");
+    let fourth = stamp_build_id(&dist).expect("fourth");
+    assert_eq!(third, fourth, "non-covered files do not move the id");
+}
+
+#[test]
+fn stamp_over_a_missing_dist_errors_and_read_of_a_missing_file_is_none() {
+    let tmp = TempDir::new().expect("tmp");
+    let missing = tmp.path().join("dist");
+    let err = stamp_build_id(&missing).expect_err("missing dist must error");
+    assert!(err.0.code.starts_with("CAC-"), "{}", err.0.code);
+    assert!(read_build_id(&missing).is_none(), "no file, no id");
+    let empty = TempDir::new().expect("empty");
+    assert!(read_build_id(&empty.path().join("dist")).is_none());
+}
+
+#[test]
+fn read_build_id_tolerates_surrounding_whitespace() {
+    // The file is written trim-ended, but a hand-edited or CRLF file must
+    // still read back as the id.
+    let tmp = TempDir::new().expect("tmp");
+    let dist = tmp.path().join("dist");
+    fs::create_dir_all(&dist).expect("mkdir");
+    fs::write(dist.join("build-id"), b"  0123456789abcdef\r\n").expect("write");
+    assert_eq!(
+        read_build_id(&dist).as_deref(),
+        Some("0123456789abcdef"),
+        "whitespace-trimmed read"
+    );
+}
