@@ -8389,16 +8389,16 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
         std::collections::BTreeMap::new();
     entries.insert("edge".into(), entry.clone());
 
-    let precompiled = crate::precompile::precompile_entries(
-        Some(&pool),
-        &entries,
-        "ssr",
-        Some("react"),
-        None,
-        env!("CARGO_PKG_VERSION"),
-        None,
-        oxide_fw_compiler::native::Backend::Auto,
-    )
+    let precompiled = crate::precompile::precompile_entries(crate::precompile::PrecompilePlan {
+        pool: Some(&pool),
+        entries: &entries,
+        svelte_generate: "ssr",
+        framework: Some("react"),
+        cache: None,
+        tool_version: env!("CARGO_PKG_VERSION"),
+        native: None,
+        backend: oxide_fw_compiler::native::Backend::Auto,
+    })
     .await
     .unwrap();
 
@@ -10681,4 +10681,209 @@ async fn replay_reproduces_a_recorded_request_without_network() {
     if had_replay {
         unsafe { std::env::set_var("OXIDE_REPLAY", "") };
     }
+}
+
+// --- V2-A04 build identity e2e -----------------------------------------------
+
+/// One raw GET with an extra request header — the [`http_get`] shape plus
+/// the header the A04 stage reads. Same retry + read conventions.
+async fn http_get_with_header(
+    addr: std::net::SocketAddr,
+    path: &str,
+    header: &str,
+    value: &str,
+) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut stream = loop {
+        match TcpStream::connect(addr).await {
+            Ok(s) => break s,
+            Err(e) => {
+                if std::time::Instant::now() >= deadline {
+                    panic!("connect to {addr} never succeeded after 3s: {e}");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        }
+    };
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\n{header}: {value}\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .expect("write request");
+    stream.flush().await.expect("flush");
+    let mut buf = Vec::with_capacity(8 * 1024);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        stream.read_to_end(&mut buf),
+    )
+    .await
+    .expect("read timed out")
+    .expect("read failed");
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// §V2-A04 acceptance, driven over the wire against a minimal app:
+///
+/// 1. SERVE (dev): the data plane enforces the build contract — a request
+///    advertising an unaccepted `x-oxide-build` answers `409` +
+///    `x-oxide-build-stale: true`; a headerless request (curl/tests/old
+///    clients) is allowed and its response ADVERTISES the boot id
+///    (`x-oxide-build: dev` — no dist yet); an HTML navigation with the
+///    bogus id is NOT rejected (the stage's data-plane scope); and the
+///    streamed shell's hydration bootstrap bakes `build:"dev"` so the
+///    client's `withBuild` echo is accepted.
+/// 2. BUILD: `oxide build` stamps the canonical id — `dist/build-id` +
+///    `.oxide/build-id`, 16-hex, the exact bytes `build_id_of_dist`
+///    computes (pinned V8-free in the cache crate; here the CLI's emit
+///    tail is the surface), stable across an unchanged rebuild.
+///
+/// `#[ignore]` like every e2e here: spawns Node workers, binds ports and
+/// needs the workspace `node_modules`. CI runs it named, single-threaded.
+#[tokio::test]
+#[ignore]
+async fn build_identity_advertises_and_rejects_stale_on_the_wire() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let routes = root.join("src/routes");
+    std::fs::create_dir_all(routes.join("index")).unwrap();
+    std::fs::write(
+        routes.join("index").join("page.tsx"),
+        "export default () => null;",
+    )
+    .unwrap();
+    write_config(&root, r#"{ "adapter": "react" }"#);
+
+    // ---- Phase 1: the stage + the advertise + the bootstrap --------------
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&root.join("oxide.config.ts")),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+    let root_str = root.to_str().expect("root utf-8");
+    let started = crate::start_dev_server_full(
+        root_str,
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("dev server");
+
+    // The stage's reject: a data-plane request with an unaccepted id.
+    let stale = http_get_with_header(
+        started.addr,
+        "/__data?route=/",
+        "x-oxide-build",
+        "deadbeefdeadbeef",
+    )
+    .await;
+    assert!(
+        stale.starts_with("HTTP/1.1 409"),
+        "a bogus build id on the data plane answers 409: {}",
+        stale.lines().next().unwrap_or("")
+    );
+    assert!(
+        stale.to_lowercase().contains("x-oxide-build-stale: true"),
+        "the 409 carries the stale marker: {}",
+        stale.lines().next().unwrap_or("")
+    );
+
+    // Headerless = allowed, and the response advertises the boot id.
+    let allowed = http_get(started.addr, "/__data?route=/").await;
+    assert!(
+        allowed.starts_with("HTTP/1.1 200"),
+        "a headerless data-plane request is allowed: {}",
+        allowed.lines().next().unwrap_or("")
+    );
+    assert!(
+        allowed.to_lowercase().contains("x-oxide-build:"),
+        "every data-plane response advertises the build id: {}",
+        allowed.lines().next().unwrap_or("")
+    );
+
+    // HTML is NOT the data plane: the bogus id passes through.
+    let html = http_get_with_header(started.addr, "/", "x-oxide-build", "deadbeefdeadbeef").await;
+    assert!(
+        !html.starts_with("HTTP/1.1 409"),
+        "an HTML navigation never 409s on the build check: {}",
+        html.lines().next().unwrap_or("")
+    );
+
+    // The streamed shell's bootstrap bakes the boot id.
+    assert!(
+        html.contains("build:\"dev\""),
+        "the hydration bootstrap carries the build field: {}",
+        body_of(&html).chars().take(400).collect::<String>()
+    );
+
+    let _ = started.shutdown.send(true);
+
+    // ---- Phase 2: the build's canonical stamp ----------------------------
+    let mut buf = Vec::new();
+    let code = crate::run_with_writer(
+        Cli {
+            command: Command::Build {
+                root: root_str.to_string(),
+                r#static: true,
+                explain: false,
+                mode: None,
+                offline_plugins: false,
+                attest: false,
+                key: None,
+            },
+        },
+        &mut buf,
+    )
+    .await
+    .expect("build runs");
+    assert_eq!(code, 0, "build ok: {}", String::from_utf8_lossy(&buf));
+    let dist = root.join("dist");
+    let stamped =
+        oxide_fw_cache::read_build_id(&dist).expect("dist/build-id is written by the build");
+    assert_eq!(stamped.len(), 16, "16-hex: {stamped}");
+    assert!(
+        stamped.chars().all(|c| c.is_ascii_hexdigit()),
+        "hex id: {stamped}"
+    );
+    let root_copy = std::fs::read_to_string(root.join(".oxide/build-id")).expect("root copy");
+    assert_eq!(root_copy.trim(), stamped, ".oxide/build-id agrees");
+    assert_eq!(
+        oxide_fw_cache::build_id_of_dist(&dist).expect("recompute"),
+        stamped,
+        "the stamped id IS build_id_of_dist's answer over the final dist"
+    );
+    // The spec's observable proof: an unchanged rebuild prints the SAME id.
+    let mut buf2 = Vec::new();
+    let code2 = crate::run_with_writer(
+        Cli {
+            command: Command::Build {
+                root: root_str.to_string(),
+                r#static: true,
+                explain: false,
+                mode: None,
+                offline_plugins: false,
+                attest: false,
+                key: None,
+            },
+        },
+        &mut buf2,
+    )
+    .await
+    .expect("rebuild runs");
+    assert_eq!(code2, 0, "rebuild ok: {}", String::from_utf8_lossy(&buf2));
+    assert_eq!(
+        oxide_fw_cache::read_build_id(&dist).expect("re-stamped"),
+        stamped,
+        "an unchanged rebuild keeps the id"
+    );
 }
