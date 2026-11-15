@@ -179,6 +179,15 @@ pub struct TypesPayload {
 
 /// Serialize the entries into the JSON the library exports. Duplicate
 /// declaration names collapse to the first contribution.
+///
+/// The `String` return is the export contract (`export_table!` emits the
+/// call inside the generated side export), so a serialize failure cannot
+/// become a coded refusal — but it is never silent: the empty payload a
+/// failure would write registers ZERO native fns at boot (the consult's
+/// id reconstruction walks the payload), which is exactly the
+/// silently-empty-write shape the silent-fallback cleanups all rule out.
+/// The failure is a loud `RFN-004` error naming the serde cause; the
+/// fallback stays (the export must still answer).
 #[must_use]
 pub fn types_json(entries: &[FnTypeEntry]) -> String {
     let mut decls: BTreeMap<String, String> = BTreeMap::new();
@@ -191,7 +200,14 @@ pub fn types_json(entries: &[FnTypeEntry]) -> String {
         fns: entries.to_vec(),
         decls,
     };
-    serde_json::to_string(&payload).unwrap_or_default()
+    serde_json::to_string(&payload).inspect_err(|e| {
+        tracing::error!(
+            code = crate::bridge::RFN_WIRE,
+            fns = entries.len(),
+            error = %e,
+            "the types payload failed to serialize; the library's side export carries an EMPTY payload and no native fn will register at boot"
+        );
+    }).unwrap_or_default()
 }
 
 /// Render the `.d.ts` source from a `types_json` payload: the
