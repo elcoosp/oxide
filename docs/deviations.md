@@ -321,14 +321,19 @@ the `oxide_experiment_assignment` counters.
 
 ## V2-A04 build id + generations substrate — spec deltas and deferred wiring
 
-**Status.** Substrate landed (`crates/cache/src/lib.rs::build_id_of_dist`,
-`crates/dispatch/src/build.rs` — `GenerationSet`, `stage_build_check`,
-`advertise_build`, `is_data_plane_path` — plus the additive
+**Status.** Substrate landed (`crates/cache/src/lib.rs::build_id_of_dist`
++ `stamp_build_id`/`read_build_id`, `crates/dispatch/src/build.rs` —
+`GenerationSet`, `stage_build_check`, `advertise_build`,
+`is_data_plane_path` — plus the additive
 `render::hydration_bootstrap_with_build` / `Injector::with_build_id` and the
 `packages/core/src/client/build.ts` client helpers wired into the router,
-`enhance` and `__oxide_call_fn`). This follows the A02/A05/A06/F04 pattern:
-the V8-free surface ships complete and pinned, the V8-linked wiring is
-deferred.
+`enhance` and `__oxide_call_fn`) AND the CLI wiring landed
+(`feat/a04-build-identity-wire`: the build's canonical stamp, the
+dispatch wrapper's stage install + advertise, the streamed-shell
+bootstrap field, the `#[ignore]` e2e pin + CI step — see the deltas
+below). This follows the A02/A05/A06/F04 pattern: the V8-free surface
+ships complete and pinned, the V8-linked wiring rides the same-session
+milestones that can compile it.
 
 **Deliberate deltas from the spec text:**
 
@@ -374,19 +379,59 @@ deferred.
 
 **What is deliberately deferred (A01 phase-3 / V8-capable host):**
 
-1. **`phase_emit` does not compute or persist the id yet** — the
-   `build_id_of_dist` call at the end of emit and the writes to
-   `dist/build-id` / `.oxide/build-id` live in `cmd_build` (V8-linked).
-   Until then `build_id_of_dist` is reachable from tests/benches only.
-2. **No stage in the pipeline** — the closure does not call
-   `stage_build_check` and responses are not passed through
-   `advertise_build`; the data plane behaves byte-identically to pre-A04
-   (the acceptance "absent header allowed" holds trivially).
-3. **No generation promotion** — `cmd_dev` reload does not construct a
-   `GenerationSet`, so the window semantics are pinned but not driven.
+1. ~~`phase_emit` does not compute or persist the id yet~~ — **LANDED**
+   (this diff, `feat/a04-build-identity-wire`): `cmd_build`'s emit tail
+   calls `oxide_fw_cache::stamp_build_id(&dist)` after the LAST covered
+   write (the i18n manifest stamp), writing `dist/build-id` +
+   `.oxide/build-id` atomically and printing the id in the build summary.
+   `read_build_id` is the one read site; the boot's build-id chain gained
+   the stamp as its second source (manifest field → stamped id → `"dev"`).
+2. ~~No stage in the pipeline~~ — **LANDED**: `build_dispatch_swappable`
+   wraps the inner dispatch — an unaccepted `x-oxide-build` on the data
+   plane answers `409` + `x-oxide-build-stale: true` before route matching
+   or the L0 lookup, every continued data-plane response carries
+   `x-oxide-build: <current>` (`advertise_build`, idempotent), and the
+   streamed shell's hydration bootstrap bakes the CURRENT id via
+   `hydration_bootstrap_with_build` (the same value the stage checks, so
+   the client echo is accepted). Non-data-plane requests and the test
+   helper's `None` handle pass byte-identical to pre-A04.
+3. **No generation promotion yet** — the boot constructs the
+   `GenerationSet` (the boot id accepted, the window from the typed
+   `deploy.skewWindow`) and `StartedServer` carries the handle, but the
+   `cmd_dev` reload promote/expiry is the F10 slice (this session's M2).
 4. **The conformance assertion "build id advertised"** (HTML carries
-   `build:`, `/__data` answers carry `x-oxide-build`) belongs to the wiring
-   PR, together with the `packages/core` client bundle rebuild.
+   `build:`, `/__data` answers carry `x-oxide-build`) — covered on the
+   wire by the `#[ignore]` e2e pin
+   `build_identity_advertises_and_rejects_stale_on_the_wire` (+ its
+   `jshost-e2e` CI step); the conformance-suite assertion remains with the
+   C25/C26 rows.
+
+**New deltas from the wiring (this diff):**
+
+1. **Prerendered shells keep the legacy three-field bootstrap.** The
+   covered set (`dist/client/**`, `dist/server/**`,
+   `.oxide/routes.manifest`) receives writes through the whole build tail
+   — the message catalogs, the L0 seed (whose KEYS embed the build id),
+   the enriched server manifest and the i18n stamp all run AFTER the
+   prerender pass, and the L0 seed's dependence on prerendered bodies
+   fixes that order. An id baked into prerendered HTML would therefore be
+   computed over a pre-tail covered set — stale by serve time — and every
+   prerendered page would 409-loop on its own `/__data` echo. The
+   prerendered Injector keeps `build_id: None` (legacy shape, pinned) and
+   those pages ride the stage's headerless allowance; the live-SSR
+   streaming path bakes the true serving id. Collapsing the two identities
+   needs the covered-set tail finalized before prerender — the recorded
+   A04 tail.
+2. **The stamp writes both files atomically** (temp + rename in the
+   target's own directory — rename across filesystems fails) and neither
+   stamped file sits inside the covered set, so re-stamping an unchanged
+   dist yields the same id (the spec's "build twice, same id" proof holds;
+   pinned in `build_id_tdd.rs`).
+3. **The boot's build-id read order is manifest field first.** The L0
+   seed keys were computed with the bundler's manifest-field id at build
+   time; the boot reads the field first (seed agreement), the stamped
+   canonical id second (a dist whose manifest predates the field),
+   `"dev"` last.
 
 **Hygiene rides-along (recorded because the gates demand them):** the
 workspace is now free of `#[allow(...)]` attributes — the pre-existing sites
@@ -2607,7 +2652,7 @@ engine unchanged.
 
 ## V2-E07 deltas (feat/llms-mcp-registry)
 
-- **`replay.run` is not in the MCP registry.** The spec's tool list includes `replay.run` (F15 record-and-replay). The F15 substrate (record + replay, `crates/dispatch`) has landed — see the V2-F15 record below — but the tool's source would be the `oxide replay` CLI command, which is the deferred A01-phase-3 half; a tool with no backing capability would be a stub. The registry ships the seven tools with real sources today; `replay.run` joins when the CLI command lands.
+- **`replay.run` IS in the MCP registry now.** The delta below recorded it as absent while the `oxide replay` CLI command was deferred; the F15/E03 CLI delivery (see "V2-F15 — the CLI wiring" below) registered `replay.run` over `run_replay` — the tool's source is the same `ReplayRunner` one-definition the command drives, so no stub: the registry ships eight tools with real sources.
 - **`llms-full.txt` reads the prerendered page text, not the content collections.** The spec's source is "route text content from content collections, Markdown", but `content.collections` carries no collection→route-URL mapping today, so a collection entry cannot be attached to its route honestly. The emission walks the prerendered pages (the sitemap's own ground truth) and extracts the visible text (script/style stripped) instead.
 - **`-W pedantic` vs `-W clippy::pedantic`.** clippy 1.100 refuses the bare `pedantic` spelling under `-D warnings` (renamed-and-removed-lints); the gate runs `-W clippy::pedantic` (the same lint group).
 
@@ -2776,6 +2821,59 @@ V8-capable host, same deferral shape as the
 `chain`/`locals`/`pools` substrates. The `record:` key's wiring into
 `RecordPolicy` rides with them.
 
+## V2-F15 + E03 — the CLI wiring (feat/record-replay-cli-wire, 2026-11-15)
+
+**What lands.** The V8-linked halves of §V2-F15 and the E03 command —
+everything the previous records deferred to "the CLI adoption":
+
+- `crates/cli/src/record_wire.rs` — the pipeline's capture: the
+  `RecordCapture::from_config` gate over the landed `record:` key (off
+  keeps the pipeline byte-identical), the `RecordingLoaderRunner`
+  decorator and the `ResponseObserver` riding the one `finish_response`
+  funnel so every finished response's headers are stamped.
+- `Command::Replay` + `run_replay` — the `oxide replay <id> [--diff]
+  [--json]` command as the thin wrapper over the landed `ReplayRunner`;
+  the CLI's `ReplayExecutor` re-executes the captured request against a
+  started server (`ReplayHttpExecutor`), so the replay is a real HTTP
+  round trip, not a synthetic re-render. `replay:drain` (the MCP tool's
+  streaming sibling) rides the worker `Pool::call_all` broadcast.
+- The MCP `replay.run` tool registered over `run_replay` — the E07
+  registry delta above is closed; the registry ships eight tools with
+  real sources.
+- `cmd_migrate` — the E03 command as the thin wrapper over the landed
+  planner (`plan_for`/`detect_framework`/`apply_plan`); the superseded
+  `crates/cli/src/migrate.rs` engine is DELETED (the planner is the one
+  definition site — the old engine's path mapping could drift from the
+  planner's, which is exactly the duplication the plan-is-data ruling
+  forbids).
+
+**Deltas.**
+
+1. **Streaming captures accumulate, then decide.** A streamed response
+   body is not pinned chunk-by-chunk in the record while it streams (an
+   unbounded in-flight buffer): the capture accumulates the stream's
+   chunks and, at stream end, applies the policy decision (size cap,
+   sampling) to the whole body. A record's body is still complete
+   bytes; the decision point moved past the stream's end.
+2. **`server-timing` joins the re-derived-header skip list.** The diff's
+   header comparisons already skip `content-security-policy`/`date`/
+   `set-cookie` (re-derived per run); `server-timing` is measured per
+   run too (the pipeline stamps the total duration), so a byte-diff on
+   it would flag every replay as divergent. It is skipped at the same
+   definition site.
+3. **The worker install rides the record module.** `globalThis.
+   __oxide_replay`'s env/override install lives with the worker's other
+   replay plumbing (`crates/jshost/worker/oxide-worker.mjs` + the host
+   install), pinned by the worker's own node tests; the CLI command and
+   the MCP tool share `run_replay`.
+
+**Verification posture.** Wired end-to-end in this tree — CI
+verification pending: the `#[ignore]` e2e pin
+(`replay_reproduces_a_recorded_request_without_network`, the two-phase
+record-then-replay over the smoke app) and the `replay_wire` example
+execution run on CI's V8-capable host; the V8-free pins (record,
+replay, runner, config) ran in-session.
+
 ## V2-F10 — the `deploy:` config key (feat/config-deploy-key, 2026-11-14)
 
 **What lands.** F10's config half — the `deploy:` section the spec's
@@ -2826,6 +2924,63 @@ F11's `releases/` layout, promote on `cmd_dev` reload, the 30 s expiry
 task, the F12 brownout trigger calling `evict_oldest()`) and the
 `tests/skew.sh` e2e — A01-phase-3 slices on a V8-capable host; the
 config key is the face they read.
+
+## V2-F10 — the CLI skew wiring (feat/skew-generation-pool-wire, 2026-11-15)
+
+**What lands.** The id-level half of the "To unclose" list above, in
+`crates/cli/src/serve/generations.rs` + the start pipeline:
+
+- `SkewState::from_boot` — the bounded `GenerationPool` the dispatch
+  wrapper drives through the same `AcceptedGenerations` seam (the stage
+  install and the advertise stamp are the A04 wiring's): the boot's
+  build id accepted as CURRENT, the window from the typed
+  `deploy.skewWindow` (`parse_duration_secs`; an unparsable literal
+  falls back to the spec's 15 m default rather than refusing a serve),
+  the depth from `deploy.generations`.
+- `promote_from_dist` / `promote_handle_from_dist` — the SIGHUP reload
+  step: re-read `dist/build-id`, demote the current build with its own
+  demotion instant, accept the new id; an unchanged or unreadable dist
+  promotes nothing (an idempotent re-deploy never churns the pool, and a
+  serve must not churn on a half-written dist).
+- `spawn_expiry_task` — the §V2-F10 step-3 30 s tick: expired demotions
+  RECLAIMED (`accepts` already refuses them on read — this is memory
+  hygiene, not the verdict).
+- `cmd_serve`'s SIGHUP handler (the select over Ctrl-C/SIGHUP, the
+  promote logged) and 4 `SkewState` pins (CI-run — the CLI crate links
+  V8, so its unit suite rides `cargo nextest run --workspace`).
+- `tests/skew.sh` — the CI-executed e2e acceptance (+ its `jshost-e2e`
+  CI step): build v1 → start → change the loader → rebuild v2 → SIGHUP →
+  the previous id ACCEPTED inside the window, the CURRENT id advertised
+  on every data-plane response, an unknown id `409` +
+  `x-oxide-build-stale: true`, an HTML navigation never the data plane,
+  and past the 2 s window the demoted id refused on read.
+
+**Deltas.**
+
+1. **The e2e pins the ACCEPTANCE contract, not the old generation's
+   output bytes.** The spec's step "call the old server-fn id with the
+   old header (succeeds, v1 output)" needs the OLD generation's loader
+   bytes — which needs the two-pool serving wiring (a second jshost pool
+   booted over the old dist, the `GenerationPools<Arc<dyn Pool>>` route
+   step handing accepted old-build requests to the old pool). Today ONE
+   jshost pool serves every generation, so the old id is accepted but its
+   bytes re-execute against the new modules. The two-pool boot is the
+   recorded F10 tail; the script documents the delta in its header.
+2. **The skew window is config-spelled, not a flag.** The spec's e2e
+   names `--skew-window 2s`; the typed `deploy.skewWindow` key (the
+   landed §14 duration grammar) is the face the wiring reads — the same
+   acceptance, no new CLI surface.
+3. **The promote site is `cmd_serve`'s SIGHUP, not `cmd_dev`'s reload.**
+   Dev never rebuilds `dist/` (the on-demand ESM server has no dist
+   loop), so there is no generation to promote there; production's
+   rebuilt-dist promote is the real path. A dev promote joins with the
+   two-pool wiring.
+
+**Verification posture.** The dispatch-side verdict pins (set/pool/pools
+parity) ran in-session; the CLI crate's own pins (V8-linked) are
+compile-verified here and CI-run (`cargo nextest run --workspace`); the
+e2e script runs in CI's `jshost-e2e` job. Wired end-to-end — CI
+verification pending for the V8-linked halves.
 
 ## V2-E12 — the workspace-links substrate (feat/workspace-links-substrate, 2026-11-14)
 
