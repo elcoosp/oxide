@@ -93,7 +93,11 @@ impl NativeCompiler for FakeNative {
 }
 
 fn healthy_registry(id: &'static str) -> NativeRegistry {
-    let mut reg = NativeRegistry::from_enabled_features();
+    // The selection-engine pins drive an INJECTED fake; the base is the
+    // empty registry (the real compiled-in backends ride
+    // `from_enabled_features()` since the C02-C05 landings and would
+    // shadow the fake a pick-based pin drives).
+    let mut reg = NativeRegistry::empty();
     reg.register(Box::new(FakeNative::healthy(id)));
     reg
 }
@@ -104,7 +108,7 @@ fn healthy_registry(id: &'static str) -> NativeRegistry {
 fn registry_pick_node_always_none() {
     // `node` is the escape hatch: whatever is compiled in and healthy,
     // `node` never picks the native path (the D26 one-release fallback).
-    let empty = NativeRegistry::from_enabled_features();
+    let empty = NativeRegistry::empty();
     let full = healthy_registry("full");
     for reg in [&empty, &full] {
         for ext in ["tsx", "vue", "svelte", ""] {
@@ -122,11 +126,12 @@ fn registry_pick_node_always_none() {
 
 #[test]
 fn registry_pick_native_missing_is_error() {
-    // No native compiler compiled in (the C01 tree's own state, until the
-    // C02-C04 backends land): `native` is a hard request — refusing with
-    // the registry code beats a silent Node fallback the config author
-    // did not ask for.
-    let reg = NativeRegistry::from_enabled_features();
+    // No native compiler compiled in: `native` is a hard request —
+    // refusing with the registry code beats a silent Node fallback the
+    // config author did not ask for. The empty registry is the premise
+    // (the compiled-in set rides `from_enabled_features()`, pinned in the
+    // lib tests to match the feature set exactly).
+    let reg = NativeRegistry::empty();
     let e = reg
         .pick("solid", "tsx", Backend::Native)
         .err()
@@ -152,8 +157,10 @@ fn registry_pick_native_missing_is_error() {
 fn registry_auto_falls_back_when_unhealthy() {
     // `auto` is the honest default: a broken backend (its health fixture
     // fails to compile) is invisible to `auto` — it answers None and the
-    // caller uses the Node pool — while `native` refuses loudly.
-    let mut reg = NativeRegistry::from_enabled_features();
+    // caller uses the Node pool — while `native` refuses loudly. The
+    // empty registry is the premise (the only backend is the broken
+    // fake); the compiled-in set rides `from_enabled_features()`.
+    let mut reg = NativeRegistry::empty();
     reg.register(Box::new(FakeNative::broken("broken-solid")));
     let auto = reg
         .pick("solid", "tsx", Backend::Auto)
@@ -175,7 +182,9 @@ fn health_checked_once() {
     // counter exactly ONCE (the health fixture), while caller-driven
     // compiles through the picked backend bump it per call.
     let counter = Arc::new(AtomicUsize::new(0));
-    let mut reg = NativeRegistry::from_enabled_features();
+    // The empty registry keeps the counted fake the only `solid` backend
+    // (the real compiled-in ones ride `from_enabled_features()`).
+    let mut reg = NativeRegistry::empty();
     reg.register(Box::new(FakeNative::with_counter(
         "counted",
         true,
@@ -209,7 +218,7 @@ fn health_checked_once() {
     );
     // Pick-only loops never re-probe (the second registry's own pin):
     let counter2 = Arc::new(AtomicUsize::new(0));
-    let mut reg2 = NativeRegistry::from_enabled_features();
+    let mut reg2 = NativeRegistry::empty();
     reg2.register(Box::new(FakeNative::with_counter(
         "counted2",
         true,
@@ -307,7 +316,7 @@ fn pick_matches_framework_and_extension_not_just_the_first_entry() {
 
 #[test]
 fn report_is_the_doctor_surface() {
-    let mut reg = NativeRegistry::from_enabled_features();
+    let mut reg = NativeRegistry::empty();
     reg.register(Box::new(FakeNative::healthy("solid-native")));
     reg.register(Box::new(FakeNative::broken("solid-broken")));
     let rows: Vec<NativeReport> = reg.report();
@@ -316,12 +325,10 @@ fn report_is_the_doctor_surface() {
     assert_eq!(rows[0].version, "0.1.0@testrev");
     assert!(rows[0].healthy, "the healthy fixture reports ok");
     assert!(!rows[1].healthy, "the broken fixture reports unhealthy");
-    // An empty registry (the C01 tree until C02-C04 land) reports nothing
-    // rather than inventing rows.
-    assert_eq!(
-        NativeRegistry::from_enabled_features().report(),
-        Vec::<NativeReport>::new()
-    );
+    // An empty registry reports nothing rather than inventing rows (the
+    // compiled-in mapping is pinned in the lib tests to match the feature
+    // set exactly).
+    assert_eq!(NativeRegistry::empty().report(), Vec::<NativeReport>::new());
 }
 
 #[test]
