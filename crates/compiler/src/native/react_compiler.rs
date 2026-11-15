@@ -108,6 +108,7 @@ impl NativeCompiler for ReactCompilerNative {
                         js: req.source.to_string(),
                         css: None,
                         warnings,
+                        source_map: None,
                     });
                 }
                 let printed = oxc_codegen::Codegen::new()
@@ -118,6 +119,7 @@ impl NativeCompiler for ReactCompilerNative {
                     js: printed,
                     css: None,
                     warnings,
+                    source_map: None,
                 })
             }
             oxc_react_compiler::CompileResult::Fatal { diagnostics } => {
