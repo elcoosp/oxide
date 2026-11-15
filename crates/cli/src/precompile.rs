@@ -476,16 +476,48 @@ async fn compile_one(
 /// `auto`/`node`; under `native` a registry refusal (`CMP-NAT-001`) is
 /// the build's failure — the config author asked for the native path,
 /// and a silent fallback would defeat the hard request.
+/// The per-walk precompile inputs. The walk grew an eighth parameter with
+/// the C01 native arm — past the arity budget, and every caller passes the
+/// same build-scoped tuple (pool + entries + the framework shape + the
+/// cache + the native registry/backend) — so the parameters are one struct
+/// the call sites build. Field order mirrors the old signature; the
+/// `native` registry stays owned (`Option<Arc<…>>`) so the per-job closure
+/// can re-pick without a borrowed lifetime.
+pub struct PrecompilePlan<'a> {
+    /// The tooling pool (`None` — no worker host — skips the walk
+    /// entirely and returns an empty map, the pre-C01 shape).
+    pub pool: Option<&'a Arc<dyn Pool>>,
+    /// The entry set the walk scans (`route id → file`).
+    pub entries: &'a BTreeMap<String, PathBuf>,
+    /// Svelte's generate target: `"dom"` for the client pass, `"ssr"`
+    /// for the server pass.
+    pub svelte_generate: &'a str,
+    /// The resolved framework (`Some("vue")` switches the Solid kinds on).
+    pub framework: Option<&'a str>,
+    /// The precompile CAS (`None` compiles uncached — dev).
+    pub cache: Option<&'a PrecompileCache>,
+    /// The tool version folded into the CAS key (D40).
+    pub tool_version: &'a str,
+    /// The compiled-in native registry (`None` skips the native arm —
+    /// the C01 default tree).
+    pub native: Option<Arc<NativeRegistry>>,
+    /// The resolved `framework.compilerBackend`.
+    pub backend: Backend,
+}
+
 pub async fn precompile_entries(
-    pool: Option<&Arc<dyn Pool>>,
-    entries: &BTreeMap<String, PathBuf>,
-    svelte_generate: &str,
-    framework: Option<&str>,
-    cache: Option<&PrecompileCache>,
-    tool_version: &str,
-    native: Option<Arc<NativeRegistry>>,
-    backend: Backend,
+    plan: PrecompilePlan<'_>,
 ) -> anyhow::Result<BTreeMap<PathBuf, String>> {
+    let PrecompilePlan {
+        pool,
+        entries,
+        svelte_generate,
+        framework,
+        cache,
+        tool_version,
+        native,
+        backend,
+    } = plan;
     let Some(pool) = pool else {
         return Ok(BTreeMap::new());
     };
@@ -846,16 +878,16 @@ mod native_pick_tests {
         let reg = Arc::new(reg);
 
         // First run: the native backend compiles; the pool is never called.
-        let out = precompile_entries(
-            Some(&pool),
-            &entries,
-            "dom",
-            Some("vue"),
-            None,
-            "0.0.0-test",
-            Some(Arc::clone(&reg)),
-            Backend::Auto,
-        )
+        let out = precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: None,
+            tool_version: "0.0.0-test",
+            native: Some(Arc::clone(&reg)),
+            backend: Backend::Auto,
+        })
         .await
         .expect("native pick compiles");
         assert_eq!(pool_calls.load(Ordering::SeqCst), 0, "pool not consulted");
@@ -870,16 +902,16 @@ mod native_pick_tests {
         // pool re-compiles.
         let cache_dir = tempfile::tempdir().unwrap();
         let cache = PrecompileCache::open_soft(cache_dir.path());
-        let out2 = precompile_entries(
-            Some(&pool),
-            &entries,
-            "dom",
-            Some("vue"),
-            cache.as_ref(),
-            "0.0.0-test",
-            Some(Arc::clone(&reg)),
-            Backend::Auto,
-        )
+        let out2 = precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: cache.as_ref(),
+            tool_version: "0.0.0-test",
+            native: Some(Arc::clone(&reg)),
+            backend: Backend::Auto,
+        })
         .await
         .expect("second run compiles (cold cache)");
         // Cold cache: the real compile again, but the health verdict is
@@ -887,16 +919,16 @@ mod native_pick_tests {
         assert_eq!(native_calls.load(Ordering::SeqCst), 3);
         assert_eq!(pool_calls.load(Ordering::SeqCst), 0);
         let js2 = out2.values().next().unwrap().clone();
-        let out3 = precompile_entries(
-            Some(&pool),
-            &entries,
-            "dom",
-            Some("vue"),
-            cache.as_ref(),
-            "0.0.0-test",
-            Some(Arc::clone(&reg)),
-            Backend::Auto,
-        )
+        let out3 = precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: cache.as_ref(),
+            tool_version: "0.0.0-test",
+            native: Some(Arc::clone(&reg)),
+            backend: Backend::Auto,
+        })
         .await
         .expect("third run");
         assert_eq!(
@@ -917,16 +949,16 @@ mod native_pick_tests {
             version: "0.1.3",
             compile_calls: Arc::clone(&upgraded_calls),
         }));
-        precompile_entries(
-            Some(&pool),
-            &entries,
-            "dom",
-            Some("vue"),
-            cache.as_ref(),
-            "0.0.0-test",
-            Some(Arc::new(upgraded)),
-            Backend::Auto,
-        )
+        precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: cache.as_ref(),
+            tool_version: "0.0.0-test",
+            native: Some(Arc::new(upgraded)),
+            backend: Backend::Auto,
+        })
         .await
         .expect("upgraded backend compiles");
         assert_eq!(
@@ -945,19 +977,18 @@ mod native_pick_tests {
         let pool = scripted_pool(Arc::clone(&pool_calls));
         // The default build's registry: nothing compiled in.
         let reg = Arc::new(NativeRegistry::from_enabled_features());
-        let e = precompile_entries(
-            Some(&pool),
-            &entries,
-            "dom",
-            Some("vue"),
-            None,
-            "0.0.0-test",
-            Some(Arc::clone(&reg)),
-            Backend::Native,
-        )
+        let e = precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: None,
+            tool_version: "0.0.0-test",
+            native: Some(Arc::clone(&reg)),
+            backend: Backend::Native,
+        })
         .await
-        .err()
-        .expect("`native` with no compiled-in backend fails the pass");
+        .expect_err("`native` with no compiled-in backend fails the pass");
         assert!(
             e.to_string().contains("CMP-NAT-001"),
             "the registry refusal surfaces end-to-end, got: {e}"
@@ -976,16 +1007,16 @@ mod native_pick_tests {
         let pool_calls = Arc::new(AtomicUsize::new(0));
         let pool = scripted_pool(Arc::clone(&pool_calls));
         let reg = Arc::new(NativeRegistry::from_enabled_features());
-        let out = precompile_entries(
-            Some(&pool),
-            &entries,
-            "dom",
-            Some("vue"),
-            None,
-            "0.0.0-test",
-            Some(reg),
-            Backend::Auto,
-        )
+        let out = precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: None,
+            tool_version: "0.0.0-test",
+            native: Some(reg),
+            backend: Backend::Auto,
+        })
         .await
         .expect("the pool compiles");
         assert_eq!(out.values().next(), Some(&"pool js".to_string()));
