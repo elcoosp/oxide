@@ -112,7 +112,7 @@ fn bench_svg_optimizer(c: &mut Criterion) {
         });
     });
     #[cfg(not(feature = "svg-oxvg"))]
-    criterion::black_box(&big);
+    std::hint::black_box(&big);
 
     group.finish();
 }
