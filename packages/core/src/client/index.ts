@@ -24,6 +24,16 @@ export {
   type ClientManifestLike, type RouteComponentSource, type RouteManifestEntry,
 } from './route-manifest.ts'
 export * from './search.ts'
+export {
+  search,
+  tokenize,
+  type SearchHit,
+  type SearchResponse,
+  type SearchOptions,
+  type SearchMode,
+  type StaticIndex,
+  type StaticDoc,
+} from './searchEngine.ts'
 
 // Phase 1 (Native ESM dev server): re-export the HMR runtime's public type.
 // The `hot.ts` module side-effect (`install()`) is guarded so importing it
