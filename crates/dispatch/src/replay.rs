@@ -390,10 +390,12 @@ fn recorded_response_headers(record: &crate::record::RequestRecord) -> Vec<(Stri
 
 /// The headers the diff treats as re-derived per-request state (the L0
 /// cache's own convention: the CSP header is re-derived at serve time,
-/// the wall clock and the cookie mint are not reproducible state).
+/// the wall clock and the cookie mint are not reproducible state, and the
+/// `Server-Timing` waterfall the pipeline stamps is measured per run —
+/// its values differ on every execution by construction).
 fn is_rederived_header(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    n == "content-security-policy" || n == "date" || n == "set-cookie"
+    n == "content-security-policy" || n == "date" || n == "set-cookie" || n == "server-timing"
 }
 
 /// The `--diff` verdict shape (§V2-F15: "`--json` emits
