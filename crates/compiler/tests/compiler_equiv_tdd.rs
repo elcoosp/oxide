@@ -1,8 +1,8 @@
 //! §V2-C01 "Equivalence harness" pin: `scripts/compiler-equiv.sh
 //! <framework>` is the acceptance gate for every landed native compiler
-//! (C02 solid — the re-opened in-repo backend — C03 vue, C04 svelte; C05
-//! is the opt-in React Compiler). The test shells out to the script and
-//! asserts exit 0 + the green diff line.
+//! (C02 solid — the upstream-backed backend, `solidjs-compiler` — C03 vue,
+//! C04 svelte; C05 is the opt-in React Compiler). The test shells out to
+//! the script and asserts exit 0 + the green diff line.
 //!
 //! #[ignore]d: it needs a RELEASE `oxide` binary with the native
 //! features compiled in and runs real builds — the CI equivalence job
