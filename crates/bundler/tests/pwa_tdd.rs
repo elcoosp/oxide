@@ -17,9 +17,14 @@
 //! - with `offline.outbox` on, the worker fans an `OXIDE_OUTBOX_FLUSH`
 //!   message out to its clients on activate — the coordination point the
 //!   client outbox listener (`packages/core/src/client/outbox.ts`)
-//!   answers.
+//!   answers;
+//! - the registration snippet rides the same emission (`/pwa-register.js`
+//!   next to the worker): a page cannot register the worker without it,
+//!   so the boot entry's loader and the emitted file must exist together.
 
-use oxide_fw_bundler::pwa::{PrecachePlan, ShellSource, emit_pwa, plan_precache, sw_source};
+use oxide_fw_bundler::pwa::{
+    PrecachePlan, ShellSource, emit_pwa, plan_precache, pwa_register_source, sw_source,
+};
 use oxide_fw_bundler::{ClientManifest, RouteBundle};
 use oxide_fw_config::{OfflineConfig, OfflinePrecache, SwConfig};
 use std::collections::{BTreeMap, BTreeSet};
@@ -404,5 +409,55 @@ fn emit_pwa_overwrites_a_stale_worker_from_a_previous_build() {
     assert!(
         !written.contains("ox-oldbuild"),
         "the previous build's worker is replaced"
+    );
+}
+
+#[test]
+fn register_source_registers_the_worker_from_the_root_scope() {
+    let src = pwa_register_source();
+    // The guarded register: a platform without `serviceWorker` (or a
+    // private-mode page) degrades to a no-op, never an error.
+    assert!(
+        src.contains("'serviceWorker' in navigator"),
+        "the registration is guarded on the platform surface: {src}"
+    );
+    assert!(
+        src.contains("navigator.serviceWorker.register('/sw.js')"),
+        "the worker is registered from the dist root: {src}"
+    );
+    assert!(
+        src.contains("window.addEventListener('load'"),
+        "the registration waits for the load event (§16.6): {src}"
+    );
+    // Deterministic: the same emission every build (the reproducibility
+    // contract `sw_source` keeps).
+    assert_eq!(
+        src,
+        pwa_register_source(),
+        "the register source is deterministic"
+    );
+}
+
+#[test]
+fn emit_pwa_writes_the_register_script_next_to_the_worker() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = PrecachePlan {
+        build_id: "b17e5f0a4c9d2e8f".to_string(),
+        cache_name: "ox-b17e5f0a4c9d2e8f".to_string(),
+        precache: vec!["/".to_string()],
+        offline_fallback: "/".to_string(),
+        outbox: true,
+    };
+    emit_pwa(dir.path(), &plan).unwrap();
+    let reg = dir.path().join("pwa-register.js");
+    let written = std::fs::read_to_string(&reg).unwrap();
+    assert_eq!(
+        written,
+        pwa_register_source(),
+        "the emitted registration bytes are the planned source"
+    );
+    assert!(
+        written.contains("register('/sw.js')"),
+        "the registration targets the emitted worker: {written}"
     );
 }
