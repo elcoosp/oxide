@@ -17,16 +17,19 @@
 #      bogus id is not the data plane (no 409).
 #   5. Past the 2 s window, the demoted A is refused on read: 409.
 #
-# DELTA vs the spec text (recorded in docs/deviations.md, F10): the spec's
-# step "call the old server-fn id with the old header (succeeds, v1
-# output)" asserts the OLD GENERATION'S OUTPUT bytes; the two-pool serving
-# wiring (a second jshost pool booted over the old dist, the
-# `GenerationPools<Arc<dyn Pool>>` route step) is the recorded F10 tail —
-# today ONE pool serves every generation, so this script pins the
-# ACCEPTANCE contract (old id inside the window: 200, not 409) and the
-# header advertisement, not the old bytes. `--skew-window` rides the typed
-# `deploy.skewWindow` config key (the landed §14 duration grammar), not a
-# CLI flag — same acceptance, config-spelled.
+# DELTA vs the spec text (recorded in docs/deviations.md, F10): the OLD
+# GENERATION'S OUTPUT bytes ARE asserted — the two-pool serving wiring
+# (`feat/live-loaders-wire`, 2026-11-15) boots the promoted generation's
+# pool + runner over the rebuilt dist and freezes each generation's loader
+# sources under `.oxide/generations/<id>/src` (the worker recompiles per
+# run with an mtime check — the pool alone does not freeze bytes; the
+# snapshot does), and the `GenerationPools<Arc<dyn Pool>>` route step
+# dispatches an accepted old-build request to the OLD generation's
+# handles. Step 4 therefore pins BOTH the acceptance contract (old id
+# inside the window: 200, not 409, current id advertised) AND the old
+# bytes: the old-header /__data still carries `v1` while the headerless
+# request carries `v2`. `--skew-window` rides the typed `deploy.skewWindow`
+# config key (the landed §14 duration grammar), not a CLI flag.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -102,6 +105,10 @@ grep -q "skew: build-id $ID_B is current" "$PROJ/serve.log" ||
 # --- 4. the acceptance contract ----------------------------------------------
 STATUS_A=$(curl -sS -o /dev/null -w '%{http_code}' -H "x-oxide-build: $ID_A" "$BASE/__data?route=/")
 [ "$STATUS_A" = "200" ] || fail "the previous generation must stay accepted inside the window, got HTTP $STATUS_A"
+RES_OLD=$(curl -sS -H "x-oxide-build: $ID_A" "$BASE/__data?route=/")
+echo "$RES_OLD" | grep -aq 'v1' || fail "an accepted old-build request must be served the OLD generation's loader bytes (v1, the frozen snapshot): ${RES_OLD:0:200}"
+grep -q "skew: generation $ID_B booted over the rebuilt dist" "$PROJ/serve.log" ||
+    fail "the promoted generation's pool was never booted (the second-pool wiring is inert): $(tail -5 "$PROJ/serve.log")"
 ADV=$(curl -sS -D - -o /dev/null -H "x-oxide-build: $ID_A" "$BASE/__data?route=/" | tr -d '\r' | grep -i '^x-oxide-build:' | awk '{print $2}')
 [ "$ADV" = "$ID_B" ] || fail "data-plane responses must advertise the CURRENT id ($ID_B), got '$ADV'"
 RES_B=$(curl -sS "$BASE/__data?route=/")
