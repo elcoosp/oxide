@@ -1,0 +1,11 @@
+# Funding options for Oxide. Uncomment the line(s) that apply.
+# GitHub shows a Sponsor button on the repo and a Sponsor link on crates.io
+# crate pages for every platform enabled here.
+# https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+# github: [elcoosp]
+# patreon: username
+# open_collective: project
+# ko_fi: username
+# tidelift: npm/package-name
+# custom: ["https://example.com/sponsor"]

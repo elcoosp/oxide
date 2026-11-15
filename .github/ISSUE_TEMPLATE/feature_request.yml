@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a capability or a change in behaviour
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that Oxide makes hard or impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: The API or behaviour you would like. Sketch code if it helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, or other designs you rejected and why.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Router / routing
+        - Rendering / SSR
+        - Bundler / assets
+        - Cache tiers
+        - JS host / worker
+        - Plugin system
+        - CLI
+        - Adapters (react / vue / svelte / solid)
+        - Documentation
+        - Other

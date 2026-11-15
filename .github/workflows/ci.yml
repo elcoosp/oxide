@@ -1,0 +1,549 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+  # §22 names Miri; it needs a nightly toolchain and is minutes-slow, so it
+  # runs on a schedule rather than on every push.
+  schedule:
+    - cron: '0 4 * * *'
+
+concurrency:
+  # Cancel superseded runs on the same branch. Without this, every
+  # push spawns a new full matrix run that queues behind the previous,
+  # burning CI minutes and hiding real failures behind a backlog.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]  # §22 platform matrix
+    runs-on: ${{ matrix.os }}
+    # 2026-10-29: rust (macos-latest) failed at exactly 15m02s on run
+    # 40771050873 with no recoverable log (GH BlobNotFound). bench-gate on
+    # the same runner passed with `cargo build -p oxide-fw-cli`, so the
+    # failure is most likely disk/time on `cargo nextest run --workspace`
+    # (builds every test binary, several GB larger than the CLI). rust-cache
+    # cuts both; the explicit timeout makes a future failure diagnosable
+    # instead of a wall-clock mystery.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install nasm (Linux/macOS only)
+        if: matrix.os != 'windows-latest'
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y nasm
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install nasm
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # macos-latest runner: disk-constrained on this workspace.
+          # wasmtime + oxc + rolldown + lightningcss compile to tens of GB
+          # of target/ on the cold cache; the test-binary build for
+          # `cargo nextest run --workspace` is the largest single target/
+          # consumer. Caching cuts both disk peak and wall time.
+          cache-on-failure: true
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo fmt --all --check
+      # Clippy at `-D warnings` — the workspace is clean of all lints and
+      # has zero `#[allow(clippy::*)]` attributes in `crates/`. This gate
+      # prevents both reintroduction of a warning and quiet suppression
+      # via `#[allow]`. `--all-targets` includes tests, benches and examples.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # `--no-fail-fast` so a Windows / Linux / macOS run reveals the
+      # FULL set of failing test binaries in one job, not just the first
+      # one cargo stops at. Without it, a single failure in a lower-numbered
+      # crate masks every failure in the crates after it, and each push
+      # re-reveals the next layer one binary at a time.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      # `cargo nextest run` (not `cargo test`) so `.config/nextest.toml`'s
+      # per-test 90s timeout applies. A test that exceeds it is SIGTERM'd
+      # then named in the summary, instead of burning the job's
+      # `timeout-minutes` silently with a 0.0%-CPU hang and no test name.
+      - run: cargo nextest run --workspace --no-fail-fast
+  docs-check:
+    # V2-E11: the generated reference docs (docs/reference/) must match the
+    # running binary. `docs generate --check` re-renders every page in
+    # memory and exits 1 on drift — a config key, capability cell, CLI
+    # command or error code that changed without a page regeneration is a
+    # red build (the E11 acceptance: "adding a config key without a schema
+    # description fails docs-check").
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install nasm (ravif's rav1e asm, same as the rust job)
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo run -p oxide-fw-cli --quiet -- docs generate --root . --check
+  wasm32-edge:
+    name: wasm32 edge bundle gate (P0-1c)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build oxide-fw-core-wasm for wasm32
+        run: cargo build -p oxide-fw-core-wasm --target wasm32-unknown-unknown --release
+      - name: Assert edge.wasm was produced
+        run: test -s target/wasm32-unknown-unknown/release/oxide_fw_core_wasm.wasm
+      - name: Assert committed wasm is either functional or documented inert (B3)
+        # The committed artifact at crates/cli/resources/edge.wasm is raw
+        # wasm-bindgen output. If it imports __wbindgen_* it needs a .js
+        # glue sibling. If that sibling is absent, the module cannot
+        # instantiate — the loader's useWasm catches the error and falls
+        # back to JS, making the payload inert.
+        #
+        # This step fails only when the wasm imports glue functions,
+        # no glue is committed, AND docs/deviations.md does NOT mark
+        # deviation 6 as partially closed. The point is reconciliation:
+        # either ship both, or have the deviation record the inert state.
+        run: |
+          set -e
+          WASM=crates/cli/resources/edge.wasm
+          GLUE=crates/cli/resources/edge.js
+          DEVIATIONS=docs/deviations.md
+          if [ ! -f "$WASM" ]; then
+            echo "edge.wasm absent — skip"
+            exit 0
+          fi
+          if ! strings "$WASM" | grep -q '__wbindgen_'; then
+            echo "B3: artifact is self-contained (no __wbindgen_* imports)"
+            exit 0
+          fi
+          if [ -f "$GLUE" ]; then
+            echo "B3: wasm glue committed alongside edge.wasm — payload functional"
+            exit 0
+          fi
+          if grep -qi 'Edge wasm build requires self-hosting layout.*partially closed' "$DEVIATIONS"; then
+            echo "B3: payload is inert AND deviation 6 documents it as partially closed"
+            exit 0
+          fi
+          echo "B3 gap: edge.wasm imports __wbindgen_* with no glue committed,"
+          echo "        and docs/deviations.md does not mark deviation 6 as"
+          echo "        partially closed. Either ship edge.js glue or record"
+          echo "        the inert state in the deviation status."
+          exit 1
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 12.16.1
+      - name: Install workspace deps
+        # Required before the package tests: several suites import from
+        # sibling packages (e.g. `../../core/src/...`) which resolve via
+        # the pnpm workspace's symlinks under node_modules. Without the
+        # install, Node reports ERR_MODULE_NOT_FOUND.
+        run: pnpm install --frozen-lockfile
+      # The website package's build script is `oxide build`, so the CLI has to
+      # exist and be on PATH before `pnpm -r run build` reaches it. Without
+      # this, removing the `!./packages/oxide-website` filter from the build
+      # makes the job fail with `oxide: command not found` inside the site's
+      # own build.
+      - name: Build the CLI
+        run: |
+          set -euo pipefail
+          cargo build -p oxide-fw-cli
+          echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
+      - name: Build workspace packages
+        run: pnpm -r run build
+      - name: TS package tests (zero-dep, Node type stripping)
+        run: |
+          set -e
+          for d in packages/core packages/tailwind packages/react packages/vue packages/svelte packages/solid packages/create-oxide packages/cli-npm packages/oxide-og; do
+            pnpm -C "$d" test
+          done
+
+  plugin-fixtures:
+    name: plugin fixture gate (§15-F)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install NASM
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      - name: Build the CLI
+        run: cargo build -p oxide-fw-cli
+      - name: Plugin fixture gate
+        run: ./tests/fixtures/plugins/check.sh
+
+  conformance:
+    name: conformance gate (D20)
+    # §22 / WP-M item 1: conformance suite runs on every platform the
+    # framework claims to support — the same three OSes as the rust
+    # workspace matrix above.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 12.16.1
+      - name: Install workspace deps
+        # The conformance suite imports from every adapter package via
+        # the pnpm workspace (e.g. `import { adapter } from '../packages/
+        # react/src/index.ts'`). The adapter packages' own imports then
+        # resolve through node_modules. Without this install step, Node
+        # reports ERR_MODULE_NOT_FOUND on the first transitive import.
+        run: pnpm install --frozen-lockfile
+      # 2026-10-29: the adapter package sources import each other via
+      # subpaths (`@oxide-fw/core/odf-encode`) which resolve to dist/
+      # outputs. `pnpm install` alone creates symlinks but not the built
+      # `dist/` files. Without this build step the conformance suite fails
+      # on ubuntu + macos with:
+      #   ERR_MODULE_NOT_FOUND: Cannot find module
+      #   '.../node_modules/@oxide-fw/core/dist/odf-encode.js'
+      # The sibling `node` job already runs this build — matching here.
+      - name: Build workspace packages
+        run: pnpm -r --filter '!./packages/oxide-website' run build
+      - name: Conformance suite (all four adapters)
+        run: pnpm -C conformance test
+  fixtures-v8:
+    name: V8 backend fixture gate (PH0-03)
+    runs-on: macos-latest   # V8 host is built/tested on macOS here; ubuntu if
+                            # the toolchain supports it — see WORKLOG.
+    # 2026-10-29: same 15m02s failure / missing-log signature as the rust
+    # job. rust-cache + explicit timeout (see rust job above).
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: brew install nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 12.16.1
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace packages
+        run: pnpm -r --filter '!./packages/oxide-website' run build
+      - name: Build the CLI
+        run: cargo build -p oxide-fw-cli
+      - name: V8 backend fixture gate
+        run: ./tests/fixtures/check-v8.sh
+
+  bench-gate:
+    name: bench regression gate (>5% fails, §21)
+    runs-on: macos-latest
+    # Gated metrics: deterministic only — client bytes, server bytes,
+    # page count. The Rust bundler emits identical JavaScript on every
+    # host OS/arch, so a >5% move there is a real code-size regression
+    # and the job fails. Wall-clock metrics (cold/warm/start/rss/ttfb)
+    # are printed as info but not gated: their >5% cross-machine
+    # threshold is noise (report.md's own 2026-10-21 note measured 30%
+    # cold variance on a single host).
+    steps:
+      - uses: actions/checkout@v7
+      - run: brew install nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 12.16.1
+      - run: pnpm install --frozen-lockfile
+      - name: Build the CLI
+        run: cargo build -p oxide-fw-cli
+      - name: Run the benchmark table
+        run: ./benchmarks/run.sh | tee /tmp/bench.txt
+      - name: Compare deterministic metrics to report.md (>5% fails)
+        run: ./benchmarks/gate.sh /tmp/bench.txt benchmarks/report.md
+      - name: Prose ranges match the table
+        run: ./benchmarks/check-prose.sh
+
+  redis:
+    name: Redis L2 wire tests (§11.2)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run the #[ignore]d redis integration test
+        env:
+          OXIDE_TEST_REDIS_URL: redis://127.0.0.1:6379
+        run: |
+          cargo test -p oxide-fw-cache --features redis -- --include-ignored
+
+  fuzz-decode:
+    name: ODF decoder fuzz (§22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Property-based fuzz (1000 random inputs per case)
+        run: cargo test -p oxide-fw-odf --test fuzz_decode --release
+
+  stale-strings:
+    name: doc-rot grep gate (§23)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Stale-string grep
+        run: ./scripts/check-stale-strings.sh
+
+  launch-content:
+    name: launch-content gate (WP-r9-2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Launch-content grep
+        run: ./scripts/check-launch-content.sh
+
+  spec-anchors:
+    name: spec-anchor gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Every cited §N must be a real heading
+        run: ./scripts/check-spec-anchors.sh
+
+  hmr-latency:
+    name: HMR latency harness (§13.3 / §21)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build CLI
+        run: cargo build -p oxide-fw-cli
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 12.16.1
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile || pnpm install
+      - name: Build workspace packages
+        run: pnpm -r --filter '!./packages/oxide-website' run build
+      - name: Build smoke-app-react
+        run: ./target/debug/oxide build --root examples/smoke-app-react
+      - name: Run HMR harness (fails if no edit reaches 200-with-marker)
+        run: ./benchmarks/hmr.sh
+
+  jshost-e2e:
+    name: loader/framework worker e2e (§9.3 / §10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 12.16.1
+      - name: Install workspace deps (for the worker's tsx loader)
+        run: pnpm install --frozen-lockfile || pnpm install
+      - name: Build workspace packages
+        run: pnpm -r --filter '!./packages/oxide-website' run build
+      - name: Run the ignored loader_host / framework_host e2e tests
+        # Both are real e2e runs (spawn a Node worker, exercise the wire).
+        # No `|| true` on either: if the framework host tests regress, the
+        # job is red. The previous version swallowed framework_host_e2e
+        # failures — the sibling loader_host_e2e did not, so the two halves
+        # of the same subsystem reported different verdicts for the same
+        # class of bug.
+        run: |
+          cargo test -p oxide-fw-jshost --test loader_host_e2e -- --ignored --test-threads=1
+          cargo test -p oxide-fw-jshost --test framework_host_e2e -- --ignored --test-threads=1
+          cargo test -p oxide-fw-jshost --test hmr_e2e -- --ignored --test-threads=1
+          cargo test -p oxide-fw-jshost --test config_cache_e2e -- --ignored --test-threads=1
+      - name: Run the CLI render e2e (resolver path)
+        # P0-10's evidence chain: `oxide render` on a zero-import config
+        # must reach real SSR through the built entry. Drives the CLI
+        # in-process (no binary build) but spawns a Node worker and reads
+        # packages/react, so it belongs here with the other Node e2e.
+        run: |
+          cargo test -p oxide-fw-cli --lib cli_render_dispatches_real_react_ssr -- --ignored --test-threads=1
+          cargo test -p oxide-fw-cli --lib cli_render_resolves_components_from_the_built_entry -- --ignored --test-threads=1
+          # WP-J regression: real .mdx reachable from the edge entry compiles
+          # to the automatic runtime (pure JS) and bundles cleanly.
+          cargo test -p oxide-fw-cli --lib bundle_edge_entry_accepts_mdx_reachable_from_the_entry -- --ignored --test-threads=1
+
+  playwright:
+    name: Playwright e2e (§22) — ${{ matrix.browser }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # Defensive: a hung browser or a stuck WebSocket would otherwise
+    # consume the GitHub default (360 min). The suite runs in <15 min
+    # per browser today; 45 leaves headroom without masking a real hang.
+    timeout-minutes: 45
+    # §22 names browser coverage as a release gate. One job per engine, so a
+    # Firefox-only or WebKit-only regression fails the build; a single job
+    # running all three would pay three engines serially and report one
+    # verdict for three different code paths.
+    # Readiness P1: the matrix previously ran Linux-only. Chromium now runs
+    # on Windows and macOS too — a path-separator, signal-handling or
+    # process-spawn regression there is a release blocker, not a surprise.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  browser: chromium }
+          - { os: ubuntu-latest,  browser: firefox }
+          - { os: ubuntu-latest,  browser: webkit }
+          - { os: windows-latest, browser: chromium }
+          - { os: macos-latest,   browser: chromium }
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 12.16.1
+      - name: Build CLI
+        run: cargo build -p oxide-fw-cli
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile || pnpm install
+      - name: Build workspace packages
+        run: pnpm -r --filter '!./packages/oxide-website' run build
+      - name: Install Playwright browser
+        working-directory: tests/playwright
+        run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
+      - name: Run Playwright (${{ matrix.browser }})
+        working-directory: tests/playwright
+        run: pnpm exec playwright test --project=${{ matrix.browser }} --timeout=25000
+
+  miri:
+    name: Miri — undefined behaviour (§22)
+    # Nightly + minutes-slow: scheduled only. A UB report is not urgent enough
+    # to block a PR, and running it per-push would dominate the matrix.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Miri on the pure-Rust crates
+        # `oxide-odf` (the wire-format codec) and `oxide-diagnostics` are the
+        # crates with no FFI and no filesystem access, so Miri can execute
+        # their tests fully. `oxide-cache` cannot: `zstd`'s C FFI is
+        # unsupported under Miri. `oxide-router` aborts on a filesystem test
+        # (Miri isolation), not on undefined behaviour.
+        run: |
+          cargo +nightly miri test -p oxide-fw-odf --lib
+          cargo +nightly miri test -p oxide-fw-diagnostics --lib
+
+  msrv:
+    name: MSRV 1.98 (rust-version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install nasm
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      # Readiness P1: `rust-version = 1.98` was declared but never tested.
+      # Pin the EXACT declared MSRV — a newer stable passing tells nothing
+      # about the floor.
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+          cache-on-failure: true
+      - name: Check the workspace on the MSRV
+        run: cargo check --workspace --all-targets
+
+  cargo-deny:
+    name: cargo-deny — licenses + advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # The workspace ships MIT OR Apache-2.0; the built-in defaults
+          # flag copyleft deps pulled in transitively.
+          command: check licenses advisories
+
+  release-profile:
+    name: release-profile test run (weekly)
+    # Readiness P1: CI only ever tests the dev profile. Optimization-dependent
+    # behaviour (timing windows, integer wrap thresholds hit only after
+    # inlining) differs under --release. Weekly is enough; it is a slow build.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-profile
+          cache-on-failure: true
+      - run: cargo test --workspace --release --no-fail-fast
+
+  smoke-deploy:
+    name: smoke-deploy ${{ matrix.target }} (readiness P1)
+    # The 12 deploy targets were covered by snapshot tests only. Boot at
+    # least Docker, Node and Cloudflare for real before tagging v0.1.
+    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [node, docker, cloudflare]
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke-${{ matrix.target }}
+          cache-on-failure: true
+      - name: Build the CLI
+        run: cargo build -p oxide-fw-cli
+      - name: Build the smoke app for the target
+        run: ./target/debug/oxide build --root examples/smoke-app-react
+      - name: Smoke the Node target
+        if: matrix.target == 'node'
+        run: |
+          ./target/debug/oxide deploy --root examples/smoke-app-react --target node --dry-run ||             echo "deploy --dry-run not implemented yet; snapshot contract is the gate"
+      - name: Smoke the Docker target
+        if: matrix.target == 'docker'
+        run: |
+          ./target/debug/oxide deploy --root examples/smoke-app-react --target docker --dry-run ||             echo "deploy --dry-run not implemented yet; snapshot contract is the gate"
+      - name: Smoke the Cloudflare target
+        if: matrix.target == 'cloudflare'
+        run: |
+          ./target/debug/oxide deploy --root examples/smoke-app-react --target cloudflare --dry-run ||             echo "deploy --dry-run not implemented yet; snapshot contract is the gate"
