@@ -29,7 +29,7 @@ use rmcp::{ErrorData, ServerHandler};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -82,6 +82,7 @@ pub fn default_registry() -> Vec<Box<dyn McpTool>> {
         Box::new(GraphWhyTool),
         Box::new(ConfigGetTool),
         Box::new(StateRecentTool),
+        Box::new(ReplayRunTool),
         Box::new(BuildRunTool),
     ]
 }
@@ -418,14 +419,14 @@ fn tree_pattern(tree: &oxide_fw_router::RouteTree, id: &str) -> Option<String> {
     })
 }
 
-fn routes_manifest_row(root: &PathBuf, id: &str) -> Option<serde_json::Value> {
+fn routes_manifest_row(root: &Path, id: &str) -> Option<serde_json::Value> {
     let bytes = std::fs::read(root.join(".oxide/types/routes.json")).ok()?;
     let rows = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes).ok()?;
     rows.into_iter()
         .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(id))
 }
 
-fn manifest_render_mode(root: &PathBuf, id: &str) -> Option<String> {
+fn manifest_render_mode(root: &Path, id: &str) -> Option<String> {
     routes_manifest_row(root, id).and_then(|r| {
         r.get("renderMode")
             .and_then(|v| v.as_str())
@@ -556,7 +557,7 @@ impl McpTool for CacheInspectTool {
         // argument is the `path:<route>` tag convention.
         let tag = arg_str(&args, "tag")
             .map(String::from)
-            .or_else(|| arg_str(&args, "route").map(|r| oxide_fw_cache::tiers::path_tag(r)));
+            .or_else(|| arg_str(&args, "route").map(oxide_fw_cache::tiers::path_tag));
         if let Some(tag) = tag {
             report.tag = Some(tag.clone());
             if let Ok(tier) = oxide_fw_cache::DiskTier::open(cache_dir)
@@ -771,6 +772,62 @@ impl McpTool for StateRecentTool {
     }
 }
 
+/// `replay.run` (V2-F15) — re-executes a captured request deterministically
+/// and compares against its record. The tool drives the same one-definition
+/// path the `oxide replay` command uses ([`super::run_replay`]: load the
+/// record, point the worker pool at it, boot the dev stack on an ephemeral
+/// port, re-execute over loopback, diff). The result is the spec's agent
+/// shape: `{ ok, divergences: [..] }` — the same payload `--json` prints.
+/// Read-only on the project (no `--allow-write` needed); the re-execution
+/// runs the app's loaders, so an app whose loaders have side effects
+/// re-plays them — the record redaction and the replay contract are the
+/// same as the CLI command's.
+struct ReplayRunTool;
+
+#[async_trait::async_trait]
+impl McpTool for ReplayRunTool {
+    fn name(&self) -> &'static str {
+        "replay.run"
+    }
+
+    fn description(&self) -> &'static str {
+        "Re-execute a captured request deterministically (V2-F15) and diff it          against its record. `id` is the request id under .oxide/records/.          Returns { ok, divergences, staleBuild, exitCode }."
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "the request id the record is stored under" }
+            },
+            "required": ["id"]
+        })
+    }
+
+    async fn call(&self, cx: &McpCx, args: serde_json::Value) -> Result<CallToolResult, ErrorData> {
+        let Some(id) = arg_str(&args, "id") else {
+            return Err(ErrorData::invalid_params("missing `id` argument", None));
+        };
+        let root = cx.root.to_string_lossy().into_owned();
+        match super::run_replay(&root, id).await {
+            Ok(Ok(report)) => json_result(&json!({
+                "ok": report.ok,
+                "divergences": report.divergences,
+                "staleBuild": report.stale_build,
+                "exitCode": if report.ok { 0 } else { 1 },
+            })),
+            Ok(Err(e)) => json_result(&json!({
+                "ok": false,
+                "error": { "code": e.0.code, "message": e.0.message, "fix": e.0.fix },
+                "exitCode": 2,
+            })),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "replay failed: {e}"
+            ))])),
+        }
+    }
+}
+
 /// `build.run` — a WRITE tool: runs `oxide build` for the project. Refused
 /// unless the server was started with `--allow-write`.
 struct BuildRunTool;
@@ -916,7 +973,7 @@ impl ServerHandler for OxideMcp {
         let name = request.name.to_string();
         let args = request
             .arguments
-            .map(|obj| serde_json::Value::Object(obj))
+            .map(serde_json::Value::Object)
             .unwrap_or_else(|| json!({}));
         let this = self.clone();
         async move { this.dispatch(&name, args).await }
