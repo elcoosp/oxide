@@ -395,8 +395,8 @@ fn the_sample_roll_is_deterministic_per_request() {
     let rolls: Vec<f64> = (0..64)
         .map(|i| sample_roll_for(&format!("req-{i:04}")))
         .collect();
-    let min = rolls.iter().cloned().fold(f64::MAX, f64::min);
-    let max = rolls.iter().cloned().fold(f64::MIN, f64::max);
+    let min = rolls.iter().copied().fold(f64::MAX, f64::min);
+    let max = rolls.iter().copied().fold(f64::MIN, f64::max);
     assert!(
         max - min > 0.5,
         "the rolls spread across the range (min {min}, max {max})"
