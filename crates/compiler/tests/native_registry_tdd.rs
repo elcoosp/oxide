@@ -78,6 +78,7 @@ impl NativeCompiler for FakeNative {
             js: format!("// {target} js({}) for {}", req.source, req.path.display()),
             css: None,
             warnings: vec!["fake warning".to_string()],
+            source_map: None,
         })
     }
     fn health_fixture(&self) -> (&'static str, &'static str) {
@@ -292,6 +293,7 @@ fn pick_matches_framework_and_extension_not_just_the_first_entry() {
                 js: "// jsx".to_string(),
                 css: None,
                 warnings: Vec::new(),
+                source_map: None,
             })
         }
         fn health_fixture(&self) -> (&'static str, &'static str) {
