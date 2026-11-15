@@ -262,7 +262,12 @@ pub struct NonDetSequences {
 
 /// A captured request or response line-set: the redaction ran on the way
 /// in, so these headers are the record-safe form.
+///
+/// The camelCase rename is the record module's wire convention (the
+/// `RequestRecord` schema is camelCase end to end — the worker drain emits
+/// `bodyBase64`, the CLI folds it straight into this shape).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordedResponse {
     /// The HTTP status.
     pub status: u16,
@@ -325,7 +330,7 @@ pub struct RequestRecord {
 /// [`RecordPolicy::should_record`]; deriving it from the request id keeps
 /// the decision pure (no RNG state, no lock) and repeatable — the same
 /// request id rolls the same value, so a record decision never flips
-/// between the pipeline stages that consult it. SplitMix64 over the
+/// between the pipeline stages that consult it. `SplitMix64` over the
 /// FNV-1a of the id: no dependency, and the low bits of an FNV digest do
 /// not skew the float they seed.
 #[must_use]
@@ -342,7 +347,9 @@ pub fn sample_roll_for(request_id: &str) -> f64 {
     h ^= h >> 31;
     // 53 bits of mantissa: every double in [0, 1) is representable, no
     // rounding bias toward 1.0.
-    (h >> 11) as f64 / (1u64 << 53) as f64
+    let mantissa =
+        f64::from((h >> 43) as u32) * 4_294_967_296.0 + f64::from(((h >> 11) & 0xffff_ffff) as u32);
+    mantissa / 9_007_199_254_740_992.0
 }
 
 /// The storage seam (§V2-F15): where finished records go. The filesystem
