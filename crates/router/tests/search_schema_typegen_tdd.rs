@@ -49,6 +49,7 @@ fn entry_with_root(
         slot: None,
         needs_parent: false,
         live: None,
+        priority: None,
     }
 }
 
