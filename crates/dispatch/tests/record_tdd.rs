@@ -53,7 +53,7 @@ use base64::Engine as _;
 use oxide_fw_dispatch::loads::{LoadNode, run_load_graph};
 use oxide_fw_dispatch::record::{
     DirRecordStore, FetchOp, LoaderCall, MAX_CAPTURED_BODY, RecordMode, RecordPolicy, RecordSink,
-    Recording, RecordingLoaderRunner, Redactor, RequestRecord, is_secret_header,
+    Recording, RecordingLoaderRunner, Redactor, RequestRecord, is_secret_header, sample_roll_for,
 };
 use oxide_fw_server::{LoaderOutput, LoaderRunInput, LoaderRunner};
 
@@ -376,5 +376,112 @@ async fn the_recording_runner_captures_the_load_graph() {
         guard.loaders()[1].input["parent_data"]["ran"],
         "routes/layout",
         "the parent data the dependent load received is in the record"
+    );
+}
+
+/// The sampling roll is a pure function of the request id: the same request
+/// id rolls the same value (a re-decided record stays consistent), the value
+/// is in `[0, 1)`, and the ids spread across the range (a uniform roll, not
+/// a constant).
+#[test]
+fn the_sample_roll_is_deterministic_per_request() {
+    let first = sample_roll_for("req-0001");
+    assert_eq!(first, sample_roll_for("req-0001"), "same id, same roll");
+    assert!(
+        (0.0..1.0).contains(&first),
+        "the roll is in [0, 1): {first}"
+    );
+    // Spread: 64 distinct ids do not all land in one percent of the range.
+    let rolls: Vec<f64> = (0..64)
+        .map(|i| sample_roll_for(&format!("req-{i:04}")))
+        .collect();
+    let min = rolls.iter().cloned().fold(f64::MAX, f64::min);
+    let max = rolls.iter().cloned().fold(f64::MIN, f64::max);
+    assert!(
+        max - min > 0.5,
+        "the rolls spread across the range (min {min}, max {max})"
+    );
+    // A sampled policy at rate 1 records everything; at rate 0 nothing
+    // (except on_error traffic) — the roll only feeds the comparison.
+    let all = RecordPolicy {
+        mode: RecordMode::Sampled {
+            sample_rate: 1.0,
+            on_error: false,
+        },
+        include_secrets: false,
+    };
+    let none = RecordPolicy {
+        mode: RecordMode::Sampled {
+            sample_rate: 0.0,
+            on_error: false,
+        },
+        include_secrets: false,
+    };
+    assert!(all.should_record(200, first));
+    assert!(!none.should_record(200, first));
+}
+
+/// The shared-handle finish: the wiring holds the accumulator behind an
+/// `Arc<Mutex<Recording>>` (the decorator and the tee share it), so the
+/// finish runs through a `MutexGuard` — `finish_shared` produces the same
+/// record `finish` does, on the same fed accumulator.
+#[tokio::test]
+async fn the_shared_handle_finish_matches_the_owned_finish() {
+    struct SharedFakeRunner;
+    #[async_trait::async_trait]
+    impl LoaderRunner for SharedFakeRunner {
+        fn name(&self) -> &'static str {
+            "fake"
+        }
+        async fn run(&self, _input: LoaderRunInput) -> oxide_fw_server::Result<LoaderOutput> {
+            Ok(LoaderOutput::ok(serde_json::json!({"hello": "world"})))
+        }
+    }
+
+    let mut input = LoaderRunInput::new("/abs/page.server.ts", "routes/index", "/");
+    input.headers.push(("cookie".into(), "sid=secret".into()));
+
+    let shared = Arc::new(Mutex::new(Recording::new(Redactor::new(false), "GET", "/")));
+    {
+        // The request line-set is captured by the wiring before the loads
+        // run (the same redactor the decorator's records use).
+        if let Ok(mut rec) = shared.lock() {
+            rec.set_request_headers(&input.headers);
+        }
+        let decorator = RecordingLoaderRunner::new(
+            Arc::new(SharedFakeRunner) as Arc<dyn LoaderRunner>,
+            Arc::clone(&shared),
+        );
+        let _ = decorator.run(input).await.expect("the fake runs");
+    }
+    let record = {
+        let mut guard = shared.lock().expect("the lock");
+        guard.finish_shared(
+            "req-shared",
+            "build-shared",
+            200,
+            &[("x-a".to_string(), "b".to_string())],
+            b"<html/>",
+        )
+    };
+    assert_eq!(record.request_id, "req-shared");
+    assert_eq!(record.build_id, "build-shared");
+    assert_eq!(record.response.status, 200);
+    assert_eq!(record.response.body_base64, "PGh0bWwvPg==");
+    assert_eq!(
+        record.loaders.len(),
+        1,
+        "the decorated load is in the record"
+    );
+    // The secret trio is redacted on the recorded request line-set.
+    let cookie = record
+        .request
+        .headers
+        .iter()
+        .find(|(k, _)| k == "cookie")
+        .expect("the cookie header is captured");
+    assert!(
+        cookie.1.starts_with("sha256:"),
+        "the shared finish redacts like the owned one: {cookie:?}"
     );
 }
