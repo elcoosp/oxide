@@ -40,6 +40,7 @@ pub fn synthetic_entries(n: usize) -> Vec<RouteEntry> {
                 has_server_module: false,
                 needs_parent: false,
                 live: None,
+                priority: None,
                 slot: None,
             }
         })
