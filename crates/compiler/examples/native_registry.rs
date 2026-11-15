@@ -52,6 +52,7 @@ impl NativeCompiler for SolidNative {
             js: format!("// solid {target} module for {}", req.path.display()),
             css: None,
             warnings: Vec::new(),
+            source_map: None,
         })
     }
     fn health_fixture(&self) -> (&'static str, &'static str) {
