@@ -357,6 +357,7 @@ fn swappable_route_tree_store_and_load_round_trip() {
     let mut tree_a_inner = oxide_fw_router::RouteTree::new();
     tree_a_inner.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -372,6 +373,7 @@ fn swappable_route_tree_store_and_load_round_trip() {
     let mut tree_b_inner = oxide_fw_router::RouteTree::new();
     tree_b_inner.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/about".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["about".into()],
@@ -623,6 +625,7 @@ fn tree_with_server_route() -> std::sync::Arc<oxide_fw_router::RouteTree> {
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -766,6 +769,7 @@ async fn no_server_module_skips_loader() {
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -4079,6 +4083,7 @@ fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_fw_router::RouteTree>
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -4091,6 +4096,7 @@ fn tree_with_page_and_middleware() -> std::sync::Arc<oxide_fw_router::RouteTree>
     });
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/middleware".into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
@@ -4228,6 +4234,7 @@ fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_fw_router::RouteTre
     let mut tree = oxide_fw_router::RouteTree::new();
     let page = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId(id.into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: segments.into_iter().map(str::to_string).collect(),
@@ -4241,6 +4248,7 @@ fn tree_with_two_middleware_layers() -> std::sync::Arc<oxide_fw_router::RouteTre
     tree.insert(page("routes/shop/page", vec!["shop"], "shop/page.tsx"));
     let mw = |id: &str, segments: Vec<&str>, file: &str| oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId(id.into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: segments.into_iter().map(str::to_string).collect(),
@@ -4387,6 +4395,7 @@ fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_fw_router::Rou
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/layout".into()),
         kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
@@ -4399,6 +4408,7 @@ fn tree_with_layout_and_parentless_page() -> std::sync::Arc<oxide_fw_router::Rou
     });
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/index/page".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -4416,6 +4426,7 @@ fn tree_with_page_and_server_module() -> std::sync::Arc<oxide_fw_router::RouteTr
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -4433,6 +4444,7 @@ fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_fw_router::Rou
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -4445,6 +4457,7 @@ fn tree_with_static_page_and_middleware() -> std::sync::Arc<oxide_fw_router::Rou
     });
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/middleware".into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
@@ -4913,6 +4926,7 @@ fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_fw_router::Rout
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/blog/post/page".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["blog".into(), "post".into()],
@@ -4925,6 +4939,7 @@ fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_fw_router::Rout
     });
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/middleware".into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
@@ -4937,6 +4952,7 @@ fn tree_with_page_and_middleware_chain() -> std::sync::Arc<oxide_fw_router::Rout
     });
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/blog/middleware".into()),
         kind: oxide_fw_router::RouteKind::Middleware,
         segments: vec![],
@@ -7174,6 +7190,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     // Root layout
     tree.insert(RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/layout".into()),
         kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
@@ -7187,6 +7204,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     // Nested layout
     tree.insert(RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/nested/layout".into()),
         kind: oxide_fw_router::RouteKind::Layout,
         segments: vec!["nested".into()],
@@ -7200,6 +7218,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     // Page at nested/
     tree.insert(RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/nested/page".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["nested".into()],
@@ -7224,6 +7243,7 @@ fn compute_layout_chain_finds_root_and_nested_layouts() {
     // A top-level page sees only the root layout.
     tree.insert(RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/page".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -8542,6 +8562,7 @@ fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_fw_router:
     let mut tree = oxide_fw_router::RouteTree::new();
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/layout".into()),
         kind: oxide_fw_router::RouteKind::Layout,
         segments: vec![],
@@ -8554,6 +8575,7 @@ fn tree_with_layout_and_page_server_modules() -> std::sync::Arc<oxide_fw_router:
     });
     tree.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/index".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec![],
@@ -9060,6 +9082,7 @@ async fn action_set_cookie_survives_200_rerender() {
     let mut tree_inner = oxide_fw_router::RouteTree::new();
     tree_inner.insert(oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId("routes/comment".into()),
         kind: oxide_fw_router::RouteKind::Page,
         segments: vec!["comment".into()],
@@ -9686,6 +9709,7 @@ async fn why_module_with_a_corrupt_manifest_fails_loud() {
 fn refusal_facts_entry(id: &str, kind: oxide_fw_router::RouteKind) -> oxide_fw_router::RouteEntry {
     oxide_fw_router::RouteEntry {
         live: None,
+        priority: None,
         id: oxide_fw_router::RouteId(id.to_string()),
         kind,
         segments: vec![],
@@ -11324,4 +11348,686 @@ fn base64_decode_bytes(b64: &str) -> Vec<u8> {
     base64::engine::general_purpose::STANDARD
         .decode(b64)
         .expect("the data payload is base64")
+}
+
+// ---------------------------------------------------------------------------
+// V2-F07: the resumable-stream wiring (§V2-F07). The substrate
+// (`oxide_fw_server::stream_store`) is pinned V8-free in
+// `crates/server/tests/stream_tdd.rs` + `stream_sweep_tdd.rs`; these pins
+// cover the CLI call-sites: the `GET /__oxide/stream/<id>` reattach route
+// and the tee on resumable endpoint responses. The crate links V8, so the
+// suite runs in CI (`cargo nextest run --workspace`).
+// ---------------------------------------------------------------------------
+
+/// A one-entry RouteTree whose only route is `/api` with
+/// `RouteKind::Endpoint` — the tee pin's dispatch target.
+fn tree_with_endpoint_route() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
+        priority: None,
+        id: oxide_fw_router::RouteId("routes/api".into()),
+        kind: oxide_fw_router::RouteKind::Endpoint,
+        segments: vec!["api".into()],
+        file: std::path::PathBuf::from("api/route.ts"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    std::sync::Arc::new(tree)
+}
+
+/// A stream wiring whose store already holds one finished buffer `sid1`
+/// with `chunks` — the reattach pins' fixture.
+fn stream_wiring_seeded(chunks: &[&[u8]]) -> std::sync::Arc<crate::serve::streams::StreamWiring> {
+    let wiring =
+        crate::serve::streams::StreamWiring::from_config(&oxide_fw_config::StreamConfig::default());
+    let buf = wiring.store.begin("sid1".into());
+    for c in chunks {
+        wiring.store.append(&buf, bytes::Bytes::copy_from_slice(c));
+    }
+    wiring.store.finish(&buf);
+    std::sync::Arc::new(wiring)
+}
+
+#[tokio::test]
+async fn stream_reattach_route_serves_the_backlog_at_the_range_offset() {
+    let tree = empty_tree();
+    let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
+    let wiring = stream_wiring_seeded(&[b"line-1\n", b"line-2\n", b"line-3\n"]);
+
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        DispatchOpts {
+            streams: Some(wiring),
+            ..Default::default()
+        },
+    );
+
+    // The full backlog (no Range header: the spec default offset 0).
+    let resp = dispatch(test_request("GET", "/__oxide/stream/sid1")).await;
+    assert_eq!(resp.status, 206, "a mid-stream reattach is a 206");
+    assert!(
+        resp.headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("content-range") && v.contains("bytes 0-")),
+        "the 206 carries the spec's content-range: {:?}",
+        resp.headers
+    );
+    let body = collect_response_body(resp).await;
+    assert_eq!(
+        body,
+        b"line-1\nline-2\nline-3\n".to_vec(),
+        "offset 0 = the full backlog"
+    );
+
+    // A mid-stream offset replays only the missed bytes (the spec's
+    // `read_from` semantics through the route).
+    let mut req = test_request("GET", "/__oxide/stream/sid1");
+    req.headers = std::sync::Arc::new(vec![("range".to_string(), "bytes=7-".to_string())]);
+    let resp = dispatch(req).await;
+    assert_eq!(resp.status, 206);
+    let body = collect_response_body(resp).await;
+    assert_eq!(
+        body,
+        b"line-2\nline-3\n".to_vec(),
+        "offset 7 = the bytes past line-1"
+    );
+}
+
+#[tokio::test]
+async fn stream_reattach_route_answers_gone_and_complete() {
+    let tree = empty_tree();
+    let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
+    let wiring = stream_wiring_seeded(&[b"abc"]);
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        DispatchOpts {
+            streams: Some(wiring),
+            ..Default::default()
+        },
+    );
+
+    // An unknown id: the store answers Gone — `410` (§V2-F07 wiring step 2).
+    let resp = dispatch(test_request("GET", "/__oxide/stream/nope")).await;
+    assert_eq!(resp.status, 410, "an unknown stream id is gone");
+
+    // An offset past the buffer's length is also gone (bytes nobody holds).
+    let mut req = test_request("GET", "/__oxide/stream/sid1");
+    req.headers = std::sync::Arc::new(vec![("range".to_string(), "bytes=99-".to_string())]);
+    let resp = dispatch(req).await;
+    assert_eq!(resp.status, 410, "an offset past len is gone");
+
+    // A completed buffer reattached at its exact end: 200, empty body,
+    // `x-oxide-stream-complete: 1`.
+    let mut req = test_request("GET", "/__oxide/stream/sid1");
+    req.headers = std::sync::Arc::new(vec![("range".to_string(), "bytes=3-".to_string())]);
+    let resp = dispatch(req).await;
+    assert_eq!(
+        resp.status, 200,
+        "a complete-buffer reattach at the end is 200"
+    );
+    assert!(
+        resp.headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("x-oxide-stream-complete") && v == "1"),
+        "the complete marker rides the 200"
+    );
+    let body = collect_response_body(resp).await;
+    assert!(body.is_empty(), "the complete body is empty");
+}
+
+#[tokio::test]
+async fn stream_reattach_route_is_get_only_and_unknown_paths_fall_through() {
+    let tree = empty_tree();
+    let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
+    let wiring = stream_wiring_seeded(&[b"abc"]);
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        DispatchOpts {
+            streams: Some(wiring),
+            ..Default::default()
+        },
+    );
+
+    let resp = dispatch(test_request("POST", "/__oxide/stream/sid1")).await;
+    assert_eq!(resp.status, 405, "the reattach route is GET only");
+
+    // The bare prefix (no id segment) is not a reattach request: it falls
+    // through to route matching (the empty tree 404s it).
+    let resp = dispatch(test_request("GET", "/__oxide/stream/")).await;
+    assert_eq!(resp.status, 404, "the bare prefix is not a reattach");
+}
+
+#[tokio::test]
+async fn stream_reattach_route_rate_limits_per_ip() {
+    let tree = empty_tree();
+    let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
+    let wiring = stream_wiring_seeded(&[b"abc"]);
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        DispatchOpts {
+            streams: Some(wiring),
+            ..Default::default()
+        },
+    );
+
+    // Hammer past the bucket's cap: the (REATTACH_RATE_MAX + 1)-th reattach
+    // in the window answers `429` + `retry-after`.
+    let mut last = None;
+    for _ in 0..(crate::serve::streams::REATTACH_RATE_MAX + 1) {
+        last = Some(dispatch(test_request("GET", "/__oxide/stream/sid1")).await);
+    }
+    let resp = last.expect("loop ran at least once");
+    assert_eq!(resp.status, 429, "the reattach bucket sheds past its cap");
+    assert!(
+        resp.headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("retry-after")),
+        "the 429 carries retry-after"
+    );
+}
+
+#[tokio::test]
+async fn resumable_endpoint_response_is_teed_into_the_store() {
+    use futures::StreamExt as _;
+
+    /// An endpoint dispatcher whose `route.ts` returned a streamed,
+    /// `resumable(...)`-marked response: the shape the spec's helper
+    /// produces.
+    struct ResumableEndpoint {
+        marked: bool,
+    }
+    #[async_trait::async_trait]
+    impl oxide_fw_server::EndpointDispatcher for ResumableEndpoint {
+        async fn dispatch(
+            &self,
+            _args: oxide_fw_server::EndpointDispatchArgs<'_>,
+        ) -> Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError> {
+            let mut headers = Vec::new();
+            if self.marked {
+                headers.push((
+                    oxide_fw_server::stream_store::RESUMABLE_HEADER.to_string(),
+                    oxide_fw_server::stream_store::RESUMABLE_VALUE.to_string(),
+                ));
+            }
+            let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = vec![
+                Ok(bytes::Bytes::from_static(b"chunk-one;")),
+                Ok(bytes::Bytes::from_static(b"chunk-two")),
+            ];
+            Ok(oxide_fw_server::EndpointRunResult {
+                status: 200,
+                headers,
+                body: Vec::new(),
+                stream: Some(Box::pin(futures::stream::iter(chunks))),
+            })
+        }
+    }
+
+    let tree = tree_with_endpoint_route();
+    let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
+    let wiring =
+        crate::serve::streams::StreamWiring::from_config(&oxide_fw_config::StreamConfig::default());
+    let store = std::sync::Arc::clone(&wiring.store);
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        DispatchOpts {
+            endpoint_dispatcher: Some(std::sync::Arc::new(ResumableEndpoint { marked: true })),
+            streams: Some(std::sync::Arc::new(wiring)),
+            ..Default::default()
+        },
+    );
+
+    let resp = dispatch(test_request("GET", "/api")).await;
+    // The tee minted the id and stamped it on the head.
+    let id = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-stream"))
+        .map(|(_, v)| v.clone())
+        .expect("the teed response carries x-oxide-stream");
+    assert!(id.len() == 16, "the id is the 16-hex blake3 shape: {id}");
+    // The id is derived from the request id + counter (blake3) —
+    // deterministic for this fixture.
+    assert_eq!(
+        id,
+        oxide_fw_server::stream_store::stream_id("dispatch-test", 0),
+        "the id is stream_id(request_id, counter)"
+    );
+    // Consuming the body feeds the store: the replayed bytes match the
+    // consumer's bytes exactly, and the natural end marks the buffer done.
+    let body = collect_response_body(resp).await;
+    assert_eq!(body, b"chunk-one;chunk-two".to_vec());
+    match store.get(&id) {
+        oxide_fw_server::stream_store::Reattach::Ok(buf) => {
+            assert!(buf.is_done(), "the natural end marked the buffer done");
+            let backlog =
+                oxide_fw_server::stream_store::read_from(&buf, 0).expect("offset 0 is held");
+            assert_eq!(
+                backlog,
+                bytes::Bytes::from(body),
+                "the store replays the tee'd bytes"
+            );
+        }
+        oxide_fw_server::stream_store::Reattach::Gone => {
+            panic!("the teed buffer reattaches")
+        }
+    }
+}
+
+#[tokio::test]
+async fn unmarked_endpoint_response_keeps_the_pre_f07_shape() {
+    /// The same endpoint WITHOUT the `resumable` marker: no id, no tee, no
+    /// store entry — a plain streamed response (the default posture).
+    struct PlainEndpoint;
+    #[async_trait::async_trait]
+    impl oxide_fw_server::EndpointDispatcher for PlainEndpoint {
+        async fn dispatch(
+            &self,
+            _args: oxide_fw_server::EndpointDispatchArgs<'_>,
+        ) -> Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError> {
+            Ok(oxide_fw_server::EndpointRunResult {
+                status: 200,
+                headers: Vec::new(),
+                body: Vec::new(),
+                stream: Some(Box::pin(futures::stream::iter(vec![Ok(
+                    bytes::Bytes::from_static(b"plain"),
+                )]))),
+            })
+        }
+    }
+
+    let tree = tree_with_endpoint_route();
+    let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
+    let wiring =
+        crate::serve::streams::StreamWiring::from_config(&oxide_fw_config::StreamConfig::default());
+    let store = std::sync::Arc::clone(&wiring.store);
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        DispatchOpts {
+            endpoint_dispatcher: Some(std::sync::Arc::new(PlainEndpoint)),
+            streams: Some(std::sync::Arc::new(wiring)),
+            ..Default::default()
+        },
+    );
+
+    let resp = dispatch(test_request("GET", "/api")).await;
+    assert!(
+        !resp
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("x-oxide-stream")),
+        "an unmarked response gains no stream id"
+    );
+    let body = collect_response_body(resp).await;
+    assert_eq!(
+        body,
+        b"plain".to_vec(),
+        "the body streams through untouched"
+    );
+    // No buffer was begun: the store stays empty (nothing to reattach).
+    assert_eq!(store.total_bytes(), 0, "the store holds nothing");
+}
+
+// ---------------------------------------------------------------------------
+// V2-F07: the resume e2e (§V2-F07 acceptance). #[ignore] — spawns a Node
+// worker, binds a port, and needs the workspace's node_modules; CI runs it
+// in the jshost-e2e job (the same convention as the live/skew/A04 pins).
+// The scenario: a streamed, `resumable(...)`-marked endpoint; the first
+// connection reads 8 of the 20 lines then dies; the client reattaches at
+// `GET /__oxide/stream/<id>` with `Range: bytes=<n>-`; the concatenation
+// of what the first pass saw and what the reattach delivered equals the
+// full stream byte for byte.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore]
+async fn stream_resume_reattach_delivers_the_missed_bytes() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app-react");
+    assert!(
+        smoke.join("src/routes/ox-stream/route.ts").is_file(),
+        "the resumable-stream fixture route is missing at {}",
+        smoke.display()
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&smoke.join("oxide.config.ts")),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+    let smoke_str = smoke.to_str().expect("smoke path utf-8");
+    let started = crate::start_dev_server_full(
+        smoke_str,
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("stream-phase server");
+
+    // The full expected body: twenty numbered lines (the fixture's shape).
+    let expected: Vec<u8> = (0..20)
+        .flat_map(|n| format!("line {n}\n").into_bytes())
+        .collect();
+
+    // (1) The first connection: stream until 8 lines have arrived, then
+    // kill the socket (the spec's `curl --max-time` shape — the drop is a
+    // client-side close mid-body, not a server error).
+    let drop_after_lines = 8usize;
+    let mut first = tokio::net::TcpStream::connect(started.addr).await.unwrap();
+    first
+        .write_all(b"GET /ox-stream HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let read_head = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            let n = first.read(&mut byte).await.unwrap();
+            assert!(n > 0, "the stream head closed early");
+            head.push(byte[0]);
+            if head.ends_with(b"\r\n\r\n") {
+                return head;
+            }
+        }
+    })
+    .await
+    .expect("the response head arrived");
+    let head_text = String::from_utf8_lossy(&read_head).to_string();
+    assert!(
+        head_text.starts_with("HTTP/1.1 200"),
+        "the fixture endpoint answers 200: {}",
+        head_text.lines().next().unwrap_or("")
+    );
+    // The tee stamped the stream id on the head (the 16-hex blake3 shape).
+    let stream_id = head_text
+        .lines()
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.eq_ignore_ascii_case("x-oxide-stream")
+                .then(|| v.trim().to_string())
+        })
+        .expect("the resumable response carries x-oxide-stream");
+    assert_eq!(stream_id.len(), 16, "the id is 16-hex: {stream_id}");
+
+    // Read the body until `drop_after_lines` newlines have arrived; that
+    // byte count is the reattach offset.
+    let (seen, offset) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let mut body = Vec::new();
+        let mut byte = [0u8; 1];
+        let mut lines_seen = 0usize;
+        loop {
+            let n = first.read(&mut byte).await.unwrap();
+            assert!(n > 0, "the stream body closed early");
+            body.push(byte[0]);
+            if byte[0] == b'\n' {
+                lines_seen += 1;
+                if lines_seen == drop_after_lines {
+                    let offset = body.len() as u64;
+                    return (body, offset);
+                }
+            }
+        }
+    })
+    .await
+    .expect("the first 8 lines arrived");
+    drop(first); // the drop: the first connection dies mid-stream
+    assert_eq!(
+        seen,
+        expected[..offset as usize].to_vec(),
+        "the prefix the first pass saw is the body's own prefix"
+    );
+
+    // (2) The reattach: `Range: bytes=<offset>-` over the data-plane
+    // route. The backlog covers every byte the tee pulled past the offset,
+    // so the missed remainder arrives and the concatenation is
+    // byte-for-byte the full stream.
+    let mut second = tokio::net::TcpStream::connect(started.addr).await.unwrap();
+    second
+        .write_all(
+            format!(
+                "GET /__oxide/stream/{stream_id} HTTP/1.1\r\nHost: localhost\r\n\
+                 Range: bytes={offset}-\r\nConnection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let (resp_head, resp_body) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let mut buf = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            let n = second.read(&mut byte).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            buf.push(byte[0]);
+            if buf.ends_with(b"\r\n\r\n") {
+                // Head complete; the body follows (chunked transfer).
+                let mut body = Vec::new();
+                loop {
+                    let n = second.read(&mut byte).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    body.push(byte[0]);
+                }
+                return (buf, body);
+            }
+        }
+        (buf, Vec::new())
+    })
+    .await
+    .expect("the reattach answered");
+    let reattach_head = String::from_utf8_lossy(&resp_head).to_string();
+    assert!(
+        reattach_head.starts_with("HTTP/1.1 206"),
+        "a mid-stream reattach is a 206: {}",
+        reattach_head.lines().next().unwrap_or("")
+    );
+    assert!(
+        reattach_head
+            .to_ascii_lowercase()
+            .contains(&format!("content-range: bytes {offset}-")),
+        "the 206 names the reattach offset: {}",
+        reattach_head
+    );
+    // The body arrives chunked; strip the chunk-size framing the same way
+    // a real client does (dechunk): sizes are hex lines, terminated by a
+    // zero-size chunk.
+    let missed = dechunk(&resp_body);
+    assert_eq!(
+        seen.len() as u64 + missed.len() as u64,
+        expected.len() as u64,
+        "the two passes together carry exactly the full stream's byte count"
+    );
+    let mut whole = seen.clone();
+    whole.extend_from_slice(&missed);
+    assert_eq!(
+        whole, expected,
+        "the concatenation is byte-for-byte the full stream"
+    );
+
+    // (3) The reattach route also serves a fresh consumer the whole body
+    // (Range absent: the spec's default offset 0).
+    let full = crate::tests::http_get(started.addr, &format!("/__oxide/stream/{stream_id}")).await;
+    assert!(
+        full.starts_with("HTTP/1.1 206"),
+        "an offset-0 reattach replays the whole buffer: {}",
+        full.lines().next().unwrap_or("")
+    );
+
+    let _ = started.shutdown.send(true);
+}
+
+/// Dechunk a chunked-transfer body (the e2e reads raw sockets): hex size
+/// lines and the terminal `0` chunk are framing, not payload.
+fn dechunk(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut rest = raw;
+    loop {
+        let Some(line_end) = find_subslice(rest, b"\r\n") else {
+            break;
+        };
+        let size_line = &rest[..line_end];
+        let size = usize::from_str_radix(std::str::from_utf8(size_line).unwrap_or("").trim(), 16)
+            .unwrap_or(0);
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            break;
+        }
+        let take = size.min(rest.len());
+        out.extend_from_slice(&rest[..take]);
+        rest = &rest[take..];
+        // Skip the chunk's trailing CRLF.
+        if rest.starts_with(b"\r\n") {
+            rest = &rest[2..];
+        }
+    }
+    out
+}
+
+/// Find the first offset of `needle` in `haystack`.
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+// ---------------------------------------------------------------------------
+// V2-F12: the brownout enforcement e2e (§V2-F12). #[ignore] — spawns a
+// Node worker, binds a port; CI runs it in the jshost-e2e job (the same
+// convention as the live/skew/A04/resume pins). The governor's level is
+// flipped through the SAME seam the sampler writes (`Governor::set` on
+// the boot's `BrownoutWiring`) so the pin exercises the real pipeline —
+// the enforcement stage, the ops endpoints — without a 500-connection
+// load rig.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore]
+async fn brownout_sheds_low_and_reports_the_level() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app-react");
+    assert!(
+        smoke.join("src/routes/slow/page.server.ts").is_file(),
+        "the low-priority fixture route is missing at {}",
+        smoke.display()
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&smoke.join("oxide.config.ts")),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+    let smoke_str = smoke.to_str().expect("smoke path utf-8");
+    let started = crate::start_dev_server_full(
+        smoke_str,
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("brownout-phase server");
+    let Some(bw) = started.brownout.as_ref() else {
+        panic!("the fixture's brownout.enabled boots the wiring");
+    };
+
+    // Warm the slow route (the pool compile + first load happen on the
+    // first request; the shed arm answers BEFORE any loader work, but the
+    // Normal-level warm request proves the route serves normally first).
+    let warm = crate::tests::http_get(started.addr, "/slow").await;
+    assert!(
+        warm.starts_with("HTTP/1.1 200"),
+        "the fixture route serves at Normal: {}",
+        warm.lines().next().unwrap_or("")
+    );
+
+    // (1) Level `Shed`: the low-priority route sheds with 503 +
+    // `retry-after: 5` + `x-oxide-brownout: 2` — before any loader work.
+    bw.governor.set(2);
+    bw.metrics.set_brownout_level(2);
+    let shed = crate::tests::http_get(started.addr, "/slow").await;
+    assert!(
+        shed.starts_with("HTTP/1.1 503"),
+        "a low-priority route sheds at Shed: {}",
+        shed.lines().next().unwrap_or("")
+    );
+    let shed_lower = shed.to_ascii_lowercase();
+    assert!(
+        shed_lower.contains("x-oxide-brownout: 2"),
+        "the shed carries the level header"
+    );
+    assert!(
+        shed_lower.contains("retry-after: 5"),
+        "the shed carries the spec's retry-after"
+    );
+
+    // (2) The readiness flip: `/_oxide/ready` answers 503 only at
+    // `Emergency` (a balancer drains); `/_oxide/health` stays 200 and
+    // reports the level either way.
+    let ready_shed = crate::tests::http_get(started.addr, "/_oxide/ready").await;
+    assert!(
+        ready_shed.starts_with("HTTP/1.1 200"),
+        "ready stays 200 at Shed: {}",
+        ready_shed.lines().next().unwrap_or("")
+    );
+    bw.governor.set(3);
+    bw.metrics.set_brownout_level(3);
+    let ready_emergency = crate::tests::http_get(started.addr, "/_oxide/ready").await;
+    assert!(
+        ready_emergency.starts_with("HTTP/1.1 503"),
+        "ready flips at Emergency: {}",
+        ready_emergency.lines().next().unwrap_or("")
+    );
+    let health = crate::tests::http_get(started.addr, "/_oxide/health").await;
+    assert!(
+        health.starts_with("HTTP/1.1 200"),
+        "health stays 200 at Emergency (liveness): {}",
+        health.lines().next().unwrap_or("")
+    );
+    assert!(
+        health.to_ascii_lowercase().contains("x-oxide-brownout: 3"),
+        "health reports the level"
+    );
+
+    // (3) Back to Normal: everything serves again.
+    bw.governor.set(0);
+    bw.metrics.set_brownout_level(0);
+    let recovered = crate::tests::http_get(started.addr, "/slow").await;
+    assert!(
+        recovered.starts_with("HTTP/1.1 200"),
+        "the route serves again at Normal: {}",
+        recovered.lines().next().unwrap_or("")
+    );
+
+    let _ = started.shutdown.send(true);
 }
