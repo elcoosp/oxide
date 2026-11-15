@@ -13,6 +13,9 @@ export {
 } from './client/islands.ts'
 export { attachDeferGlue, wireDeferreds, DeferredClient, type SwapDetail } from './client/defer-glue.ts'
 export { enhance, type EnhanceForm, type EnhanceOptions } from './client/enhance.ts'
+// §V2-F07: the resumable-fetch lifecycle (the router's data fetch rides it;
+// app code calling a streamed, `resumable(...)`-marked endpoint imports it).
+export { resumableFetch, type ResumableFetchOptions } from './client/resume.ts'
 export { toBase64, fromBase64 } from './bytes.ts'
 export { boot } from './client/boot.ts'
 export { scheduleScript, loadScripts, type ScriptStrategy, type ScriptOptions } from './client/scripts.ts'
