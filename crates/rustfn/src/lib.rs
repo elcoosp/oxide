@@ -23,6 +23,7 @@ pub mod abi;
 pub mod bridge;
 pub mod host;
 pub mod shim;
+pub mod swap;
 pub mod types;
 
 use oxide_fw_diagnostics::OxideError;
