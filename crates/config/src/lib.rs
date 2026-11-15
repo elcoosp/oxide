@@ -48,9 +48,10 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SwConfig {
-    /// Emit the service worker at build. Default: `true` when
-    /// `manifest` is present; `sw.enabled = false` disables emission
-    /// even with a manifest.
+    /// Emit the service worker at build (§V2-F14: the CLI's emission gate
+    /// additionally requires `offline.enabled` — `enabled: false` there
+    /// installs no worker). `sw.enabled = false` disables emission even
+    /// with offline on.
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// The offline-fallback route the worker serves for a navigation
