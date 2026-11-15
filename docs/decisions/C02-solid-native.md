@@ -1,3 +1,72 @@
+# 2026-11-15
+
+## C02 — Solid native compiler: the dependency arm LANDED (upstream core)
+
+**Decision.** The re-open record below (2026-11-14) set the re-run
+condition — "when upstream publishes a crates.io crate or a public Cargo
+tree, re-run the dependency arm: swap the backend's `compile` body to the
+crate, bump `version()`, keep the refusal shapes, re-run the parity gate".
+The condition is now **met to the letter**: the `solidjs/solid` `next`
+branch carries `packages/compiler` as a public Cargo tree.
+
+**The measured facts (2026-11-15).**
+
+1. Upstream: `solidjs/solid` `next` at `packages/compiler` is the Rust
+   crate behind npm `@solidjs/compiler` 2.0.0-rc.21 — `[package] name =
+   "solidjs-compiler"`, version 0.0.0, edition 2024, `crate-type =
+   ["cdylib", "rlib"]`, `publish = false`. HEAD at the measurement: `rev =
+   7ea2a02e9edc976e4be4d060c7e65ba85d10b42c` (a full-SHA pin, the letter
+   the kill record asked for).
+2. Features: `default = ["node", "tsrx"]`; `default-features = false`
+   builds the pure Rust `rlib` — `node` is the NAPI host binding (off:
+   no Node host in the Rust build) and `tsrx` is the TSRX frontend (off:
+   it would drag a second, git-pinned oxc 0.140 fork; a `.tsrx` source
+   refuses loudly onto `CMP-SOL-001`).
+3. oxc: the crate pins its own oxc **0.144** stack; the workspace rides
+   oxc 0.155. No skew conflict — the C01 seam is string in / string out,
+   no oxc type crosses (the same shape as verter_core's 0.117 and
+   oxc_react_compiler's 0.143 skews). A Cargo git dependency takes `rev`
+   OR `branch` — the full-SHA `rev` IS the branch pin.
+4. API: `compile(source, &CompileOptions) -> Result<CompileOutput,
+   CompileError>` with `Generate::{Dom, Ssr, Universal, Dynamic}`,
+   `module_name`, `hydratable`, `dev`, `source_names` (the JS surface
+   defaults each kind to `dev`), `lower_show` (the JS surface defaults it
+   to `!dev`), `source_map`, and `CompileOutput { code, source_map, css,
+   css_hash }` / `CompileError { kind: Parse|Configuration|Transform,
+   message }`. The Rust API is upstream-unstable (pre-1.0) — the exact
+   rev pin is the stability answer.
+
+**What landed.** The in-repo JSX/reactivity transform
+(`src/native/solid.rs`, the 1.7k-line walk the re-open built) is
+**deleted**; the backend is a thin adapter: TS strip (workspace oxc 0.155
+transformer, `only_remove_type_imports` sucrase parity, JSX untouched)
+BEFORE the compile — the upstream core parses `.tsx` but does not strip
+annotations, and stripping first keeps its source map valid — then
+`compile()` with `module_name: "@solidjs/web"`, `hydratable: true` (both
+targets, the worker oracle's flags), `generate` mapped from
+`CompileRequest`, the dev flags mapped (`source_names`, `lower_show`,
+`source_map`), the worker's `solid-js/web` → `@solidjs/web` rewrite after
+(offset-neutral: both specifiers are 12 chars, the map survives). Every
+upstream failure maps onto `CMP-SOL-001` with the upstream stage +
+diagnostic riding the message and the Node-pool fix. `version()` is
+`2.0.0-rc.21+7ea2a02` (npm release + short rev) — the D40 bump
+invalidates every artifact the in-repo transform ever emitted.
+`CompileOutput` carries `source_map: Option<String>` now (the first
+native backend to emit one; dev only — the production pipeline does not
+consume per-file native maps yet, the pool emits none).
+
+**The supported surface widened.** The v1 refusal list the in-repo
+transform carried (spreads, SSR fragments, object `style`/`classList`,
+`innerHTML`) is gone — the 2.0 core compiles those natively (`_$spread`,
+SSR array templates, ...). `use:` directives now refuse (they were
+REMOVED in Solid 2.0) with the upstream migration note. The spike pins
+(`solid_native_spike.rs`) hold the upstream shapes (`_$template` +
+`_$getNextMarker` walks, `_$scope` effects, `_$memo`-lowered `<Show>`,
+SSR `<!--$-->` hydration markers, dev `sourceNames` + the V3 map) and the
+byte determinism the CAS contract needs.
+
+---
+
 # 2026-11-14
 
 ## C02 — Solid native compiler: RE-OPENED, LANDED in-repo (WP V2-C02)
