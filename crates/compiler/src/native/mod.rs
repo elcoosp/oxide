@@ -33,12 +33,13 @@
 //!
 //! # What is compiled in today
 //!
-//! Nothing yet — by design. [`NativeRegistry::from_enabled_features`]
-//! builds the registry from the backends compiled into the binary; the
-//! real backends (Solid, Vue, Svelte) land with C02–C04, each behind its
-//! own feature with its vendored upstream (D27), and register themselves
-//! here. Until then every framework answers the Node pool under `auto`,
-//! which is exactly the C01 contract the TDD pins hold
+//! The feature-gated backends push into [`NativeRegistry::from_enabled_features`]:
+//! `native-solid` (the C02 re-open — the in-repo Solid JSX transform, see
+//! `docs/decisions/C02-solid-native.md`), `native-vue` (C03, `verter_core`),
+//! `native-svelte` (C04, `svelte-compiler`) and `native-react-compiler`
+//! (C05, `oxc_react_compiler`). A default build compiles none of them:
+//! `auto` answers the Node pool for every framework and `native` refuses
+//! with [`native_err`], which is the C01 contract the TDD pins hold
 //! (`tests/native_registry_tdd.rs`, driven by an injected test backend —
 //! the same shape a host crate uses). The integration (the CLI's
 //! `compile_one` consulting `pick` before the pool, and `oxide doctor`
@@ -47,9 +48,11 @@
 
 use crate::{OxideError, Result};
 
-// §V2-C03/C04/C05: the landed backends, each behind its feature.
+// §V2-C02/C03/C04/C05: the landed backends, each behind its feature.
 #[cfg(feature = "native-react-compiler")]
 pub mod react_compiler;
+#[cfg(feature = "native-solid")]
+pub mod solid;
 #[cfg(feature = "native-svelte")]
 pub mod svelte;
 #[cfg(feature = "native-vue")]
@@ -181,27 +184,37 @@ pub struct NativeRegistry {
 impl NativeRegistry {
     /// The registry of backends compiled into this binary.
     ///
-    /// The compiled-in set is the feature-gated push list below
-    /// (`native-vue`, `native-svelte`, `native-react-compiler` — the
-    /// C02 Solid backend is killed upstream, see
-    /// `docs/decisions/C02-solid-kill.md`). A default build compiles
-    /// none of them: `auto` answers the Node pool for every framework
-    /// and `native` refuses with [`native_err`], which is the C01
-    /// contract the TDD pins hold.
+    /// The compiled-in set is the feature-gated push list
+    /// (`register_compiled_in` — the C02 Solid re-open plus the C03/C04/C05
+    /// backends). A default build compiles none of them: `auto` answers the
+    /// Node pool for every framework and `native` refuses with [`native_err`],
+    /// which is the C01 contract the TDD pins hold.
     #[must_use]
     pub fn from_enabled_features() -> Self {
-        #[allow(unused_mut)]
         let mut reg = Self::empty();
-        // §V2-C03/C04/C05: the backends compiled into this binary. Each
-        // rides its own feature (default builds stay lean; the release
-        // recipe turns them on) and pushes itself here.
+        Self::register_compiled_in(&mut reg);
+        reg
+    }
+
+    /// The compiled-in backend push list (§V2-C02–C05): each backend rides its
+    /// own feature (default builds stay lean; the release recipe turns them
+    /// on) and pushes itself here. With no feature on the body compiles to
+    /// nothing — a parameter that is never dereferenced mutably is not a lint
+    /// finding, so no `allow` escape hatch rides this function.
+    fn register_compiled_in(reg: &mut NativeRegistry) {
+        // The C02 re-open: the in-repo Solid JSX transform
+        // (`docs/decisions/C02-solid-native.md`).
+        #[cfg(feature = "native-solid")]
+        reg.register(Box::new(super::native::solid::SolidNative));
+        // §V2-C03: the Vue SFC compiler (verter_core).
         #[cfg(feature = "native-vue")]
         reg.register(Box::new(super::native::vue::VueNative));
+        // §V2-C04: the Svelte compiler (svelte-compiler).
         #[cfg(feature = "native-svelte")]
         reg.register(Box::new(super::native::svelte::SvelteNative));
+        // §V2-C05: the React Compiler port (oxc_react_compiler).
         #[cfg(feature = "native-react-compiler")]
         reg.register(Box::new(super::native::react_compiler::ReactCompilerNative));
-        reg
     }
 
     /// An empty registry (the injection seam's starting point).
@@ -373,11 +386,32 @@ mod tests {
     }
 
     #[test]
-    fn empty_registry_is_the_default_build() {
+    fn from_enabled_features_matches_the_compiled_in_set() {
+        // The C01-era pin asserted an empty registry; the landed
+        // C02–C05 backends broke that assumption, so the pin now holds
+        // the exact feature-to-registry mapping under any feature
+        // combination (the compiled-in set is exactly the features on).
         let reg = NativeRegistry::from_enabled_features();
-        assert!(reg.is_empty());
-        assert_eq!(reg.report(), Vec::new());
-        assert_eq!(reg.len(), 0);
+        let mut expected = 0usize;
+        #[cfg(feature = "native-solid")]
+        {
+            expected += 1;
+        }
+        #[cfg(feature = "native-vue")]
+        {
+            expected += 1;
+        }
+        #[cfg(feature = "native-svelte")]
+        {
+            expected += 1;
+        }
+        #[cfg(feature = "native-react-compiler")]
+        {
+            expected += 1;
+        }
+        assert_eq!(reg.len(), expected, "the registry is the compiled-in set");
+        assert_eq!(reg.report().len(), expected);
+        assert_eq!(reg.is_empty(), expected == 0);
     }
 
     #[test]
