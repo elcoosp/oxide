@@ -44,6 +44,7 @@ pub mod llms;
 pub mod mcp;
 mod native_plugins;
 pub mod perf_bisect;
+pub mod serve;
 // V2-F09: the build-side search mapping (feature `search`) — the pure
 // entry→document helpers the `emit_search_engine_index` build step uses.
 #[cfg(feature = "search")]
@@ -7158,27 +7159,27 @@ async fn cmd_build(
         oxide_fw_config::CompilerBackend::Native => oxide_fw_compiler::native::Backend::Native,
         oxide_fw_config::CompilerBackend::Node => oxide_fw_compiler::native::Backend::Node,
     };
-    let client_precompiled = precompile::precompile_entries(
-        stack.tooling_pool.as_ref(),
-        &entries,
-        "dom",
-        framework_name,
-        precompile_cache.as_ref(),
+    let client_precompiled = precompile::precompile_entries(precompile::PrecompilePlan {
+        pool: stack.tooling_pool.as_ref(),
+        entries: &entries,
+        svelte_generate: "dom",
+        framework: framework_name,
+        cache: precompile_cache.as_ref(),
         tool_version,
-        Some(std::sync::Arc::clone(&native_registry)),
-        compiler_backend,
-    )
+        native: Some(std::sync::Arc::clone(&native_registry)),
+        backend: compiler_backend,
+    })
     .await?;
-    let server_precompiled = precompile::precompile_entries(
-        stack.tooling_pool.as_ref(),
-        &server_entries,
-        "ssr",
-        framework_name,
-        precompile_cache.as_ref(),
+    let server_precompiled = precompile::precompile_entries(precompile::PrecompilePlan {
+        pool: stack.tooling_pool.as_ref(),
+        entries: &server_entries,
+        svelte_generate: "ssr",
+        framework: framework_name,
+        cache: precompile_cache.as_ref(),
         tool_version,
-        Some(std::sync::Arc::clone(&native_registry)),
-        compiler_backend,
-    )
+        native: Some(std::sync::Arc::clone(&native_registry)),
+        backend: compiler_backend,
+    })
     .await?;
     // §4.2: bundle the config graph to ESM for the V8 backend, NOW that the
     // SFCs are precompiled (the config imports them directly). V8 cannot import
@@ -8984,9 +8985,21 @@ async fn cmd_build(
     // §16.4: stamp the client manifest now that catalogs are emitted — the
     // stamp keys off `dist/client/messages/`, so it must run after that.
     stamp_i18n_locales(&rootp, &cfg);
+    // V2-A04 step 1 (the write half): stamp the canonical build id over the
+    // final dist. Every covered write (dist/client/**, dist/server/**,
+    // .oxide/routes.manifest) is done by now — the i18n manifest stamp just
+    // above is the LAST writer into dist/client — so the id covers the
+    // final bytes (the spec's "computed at the end of phase_emit"). The
+    // id lands in `dist/build-id` + `.oxide/build-id`; `oxide start` /
+    // `oxide preview` read it back through `oxide_fw_cache::read_build_id`
+    // and the F10 pools key their generations off it. A build whose
+    // identity cannot be stamped fails here — downstream consumers
+    // (the data-plane check, attest) must never fall back to a guess.
+    let stamped_build_id = oxide_fw_cache::stamp_build_id(&dist)?;
     outln!(
         w,
-        "build ok — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
+        "build ok — build-id {} — {} routes, {} prerendered, {} deploy file(s) for `{}` in dist/deploy",
+        stamped_build_id,
         tree.entries.len(),
         artifact.prerendered.len(),
         written.len(),
@@ -9204,6 +9217,13 @@ pub struct StartedServer {
     /// WP-B: the route tree the dispatch reads through. The dev watcher
     /// stores a fresh tree here after re-scanning; `cmd_serve` never swaps.
     pub(crate) swappable_tree: SwappableRouteTree,
+    /// V2-A04/F10: the generation pool the data plane checks against.
+    /// The serve loop promotes a rebuilt dist's id here on `SIGHUP` (the
+    /// old build stays accepted for its skew window, the 30 s task
+    /// reclaims expired slots); tests promote through
+    /// `SkewState::promote_from_dist`.
+    pub(crate) generations:
+        Option<std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>>,
     /// V2-F09 (feature `search`): the hot-reload handle for the search
     /// index the serve side opened. The dev watcher swaps a rebuilt
     /// index in after re-emitting the corpus (the zero-downtime posture
@@ -9601,6 +9621,10 @@ fn build_dispatch(
         esm_state: None,
         record: None,
         recordings: std::sync::Arc::new(crate::record_wire::Recordings::new()),
+        // The test-pipeline default: no generations handle — the wrapper's
+        // `None` arm keeps the pre-A04 byte shapes, and the pins that need
+        // the stage construct their own set.
+        generations: None,
     })
 }
 
@@ -9665,6 +9689,16 @@ pub(crate) struct DispatchArgs {
     pub record: Option<std::sync::Arc<crate::record_wire::RecordCapture>>,
     /// V2-F15: the in-flight captures, keyed by request id.
     pub recordings: std::sync::Arc<crate::record_wire::Recordings>,
+    /// V2-A04 + F10: the generations the data plane answers for — the
+    /// bounded skew pool (the boot build id plus up to
+    /// `deploy.generations` demoted builds, each accepted for
+    /// `deploy.skewWindow` from its own demotion). `Some` on every real
+    /// server boot (the stage runs); `None` keeps the pre-A04 byte shapes
+    /// (the test helper's default). The stage install and the advertise
+    /// stamp live in [`build_dispatch_swappable`]'s wrapper, driven
+    /// through the same `AcceptedGenerations` seam the 1-deep set uses.
+    pub generations:
+        Option<std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>>,
 }
 
 fn build_dispatch_swappable(
@@ -9693,6 +9727,7 @@ fn build_dispatch_swappable(
         esm_state,
         record,
         recordings,
+        generations,
     } = args;
 
     let boot_script_url_for_render = boot_script_url.clone();
@@ -9724,11 +9759,31 @@ fn build_dispatch_swappable(
     >;
     let self_dispatch: SelfDispatch = std::sync::Arc::new(std::sync::OnceLock::new());
     let self_dispatch_for_closure = std::sync::Arc::clone(&self_dispatch);
-    let dispatch_fn: std::sync::Arc<
+    // V2-A04: the render arm bakes the CURRENT build id into the streamed
+    // shell's hydration bootstrap (the same value the stage checks), so the
+    // client's `withBuild` echo is always accepted. The handle is captured
+    // (shared-borrow use only — the closure is `Fn`); the per-request read
+    // happens inside the closure body, the guard never enters an async
+    // block.
+    let generations_for_render = generations.clone();
+    // The framework dispatch itself. `inner_dispatch` because the V2-A04
+    // stage install (below) wraps it — the wrapper owns the data-plane
+    // build check and the advertise stamp, so the ~2000-line body keeps
+    // its own return points untouched.
+    let inner_dispatch: std::sync::Arc<
         dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync,
     > = std::sync::Arc::new(move |req: oxide_fw_server::OxideRequest| {
         let tree = swappable.load();
         let started = std::time::Instant::now();
+        // V2-A04: the build id the render arm bakes into the streamed
+        // shell's hydration bootstrap — read once per request, under the
+        // read guard, in this sync section (the guard never enters the
+        // async blocks; a `None` handle reads as `None` and the bootstrap
+        // keeps its legacy three-field shape).
+        let boot_build_id = generations_for_render
+            .as_ref()
+            .and_then(|g| g.read().ok())
+            .map(|g| g.current().to_string());
         // Rewrite-hop guard (§8.5 / S-20): the hop count is tracked on the
         // internal `rewrite_hops` field, never a client-supplied header — a
         // client cannot pre-set it to exhaust the rewrite budget. Inbound
@@ -11465,7 +11520,30 @@ fn build_dispatch_swappable(
                             use base64::Engine as _;
                             let odf_b64 =
                                 base64::engine::general_purpose::STANDARD.encode(&odf_bytes);
-                            oxide_fw_render::hydration_bootstrap(&odf_b64, &route_for_odf, &nonce)
+                            // V2-A04: the bootstrap advertises the CURRENT
+                            // build id — the same value the stage checks and
+                            // every data-plane response advertises — so the
+                            // client's `withBuild` echo is accepted. The id
+                            // was read once per request at the closure top
+                            // (`boot_build_id`, the guard never enters the
+                            // async blocks); the clone keeps nested moves
+                            // legal. An absent handle (the test helper)
+                            // keeps the legacy three-field shape.
+                            match boot_build_id.clone() {
+                                Some(id) if !id.is_empty() => {
+                                    oxide_fw_render::hydration_bootstrap_with_build(
+                                        &odf_b64,
+                                        &route_for_odf,
+                                        &nonce,
+                                        &id,
+                                    )
+                                }
+                                _ => oxide_fw_render::hydration_bootstrap(
+                                    &odf_b64,
+                                    &route_for_odf,
+                                    &nonce,
+                                ),
+                            }
                         };
                         // §7.1 / §9.2: resolved defer() values ride a JSON
                         // script element so the boot module can dispatch
@@ -11850,6 +11928,64 @@ fn build_dispatch_swappable(
                 }
                 resp
             }
+        })
+    });
+    // V2-A04 (the wiring): the data-plane stage install. One wrapper around
+    // `inner_dispatch` instead of touching its many return points:
+    //
+    // - a data-plane request advertising an unaccepted `x-oxide-build`
+    //   answers `409` + `x-oxide-build-stale: true` BEFORE any route
+    //   matching or L0 lookup runs (the stage's contract — the response
+    //   carries no build advertisement: it is a rejection, not a serving);
+    // - every CONTINUED data-plane response carries
+    //   `x-oxide-build: <current>` (the advertise step — idempotent, so a
+    //   stamp the inner path already laid wins);
+    // - non-data-plane requests and a `None` generations handle (the test
+    //   helper's default) pass through byte-identical to the pre-A04 shapes.
+    //
+    // The read guard lives only in this sync section — no guard crosses an
+    // await (the dispatch future must stay `Send`). A poisoned lock takes
+    // the fail-open arm (the stage's headerless behavior), never the data
+    // plane down. Middleware `{ rewrite }` re-enters through
+    // `self_dispatch`, i.e. through THIS wrapper — the stage is idempotent
+    // per request (the hop-carried headers are the same header set).
+    let dispatch_fn: std::sync::Arc<
+        dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync,
+    > = std::sync::Arc::new(move |req: oxide_fw_server::OxideRequest| {
+        let Some(gens) = generations.as_ref() else {
+            return inner_dispatch(req);
+        };
+        let raw_path = req.url.split(['?', '#']).next().unwrap_or("/").to_string();
+        let headers = std::sync::Arc::clone(&req.headers);
+        let rejected: Option<oxide_fw_server::OxideResponse> = match gens.read() {
+            Ok(g) => {
+                match oxide_fw_dispatch::skew::stage_check(
+                    &raw_path,
+                    headers.as_slice(),
+                    &*g,
+                    std::time::Instant::now(),
+                ) {
+                    oxide_fw_dispatch::flow::Flow::Respond(resp) => Some(resp),
+                    oxide_fw_dispatch::flow::Flow::Continue => None,
+                }
+            }
+            Err(_) => None,
+        };
+        if let Some(resp) = rejected {
+            return Box::pin(async move { resp });
+        }
+        if !oxide_fw_dispatch::build::is_data_plane_path(&raw_path) {
+            return inner_dispatch(req);
+        }
+        let current = match gens.read() {
+            Ok(g) => g.current().to_string(),
+            Err(_) => return inner_dispatch(req),
+        };
+        let fut = inner_dispatch(req);
+        Box::pin(async move {
+            let mut resp = fut.await;
+            oxide_fw_dispatch::build::advertise_build(&mut resp, &current);
+            resp
         })
     });
     // §8.5: publish the dispatch closure so middleware `{ rewrite }` can
@@ -13520,14 +13656,18 @@ async fn start_server_inner_full(
         None
     };
     // §11 L0: a response cache for static/isr routes. The build id scopes
-    // entries to this deployment, so a rebuild invalidates them; it comes from
-    // the client manifest, falling back to a source-derived hash when no build
-    // is present (a dev server with no `dist/` still serves, just uncached).
+    // entries to this deployment, so a rebuild invalidates them. The read
+    // order: the client manifest's field first (the bundler's identity —
+    // the L0 seed keys were computed with it at build time), then the
+    // canonical `dist/build-id` stamp (A04 — a dist whose manifest predates
+    // the field still serves with its stamped id), then `"dev"` (a dev
+    // server with no dist serves uncached).
     let build_id = client_manifest_json
         .as_ref()
         .and_then(|v| v.get("build_id"))
         .and_then(|v| v.as_str())
         .map(str::to_string)
+        .or_else(|| oxide_fw_cache::read_build_id(&rootp.join("dist")))
         .unwrap_or_else(|| "dev".to_string());
 
     // §20: the per-request waterfall recorder the inspector renders. Created
@@ -13923,6 +14063,22 @@ async fn start_server_inner_full(
         .ppr
         .then(|| std::sync::Arc::new(std::sync::Mutex::new(PprShellStore::default())));
     let swappable_tree = SwappableRouteTree::new(std::sync::Arc::clone(&tree));
+    // V2-A04 + F10: the skew pool the data plane checks against — the
+    // boot's build id accepted as CURRENT, the demotion window from the
+    // typed `deploy.skewWindow` and the depth from `deploy.generations`
+    // (both load-validated `CFG-DEPLOY`; an unparsable literal falls back
+    // to the spec's 15 m default rather than refusing a serve). The 30 s
+    // expiry task reclaims the expired slots; the serve loop's `SIGHUP`
+    // handler promotes a rebuilt dist (`SkewState::promote_from_dist`).
+    let skew_state = crate::serve::generations::SkewState::from_boot(
+        &build_id,
+        &cfg.deploy.skew_window,
+        cfg.deploy.generations,
+    );
+    let generations: Option<
+        std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>,
+    > = Some(skew_state.handle());
+    let _generations_expiry = crate::serve::generations::spawn_expiry_task(skew_state.handle());
     let dispatch = build_dispatch_swappable(DispatchArgs {
         swappable: swappable_tree.clone(),
         metrics: std::sync::Arc::clone(&metrics),
@@ -13953,6 +14109,7 @@ async fn start_server_inner_full(
         esm_state: esm_state.clone(),
         record: record_capture.clone(),
         recordings: std::sync::Arc::clone(&recordings),
+        generations: generations.clone(),
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
@@ -14051,6 +14208,7 @@ async fn start_server_inner_full(
         hmr,
         ppr_shells,
         swappable_tree,
+        generations: generations.clone(),
         #[cfg(feature = "search")]
         hot_search,
     })
@@ -14104,11 +14262,42 @@ async fn cmd_serve(
     let started = start_server(root, port, stack).await?;
     outln!(
         w,
-        "{label} — listening on http://{} (health: /_oxide/health, Ctrl-C to stop)",
+        "{label} — listening on http://{} (health: /_oxide/health, Ctrl-C to stop, SIGHUP to promote a rebuilt dist)",
         started.addr
     );
-    // Runs until Ctrl-C (§12.2 graceful shutdown); tests drive `start_server` directly.
-    let _ = tokio::signal::ctrl_c().await;
+    // §12.2 graceful shutdown on Ctrl-C; §V2-F10 step 1 on SIGHUP: a
+    // rebuilt `dist/` is promoted — the new build id becomes CURRENT and
+    // the previous one stays accepted for `deploy.skewWindow` (the skew
+    // pool holds it; the 30 s expiry task reclaims the slot at window
+    // end). An unchanged or unreadable dist promotes nothing (an
+    // idempotent re-deploy never churns the pool).
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut hup) = signal(SignalKind::hangup()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = hup.recv() => {
+                    if let Some(gens) = &started.generations {
+                        let dist = rootp.join("dist");
+                        match crate::serve::generations::promote_handle_from_dist(gens, &dist) {
+                            Some(new_id) => outln!(
+                                w,
+                                "skew: build-id {new_id} is current — the previous generation stays accepted for its skew window"
+                            ),
+                            None => outln!(w, "skew: dist unchanged — no generation promoted"),
+                        }
+                    }
+                }
+            }
+        } else {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
     let _ = started.shutdown.send(true);
     Ok(0)
 }
