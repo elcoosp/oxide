@@ -408,20 +408,26 @@ milestones that can compile it.
 
 **New deltas from the wiring (this diff):**
 
-1. **Prerendered shells keep the legacy three-field bootstrap.** The
-   covered set (`dist/client/**`, `dist/server/**`,
-   `.oxide/routes.manifest`) receives writes through the whole build tail
-   — the message catalogs, the L0 seed (whose KEYS embed the build id),
-   the enriched server manifest and the i18n stamp all run AFTER the
-   prerender pass, and the L0 seed's dependence on prerendered bodies
-   fixes that order. An id baked into prerendered HTML would therefore be
-   computed over a pre-tail covered set — stale by serve time — and every
-   prerendered page would 409-loop on its own `/__data` echo. The
-   prerendered Injector keeps `build_id: None` (legacy shape, pinned) and
-   those pages ride the stage's headerless allowance; the live-SSR
-   streaming path bakes the true serving id. Collapsing the two identities
-   needs the covered-set tail finalized before prerender — the recorded
-   A04 tail.
+1. ~~Prerendered shells keep the legacy three-field bootstrap~~ — **CLOSED**
+   (this diff, `feat/live-loaders-wire`, 2026-11-15): the emit tail now
+   bakes the STAMPED id into every prerendered shell AFTER
+   `stamp_build_id` computed it and with no covered writer left to run
+   (`crates/render/src/lib.rs::bake_build_id`, called from `cmd_build`'s
+   tail over `artifact.prerendered`). The bake is byte-surgery on the
+   bootstrap's `window.__oxide={route:"…"` marker — the four-field A04
+   shape, idempotent under repeated builds, re-baking a stale id on an
+   incremental rebuild — and the shells live at `dist/<page>.html`,
+   OUTSIDE the covered set (`dist/client/**`, `dist/server/**`,
+   `.oxide/routes.manifest`), so the baked bytes never re-stamp the
+   identity: the id a shell echoes is by construction the id the stage
+   accepts, no 409 loop. The prerender Injector still keeps `build_id:
+   None` (the pass runs pre-tail); the bake is the post-tail point the
+   original delta reserved. Pinned V8-free in
+   `crates/render/tests/bake_build_id_tdd.rs` (5 pins: the byte-exact
+   A04 shape, idempotence, stale-id re-bake, multi-marker + no-marker
+   no-op, id sanitization) and over the wire by the extended
+   `build_identity_advertises_and_rejects_stale_on_the_wire` e2e (the
+   shell carries the stamped id — its `jshost-e2e` CI step runs it).
 2. **The stamp writes both files atomically** (temp + rename in the
    target's own directory — rename across filesystems fails) and neither
    stamped file sits inside the covered set, so re-stamping an unchanged
@@ -450,7 +456,7 @@ branch filter is the truncated token (`ain]`) — the tree already has the
 correct filter; the spec text predates the fix and the item is closed in
 the tree.
 
-## V2-F05 live loaders — deltas and deferrals (substrate step)
+## V2-F05 live loaders — deltas and deferrals (wired)
 
 **Status.** Substrate landed (`crates/server/src/live.rs`,
 `crates/router/src/lib.rs::RouteLive` + scan,
@@ -458,9 +464,32 @@ the tree.
 `crates/dispatch/src/build.rs` live data-plane contract,
 `crates/render/src/lib.rs` bootstrap,
 `crates/adapters/src/lib.rs::Capability::Live`,
-`packages/core/src/client/live.ts`). Endpoint, rerun closure and the
-client-router lifecycle are the A01-phase-3 wiring (V8-linked); see the
-handoff for the one-sentence pickup list.
+`packages/core/src/client/live.ts`). **The wiring landed**
+(`feat/live-loaders-wire`, 2026-11-15):
+
+- the `GET /__oxide/live` endpoint arm in the dispatch closure
+  (`crates/cli/src/lib.rs`): `same_origin` gate (`403`; missing evidence
+  denies), the live-route lookup (`404` otherwise), `parse_live_query`,
+  subscribe-or-`503` via `live_endpoint_response` (the body holds the
+  subscription `Guard` — an ended/disconnected body unsubscribes), the
+  connect-time first snapshot (enqueue → rerun → push);
+- the runner spawned once per boot (`crates/cli/src/serve/live.rs::LiveState`
+  + `spawn_runner`) with the rerun closure dispatching the SAME data-route
+  path as `/__data` (`rerun_request` carries the stored header snapshot);
+  a redirect/error/empty result is the stale signal —
+  `live_stream_with_stale` answers `event: stale` + the current build id
+  and ends the stream;
+- the revalidation hooks (§V2-F05 step 6) on the action's
+  `revalidate.tag`/`revalidate.path` events: `notify_tag`/`notify_path`
+  fan out through `Hub::affected` (`path` events compute the `path_tag`
+  convention);
+- the client lifecycle (`packages/core/src/client/boot.ts`):
+  `connectLive` is imported and driven from the wrapped `adapter.update` —
+  every navigation syncs the connection with the current input's route +
+  `live` flag; the hydration bootstrap's flag opens it at boot; the boot
+  disposer closes it. The `/__data` envelope advertises `live: true` for
+  live routes (`normalizeInput` carries it into `ClientInput.live`);
+  non-live envelopes stay byte-identical.
 
 **Deliberate deltas from the spec text (refinements, not forks):**
 
@@ -494,31 +523,25 @@ handoff for the one-sentence pickup list.
    `EventSource` or `document`; injection keeps the module import-safe
    (the `boot.ts` contract) with the spec's globals as defaults.
 
-**What is deliberately deferred (A01 phase-3 / V8-capable host):**
+**What remains deliberately deferred:**
 
-1. **No `GET /__oxide/live` endpoint in the pipeline yet** — the
-   same-origin check, the route lookup, subscribe-or-503 and the
-   `live_stream` body compose into the dispatch closure's stage list;
-   the substrate functions are reachable from tests/benches only.
-2. **No rerun closure** — the wiring calls the same data-route path as
-   `/__data` (spec step 5) with the stored header snapshot so middleware,
-   locals, layout loads and gating behave identically; `Runner` runs with
-   an injected closure in tests. The `event: stale` emission on a failed
-   rerun (redirect/error → `None` snapshot) is the wiring's watch on the
-   cleared channel.
-3. **No tag-revalidation hook** — the `TieredCache::invalidate_tag` call
-   sites (server + action handlers' `revalidate.tag`) do not call
-   `hub.affected(tag)` yet; the substrate pins the fan-out.
-4. **No client-router lifecycle** — `connectLive` is exported from
-   `client/live.ts` but the router does not call it after hydration yet
-   (an EventSource hitting a not-yet-existing endpoint would 404-retry
-   loop per page — worse than inert); the bootstrap already advertises
-   `live:true` for opted-in routes and the field is read by the wiring.
-5. **The `AST-LIV-001` refusal** (`live: true` on Static) belongs to the
+1. **Subscriber tags seed with the route's own `path:` tag** — the spec's
+   `Sub.tags` comment names "route config tags + tags recorded by the last
+   run", but the loader/cache surfaces carry no per-route tag declarations
+   to read (`RouteLive` has no tags field; `LoaderOutput` has no recorded
+   tags; `/__data` responses are never L0-cached). The fan-out covers both
+   `tag` and `path` revalidate events, and `Hub::retag` stays for the
+   future load-recorded tags — there is no invented API reading tags that
+   do not exist.
+2. **The `AST-LIV-001` refusal** (`live: true` on Static) belongs to the
    refusal-rule WP (spec §2776 `check_config`); the matrix row it consults
-   is in place. The `tests/live.sh` integration script needs the running
-   endpoint — deferred with it.
-6. **Capability row choices the spec sentence leaves open**: Deno/Bun =
+   is in place. The `tests/live.sh` integration script rides with it (the
+   `#[ignore]` e2e pin `live_pushes_snapshots_over_the_wire` + its
+   `live SSE e2e` CI step covers the same contract over the wire today).
+3. **The `transport: 'poll'` fallback still polls full snapshots;**
+   converting poll responses to patches is pointless while ETags gate the
+   round trip.
+4. **Capability row choices the spec sentence leaves open**: Deno/Bun =
    Full (NodeHost-backed runtimes with full §18 sockets rows); Cloudflare/
    CloudflarePages = Degraded (Workers stream but do not guarantee
    long-lived connections) — both documented in `degradation()`.
@@ -613,14 +636,12 @@ the existing F05 substrate and activates there with zero further changes.
    refuses with `ODP-BASE` — reconnect, fresh snapshot, graceful
    degradation, never corruption.
 
-**What is deliberately deferred (A01 phase-3 / V8-capable host):**
+**What remains deliberately deferred:**
 
-- Nothing F06-specific: the transport is active end-to-end inside the
-  substrate (server policy ⇄ SSE frames ⇄ client decode). The deferred
-  wiring list from F05 (endpoint, rerun closure, revalidation hook, client
-  router lifecycle, `AST-LIV-001` refusal, `tests/live.sh`) is unchanged.
-- The `transport: 'poll'` fallback still polls full snapshots; converting
-  poll responses to patches is pointless while ETags gate the round trip.
+- Nothing F06-specific: the transport is active end-to-end on the F05
+  wiring (server policy ⇄ SSE frames ⇄ client decode). The remaining F05
+  deferrals above (`AST-LIV-001`, `tests/live.sh`, the poll fallback)
+  apply unchanged.
 
 **Hygiene rides-along:** the `odf` crate-module doc pointed at a
 nonexistent `docs/format.md` and a nonexistent `packages/oxide` package —
@@ -630,10 +651,59 @@ found this session (README crate count, CI job counts, spec Appendix V2.O's
 all-`todo` table, CONTRIBUTING's toolchain claim) is listed in the handoff
 and left to the doc owners.
 
-**To unclose:** the A01 phase-3 wiring (the rerun closure already calls the
-data-route path; its `Option<Bytes>` result now flows through
-`prepare_rerun` automatically) — then the `tests/live.sh` e2e, which should
-assert `event: data` frames carry `ODP1` after the first full snapshot.
+**Unclosed:** the wiring landed (`feat/live-loaders-wire`, 2026-11-15).
+The e2e that asserts the wire contract is the `#[ignore]` pin
+`live_pushes_snapshots_over_the_wire` (`crates/cli/src/tests.rs`) run by
+CI's `live SSE e2e` step: same-origin 403s, the full connect frame, and a
+new data frame after the fixture action's `revalidate.path` — the F06
+frame-magic sanity check rides it (the exact full-then-patch shape is
+pinned V8-free in `frames_carry_full_then_patch_payloads`; the sending
+policy may legitimately ship a full for tiny envelopes, which the e2e
+honors). The `tests/live.sh` curl script remains with `AST-LIV-001`.
+
+## V2-F10 skew protection — the two-pool serving deltas (wired)
+
+**Status.** The id-level wiring (the A04 stage, the bounded
+`GenerationPool`, the SIGHUP promote, the expiry task, the skew e2e) was
+already landed. **The serving half landed** (`feat/live-loaders-wire`,
+2026-11-15): a pool + loader runner per generation, routed by build id.
+
+**Deliberate deltas from the spec text:**
+
+1. **The loader bytes freeze via a source snapshot, not the pool.** The
+   spec's step 1 ("keeps G1's **server module and pool** alive") assumed
+   the pool alone preserves the old bytes — but the worker recompiles
+   loader modules per run with an mtime check (`compileServerModule`'s
+   B-13 fast path), so a demoted pool re-reading an EDITED source serves
+   the NEW bytes. The wiring freezes each generation's loader sources
+   under `.oxide/generations/<id>/src` (a deep copy at boot and at every
+   promote — the bytes are frozen at the moment the generation becomes
+   current) and the demoted generation's runner resolves its module paths
+   from its own snapshot root; node-package imports resolve through the
+   ancestor walk to the project's `node_modules`. A failed snapshot
+   downgrades the generation to acceptance-only (a `SKW-SNAPSHOT` warn;
+   the boot handles serve every generation) instead of failing the boot.
+2. **The promote boots a full fresh stack** (`build_framework_stack`) —
+   the new pool + runner — and `GenerationPools::promote` demotes the old
+   handles together (`ServingPools::promote_booted`). The route step
+   (`crates/cli/src/lib.rs`'s dispatch prelude) resolves the generation by
+   `x-oxide-build` on the data plane and shadows the boot handles; HTML
+   navigations always ride current (§V2-F10 step 2 verbatim). The
+   acceptance verdict stays the one stage (the wrapper drives the id-level
+   pool) — the routing layer only decides WHO serves an accepted id, and
+   the dispatch-crate pins (`pools_tdd.rs`) hold the semantics.
+3. **The rollback path's `--generation previous` flag and the
+   `.oxide/generations/<id>` hard-link layout** (spec step 4) stay
+   deferred — the snapshot directory now doubles as the frozen-source
+   store; the flag rides the F11 releases slice.
+4. **The brownout early-drop hook** (`evict_oldest`) is the substrate's
+   (pinned); the F12 wiring calls it when the queue-wait threshold trips.
+
+**Wire proof:** `tests/skew.sh` step 4 now asserts BOTH the acceptance
+contract AND the old bytes — the old-header `/__data` still carries the
+v1 loader output (the frozen snapshot) while the headerless request
+carries v2, and the serve log names the booted generation's pool. CI's
+`skew e2e` step runs it (V8-capable host).
 
 ## V2-F07 resumable streams — deltas and deferrals (substrate step)
 
