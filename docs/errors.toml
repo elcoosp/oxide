@@ -303,8 +303,24 @@ fix = "build oxide-cli with --features native-{fw} or set framework.compilerBack
 message = "fix the syntax error reported by the Oxc parser"
 fix = "Fix the syntax error the parser names"
 
+[CMP-RCC-001]
+message = "native react-compiler failed for `{}`: {detail}"
+fix = "set framework.compilerBackend to 'auto' or 'node' to use the Node tooling pool"
+
 [CMP-SECRET]
 message = "`process.env.{name}` is read in client module `{}`;                          this would ship the secret to the browser. Move the                          read to a server module or rename to `PUBLIC_{name}`."
+
+[CMP-SOL-001]
+message = "native solid compile failed for `{}`: {detail}"
+fix = "set framework.compilerBackend to 'auto' or 'node' to use the Node tooling pool"
+
+[CMP-SVT-001]
+message = "native svelte compile failed for `{}`: {message} ({code})"
+fix = "set framework.compilerBackend to 'auto' or 'node' to use the Node tooling pool"
+
+[CMP-VUE-001]
+message = "native vue compile failed for `{}`: {detail}"
+fix = "set framework.compilerBackend to 'auto' or 'node' to use the Node tooling pool"
 
 [CONTENT-TYPEGEN]
 message = "mkdir {}: {e}"
