@@ -172,6 +172,13 @@ jobs:
           for d in packages/core packages/tailwind packages/react packages/vue packages/svelte packages/solid packages/create-oxide packages/cli-npm packages/oxide-og; do
             pnpm -C "$d" test
           done
+      # V2-F15: the worker-side replay install (`globalThis.__oxide_replay`)
+      # and the record/drain protocol are pinned by the worker's own node
+      # tests — plain `node --test`, no workspace deps needed (the worker
+      # module is dependency-free). The glob runs every `*.test.mjs` under
+      # the worker dir, so the next worker pin is covered without a CI edit.
+      - name: jshost worker node tests
+        run: node --test crates/jshost/worker/*.test.mjs
 
   plugin-fixtures:
     name: plugin fixture gate (§15-F)
@@ -396,6 +403,30 @@ jobs:
           # WP-J regression: real .mdx reachable from the edge entry compiles
           # to the automatic runtime (pure JS) and bundles cleanly.
           cargo test -p oxide-fw-cli --lib bundle_edge_entry_accepts_mdx_reachable_from_the_entry -- --ignored --test-threads=1
+      - name: Run the record/replay e2e (V2-F15)
+        # The two-phase pin over the smoke app: `record: 'errors'` captures
+        # a real request through the pipeline funnel, then `oxide replay`
+        # re-executes it against the started server and diffs — the
+        # #[ignore] convention (spawns a worker, binds a port), so it runs
+        # HERE on the V8-capable host, nowhere else. No `|| true`.
+        run: |
+          cargo test -p oxide-fw-cli --lib replay_reproduces_a_recorded_request_without_network -- --ignored --test-threads=1
+      - name: Run the A04 build-identity e2e (V2-A04)
+        # The build id on the wire: the stage's 409 + stale marker on the
+        # data plane, the advertise header, the baked bootstrap field, and
+        # the canonical dist/build-id stamp (stable across an unchanged
+        # rebuild). #[ignore] e2e — V8-capable host only, same convention.
+        run: |
+          cargo test -p oxide-fw-cli --lib build_identity_advertises_and_rejects_stale_on_the_wire -- --ignored --test-threads=1
+      - name: Run the skew e2e (V2-F10)
+        # §V2-F10's acceptance script: build a fixture, promote a rebuilt
+        # dist via SIGHUP, and pin the generation contract on the wire —
+        # the previous build accepted inside the skew window, the CURRENT
+        # id advertised, unknown 409 + stale marker, HTML passthrough,
+        # expired 409. Needs the CLI binary; the job installs nasm above.
+        run: |
+          cargo build -p oxide-fw-cli
+          ./tests/skew.sh
 
   playwright:
     name: Playwright e2e (§22) — ${{ matrix.browser }} / ${{ matrix.os }}
