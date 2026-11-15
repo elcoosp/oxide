@@ -52,6 +52,13 @@ pub const RPL_STALE_BUILD: &str = "RPL-003";
 /// the re-execution observed more values than the record captured.
 pub const RPL_SEQUENCE_DRAINED: &str = "RPL-004";
 
+/// The diagnostic code for a record whose base64 payload does not decode:
+/// the record is corrupt (truncated, hand-edited, written by a foreign
+/// schema) — the replay refuses or reports the corruption instead of
+/// comparing an EMPTY decode against the replay's bytes and calling the
+/// difference a divergence the code path produced.
+pub const RPL_RECORD_CORRUPT: &str = "RPL-006";
+
 /// The nonce length the diff normalizes: `oxide_fw_server::nonce_for`
 /// hashes the request id with blake3 and keeps 32 lowercase hex chars.
 pub const NONCE_LENGTH: usize = 32;
@@ -62,6 +69,7 @@ fn rpl(code: &'static str, msg: impl Into<String>, fix: &'static str) -> OxideEr
 
 const RPL_002_FIX: &str = "Re-record, or the code path changed";
 const RPL_004_FIX: &str = "Re-record; the replay observed more than the record captured";
+const RPL_006_FIX: &str = "Re-record; the record's payload is corrupt (truncated or hand-edited)";
 
 /// The recorded outbound fetch ops, played in order.
 ///
@@ -115,7 +123,15 @@ impl ReplayMatcher {
         };
         let recorded_body = base64::engine::general_purpose::STANDARD
             .decode(&next.request_body_base64)
-            .unwrap_or_default();
+            .map_err(|e| {
+                rpl(
+                    RPL_RECORD_CORRUPT,
+                    format!(
+                        "replay: the recorded request body of {method} {url} does not decode from base64: {e}"
+                    ),
+                    RPL_006_FIX,
+                )
+            })?;
         if next.method != method || next.url != url || recorded_body.as_slice() != request_body {
             return Err(rpl(
                 RPL_UNEXPECTED_CALL,
@@ -332,9 +348,18 @@ pub fn replay_diff(
         });
     }
 
-    let recorded_bytes = base64::engine::general_purpose::STANDARD
-        .decode(&record.response.body_base64)
-        .unwrap_or_default();
+    let Ok(recorded_bytes) =
+        base64::engine::general_purpose::STANDARD.decode(&record.response.body_base64)
+    else {
+        divergences.push(Divergence {
+            kind: "record",
+            detail: "the record's response body does not decode from base64 (the record is corrupt; the body diff is unreliable)".to_string(),
+        });
+        return ReplayDiff {
+            ok: false,
+            divergences,
+        };
+    };
     let recorded_body = String::from_utf8_lossy(&recorded_bytes);
     let a = normalize_nonce(&recorded_body);
     let b = normalize_nonce(body);
