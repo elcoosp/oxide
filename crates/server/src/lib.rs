@@ -2065,6 +2065,29 @@ impl I18nPolicy {
     }
 }
 
+/// V2-F15 (the recorder's response side): one finished response, observed
+/// at the pipeline's single funnel — every served response passes
+/// `finish_response` exactly once, after the security headers are stamped,
+/// so the observer sees the same response shape a replay's HTTP client
+/// would see. The CLI's recorder wiring implements this to finish the
+/// per-request capture into `.oxide/records/<request-id>.json`; a `None`
+/// observer keeps the pipeline byte-identical (the default).
+pub trait ResponseObserver: Send + Sync {
+    /// One finished response. `headers` are the stamped response headers.
+    /// `body` is `Some(bytes)` for a buffered response and `None` for a
+    /// streamed one — the stream cannot be buffered without consuming it,
+    /// so the observer is told the headers now and the CLI's stream tee
+    /// finishes that capture when the stream ends.
+    fn observe(
+        &self,
+        request_id: &str,
+        method: &str,
+        status: u16,
+        headers: &[(String, String)],
+        body: Option<&[u8]>,
+    );
+}
+
 pub struct Pipeline {
     /// A3: per-peer token bucket for the OG endpoint. `resvg` rasterization
     /// is CPU-bound and unauthenticated; without a limit one client can pin a
@@ -2184,6 +2207,10 @@ pub struct Pipeline {
     /// non-zero value makes every HTTP/1.1+2 response advertise it via
     /// `Alt-Svc`, so a browser upgrades to h3 on the next request.
     pub http3_port: u16,
+    /// V2-F15: the finished-response observer (the recorder's response
+    /// side). `None` (the default) observes nothing — the pipeline is
+    /// byte-identical; attached via [`Pipeline::with_response_observer`].
+    pub response_observer: Option<Arc<dyn ResponseObserver>>,
     /// C3: whether to emit `Alt-Svc: h3=":port"`. The h3 listener runs
     /// either way; this gates only the advertisement a browser uses to
     /// upgrade.
@@ -2750,6 +2777,7 @@ impl Default for Pipeline {
             sockets: None,
             http3_port: 0,
             http3_advertise: false,
+            response_observer: None,
         }
     }
 }
@@ -3895,6 +3923,15 @@ impl Pipeline {
         self
     }
 
+    /// V2-F15: attach the finished-response observer (the recorder's
+    /// response side). The observer fires once per served response, after
+    /// the security headers are stamped; `None` (the default) observes
+    /// nothing. Chainable.
+    pub fn with_response_observer(mut self, obs: Arc<dyn ResponseObserver>) -> Self {
+        self.response_observer = Some(obs);
+        self
+    }
+
     /// V2-F09 (feature `search`): attach the search endpoint's state —
     /// the read-only engine plus its L1. When `Some`, `GET
     /// /_oxide/search` answers the corpus; when `None` (the default) the
@@ -4776,6 +4813,20 @@ impl Pipeline {
         // the `x-oxide-csrf` header on unsafe methods.
         // SPEC-24: one redacted request log line per finished response.
         log_request(request_id, method.unwrap_or(""), r.status, &r.headers);
+        // V2-F15: the recorder's response side fires here — the one funnel
+        // every finished response passes, with the headers stamped. A
+        // streamed body is NOT observed (the stream cannot be buffered
+        // without consuming it); the observer skips it by its empty body
+        // plus the `stream` marker the caller checks. The observer never
+        // fails the response it watches.
+        if let Some(obs) = self.response_observer.as_ref() {
+            let method_str = method.unwrap_or("");
+            if r.stream.is_none() {
+                obs.observe(request_id, method_str, r.status, &r.headers, Some(&r.body));
+            } else {
+                obs.observe(request_id, method_str, r.status, &r.headers, None);
+            }
+        }
         if self.security.csrf.eq_ignore_ascii_case("token")
             && matches!(
                 method.map(|m| m.to_ascii_uppercase()).as_deref(),
