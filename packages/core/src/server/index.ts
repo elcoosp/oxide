@@ -174,6 +174,31 @@ export function redirect(location: string, status = 303): never {
 }
 
 // ---------------------------------------------------------------------------
+// Resumable streams (§V2-F07)
+// ---------------------------------------------------------------------------
+
+/** The header the server tees on (and the client reattaches under). */
+const RESUMABLE_HEADER = 'x-oxide-resumable'
+
+/**
+ * Mark a streamed endpoint response resumable (§V2-F07): the server tees
+ * every byte into the stream store, the head gains
+ * `x-oxide-stream: <id>`, and a detached client reattaches at
+ * `GET /__oxide/stream/<id>` with `Range: bytes=<n>-` to receive only the
+ * bytes it missed (the `resumableFetch` client helper drives that
+ * transparently). Only idempotent GET handlers and server functions are
+ * eligible; never HTML page streams.
+ *
+ * The returned response is the SAME response — the helper is a header
+ * stamp, so `route.ts` reads
+ * `return resumable(new Response(stream))`.
+ */
+export function resumable(response: Response): Response {
+  response.headers.set(RESUMABLE_HEADER, '1')
+  return response
+}
+
+// ---------------------------------------------------------------------------
 // Actions / meta / sockets (§9.1, §9.6)
 // ---------------------------------------------------------------------------
 
