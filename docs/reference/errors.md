@@ -95,7 +95,11 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CMP-GUARD` | server-only `{ident}` from `{}` shipped into client chunk `{chunk}` | — |
 | `CMP-NAT-001` | framework.compilerBackend is 'native' but no healthy native compiler is available for {fw} | build oxide-cli with --features native-{fw} or set framework.compilerBackend to 'auto' or 'node' |
 | `CMP-PARSE` | fix the syntax error reported by the Oxc parser | Fix the syntax error the parser names |
+| `CMP-RCC-001` | native react-compiler failed for `{}`: {detail} | set framework.compilerBackend to 'auto' or 'node' to use the Node tooling pool |
 | `CMP-SECRET` | `process.env.{name}` is read in client module `{}`;                          this would ship the secret to the browser. Move the                          read to a server module or rename to `PUBLIC_{name}`. | — |
+| `CMP-SOL-001` | native solid compile failed for `{}`: {detail} | set framework.compilerBackend to 'auto' or 'node' to use the Node tooling pool |
+| `CMP-SVT-001` | native svelte compile failed for `{}`: {message} ({code}) | set framework.compilerBackend to 'auto' or 'node' to use the Node tooling pool |
+| `CMP-VUE-001` | native vue compile failed for `{}`: {detail} | set framework.compilerBackend to 'auto' or 'node' to use the Node tooling pool |
 | `CONTENT-TYPEGEN` | mkdir {}: {e} | — |
 | `DEP-BUILDID` | the deploy build id `{}` must be non-empty lowercase hex (the A04 shape) | — |
 | `DEP-IO` | deploy store operation failed on `{}`: {e} | — |
