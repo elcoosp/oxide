@@ -3314,3 +3314,38 @@ drift) plus `CMP-SOL-001`; the `native_registry` example's stand-in
 comment ("a stand-in for a real C02 backend") updated to name the landed
 backend; the spec status table's C01 row (partial → merged, the tail
 recorded) and the C02–C11 group row (partial → merged, per-WP records).
+
+## V2-C02 — the dependency arm lands: the in-repo transform swaps for Solid 2.0's official Rust compiler core (`refactor/solid-upstream-compiler`, 2026-11-15)
+
+**What changed.** The re-open record (`docs/decisions/C02-solid-native.md`,
+2026-11-14) set the re-run condition for the day upstream published a
+sourceable Cargo tree. The `solidjs/solid` `next` branch now carries
+`packages/compiler` — the `solidjs-compiler` crate behind npm
+`@solidjs/compiler` 2.0.0-rc.21 — so the condition is met and the
+dependency arm landed: the 1.7k-line in-repo JSX/reactivity transform is
+deleted, `crates/compiler/src/native/solid.rs` is a thin adapter around
+`solidjs-compiler` (git-pinned at full SHA
+`7ea2a02e9edc976e4be4d060c7e65ba85d10b42c`, `default-features = false`
+— no NAPI, no tsrx fork), and
+the workspace oxc 0.155 stack stays the only oxc the seam's types see
+(the upstream crate pins its own oxc 0.144 internally; string in /
+string out, no type crosses). The D40 CAS version moved 1.0.0 →
+`2.0.0-rc.21+7ea2a02`, so every artifact the in-repo transform emitted
+invalidates.
+
+**Deltas vs the re-open's v1 (recorded, not silent).** The TS strip runs
+BEFORE the upstream compile (the core parses `.tsx` but does not strip
+annotations — the worker strips around its transform too; stripping
+first keeps the upstream source map valid). Dev builds now carry the
+upstream `sourceNames` markers, keep the `<Show>` component unlowered
+and emit the upstream V3 source map through a new `CompileOutput.source_
+map` seam field (the first native backend to emit one; the production
+pipeline does not consume per-file native maps yet — the pool emits
+none). The v1 refusal list shrank to what the 2.0 core itself refuses:
+spreads, SSR fragments, object `style`/`classList` and `innerHTML`
+compile natively now; `use:` directives refuse (removed in Solid 2.0)
+with the upstream migration note; every upstream failure still maps onto
+`CMP-SOL-001` with the Node-pool fix. The spike pins
+(`solid_native_spike.rs`) hold the upstream emission shapes and byte
+determinism; `scripts/compiler-equiv.sh solid` stays the capable-host
+parity gate.
