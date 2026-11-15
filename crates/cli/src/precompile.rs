@@ -796,6 +796,7 @@ mod native_pick_tests {
                 js: format!("native js for {}", req.source),
                 css: None,
                 warnings: Vec::new(),
+                source_map: None,
             })
         }
         fn health_fixture(&self) -> (&'static str, &'static str) {
