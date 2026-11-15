@@ -127,8 +127,8 @@ fn spike_api_shape_and_ts_handling() {
         "ssr compile errors: {:?}",
         ssr.errors
     );
-    let sscript = ssr.script.as_ref().expect("ssr script block");
-    println!("=== script (ssr) ===\n{}\n", sscript.code);
+    let ssr_script = ssr.script.as_ref().expect("ssr script block");
+    println!("=== script (ssr) ===\n{}\n", ssr_script.code);
 }
 
 #[test]
@@ -189,7 +189,10 @@ fn spike_native_seam_rehearsal() {
     let r = compile_fixture(req.source, &req.path.display().to_string(), ssr);
     assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
     let script = r.script.as_ref().expect("script block");
-    assert!(!script.code.is_empty());
+    assert!(
+        !script.code.is_empty(),
+        "the seam rehearsal output is non-empty"
+    );
     println!("=== seam rehearsal output (first 40 lines) ===");
     for line in script.code.lines().take(40) {
         println!("{line}");
