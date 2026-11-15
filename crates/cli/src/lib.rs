@@ -1333,8 +1333,9 @@ fn generate_island_boot_entry(
     // `loading.tsx` path. Emitted as static imports + a `loading` map passed
     // to `bootWithRouter`.
     loading: &BTreeMap<String, PathBuf>,
-    // §16.6 / SPEC-21: whether the project configured a PWA (`manifest`).
-    // When true, the boot entry registers the service worker.
+    // §16.6 / §V2-F14: whether the build emitted a service worker — the
+    // emitter's `offline.enabled` + `sw.enabled` gate. When true, the boot
+    // entry loads `/pwa-register.js` so the worker registers.
     pwa: bool,
 ) -> String {
     let mut out = String::new();
@@ -1461,10 +1462,13 @@ fn generate_island_boot_entry(
     // §16.6 / §20: report Core Web Vitals to `/_oxide/vitals`. Guarded and
     // no-op outside the browser; the boot entry only runs in one.
     out.push_str("import { reportWebVitals } from '@oxide-fw/core/client';\nreportWebVitals();\n");
-    // §16.6 / SPEC-21: auto-register the service worker when the project
-    // configured a PWA manifest. `emit_pwa_worker` wrote `/pwa-register.js`;
-    // loading it from the boot entry is what the spec's "auto-registration"
-    // means (previously the script was emitted but never loaded).
+    // §16.6 / §V2-F14: auto-register the service worker when the build
+    // emitted one (the emitter's `offline.enabled` + `sw.enabled` gate —
+    // the same boolean the caller passes). `emit_pwa_worker` wrote
+    // `/pwa-register.js`; loading it from the boot entry is what the
+    // spec's "auto-registration" means (previously the script was emitted
+    // but never loaded). The gates MUST match: registering a worker the
+    // build did not emit 404s, and emitting one no page registers is dead.
     if pwa {
         // §16.6: register the service worker at runtime, not via a
         // static `import('/pwa-register.js')`. The latter is resolved by
@@ -2349,7 +2353,7 @@ async fn build_client_bundle(
             &framework,
             &cfg.framework.islands,
             &loading_dir_map,
-            cfg.manifest.is_some(),
+            cfg.offline.enabled && cfg.sw.enabled,
         );
         let boot_dir = rootp.join(".oxide");
         std::fs::create_dir_all(&boot_dir)?;
@@ -5401,178 +5405,91 @@ fn emit_config_bundle(
     Ok(())
 }
 
-/// SPEC-21 / §16.6: emit `sw.js` when a `manifest` (a PWA block) is
-/// configured. The worker precaches every client asset in the manifest
-/// (cache-first) and serves an offline fallback for a navigation miss. The
-/// registration snippet is emitted as `dist/pwa-register.js` so the page can
-/// `<script src="/pwa-register.js">` it (or the CLI can inject it).
+/// SPEC-21 / §16.6 / §V2-F14: emit the PWA worker + its registration over
+/// the bundler's emitter (`oxide_fw_bundler::pwa`). The call-site gate is
+/// the emitter's documented contract: the build produced a client manifest
+/// (upstream guarantees it — the build bails when the bundler wrote none)
+/// and `offline.enabled` + `sw.enabled` both hold. `offline.enabled =
+/// false` "installs no service worker" (the `OfflineConfig` docs — this is
+/// the default posture, so the skip is silent); `sw.enabled = false`
+/// disables emission even with offline on (the `SwConfig` docs — loud, a
+/// configured-but-refused feature is worth a line).
+///
+/// The prerendered-shell walk is the call site's [`ShellSource`]
+/// implementation: the emitter stays pure over the client manifest.
 fn emit_pwa_worker(
     cfg: &oxide_fw_config::OxideConfig,
     dist: &Path,
-    client_manifest: &serde_json::Value,
+    client_manifest_snapshot: &serde_json::Value,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
-    if cfg.manifest.is_none() {
+    if !cfg.offline.enabled {
         return Ok(());
     }
     if !cfg.sw.enabled {
         outln!(w, "pwa: sw disabled by config (sw.enabled = false)");
         return Ok(());
     }
-    // Every asset path the client manifest names (entry + preload + css),
-    // turned into a URL. Precache is the *shell* — the paths the app needs
-    // to boot offline. Route-specific chunks are SWR'd on first use rather
-    // than precached (a large site's full chunk set would blow the install
-    // window).
-    // §16.6 / WP-r9-8: resolve the offline fallback BEFORE building the
-    // precache list, so an existing fallback route can be precached. The
-    // old order validated the fallback but never added it — `caches.match`
-    // missed on every offline navigation and degraded to the `/` shell.
-    let offline_fallback = cfg
-        .sw
-        .offline_fallback
-        .clone()
-        .unwrap_or_else(|| "/offline".to_string());
-    let fallback_exists = dist
-        .join("prerendered")
-        .join(offline_fallback.trim_start_matches('/'))
-        .with_extension("html")
-        .is_file()
-        || offline_fallback == "/";
-    let effective_fallback = if fallback_exists {
-        &offline_fallback
-    } else {
-        "/"
-    };
-
-    let mut precache: Vec<String> = vec!["/".to_string()];
-    if let Some(routes) = client_manifest.get("routes").and_then(|r| r.as_object()) {
-        for row in routes.values() {
-            if let Some(entry) = row.get("entry_chunk").and_then(|v| v.as_str()) {
-                precache.push(format!("/client/{entry}"));
-            }
-            if let Some(pre) = row.get("preload").and_then(|v| v.as_array()) {
-                for p in pre {
-                    if let Some(s) = p.as_str() {
-                        precache.push(format!("/client/{s}"));
-                    }
-                }
-            }
-            if let Some(css) = row.get("css").and_then(|v| v.as_array()) {
-                for c in css {
-                    if let Some(s) = c.as_str() {
-                        precache.push(format!("/{s}"));
-                    }
-                }
-            }
-        }
-    }
-    if let Some(assets) = client_manifest.get("assets").and_then(|a| a.as_object()) {
-        for orig in assets.keys() {
-            precache.push(orig.clone());
-        }
-    }
-    // §16.6 / WP-r9-8: precache the resolved fallback route. `install`
-    // runs `caches.addAll(PRECACHE)`, so the offline navigation's
-    // `caches.match(OFFLINE_FALLBACK)` only hits if the fallback is here.
-    if effective_fallback != "/" {
-        precache.push(effective_fallback.to_string());
-    }
-    precache.sort();
-    precache.dedup();
-    let list = precache
-        .iter()
-        .map(|s| format!("  {s:?},"))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let sw = format!(
-        r#"// Oxide service worker (§16.6). Stale-while-revalidate for
-// same-origin assets; network-first with an offline fallback for
-// navigations. Cache name is scoped by build id so a rebuild is a new
-// cache and a stale deploy self-evicts on activate.
-const CACHE = 'oxide-{build}';
-const PRECACHE = [
-{list}
-];
-const OFFLINE_FALLBACK = {fallback:?};
-
-self.addEventListener('install', (e) => {{
-  e.waitUntil(
-    caches.open(CACHE)
-      .then((c) => c.addAll(PRECACHE))
-      .then(() => self.skipWaiting())
-      .catch(() => self.skipWaiting()),
-  );
-}});
-
-self.addEventListener('activate', (e) => {{
-  e.waitUntil(
-    caches.keys()
-      .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim()),
-  );
-}});
-
-self.addEventListener('fetch', (e) => {{
-  const req = e.request;
-  if (req.method !== 'GET') return;
-  const url = new URL(req.url);
-  // Only same-origin; a cross-origin request (an analytics beacon, a CDN
-  // script) is out of scope for the app's cache.
-  if (url.origin !== self.location.origin) return;
-
-  if (req.mode === 'navigate') {{
-    // Network-first: a fresh deploy must reach the browser. On failure,
-    // the offline fallback (or the shell) — never the browser's own
-    // offline page.
-    e.respondWith(
-      fetch(req).catch(() =>
-        caches.match(OFFLINE_FALLBACK).then((hit) => hit || caches.match('/') || caches.match(req)),
-      ),
-    );
-    return;
-  }}
-
-  // Stale-while-revalidate: serve the cached copy immediately, fetch a
-  // fresh one in the background, and store it for the next request. A
-  // cached asset is not "never updated" and a network hiccup is not
-  // "unavailable" — the cache bridges both.
-  e.respondWith(
-    caches.match(req).then((cached) => {{
-      const network = fetch(req)
-        .then((resp) => {{
-          if (resp && resp.status === 200 && resp.type === 'basic') {{
-            const copy = resp.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {{}});
-          }}
-          return resp;
-        }})
-        .catch(() => cached);
-      return cached || network;
-    }}),
-  );
-}});
-"#,
-        build = client_manifest
-            .get("build_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("dev"),
-        fallback = effective_fallback,
-    );
-    std::fs::write(dist.join("sw.js"), sw).map_err(|e| anyhow::anyhow!("write sw.js: {e}"))?;
-
-    let reg = "// Oxide PWA registration (§16.6).\n\
-if ('serviceWorker' in navigator) {\n\
-  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));\n\
-}\n";
-    std::fs::write(dist.join("pwa-register.js"), reg)
-        .map_err(|e| anyhow::anyhow!("write pwa-register.js: {e}"))?;
+    // The snapshot came from the manifest the bundler wrote, so a shape
+    // mismatch here is a bundler/CLI contract bug — loud, not a silent skip.
+    let manifest: oxide_fw_bundler::ClientManifest =
+        serde_json::from_value(client_manifest_snapshot.clone())
+            .map_err(|e| anyhow::anyhow!("pwa: client manifest does not deserialize: {e}"))?;
+    let shells = PrerenderedShells::collect(&dist.join("prerendered"))?;
+    let plan = oxide_fw_bundler::pwa::plan_precache(&manifest, &cfg.sw, &cfg.offline, &shells);
+    oxide_fw_bundler::pwa::emit_pwa(dist, &plan)
+        .map_err(|e| anyhow::anyhow!("write pwa emission: {e}"))?;
     outln!(
         w,
-        "pwa: sw.js + pwa-register.js emitted (fallback: {effective_fallback})"
+        "pwa: sw.js + pwa-register.js emitted (cache ox-{}, fallback {}, {} precached)",
+        plan.build_id,
+        plan.offline_fallback,
+        plan.precache.len()
     );
     Ok(())
+}
+
+/// The build's prerendered route shells, in the URL spelling a navigation
+/// requests — the call-site implementation of the emitter's
+/// [`oxide_fw_bundler::pwa::ShellSource`] seam (the emitter never touches
+/// the disk; the walk lives here where the files are).
+///
+/// `dist/prerendered/**.html` is the ground truth for "which URL exists"
+/// (the sitemap walk's rule, shared verbatim): `url_path_from_rel` maps the
+/// file spelling to the route spelling (`prerendered/about.html` →
+/// `/about`, `prerendered/index.html` → `/`), so a cached navigation
+/// matches its request URL. A missing root — a pure-SPA build with no
+/// prerendered routes — is an empty shell set; the worker still serves the
+/// fallback chain.
+struct PrerenderedShells {
+    urls: std::collections::BTreeSet<String>,
+}
+
+impl PrerenderedShells {
+    fn collect(prerendered_root: &Path) -> anyhow::Result<Self> {
+        let mut files = Vec::new();
+        if prerendered_root.is_dir() {
+            walk_files(prerendered_root, &mut files);
+        }
+        let mut urls = std::collections::BTreeSet::new();
+        for f in files {
+            if f.extension().is_none_or(|x| x != "html") {
+                continue;
+            }
+            let Ok(rel) = f.strip_prefix(prerendered_root) else {
+                continue;
+            };
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            urls.insert(url_path_from_rel(&format!("prerendered/{rel_str}")));
+        }
+        Ok(Self { urls })
+    }
+}
+
+impl oxide_fw_bundler::pwa::ShellSource for PrerenderedShells {
+    fn shell_urls(&self) -> std::collections::BTreeSet<String> {
+        self.urls.clone()
+    }
 }
 
 fn emit_web_manifest(
@@ -7069,7 +6986,7 @@ async fn cmd_build(
                 &framework,
                 &cfg.framework.islands,
                 &loading_dir_map,
-                cfg.manifest.is_some(),
+                cfg.offline.enabled && cfg.sw.enabled,
             );
             let boot_dir = rootp.join(".oxide");
             std::fs::create_dir_all(&boot_dir)?;
