@@ -371,6 +371,14 @@ message = "QR generation failed: {e}"
 [DEV-TLS]
 message = "certificate params failed: {e}"
 
+[DEV-RFN-001]
+message = "the native fn crate {name} failed to build (cargo build --lib): {tail}"
+fix = "the compile error above is the fix; a successful build must produce the cdylib the [lib] crate-type declares"
+
+[DEV-RFN-002]
+message = "the rebuilt library's types payload does not parse (the §9.4 id bindings cannot be re-derived): {e}"
+fix = "rebuild with the `export_table!` macro's `oxide_fn_types_json` side export; the loop refuses rather than swap with guessed ids"
+
 [DEV-WS-001]
 message = "workspace discovery failed for {path}: {err_msg}"
 fix = "Check the manifest's shape — pnpm-workspace.yaml `packages:` is a list of glob entries (block or flow), package.json `workspaces` is a list of globs — and run the package manager's install so linked packages resolve under node_modules"
@@ -730,6 +738,10 @@ fix = "Re-record; the replay observed more than the record captured"
 [RPL-005]
 message = "cannot load the record: schema version {} is not one this build reads (version 1)"
 fix = "re-record the request with the current build; the record schema changed"
+
+[RPL-006]
+message = "replay: the recorded request body of {method} {url} does not decode from base64: {e}"
+fix = "Re-record; the record's payload is corrupt (truncated or hand-edited)"
 
 [RTR-001]
 message = "routes directory not found: {}"
