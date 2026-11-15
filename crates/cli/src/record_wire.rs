@@ -321,15 +321,15 @@ fn finish_capture(
         drop(rec);
         // The decision: the status now exists. A declined capture is
         // dropped silently (that IS the sampling decision).
-        if capture.policy.should_record(finished.status, roll) {
-            if let Err(e) = capture.sink.write(&record) {
-                tracing::warn!(
-                    code = %e.0.code,
-                    msg = %e.0.message,
-                    request_id = %finished.request_id,
-                    "the request record could not be written; the capture is dropped"
-                );
-            }
+        if capture.policy.should_record(finished.status, roll)
+            && let Err(e) = capture.sink.write(&record)
+        {
+            tracing::warn!(
+                code = %e.0.code,
+                msg = %e.0.message,
+                request_id = %finished.request_id,
+                "the request record could not be written; the capture is dropped"
+            );
         }
     });
 }
