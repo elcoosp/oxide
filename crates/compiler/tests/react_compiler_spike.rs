@@ -73,7 +73,7 @@ fn spike_memoizes_hooks_through_the_string_seam() {
             output,
             diagnostics,
         } => {
-            println!("=== diagnostics: {:?} ===", diagnostics);
+            println!("=== diagnostics: {diagnostics:?} ===");
             if let Some(_output) = output {
                 let printed = oxc_codegen::Codegen::new()
                     .with_options(oxc_codegen::CodegenOptions::default())
