@@ -1,19 +1,28 @@
 //! The CLI's serving half (§V2-F10): the generation pool the data plane
-//! checks against, the reload promote and the expiry tick.
+//! checks against, the reload promote, the expiry tick — and, since the
+//! two-pool wiring landed, the SERVING half: a jshost pool + loader runner
+//! per generation, routed by the request's build id.
 //!
-//! The V8-free seams live in `oxide_fw_dispatch` (`skew::GenerationPool`,
-//! the `AcceptedGenerations` contract the stage drives); this module is
-//! the CLI state around them — the spec's §V2-F10 step 1 sketch
-//! (`crates/cli/src/serve/generations.rs`) minus the second-pool boot:
-//! one jshost pool serves today's generations, so the id-level pool (the
-//! bounded `GenerationPool`) owns the acceptance verdict while the
-//! serving-handle `GenerationPools<Arc<dyn Pool>>` routing waits on the
-//! two-pool boot (see `docs/deviations.md`, F10).
+//! The V8-free seams live in `oxide_fw_dispatch` (`skew::GenerationPool`
+//! for the acceptance verdict, `pools::GenerationPools` for the
+//! serving-handle routing — its semantics are pinned by
+//! `crates/dispatch/tests/pools_tdd.rs`); this module is the CLI state
+//! around them. The loader-byte guarantee: a generation's loader sources
+//! are SNAPSHOTTED under `.oxide/generations/<id>/src` (boot and promote
+//! both snapshot — the bytes are frozen at the moment the generation
+//! becomes current), and the demoted generation's runner runs its module
+//! paths from its own snapshot root, so a later source edit cannot leak
+//! into an accepted old-build response. (The worker recompiles per run
+//! with an mtime check — a pool alone does not freeze bytes; the snapshot
+//! does.)
 
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use oxide_fw_dispatch::skew::GenerationPool;
+use oxide_fw_jshost::Pool;
+use oxide_fw_server::LoaderRunner;
 
 /// The demotion window used when the typed `deploy.skewWindow` literal
 /// cannot parse. Load validation (`CFG-DEPLOY`) refuses a bad literal at
@@ -90,6 +99,148 @@ pub fn promote_handle_from_dist(
     }
     pool.promote(id.clone(), now);
     Some(id)
+}
+
+/// One generation's serving handles (§V2-F10 step 2): the pool booted over
+/// that dist, the loader runner the data-plane dispatch calls, and the
+/// loader-source root its runner's module paths resolve against (the
+/// frozen snapshot — see the module doc).
+pub struct GenServing {
+    /// The worker pool executing the generation's loads.
+    pub pool: Arc<dyn Pool>,
+    /// The loader runner (the same seam the dispatch's `/__data` path
+    /// calls); `None` when the boot had no runner (a serve without server
+    /// modules — the generation then contributes only its pool).
+    pub runner: Option<Arc<dyn LoaderRunner>>,
+    /// The loader-source root for THIS generation's module paths.
+    pub routes_root: PathBuf,
+}
+
+/// The serving pools (§V2-F10 steps 1-2 wired): the current generation's
+/// handles plus the demoted ones, each routed by the request's build id
+/// through the dispatch crate's [`GenerationPools`] — the acceptance
+/// verdict stays the one stage (the wrapper drives the id-level pool);
+/// this layer decides WHO serves an accepted id.
+pub struct ServingPools {
+    pools: RwLock<oxide_fw_dispatch::pools::GenerationPools<Arc<GenServing>>>,
+}
+
+impl ServingPools {
+    /// Boot the pools: `id` is served by `gen`; the window and capacity
+    /// are the same typed config the id-level pool runs.
+    pub fn from_boot(
+        id: &str,
+        generation: Arc<GenServing>,
+        window: Duration,
+        capacity: u32,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            pools: RwLock::new(oxide_fw_dispatch::pools::GenerationPools::new(
+                id.to_string(),
+                generation,
+                window,
+                capacity.max(1) as usize,
+            )),
+        })
+    }
+
+    /// The id every data-plane response advertises.
+    #[must_use]
+    pub fn current(&self) -> Option<String> {
+        self.pools.read().ok().map(|p| p.current().to_string())
+    }
+
+    /// Install a freshly-booted generation as current (the reload deploy:
+    /// the caller built the new pool + runner, the old handles demote
+    /// together). `false` when the id is already current (an idempotent
+    /// re-deploy never churns the pools).
+    pub fn promote_booted(&self, id: &str, generation: Arc<GenServing>) -> bool {
+        let Ok(mut p) = self.pools.write() else {
+            return false;
+        };
+        if p.current() == id {
+            return false;
+        }
+        p.promote(id.to_string(), generation, Instant::now());
+        true
+    }
+
+    /// The §V2-F10 step-2 routing decision: which generation's handles
+    /// serve a request advertising `id`? `None` id (HTML navigations,
+    /// header-less data-plane requests) → current; a demoted id inside
+    /// ITS window → THAT generation's handles. The caller falls back to
+    /// the boot handles when the pools are unavailable (a poisoned lock)
+    /// — the stage's 409 already answered unknown ids.
+    #[must_use]
+    pub fn route_for(
+        &self,
+        id: Option<&str>,
+    ) -> Option<(Arc<GenServing>, oxide_fw_dispatch::build::Gen)> {
+        let p = self.pools.read().ok()?;
+        let (generation, which) = p.route(id, Instant::now())?;
+        Some((Arc::clone(generation), which))
+    }
+
+    /// Drop expired demoted generations (their handles go; nothing is
+    /// unlinked — the snapshots are content-frozen copies the next sweep
+    /// reclaims). Returns how many went.
+    pub fn expire(&self) -> usize {
+        let Ok(mut p) = self.pools.write() else {
+            return 0;
+        };
+        p.expire(Instant::now())
+    }
+}
+
+/// Deep-copy the loader sources a generation serves into
+/// `.oxide/generations/<id>/src` (the bytes frozen at the moment the
+/// generation becomes current — the worker's per-run mtime recompile
+/// would otherwise let a later source edit leak into an accepted
+/// old-build response). `Err` lists the first failure; a failed snapshot
+/// downgrades the generation to "acceptance only" (the pools skip the
+/// route step) instead of failing the boot.
+pub fn snapshot_generation_sources(root: &std::path::Path, id: &str) -> Result<PathBuf, String> {
+    let src = root.join("src");
+    if !src.is_dir() {
+        return Err(format!("no src/ tree at {}", root.display()));
+    }
+    let dest = root.join(".oxide").join("generations").join(id);
+    if dest.join("src").is_dir() {
+        return Ok(dest.join("src"));
+    }
+    copy_tree(&src, &dest.join("src"), 0)?;
+    Ok(dest.join("src"))
+}
+
+const SNAPSHOT_MAX_DEPTH: usize = 24;
+
+fn copy_tree(src: &std::path::Path, dest: &std::path::Path, depth: usize) -> Result<(), String> {
+    if depth > SNAPSHOT_MAX_DEPTH {
+        return Err(format!(
+            "snapshot tree deeper than {SNAPSHOT_MAX_DEPTH} at {}",
+            src.display()
+        ));
+    }
+    std::fs::create_dir_all(dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
+    let entries = std::fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
+        let p = entry.path();
+        let name = entry.file_name();
+        let target = dest.join(&name);
+        let ft = entry
+            .file_type()
+            .map_err(|e| format!("file_type {}: {e}", p.display()))?;
+        if ft.is_dir() {
+            copy_tree(&p, &target, depth + 1)?;
+        } else if ft.is_file() {
+            std::fs::copy(&p, &target).map_err(|e| format!("copy {}: {e}", p.display()))?;
+        }
+        // Symlinks and other entries are skipped: a generation's loader
+        // graph is source files; a linked tree is a build artifact, not a
+        // loader byte.
+    }
+    Ok(())
 }
 
 /// The §V2-F10 step-3 expiry task: every 30 s the expired demotions are
