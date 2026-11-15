@@ -332,6 +332,7 @@ globalThis.fetch = async function oxideFetch(input, init = {}) {
     } else if (typeof raw === "object") {
       for (const k of Object.keys(raw)) h.append(k, String(raw[k]));
     }
+    recordCompletedFetch(method, url, bodyB64, res.status, h, bytes);
     return new Response(bytes, { status: res.status, headers: h });
   } catch (e) {
     // S-01: only an *unregistered* op (a legacy host with no fetch handler)
@@ -344,11 +345,234 @@ globalThis.fetch = async function oxideFetch(input, init = {}) {
         __fetchFallbackWarned = true;
         console.error("[oxide] fetch op unavailable (" + (e && e.message) + "); falling back to native fetch (no SSRF guard)");
       }
-      if (__nativeFetch) return __nativeFetch(input, init);
+      if (__nativeFetch) {
+        // Recording buffers the fallback response so it lands in the record;
+        // without the record mode the native Response streams through
+        // untouched (the pre-F15 behavior).
+        if (!recordState) return __nativeFetch(input, init);
+        const res = await __nativeFetch(input, init);
+        const bytes = Buffer.from(await res.arrayBuffer());
+        recordCompletedFetch(method, url, bodyB64, res.status, res.headers, bytes);
+        return new Response(bytes, { status: res.status, headers: res.headers });
+      }
     }
     throw e;
   }
 };
+
+// --- V2-F15 record-and-replay (worker half) --------------------------------
+//
+// Two env-gated modes, mirroring the Rust substrate in
+// `crates/dispatch/src/{record,replay}.rs`:
+//
+// OXIDE_RECORD=1 (the recorder's observation side): completed outbound
+// fetches, cache ops and the Date.now / Math.random / crypto.randomUUID
+// observations accumulate into a module-level buffer; the host drains them
+// with the `replay:drain` op (which resets the buffer) and folds them into
+// `.oxide/records/<request-id>.json`. The wrappers are transparent — the
+// values the pipeline sees are unchanged.
+//
+// OXIDE_REPLAY=<file> (the player): the record file's fetch ops play back
+// IN ORDER (matched by method, URL and body; an unexpected call is an
+// error naming RPL-002) and the non-deterministic sources play from the
+// recorded sequences (a drained stream is RPL-004). The overrides REPLACE
+// the fetch shim — a replayed request never touches the network. After the
+// install, the normal pipeline runs.
+const RPL_UNEXPECTED_CALL = "RPL-002";
+const RPL_SEQUENCE_DRAINED = "RPL-004";
+const REPLAY_BODY_CAP = 1024 * 1024; // the record's 1 MB body cap
+
+// The recorder's buffer, non-null only when OXIDE_RECORD=1.
+let recordState = null;
+// The player's state, non-null only when OXIDE_REPLAY=<file>.
+let replayState = null;
+
+function drainedError(stream) {
+  const e = new Error(
+    `replay: the recorded ${stream}() sequence is drained (${RPL_SEQUENCE_DRAINED})`,
+  );
+  e.code = RPL_SEQUENCE_DRAINED;
+  return e;
+}
+
+function capBase64(bytes) {
+  const truncated = bytes.length > REPLAY_BODY_CAP;
+  const capped = truncated ? bytes.subarray(0, REPLAY_BODY_CAP) : bytes;
+  return { bodyBase64: capped.toString("base64"), truncated };
+}
+
+// The recorder's Date.now / Math.random / crypto.randomUUID observation
+// wrappers — installed only when OXIDE_RECORD=1, transparent to callers.
+if (process.env.OXIDE_RECORD === "1") {
+  recordState = { fetches: [], cacheOps: [], sequences: { nowMs: [], randoms: [], uuids: [] } };
+  const nativeNow = Date.now.bind(Date);
+  Date.now = function oxideRecordingNow() {
+    const v = nativeNow();
+    recordState.sequences.nowMs.push(v);
+    return v;
+  };
+  const nativeRandom = Math.random.bind(Math);
+  Math.random = function oxideRecordingRandom() {
+    const v = nativeRandom();
+    recordState.sequences.randoms.push(v);
+    return v;
+  };
+  const nativeCrypto = globalThis.crypto;
+  if (nativeCrypto && typeof nativeCrypto.randomUUID === "function") {
+    const nativeUuid = nativeCrypto.randomUUID.bind(nativeCrypto);
+    nativeCrypto.randomUUID = function oxideRecordingUuid() {
+      const v = nativeUuid();
+      recordState.sequences.uuids.push(v);
+      return v;
+    };
+  }
+  // The cache ops user code makes through the host bridge (`cache_get` /
+  // `cache_set` / `cache_tag`, the §9.3 surface) are captured like fetches:
+  // the op name, the key, and the read verdict (§V2-F15 "cache op results").
+  const nativeOpRequest = globalThis.__oxide_op_request;
+  globalThis.__oxide_op_request = async function oxideRecordingOp(op, args) {
+    const reply = await nativeOpRequest(op, args);
+    if (op === "CacheGet") {
+      recordState.cacheOps.push({
+        op: "l1.get",
+        key: String(args?.key ?? ""),
+        hit: reply != null,
+      });
+    } else if (op === "CacheSet") {
+      recordState.cacheOps.push({ op: "l1.set", key: String(args?.key ?? ""), hit: null });
+    } else if (op === "CacheTag") {
+      recordState.cacheOps.push({ op: "l1.tag", key: String(args?.key ?? ""), hit: null });
+    }
+    return reply;
+  };
+}
+
+// One completed outbound call, into the recorder's buffer. Headers are
+// consumed as pairs (the record's redaction runs host-side, where the
+// secret-trio sha256 prefix is applied by the Rust substrate).
+function recordCompletedFetch(method, url, requestBodyB64, status, resHeaders, bodyBytes) {
+  if (!recordState) return;
+  try {
+    const headerPairs = [];
+    if (resHeaders && typeof resHeaders.forEach === "function") {
+      resHeaders.forEach((v, k) => headerPairs.push([k, v]));
+    } else if (resHeaders && typeof resHeaders.entries === "function") {
+      for (const [k, v] of resHeaders.entries()) headerPairs.push([k, v]);
+    }
+    const { bodyBase64, truncated } = capBase64(bodyBytes ?? Buffer.alloc(0));
+    recordState.fetches.push({
+      method,
+      url,
+      requestBodyBase64: requestBodyB64 ?? "",
+      truncated: false,
+      response: { status, headers: headerPairs, bodyBase64, truncated },
+    });
+  } catch {
+    // A capture failure must never break the traffic it observes.
+  }
+}
+
+// The host's drain: everything this worker captured since the last drain,
+// then the buffer resets. Always answers (an empty shape when the record
+// mode is off), so the host can drain unconditionally.
+function drainRecordState() {
+  if (!recordState) {
+    return { fetches: [], cacheOps: [], sequences: { nowMs: [], randoms: [], uuids: [] } };
+  }
+  const out = {
+    fetches: recordState.fetches,
+    cacheOps: recordState.cacheOps,
+    sequences: recordState.sequences,
+  };
+  recordState.fetches = [];
+  recordState.cacheOps = [];
+  recordState.sequences = { nowMs: [], randoms: [], uuids: [] };
+  return out;
+}
+
+// The player: the record file's fetch ops and sequences, played IN ORDER.
+if (process.env.OXIDE_REPLAY) {
+  try {
+    const record = JSON.parse(fs.readFileSync(process.env.OXIDE_REPLAY, "utf8"));
+    const matcher = {
+      ops: Array.isArray(record.fetches) ? record.fetches.slice() : [],
+      i: 0,
+      take(method, url, requestBodyB64) {
+        if (matcher.i >= matcher.ops.length) {
+          const e = new Error(
+            `replay: outbound ${method} ${url} is not in the record (all recorded ops are played) (${RPL_UNEXPECTED_CALL})`,
+          );
+          e.code = RPL_UNEXPECTED_CALL;
+          throw e;
+        }
+        const next = matcher.ops[matcher.i];
+        if (next.method !== method || next.url !== url || next.requestBodyBase64 !== requestBodyB64) {
+          const e = new Error(
+            `replay: outbound ${method} ${url} is not the recorded call (expected ${next.method} ${next.url}) (${RPL_UNEXPECTED_CALL})`,
+          );
+          e.code = RPL_UNEXPECTED_CALL;
+          throw e;
+        }
+        matcher.i += 1;
+        return next.response;
+      },
+    };
+    const seq = {
+      nowMs: (record.sequences && record.sequences.nowMs) || [],
+      randoms: (record.sequences && record.sequences.randoms) || [],
+      uuids: (record.sequences && record.sequences.uuids) || [],
+      i: { now: 0, random: 0, uuid: 0 },
+    };
+    globalThis.fetch = async function oxideReplayFetch(input, init = {}) {
+      const url = typeof input === "string" ? input : (input && input.url) || String(input);
+      const method = (init.method || (input && input.method) || "GET").toUpperCase();
+      let requestBodyB64 = "";
+      const body = init.body;
+      if (body != null) {
+        const bytes =
+          typeof body === "string"
+            ? Buffer.from(body, "utf8")
+            : body instanceof Uint8Array
+            ? Buffer.from(body)
+            : Buffer.from(String(body), "utf8");
+        requestBodyB64 = bytes.toString("base64");
+      }
+      const recorded = matcher.take(method, url, requestBodyB64);
+      const bytes = Buffer.from(recorded.bodyBase64 || "", "base64");
+      const h = new Headers();
+      for (const pair of recorded.headers || []) {
+        if (Array.isArray(pair) && pair.length === 2) h.append(pair[0], pair[1]);
+      }
+      return new Response(bytes, { status: recorded.status, headers: h });
+    };
+    Date.now = function oxideReplayNow() {
+      if (seq.i.now >= seq.nowMs.length) throw drainedError("Date.now");
+      return seq.nowMs[seq.i.now++];
+    };
+    Math.random = function oxideReplayRandom() {
+      if (seq.i.random >= seq.randoms.length) throw drainedError("Math.random");
+      return seq.randoms[seq.i.random++];
+    };
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+      globalThis.crypto.randomUUID = function oxideReplayUuid() {
+        if (seq.i.uuid >= seq.uuids.length) throw drainedError("crypto.randomUUID");
+        return seq.uuids[seq.i.uuid++];
+      };
+    }
+    replayState = { requestId: record.requestId, buildId: record.buildId };
+    globalThis.__oxide_replay = {
+      requestId: record.requestId,
+      buildId: record.buildId,
+      recordPath: process.env.OXIDE_REPLAY,
+    };
+  } catch (e) {
+    // A record the worker cannot read leaves the pipeline unreplayed — the
+    // failure is LOUD on stderr (the host surfaces it), never silent.
+    console.error(
+      `[oxide] OXIDE_REPLAY=${process.env.OXIDE_REPLAY} could not be loaded (${e && e.message ? e.message : e}); the worker runs WITHOUT replay`,
+    );
+  }
+}
 
 // Cache required modules across calls (CJS path).
 const modCache = new Map();
@@ -2210,6 +2434,11 @@ async function handleCall(msg) {
 
 async function handleCallInner(msg) {
   const { id, entry, input } = msg;
+  // V2-F15: the record/replay control ops. `replay:drain` returns (and
+  // resets) the recorder's buffer; `replay:identity` reports the installed
+  // record's identity for diagnostics. Both always answer.
+  if (entry.kind === "replay:drain") { callOk(id, drainRecordState()); return; }
+  if (entry.kind === "replay:identity") { callOk(id, replayState ?? null); return; }
   if (entry.kind === "tooling:module") { await dispatchToolingModule(id, input); return; }
   if (entry.kind === "tooling:vue-compile") { await dispatchVueCompile(id, input); return; }
   if (entry.kind === "tooling:svelte-compile") { await dispatchSvelteCompile(id, input); return; }
