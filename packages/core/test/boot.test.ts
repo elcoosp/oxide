@@ -417,3 +417,145 @@ test('bootWithRouter: same-origin link click dispatches adapter.update (§8.4)',
     restoreGlobals(saved)
   }
 })
+
+// ---------------------------------------------------------------------------
+// §V2-F05: the live-loader lifecycle in boot. The connection follows the
+// CURRENT input: opened after hydration when the bootstrap advertised
+// `live: true`, the stream's decoded envelope feeds `adapter.update` (the
+// same in-place data update a navigation uses), closed on navigation away
+// and re-opened when a navigation lands on another live route (the /__data
+// envelope's `live` flag rides the input).
+// ---------------------------------------------------------------------------
+
+class FakeLiveSource {
+  static instances: FakeLiveSource[] = []
+  url: string
+  closed = false
+  handlers = new Map<string, ((ev: { data?: string }) => void)[]>()
+  constructor(url: string) {
+    this.url = url
+    FakeLiveSource.instances.push(this)
+  }
+  addEventListener(type: string, cb: (ev: { data?: string }) => void): void {
+    const list = this.handlers.get(type) ?? []
+    list.push(cb)
+    this.handlers.set(type, list)
+  }
+  removeEventListener(): void {}
+  close(): void {
+    this.closed = true
+  }
+  emit(type: string, data?: string): void {
+    for (const cb of this.handlers.get(type) ?? []) cb({ data })
+  }
+}
+
+function installLiveSource(): void {
+  FakeLiveSource.instances = []
+  const g = globalThis as Record<string, unknown>
+  g.EventSource = FakeLiveSource as unknown as typeof EventSource
+}
+
+function b64of(bytes: Uint8Array): string {
+  let s = ''
+  for (const b of bytes) s += String.fromCharCode(b)
+  return Buffer.from(s, 'binary').toString('base64')
+}
+
+const settleNav = () => new Promise((r) => setTimeout(r, 30))
+
+test('bootWithRouter: opens the live stream for a live bootstrap route and applies data frames (§V2-F05)', async () => {
+  const saved = saveGlobals()
+  try {
+    const root = makeRoot()
+    const doc = makeDoc({ root })
+    const location = { href: 'http://x.test/live', pathname: '/live', search: '' }
+    const g = globalThis as Record<string, unknown>
+    g.window = { __oxide: { route: '/live', data: '', live: true }, __oxideBoot: { loadChunk: async () => ({}) }, location }
+    g.document = doc
+    g.location = location
+    g.history = {
+      state: null,
+      pushState() {},
+      replaceState() {},
+    }
+    g.__oxide = g.window.__oxide
+    g.__oxideBoot = g.window.__oxideBoot
+    installLiveSource()
+    const updates: any[] = []
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(input: unknown) { updates.push(input) },
+      hydrateIsland(): Disposer { return () => {} },
+    }
+    const dispose = bootWithRouter(adapter)
+    assert.equal(FakeLiveSource.instances.length, 1, 'one live connection for the live route')
+    const es = FakeLiveSource.instances[0]
+    assert.match(es.url, /^\/__oxide\/live\?route=/)
+    assert.ok(es.url.includes('route=%2Flive'), 'the route travels percent-encoded')
+    assert.ok(es.url.includes('url='), 'the page url rides')
+    // A data frame (base64 ODF envelope) applies in place through the
+    // adapter — the same path a navigation takes.
+    const envelope = encodeLite({ route: '/live', url: '/live', params: {}, data: { n: 7 } })
+    es.emit('data', b64of(envelope))
+    await settleNav()
+    assert.equal(updates.length, 1, 'the data frame applied')
+    assert.deepEqual(updates[0].data, { n: 7 })
+    // Disposing boot closes the stream.
+    dispose()
+    assert.equal(es.closed, true, 'the boot disposer closes the stream')
+  } finally {
+    restoreGlobals(saved)
+  }
+})
+
+test('bootWithRouter: closes the live stream on navigation away, reopens for a live route (§V2-F05)', async () => {
+  const saved = saveGlobals()
+  try {
+    const root = makeRoot()
+    const doc = makeDoc({ root, links: [makeLink('/other'), makeLink('/also')] })
+    const location = { href: 'http://x.test/live', pathname: '/live', search: '' }
+    const history = {
+      state: null as unknown,
+      pushState(s: unknown) { this.state = s },
+      replaceState(s: unknown) { this.state = s },
+    }
+    const g = globalThis as Record<string, unknown>
+    g.window = { __oxide: { route: '/live', data: '', live: true }, __oxideBoot: { loadChunk: async () => ({}) }, location }
+    g.document = doc
+    g.location = location
+    g.history = history
+    g.__oxide = g.window.__oxide
+    g.__oxideBoot = g.window.__oxideBoot
+    g.fetch = async () => new Response(encodeLite({ route: '/other', url: '/other', params: {}, data: {} }), { status: 200 })
+    installLiveSource()
+    const adapter: BootAdapter = {
+      hydrate(): Disposer { return () => {} },
+      update(): void {},
+      hydrateIsland(): Disposer { return () => {} },
+    }
+    const dispose = bootWithRouter(adapter)
+    assert.equal(FakeLiveSource.instances.length, 1, 'the bootstrap connection')
+    const first = FakeLiveSource.instances[0]
+
+    // Navigate to a NON-live route: the stream closes (the envelope carries
+    // no `live` flag) and nothing reopens.
+    doc._fireClick(mustEl(doc.querySelectorAll('a[href]'), 0))
+    await settleNav()
+    assert.equal(first.closed, true, 'navigation away closes the stream')
+    assert.equal(FakeLiveSource.instances.length, 1, 'no connection for a non-live route')
+
+    // Navigate to ANOTHER live route (the envelope advertises live): a new
+    // connection opens for that route's path.
+    g.fetch = async () => new Response(encodeLite({ route: '/also', url: '/also', params: {}, data: {}, live: true }), { status: 200 })
+    doc._fireClick(mustEl(doc.querySelectorAll('a[href]'), 1))
+    await settleNav()
+    assert.equal(FakeLiveSource.instances.length, 2, 'the live route reopens')
+    const second = FakeLiveSource.instances[1]
+    assert.ok(second.url.includes('route=%2Falso'), 'the new route path is the subscription')
+    assert.equal(second.closed, false, 'the new stream is open')
+    dispose()
+  } finally {
+    restoreGlobals(saved)
+  }
+})
