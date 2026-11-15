@@ -355,3 +355,32 @@ test('router: goto() without a manifest stamps no nav headers', async () => {
   const call = mustCall(calls, 0)
   assert.equal(call.headers?.['x-oxide-nav-from'], undefined)
 })
+
+// §V2-F05: the live advertisement rides the /__data envelope — the boot
+// lifecycle syncs the SSE connection from the applied input, so
+// normalizeInput must carry the envelope's `live` flag through.
+test('router: normalizeInput carries the envelope live flag (§V2-F05)', async () => {
+  const liveRoutes = {
+    ...ROUTES,
+    '/live': { route: '/live', params: {}, url: 'http://x.test/live', data: { n: 1 }, live: true },
+  }
+  const { doc, dispatch } = setup({}, [linkEl('/live'), linkEl('/about')])
+  // Rebuild the fetch with the live route available: the harness's
+  // makeFetch is closed over ROUTES, so this test dispatches clicks with
+  // its own router instead.
+  const { fetchImpl } = makeFetch(liveRoutes)
+  const updates: ClientInput[] = []
+  const router = createRouter({
+    adapter: { update: (input: ClientInput) => updates.push(input) },
+    manifest: { routes: {} },
+    doc,
+    history: new FakeHistory(),
+    location: { href: 'http://x.test/', pathname: '/', search: '' },
+    fetch: fetchImpl as typeof fetch,
+  })
+  await router.goto('/live')
+  assert.equal(mustEl(updates, 0).live, true, 'the live envelope rides the input')
+  await router.goto('/about')
+  assert.equal(mustEl(updates, 1).live, undefined, 'non-live envelopes stay untouched')
+  void dispatch
+})
