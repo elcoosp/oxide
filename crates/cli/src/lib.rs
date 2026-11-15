@@ -1158,6 +1158,7 @@ async fn scan_routes(
             }
             tree.insert(oxide_fw_router::RouteEntry {
                 live: None,
+                priority: None,
                 // A root middleware: base dir `routes`, so it wraps every
                 // route (the chain rule is a prefix match).
                 id: oxide_fw_router::RouteId(format!("routes/{safe}.plugin-middleware")),
@@ -1253,6 +1254,7 @@ async fn scan_routes(
                     .unwrap_or_default();
                 tree.insert(oxide_fw_router::RouteEntry {
                     live: None,
+                    priority: None,
                     id: oxide_fw_router::RouteId(id.to_string()),
                     kind,
                     segments,
@@ -9285,6 +9287,11 @@ pub struct StartedServer {
     /// production reindexes by building and starting anew.
     #[cfg(feature = "search")]
     pub(crate) hot_search: Option<std::sync::Arc<oxide_fw_search::SwappableSearchIndex>>,
+    /// V2-F12: the brownout governor the sampler drives. The e2e pins
+    /// flip the level through it (the same seam the sampler writes) to
+    /// pin the enforcement stage and the readiness flip on the wire;
+    /// `None` when `brownout.enabled` is off (the default).
+    pub(crate) brownout: Option<std::sync::Arc<crate::serve::brownout::BrownoutWiring>>,
 }
 
 /// Boxed dispatch future. Structurally identical to `futures::future::BoxFuture<_,
@@ -9644,6 +9651,14 @@ struct DispatchOpts {
     waterfall: Option<oxide_fw_dev::WaterfallRecorder>,
     session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     ppr_shells: Option<PprShells>,
+    /// V2-F07: the resumable-stream wiring (the replay store + the
+    /// reattach limiter). `None` keeps the pre-F07 shapes (no reattach
+    /// arm, no tee); the stream pins construct one.
+    streams: Option<std::sync::Arc<crate::serve::streams::StreamWiring>>,
+    /// V2-F12: the brownout wiring (the governor the sampler drives).
+    /// `None` keeps the pre-F12 shapes (no enforcement stage); the
+    /// brownout pins construct one.
+    brownout: Option<std::sync::Arc<crate::serve::brownout::BrownoutWiring>>,
 }
 
 #[cfg(test)]
@@ -9672,6 +9687,8 @@ fn build_dispatch(
         waterfall: opts.waterfall,
         session_codec: opts.session_codec,
         ppr_shells: opts.ppr_shells,
+        streams: opts.streams,
+        brownout: opts.brownout,
         esm_state: None,
         record: None,
         recordings: std::sync::Arc::new(crate::record_wire::Recordings::new()),
@@ -9771,6 +9788,19 @@ pub(crate) struct DispatchArgs {
     /// step is inert and the boot handles serve every generation, the
     /// pre-pool byte shapes).
     pub serving_pools: Option<std::sync::Arc<crate::serve::generations::ServingPools>>,
+    /// V2-F07: the resumable-stream wiring (`serve::streams::StreamWiring`
+    /// — the replay store + the per-IP reattach limiter). `Some` on every
+    /// real server boot (the reattach arm runs and resumable endpoint
+    /// responses tee); `None` for the test helper and any arm without a
+    /// store (no stream was ever teed, so the arm would answer every id
+    /// `Gone` — the pre-F07 fall-through is the honest shape there).
+    pub streams: Option<std::sync::Arc<crate::serve::streams::StreamWiring>>,
+    /// V2-F12: the brownout wiring (`serve::brownout::BrownoutWiring` —
+    /// the governor the sampler drives). `Some` on every real server boot
+    /// with `brownout.enabled` (the enforcement stage runs, the ops
+    /// endpoints report the level); `None` for the test helper and every
+    /// `enabled: false` boot (the stage is inert, the pre-F12 shapes).
+    pub brownout: Option<std::sync::Arc<crate::serve::brownout::BrownoutWiring>>,
 }
 
 fn build_dispatch_swappable(
@@ -9802,6 +9832,8 @@ fn build_dispatch_swappable(
         generations,
         live,
         serving_pools,
+        streams,
+        brownout,
     } = args;
 
     let boot_script_url_for_render = boot_script_url.clone();
@@ -9840,6 +9872,17 @@ fn build_dispatch_swappable(
     // happens inside the closure body, the guard never enters an async
     // block.
     let generations_for_render = generations.clone();
+    // V2-F07: the resumable-stream wiring the tee (endpoint responses) and
+    // the reattach route (`GET /__oxide/stream/<id>`) share, plus the
+    // per-process id counter the tee mints stream ids with
+    // (`stream_id(request_id, counter)` — blake3 over the request id and
+    // the counter, the A04 id convention).
+    let streams_for_dispatch = streams.clone();
+    let stream_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    // V2-F12: the brownout wiring the enforcement stage reads (one
+    // relaxed atomic per request at `Normal`); the sampler/probe tasks
+    // are spawned at boot.
+    let brownout_for_dispatch = brownout.clone();
     // The framework dispatch itself. `inner_dispatch` because the V2-A04
     // stage install (below) wraps it — the wrapper owns the data-plane
     // build check and the advertise stamp, so the ~2000-line body keeps
@@ -10028,6 +10071,65 @@ fn build_dispatch_swappable(
             let resp = live.endpoint_response(sub, boot_build_id.as_deref());
             return Box::pin(async move { resp });
         }
+        // V2-F07 step 2: `GET /__oxide/stream/<id>` — the reattach route.
+        // Data plane (the wrapper's stage already checked the build id:
+        // the reattach replays response bytes, so it enforces the same
+        // contract). The arm composes the substrate's pure pieces — the
+        // id parse (`stream_resume_id`), the `Range: bytes=<n>-` offset
+        // (`parse_range_offset`, absent header = 0), the store lookup and
+        // the two responses (`stream_resume_response` / the `410`
+        // `stream_gone_response`). The per-IP rate limit rides the
+        // sharded limiter the wiring boots (a hot loop over one id is
+        // pure waste; the client's own backoff ladder tops out at five).
+        // Without a store (`None`: the test helper, a serve that predates
+        // the config) the URL falls through to route matching and 404s —
+        // no stream was ever teed, so nothing could reattach.
+        if let Some(sw) = streams_for_dispatch.as_ref()
+            && let Some(id) = oxide_fw_dispatch::build::stream_resume_id(&raw)
+        {
+            if !req.method.eq_ignore_ascii_case("GET") {
+                return Box::pin(async move {
+                    oxide_fw_server::OxideResponse::html(405, "stream reattach: GET only")
+                });
+            }
+            // S-10's unspoofable-key rule: the peer socket address (set by
+            // the accept loop), never a client header. A synthetic request
+            // (in-process pins) has no peer and shares the limiter's
+            // catch-all bucket — the cap is 60/min, far above anything a
+            // pin or a well-behaved client needs.
+            let peer_key = req
+                .peer
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "stream-synthetic".to_string());
+            if !sw.limiter.allow(
+                &format!("stream-reattach:{peer_key}"),
+                crate::serve::streams::REATTACH_RATE_MAX,
+                crate::serve::streams::REATTACH_RATE_WINDOW_SECS,
+            ) {
+                return Box::pin(async move {
+                    oxide_fw_server::OxideResponse::new(429, "stream reattach rate limit exceeded")
+                        .with_header(
+                            "retry-after",
+                            crate::serve::streams::REATTACH_RATE_WINDOW_SECS.to_string(),
+                        )
+                });
+            }
+            let offset = oxide_fw_server::stream_store::parse_range_offset(&req.headers);
+            let reattach = sw.store.get(id);
+            return Box::pin(async move {
+                match reattach {
+                    oxide_fw_server::stream_store::Reattach::Ok(buf) => {
+                        oxide_fw_server::stream_store::stream_resume_response(
+                            &buf,
+                            offset.unwrap_or(0),
+                        )
+                    }
+                    oxide_fw_server::stream_store::Reattach::Gone => {
+                        oxide_fw_server::stream_store::stream_gone_response()
+                    }
+                }
+            });
+        }
         // Route conventions: the root page module is `index`, so `/` maps to
         // the `/index` pattern (spec §8.1); trailing slashes are folded too.
         let normalized = if raw.len() > 1 && raw.ends_with('/') {
@@ -10160,7 +10262,11 @@ fn build_dispatch_swappable(
         };
         let loader_runner = routed_runner;
         let page_renderer = routed_renderer;
-        let pool = routed_pool;
+        // PERF/serve: the generation-routing step produced a per-generation
+        // pool handle before the serving-pools adoption moved the routing
+        // into `serving_pools` — the binding is kept (drop at scope end)
+        // but nothing downstream reads it.
+        let _pool = routed_pool;
         let routes_root = routed_routes_root;
 
         // Pre-compute the loader inputs synchronously so the async block
@@ -10377,6 +10483,42 @@ fn build_dispatch_swappable(
         let session_codec = session_codec.clone();
         // §11 L0: only a GET on a cacheable-mode route is a candidate.
         let l0 = l0.clone();
+        // V2-F07: same shadow for the resumable-stream wiring (the tee in
+        // the endpoint arm) and the stream-id counter the tee mints ids
+        // with.
+        let streams_for_dispatch = streams_for_dispatch.clone();
+        let stream_counter = stream_counter.clone();
+        // V2-F12: the brownout enforcement stage (§V2-F12, "stage after
+        // prelude"): the route's overload priority (`page.server.ts`
+        // `config.priority`, scanned into the route tree; the `rules`
+        // `NativeRule.priority` mirror is the config-side declaration)
+        // × the sampler's published level → the pure `serve_decision`.
+        // A `Shed` verdict answers 503 + `retry-after: 5` +
+        // `x-oxide-brownout` BEFORE any loader, cache or render work; a
+        // `ServeStale` verdict arms the L0 lookup with the
+        // `staleCeiling` bound and stamps the `warning: 110` header on
+        // the served hit. At `Normal` the whole stage costs one relaxed
+        // atomic read.
+        let mut brownout_ceiling: Option<u64> = None;
+        if let Some(bw) = brownout_for_dispatch.as_ref() {
+            let level = bw.governor.level();
+            if level != oxide_fw_server::governor::Level::Normal {
+                let priority = crate::serve::brownout::route_priority(
+                    matched.as_ref().and_then(|m| m.route.priority.as_deref()),
+                );
+                match oxide_fw_server::governor::serve_decision(level, priority) {
+                    oxide_fw_server::governor::Decision::Serve => {}
+                    oxide_fw_server::governor::Decision::ServeStale => {
+                        brownout_ceiling = Some(bw.stale_ceiling_pct);
+                    }
+                    oxide_fw_server::governor::Decision::Shed => {
+                        return Box::pin(
+                            async move { oxide_fw_server::governor::shed_response(level) },
+                        );
+                    }
+                }
+            }
+        }
         // §11.1: L0 caches the FULL response for cacheable modes. The
         // layer table puts no server-module restriction on L0 ("L0 | Full
         // response (HTML, headers, tags) | Rust, no JS on hit" — spec
@@ -10832,9 +10974,21 @@ fn build_dispatch_swappable(
 
             // §11.1 L0: a cache hit serves the stored response with the
             // live request's CSP nonce substituted in, no JS on the path.
+            // V2-F12: at a `ServeStale` brownout decision the lookup runs
+            // with the `staleCeiling` bound — entries past their SWR
+            // window still serve (flagged stale, so the existing
+            // background regeneration flow proceeds) and the response
+            // carries the spec's `warning: 110` header.
             if l0_eligible
                 && let Some(cache) = l0.as_ref()
-                && let Some(hit) = cache.get(&l0_route, &l0_params, &l0_vary).await
+                && let Some(hit) = match brownout_ceiling {
+                    Some(pct) => {
+                        cache
+                            .get_brownout(&l0_route, &l0_params, &l0_vary, pct)
+                            .await
+                    }
+                    None => cache.get(&l0_route, &l0_params, &l0_vary).await,
+                }
             {
                 // PERF-04: a conditional request whose validator
                 // matches the stored ETag gets a 304 (no body). The
@@ -10927,6 +11081,16 @@ fn build_dispatch_swappable(
                     "x-oxide-fw-cache",
                     if hit.stale { "L0-stale" } else { "L0-hit" },
                 );
+                // V2-F12: a hit served under the brownout's staleCeiling
+                // grant (past the SWR window) carries the spec's stale
+                // warning so caches between the server and the client
+                // know the response is deliberately old.
+                if brownout_ceiling.is_some() {
+                    resp = resp.with_header(
+                        oxide_fw_server::governor::STALE_WARNING_HEADER,
+                        oxide_fw_server::governor::STALE_WARNING_VALUE,
+                    );
+                }
                 // P0-5: middleware headers reflect this request; a
                 // cached body must not suppress an auth/security
                 // header the middleware just set.
@@ -11546,9 +11710,48 @@ fn build_dispatch_swappable(
                         for (k, v) in &middleware_headers {
                             resp = resp.with_header(k, v.clone());
                         }
+                        // V2-F07 wiring step 1: a streamed endpoint response
+                        // the handler opted in through the `oxide/server`
+                        // `resumable` helper (`x-oxide-resumable: 1`) is
+                        // teed into the stream store — every byte the
+                        // consumer sees is buffered under a minted
+                        // `stream_id(request_id, counter)`, the head gains
+                        // `x-oxide-stream: <id>` (the client reattaches at
+                        // `GET /__oxide/stream/<id>` with
+                        // `Range: bytes=<n>-`), and the tee marks the
+                        // buffer done at the natural end or a producer
+                        // error. A buffered response, a response without
+                        // the marker, and a `None` store (the test helper)
+                        // all keep the pre-F07 byte shapes.
+                        if let Some(sw) = streams_for_dispatch.as_ref()
+                            && resp.stream.is_some()
+                            && out.headers.iter().any(|(k, v)| {
+                                k.eq_ignore_ascii_case(
+                                    oxide_fw_server::stream_store::RESUMABLE_HEADER,
+                                ) && v == oxide_fw_server::stream_store::RESUMABLE_VALUE
+                            })
+                            && let Some(inner) = resp.stream.take()
+                        {
+                            let counter =
+                                stream_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let id = oxide_fw_server::stream_store::stream_id(
+                                &req_owned.request_id,
+                                counter,
+                            );
+                            let buf = sw.store.begin(id.clone());
+                            resp =
+                                resp.with_header(oxide_fw_server::stream_store::STREAM_HEADER, id);
+                            resp.stream = Some(oxide_fw_server::stream_store::tee_stream(
+                                &sw.store, &buf, inner,
+                            ));
+                        }
                         // V2-F15: a streamed endpoint response records
                         // through the tee (the observer sees the headers;
                         // the tee supplies the body when the stream ends).
+                        // Composition order: the F07 stream tee sits
+                        // INNERMOST (closest to the producer) so the store
+                        // and the recorder observe the same bytes in the
+                        // same order.
                         if let Some(rec) = req_recording.as_ref()
                             && let Some(stream) = resp.stream.take()
                         {
@@ -13964,6 +14167,22 @@ async fn start_server_inner_full(
         &build_id,
         stack.pool.clone(),
     );
+    // V2-F12: the brownout wiring — built only when `brownout.enabled`
+    // is on (the inert-defaults contract: with the mode off the request
+    // path gains nothing). The sampler task (the spec's 500 ms tick) and
+    // the loop-lag probe (100 ms) run for the process's lifetime; their
+    // handles drop at boot scope (detach), the same posture as the skew
+    // expiry task.
+    let brownout_wiring = crate::serve::brownout::BrownoutWiring::from_config(
+        &cfg.brownout,
+        stack.pool.clone(),
+        std::sync::Arc::clone(&metrics),
+    )
+    .map(std::sync::Arc::new);
+    if let Some(bw) = brownout_wiring.as_ref() {
+        let _sampler = crate::serve::brownout::BrownoutWiring::spawn_sampler(bw, &cfg.brownout);
+        let _probe = crate::serve::brownout::BrownoutWiring::spawn_loop_lag_probe(bw);
+    }
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -14059,6 +14278,9 @@ async fn start_server_inner_full(
             expose_cache_header: cfg.security.expose_cache_header,
         },
         rate_limiter: std::sync::Arc::new(oxide_fw_server::RateLimiter::default()),
+        brownout: brownout_wiring
+            .as_ref()
+            .map(|bw| std::sync::Arc::clone(&bw.governor)),
         health_path: "/_oxide/health".to_string(),
         ready_path: "/_oxide/ready".to_string(),
         render_ready: std::sync::Arc::clone(&render_ready),
@@ -14346,6 +14568,18 @@ async fn start_server_inner_full(
     } else {
         None
     };
+    // V2-F07: the resumable-stream wiring — the store over the typed
+    // `stream.resume` bounds (`serve::streams::StreamWiring::from_config`)
+    // and the §V2-F07 housekeeping task (a sweep every 30 s reclaims the
+    // buffers whose TTL passed; the handle is dropped like the skew
+    // expiry task's, detaching the task for the process's lifetime).
+    let stream_wiring = std::sync::Arc::new(crate::serve::streams::StreamWiring::from_config(
+        &cfg.stream,
+    ));
+    let _streams_sweep = oxide_fw_server::stream_store::spawn_sweep(
+        std::sync::Arc::clone(&stream_wiring.store),
+        std::time::Duration::from_secs(crate::serve::streams::SWEEP_CADENCE_SECS),
+    );
     let dispatch = build_dispatch_swappable(DispatchArgs {
         swappable: swappable_tree.clone(),
         metrics: std::sync::Arc::clone(&metrics),
@@ -14379,6 +14613,8 @@ async fn start_server_inner_full(
         generations: generations.clone(),
         live: live_state.clone(),
         serving_pools: serving_pools.clone(),
+        streams: Some(std::sync::Arc::clone(&stream_wiring)),
+        brownout: brownout_wiring.as_ref().map(|bw| std::sync::Arc::clone(bw)),
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
@@ -14494,6 +14730,7 @@ async fn start_server_inner_full(
         generations: generations.clone(),
         live: live_state,
         serving_pools,
+        brownout: brownout_wiring,
         #[cfg(feature = "search")]
         hot_search,
     })
