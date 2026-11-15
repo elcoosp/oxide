@@ -559,6 +559,75 @@ impl RustFnHost {
         self.ids.is_empty()
     }
 
+    /// The number of mounted libraries (the retire pass's denominator).
+    #[must_use]
+    pub fn mount_count(&self) -> usize {
+        self.libraries.len()
+    }
+
+    /// Forget one id (the dev loop's swap drops the ids a rebuild no
+    /// longer names, so the consult's JS-pool fallback takes them back).
+    /// `true` when the id existed.
+    pub fn unregister(&mut self, id: &str) -> bool {
+        self.ids.remove(id).is_some()
+    }
+
+    /// The two-phase call resolve [`crate::swap::SwappableHost::call_now`]
+    /// (and the consult adapter) runs: the library `Arc` + entry name for
+    /// one id, cloned under the caller's short lock so the call itself
+    /// runs OUTSIDE it — an in-flight call holds only its library Arc,
+    /// and the mount survives until that Arc drops.
+    #[must_use]
+    pub fn resolve_call(&self, id: &str) -> Option<(Arc<RustFnLibrary>, String)> {
+        let (index, name) = self.ids.get(id)?.clone();
+        let lib = Arc::clone(self.libraries.get(index)?);
+        Some((lib, name))
+    }
+
+    /// Reclaim the orphaned mounts (the dev loop's retire pass): a
+    /// library no id references anymore AND no in-flight call holds
+    /// (`Arc::strong_count == 1` — only the mount list owns it) is
+    /// dropped. The surviving mounts re-compact and the id table's
+    /// indices re-map, so the host stays consistent. Returns the count
+    /// retired.
+    pub fn retire_idle_mounts(&mut self) -> usize {
+        let survivors: Vec<usize> = self
+            .libraries
+            .iter()
+            .enumerate()
+            .filter(|(index, lib)| {
+                let referenced = self.ids.values().any(|(idx, _)| idx == index);
+                referenced || Arc::strong_count(lib) > 1
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let retired = self.libraries.len() - survivors.len();
+        if retired == 0 {
+            return 0;
+        }
+        // Re-compact: new index = position in the survivor list.
+        let remap: BTreeMap<usize, usize> = survivors
+            .iter()
+            .enumerate()
+            .map(|(new, old)| (*old, new))
+            .collect();
+        let kept_libraries: Vec<Arc<RustFnLibrary>> = survivors
+            .iter()
+            .map(|old| Arc::clone(&self.libraries[*old]))
+            .collect();
+        let kept_ids: BTreeMap<String, (usize, String)> = self
+            .ids
+            .iter()
+            .filter_map(|(id, (index, name))| {
+                let new_index = remap.get(index)?;
+                Some((id.clone(), (*new_index, name.clone())))
+            })
+            .collect();
+        self.libraries = kept_libraries;
+        self.ids = kept_ids;
+        retired
+    }
+
     /// The types payload of the first mounted library that exports one.
     #[must_use]
     pub fn types_json(&self) -> Option<String> {
@@ -606,7 +675,7 @@ impl RustFnHost {
 /// Convert the §9.4 route's args JSON into the ODF bytes the boundary
 /// carries (the JSON → ODF hop the host owns, so the client stub and
 /// the C ABI both stay untouched).
-fn args_to_odf(args_json: &[u8]) -> Result<Vec<u8>, OxideError> {
+pub(crate) fn args_to_odf(args_json: &[u8]) -> Result<Vec<u8>, OxideError> {
     let json: serde_json::Value = serde_json::from_slice(args_json).map_err(|e| {
         err(
             RFN_WIRE,
