@@ -42,7 +42,7 @@ pub fn include_matches(pattern: &str, path: &str) -> bool {
                 (0..=s.len()).any(|i| seg_match(&p[1..], &s[i..]))
             }
             (Some(p_seg), Some(s_seg)) => {
-                s.len() >= 1 && seg_star_match(p_seg, s_seg) && seg_match(&p[1..], &s[1..])
+                !s.is_empty() && seg_star_match(p_seg, s_seg) && seg_match(&p[1..], &s[1..])
             }
             (Some(_), None) => false,
         }
