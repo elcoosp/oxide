@@ -439,6 +439,26 @@ jobs:
         # convention.
         run: |
           cargo test -p oxide-fw-cli --lib live_pushes_snapshots_over_the_wire -- --ignored --test-threads=1
+      - name: Run the resumable-stream e2e (V2-F07)
+        # §V2-F07's acceptance: the streamed, `resumable(...)`-marked
+        # `ox-stream` fixture — the first connection reads 8 of the 20
+        # lines then dies mid-stream, the reattach answers
+        # `GET /__oxide/stream/<id>` with `Range: bytes=<n>-` (206 +
+        # `content-range`), and the concatenation of the two passes is
+        # byte-for-byte the full stream. #[ignore] e2e — V8-capable host
+        # only, same convention.
+        run: |
+          cargo test -p oxide-fw-cli --lib stream_resume_reattach_delivers_the_missed_bytes -- --ignored --test-threads=1
+      - name: Run the brownout enforcement e2e (V2-F12)
+        # §V2-F12's enforcement on the wire: the fixture's `slow` route
+        # (config.priority = 'low') sheds with 503 + retry-after: 5 +
+        # x-oxide-brownout: 2 at level Shed, `/_oxide/ready` flips 503
+        # only at Emergency while `/_oxide/health` stays 200 and reports
+        # the level, and the route recovers at Normal. The governor's
+        # level is driven through the same seam the sampler writes.
+        # #[ignore] e2e — V8-capable host only, same convention.
+        run: |
+          cargo test -p oxide-fw-cli --lib brownout_sheds_low_and_reports_the_level -- --ignored --test-threads=1
 
   playwright:
     name: Playwright e2e (§22) — ${{ matrix.browser }} / ${{ matrix.os }}
