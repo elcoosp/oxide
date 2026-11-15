@@ -7,6 +7,7 @@
 //! app.fetch helper), mcp, schema, config, render, perf (§V2-F18 bisect).
 
 use clap::{Parser, Subcommand};
+use oxide_fw_diagnostics::OxideError;
 use oxide_fw_jshost::loader_host::ActionRunArgs;
 use oxide_fw_jshost::loader_host::EndpointRunArgs;
 use oxide_fw_jshost::loader_host::LoaderRunArgs;
@@ -54,10 +55,10 @@ mod esm_dev;
 mod framework_shim;
 mod l0_cache;
 pub mod loader_shim;
-mod migrate;
 mod modules_loader;
 pub mod precompile;
 mod precompile_cache;
+mod record_wire;
 /// `oxide secrets <op>` (§9.4 / BUG-05).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum SecretsOp {
@@ -109,6 +110,13 @@ pub enum Command {
         /// `/src/**` transformed modules.
         #[arg(long = "no-esm")]
         no_esm: bool,
+        /// V2-F15: when `record:` is on, keep the secret header trio
+        /// (`authorization`, `cookie`, `set-cookie`) verbatim in the
+        /// records instead of the `sha256:<12 hex>` redaction — a replay
+        /// can then exercise authenticated paths. Dev-only; the production
+        /// stack never reads it.
+        #[arg(long)]
+        include_secrets: bool,
         /// Hidden test hook: run exactly one watch poll, print `dev ready` and exit.
         /// Without it the dev loop runs until Ctrl-C (§13, not exercised in tests).
         #[arg(long, hide = true)]
@@ -247,14 +255,43 @@ pub enum Command {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
-    /// Migrate from next/nuxt/sveltekit/vite (§19.2).
+    /// Migrate to oxide from a detected source framework (V2-E03): a dry
+    /// run prints the plan; `--apply` performs the mechanical halves
+    /// (renames + import rewrites) and requires a clean git tree unless
+    /// `--force`. The framework is detected from the project's manifest
+    /// and config signatures; an explicit `source` must match it.
     Migrate {
         #[arg(long, default_value = ".")]
         root: String,
-        source: String,
-        /// Actually write the converted files. Default is dry-run (plan only).
+        /// The expected source framework (`sveltekit|next|nuxt|vite`) —
+        /// optional; given, it must match the detection.
+        source: Option<String>,
+        /// Apply the plan's mechanical halves (renames + import
+        /// rewrites). A dry run never writes.
         #[arg(long, default_value_t = false)]
+        apply: bool,
+        /// Apply even when the git tree is dirty (the clean-tree gate
+        /// exists so a half-migration can be reverted).
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// The pre-E03 spelling of `--apply` (kept as a hidden alias).
+        #[arg(long = "write", hide = true, default_value_t = false)]
         write: bool,
+    },
+    /// V2-F15: re-execute a captured request deterministically and compare
+    /// against its record (`.oxide/records/<id>.json`).
+    Replay {
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// The request id the record is stored under (the file stem).
+        id: String,
+        /// Compare the replayed response against the recorded one
+        /// (nonce-normalized).
+        #[arg(long)]
+        diff: bool,
+        /// For agents: emit `{ ok, divergences: [..] }` and nothing else.
+        #[arg(long)]
+        json: bool,
     },
     /// In-process test helper: boot the app and expose `fetch` (§16.6 oxide/test).
     Test {
@@ -538,6 +575,7 @@ impl Command {
             | Command::Cache { root, .. }
             | Command::Audit { root, .. }
             | Command::Migrate { root, .. }
+            | Command::Replay { root, .. }
             | Command::Test { root, .. }
             | Command::Mcp { root, .. }
             | Command::Config { root, .. }
@@ -638,6 +676,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             open,
             proxy,
             no_esm,
+            include_secrets,
             once,
         } => {
             cmd_dev(
@@ -651,6 +690,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
                     port,
                     proxy,
                     no_esm,
+                    include_secrets,
                 },
                 w,
             )
@@ -693,8 +733,16 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
         Command::Migrate {
             root,
             source,
+            apply,
+            force,
             write,
-        } => cmd_migrate(&root, &source, write, w).await,
+        } => cmd_migrate(&root, source.as_deref(), apply || write, force, w).await,
+        Command::Replay {
+            root,
+            id,
+            diff,
+            json,
+        } => cmd_replay(&root, &id, diff, json, w).await,
         Command::Test { root } => cmd_test(&root, w).await,
         Command::Mcp {
             root, allow_write, ..
@@ -2812,6 +2860,16 @@ fn install_dev_log_file() {
 
 async fn cmd_dev(root: &str, once: bool, flags: DevFlags, w: Writer<'_>) -> anyhow::Result<i32> {
     install_dev_log_file();
+    // V2-F15: the `--include-secrets` toggle rides the env the way the
+    // other dev toggles do (`OXIDE_DEV_NO_ESM`) — the stack builder reads
+    // it where the recorder capture is built. Only `dev` sets it; the
+    // production stack never does, so a record made in prod keeps the
+    // secret trio redacted no matter what a dev flag said.
+    if flags.include_secrets {
+        // SAFETY: single-threaded command startup, before any worker spawn
+        // reads the value (the same window every dev toggle here uses).
+        unsafe { std::env::set_var("OXIDE_INCLUDE_SECRETS", "1") };
+    }
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let mut cfg = load_config_or_default(&rootp, "development");
     // §2.9: `--no-esm` overrides the config after load. The dev server
@@ -4607,7 +4665,7 @@ fn emit_search_engine_index(
             .iter()
             .find(|c| &c.name == name)
             .ok_or_else(|| {
-                oxide_fw_diagnostics::OxideError(Box::new(
+                OxideError(Box::new(
                     oxide_fw_diagnostics::Diagnostic::error(
                         "SRC-106",
                         format!("search.collections names `{name}` but content.collections has no such collection"),
@@ -5199,7 +5257,7 @@ fn emit_snapshot_blob(root: &Path, server_out: &Path, w: Writer<'_>) -> anyhow::
     let built = std::thread::spawn(oxide_fw_jshost::snapshot_build_runtime)
         .join()
         .unwrap_or_else(|_| {
-            Err(oxide_fw_diagnostics::OxideError(Box::new(
+            Err(OxideError(Box::new(
                 oxide_fw_diagnostics::Diagnostic::error(
                     "SNP-PANIC",
                     "snapshot builder thread panicked",
@@ -9099,6 +9157,12 @@ pub struct DevFlags {
     pub proxy: Vec<String>,
     /// §2.9: opt out of the native ESM dev server (bundler path).
     pub no_esm: bool,
+    /// V2-F15: keep the secret header trio verbatim in the records
+    /// (§V2-F15 `--include-secrets`). Read through the
+    /// `OXIDE_INCLUDE_SECRETS` env by the stack builder, so the flag
+    /// reaches the recorder without threading a new parameter through the
+    /// stack builder's signature.
+    pub include_secrets: bool,
 }
 
 impl DevFlags {
@@ -9535,6 +9599,8 @@ fn build_dispatch(
         session_codec: opts.session_codec,
         ppr_shells: opts.ppr_shells,
         esm_state: None,
+        record: None,
+        recordings: std::sync::Arc::new(crate::record_wire::Recordings::new()),
     })
 }
 
@@ -9594,6 +9660,11 @@ pub(crate) struct DispatchArgs {
     pub session_codec: Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     pub ppr_shells: Option<PprShells>,
     pub esm_state: Option<std::sync::Arc<crate::esm_dev::EsmDevState>>,
+    /// V2-F15: the recorder capture (`record:` config key) — `None` when
+    /// off, and the pipeline is byte-identical.
+    pub record: Option<std::sync::Arc<crate::record_wire::RecordCapture>>,
+    /// V2-F15: the in-flight captures, keyed by request id.
+    pub recordings: std::sync::Arc<crate::record_wire::Recordings>,
 }
 
 fn build_dispatch_swappable(
@@ -9620,6 +9691,8 @@ fn build_dispatch_swappable(
         session_codec,
         ppr_shells,
         esm_state,
+        record,
+        recordings,
     } = args;
 
     let boot_script_url_for_render = boot_script_url.clone();
@@ -10006,11 +10079,27 @@ fn build_dispatch_swappable(
         let action_route = route_id_for_render.clone().unwrap_or_default();
 
         let page_renderer = page_renderer.clone();
-        let loader_runner = loader_runner.clone();
         let metrics = std::sync::Arc::clone(&metrics);
         // P-07: `req` is this invocation's own parameter, so move it into
         // the async block instead of cloning the whole request per call.
         let req_owned = req;
+        // V2-F15: the capture starts HERE, where the request line-set and
+        // the router's verdict are both known. The record keeps the raw
+        // match (`route_id`) — the id the replay drives back through the
+        // pipeline is the same one dispatch matched.
+        let req_recording = record
+            .as_ref()
+            .and_then(|c| crate::record_wire::RequestRecording::start(c, &recordings, &req_owned));
+        if let Some(rec) = req_recording.as_ref() {
+            rec.set_route(route_id.as_deref().unwrap_or(""), &params);
+        }
+        // V2-F15: this request's loads run through the recording decorator
+        // when the capture is on, so every load the §9.2 graph drives
+        // lands in the record (the runner and the graph stay agnostic).
+        let loader_runner = match req_recording.as_ref() {
+            Some(rec) => rec.decorated(loader_runner.clone()),
+            None => loader_runner.clone(),
+        };
         // Shadow captured values that the async block consumes (an `Fn`
         // closure cannot surrender a captured variable — E0507).
         let boot_script_url_for_render = boot_script_url_for_render.clone();
@@ -10314,6 +10403,11 @@ fn build_dispatch_swappable(
             // PERF-06: the middleware phase is done — record its duration
             // so `Server-Timing` reports the real cost (§12.1 step 8).
             let middleware_ms = stage_middleware_start.elapsed().as_secs_f64() * 1000.0;
+            // V2-F15: the middleware locals are final — the record captures
+            // them (the loader's threaded copy rides the loader inputs).
+            if let Some(rec) = req_recording.as_ref() {
+                rec.set_locals(&middleware_locals);
+            }
 
             // PERF-01 / §8.4: `/__data` is the client router's route-data
             // endpoint. The target route was re-matched in the prelude, so
@@ -11177,6 +11271,14 @@ fn build_dispatch_swappable(
                         for (k, v) in &middleware_headers {
                             resp = resp.with_header(k, v.clone());
                         }
+                        // V2-F15: a streamed endpoint response records
+                        // through the tee (the observer sees the headers;
+                        // the tee supplies the body when the stream ends).
+                        if let Some(rec) = req_recording.as_ref()
+                            && let Some(stream) = resp.stream.take()
+                        {
+                            resp.stream = Some(rec.tee(stream, resp.status));
+                        }
                         return resp;
                     }
                     Err(e) => {
@@ -11649,6 +11751,14 @@ fn build_dispatch_swappable(
                             for (k, v) in &middleware_headers {
                                 resp = resp.with_header(k, v.clone());
                             }
+                            // V2-F15: a streamed render records through the
+                            // tee (the observer signals the stamped meta;
+                            // the tee supplies the body at stream end).
+                            if let Some(rec) = req_recording.as_ref()
+                                && let Some(stream) = resp.stream.take()
+                            {
+                                resp.stream = Some(rec.tee(stream, resp.status));
+                            }
                             return resp;
                         }
                         // §10.2 step 5 / §8.3: the framework render path
@@ -11688,6 +11798,14 @@ fn build_dispatch_swappable(
                         }
                         for (k, v) in &loader_headers {
                             resp = resp.with_header(k, v.clone());
+                        }
+                        // V2-F15: a streamed render records through the tee
+                        // (the observer signals the stamped meta; the tee
+                        // supplies the body at stream end).
+                        if let Some(rec) = req_recording.as_ref()
+                            && let Some(stream) = resp.stream.take()
+                        {
+                            resp.stream = Some(rec.tee(stream, resp.status));
                         }
                         resp
                     }
@@ -12711,7 +12829,7 @@ fn build_js_plugin_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(Box::new(
+                            OxideError(Box::new(
                                 oxide_fw_diagnostics::Diagnostic::error(
                                     "PLG-BRIDGE",
                                     format!("bridge runtime: {e}"),
@@ -12767,7 +12885,7 @@ fn build_js_plugin_hook(
                                 export: "transform".into(),
                             };
                             let mut stream = pool.call(entry, call).await.map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(Box::new(
+                                OxideError(Box::new(
                                     oxide_fw_diagnostics::Diagnostic::error(
                                         "PLG-CALL",
                                         format!("plugin transform failed: {}", e.0.message),
@@ -12775,7 +12893,7 @@ fn build_js_plugin_hook(
                                 ))
                             })?;
                             let bytes = stream.collect().await.map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(Box::new(
+                                OxideError(Box::new(
                                     oxide_fw_diagnostics::Diagnostic::error(
                                         "PLG-CALL",
                                         format!("plugin transform read failed: {}", e.0.message),
@@ -12796,7 +12914,7 @@ fn build_js_plugin_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(Box::new(
+                    Err(OxideError(Box::new(
                         oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "plugin bridge thread panicked",
@@ -13476,6 +13594,16 @@ async fn start_server_inner_full(
     // feature) constructs nothing, byte-identical to the pre-F09 shape.
     #[cfg(feature = "search")]
     let (search_endpoint, hot_search) = build_search_endpoint(&cfg.search, &rootp);
+    // V2-F15: the recorder capture (`record:` config key) and the
+    // in-flight map. The observer rides the pipeline (the one
+    // `finish_response` funnel); the closure receives the same pair.
+    let recordings = std::sync::Arc::new(crate::record_wire::Recordings::new());
+    let record_capture = crate::record_wire::RecordCapture::from_config(
+        &cfg.record,
+        &rootp,
+        &build_id,
+        stack.pool.clone(),
+    );
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -13616,6 +13744,12 @@ async fn start_server_inner_full(
         } else {
             0
         },
+        response_observer: record_capture.as_ref().map(|c| {
+            std::sync::Arc::new(crate::record_wire::RecorderObserver::new(
+                std::sync::Arc::clone(c),
+                std::sync::Arc::clone(&recordings),
+            )) as std::sync::Arc<dyn oxide_fw_server::ResponseObserver>
+        }),
     });
     let proxy_rules: Vec<oxide_fw_dev::ProxyRule> = proxy_rules.clone();
     let routes_root = rootp.join(&cfg.routes.dir);
@@ -13817,6 +13951,8 @@ async fn start_server_inner_full(
         session_codec,
         ppr_shells: ppr_shells.clone(),
         esm_state: esm_state.clone(),
+        record: record_capture.clone(),
+        recordings: std::sync::Arc::clone(&recordings),
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
@@ -15844,80 +15980,391 @@ async fn cmd_audit(root: &str, json: bool, w: Writer<'_>) -> anyhow::Result<i32>
     Ok(exit_code)
 }
 
-/// `oxide migrate <source>` (§19.2): dry-run plan; never writes.
-async fn cmd_migrate(root: &str, source: &str, write: bool, w: Writer<'_>) -> anyhow::Result<i32> {
-    let rootp = PathBuf::from(root);
-    // §19-B: plan via the codemod engine, report every file (converted or
-    // skipped), then optionally apply. A dry-run never writes; `--write`
-    // refuses to clobber an existing destination.
-    let plan = match crate::migrate::plan(&rootp, source) {
+/// V2-F15: the replay executor the [`ReplayRunner`] drives — one HTTP
+/// request against the replay server's loopback address, built from the
+/// record's request line-set. The worker pool the stack spawned runs with
+/// `OXIDE_REPLAY=<record>` (set before the stack builds), so the loader
+/// code's outbound `fetch` calls and non-deterministic sources play back
+/// from the record instead of the network.
+struct ReplayHttpExecutor {
+    addr: std::net::SocketAddr,
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_dispatch::replay::ReplayExecutor for ReplayHttpExecutor {
+    async fn execute(
+        &self,
+        record: &oxide_fw_dispatch::record::RequestRecord,
+    ) -> Result<oxide_fw_dispatch::replay::ExecutedResponse, oxide_fw_diagnostics::OxideError> {
+        use oxide_fw_diagnostics::Diagnostic;
+        let client = reqwest::Client::new();
+        let url = format!("http://{}{}", self.addr, record.request.url);
+        let method =
+            reqwest::Method::from_bytes(record.request.method.to_ascii_uppercase().as_bytes())
+                .map_err(|e| {
+                    OxideError(Box::new(Diagnostic::error(
+                        "RPL-001",
+                        format!(
+                            "the record's method `{}` is not an HTTP method: {e}",
+                            record.request.method
+                        ),
+                    )))
+                })?;
+        // The transport headers are per-connection state, not recorded
+        // request identity — the client mints its own.
+        const SKIP_REQUEST_HEADERS: [&str; 6] = [
+            "host",
+            "content-length",
+            "connection",
+            "transfer-encoding",
+            "keep-alive",
+            "upgrade",
+        ];
+        let mut req = client.request(method, &url);
+        for (k, v) in &record.request.headers {
+            if SKIP_REQUEST_HEADERS
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(k))
+            {
+                continue;
+            }
+            req = req.header(k.as_str(), v.as_str());
+        }
+        let resp = req.send().await.map_err(|e| {
+            OxideError(Box::new(
+                Diagnostic::error(
+                    "RPL-001",
+                    format!("the replay request to {url} failed: {e}"),
+                )
+                .with_fix("is the app the record was made from still buildable?"),
+            ))
+        })?;
+        // The transport-added headers are per-response state the diff
+        // already treats as re-derived or would misread (a reqwest body
+        // length is not the app's answer).
+        const SKIP_RESPONSE_HEADERS: [&str; 5] = [
+            "date",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "keep-alive",
+        ];
+        let status = resp.status().as_u16();
+        let headers: Vec<(String, String)> = resp
+            .headers()
+            .iter()
+            .filter(|(k, _)| {
+                !SKIP_RESPONSE_HEADERS
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(k.as_str()))
+            })
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        let body = resp.bytes().await.map_err(|e| {
+            OxideError(Box::new(Diagnostic::error(
+                "RPL-001",
+                format!("the replay response body could not be read: {e}"),
+            )))
+        })?;
+        Ok(oxide_fw_dispatch::replay::ExecutedResponse {
+            status,
+            headers,
+            body: body.to_vec(),
+        })
+    }
+}
+
+/// The replay result the CLI prints and the MCP tool serves (§V2-F15:
+/// "`--json` emits `{ ok, divergences: [..] }`").
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReplayReport {
+    pub ok: bool,
+    pub divergences: Vec<oxide_fw_dispatch::replay::Divergence>,
+    /// The record was made on an older build id (`RPL-003`; the replay ran
+    /// anyway).
+    pub stale_build: bool,
+}
+
+/// The one replay definition the `oxide replay` command and the MCP
+/// `replay.run` tool drive: load the record, point the worker pool at it
+/// (`OXIDE_REPLAY`), boot the dev-mode stack on an ephemeral port,
+/// re-execute the captured request through the real pipeline over
+/// loopback, and diff against the record.
+pub(crate) async fn run_replay(
+    root: &str,
+    id: &str,
+) -> anyhow::Result<Result<ReplayReport, oxide_fw_diagnostics::OxideError>> {
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+    let store = oxide_fw_dispatch::record::DirRecordStore::new(&rootp);
+    // The load errors surface unchanged (RPL-001 missing/unreadable,
+    // RPL-005 foreign version) — the same doors the runner re-runs below,
+    // checked here so a bad record refuses before any stack is built.
+    let _record = match oxide_fw_dispatch::record::RecordSource::load(&store, id) {
+        Ok(r) => r,
+        Err(e) => return Ok(Err(e)),
+    };
+    // The build id the record is replayed against — the same derivation
+    // the dev stack uses (the client manifest's build id, `dev` without
+    // one), so an RPL-003 warn only fires for a genuinely older build.
+    let current_build_id = std::fs::read_to_string(rootp.join("dist/client/client.manifest.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v.get("build_id").and_then(|b| b.as_str()).map(String::from))
+        .unwrap_or_else(|| "dev".to_string());
+    // The worker pool the stack spawns inherits this env: the workers
+    // install `globalThis.__oxide_replay` and play the record's fetch ops
+    // and sequences into the re-execution (the V2-F15 worker half).
+    let record_file = rootp
+        .join(oxide_fw_dispatch::record::RECORDS_DIR)
+        .join(format!("{id}.json"));
+    // SAFETY: one-shot command startup, before the stack spawns any
+    // worker that reads it (the established startup-env window).
+    unsafe { std::env::set_var("OXIDE_REPLAY", &record_file) };
+
+    let config_path = rootp.join("oxide.config.ts");
+    let config_arg = if config_path.is_file() {
+        Some(config_path)
+    } else {
+        None
+    };
+    let stack = crate::framework_shim::build_framework_stack(
+        config_arg.as_deref(),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+    let started = crate::start_dev_server_full(
+        root,
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await?;
+
+    let executor = ReplayHttpExecutor { addr: started.addr };
+    let runner =
+        oxide_fw_dispatch::replay::ReplayRunner::new(std::sync::Arc::new(store), &current_build_id);
+    let outcome = runner.run(id, &executor).await;
+    // The one-shot server goes down with the command.
+    let _ = started.shutdown.send(true);
+    match outcome {
+        Ok(outcome) => Ok(Ok(ReplayReport {
+            ok: outcome.diff.ok,
+            divergences: outcome.diff.divergences,
+            stale_build: outcome.stale_build,
+        })),
+        Err(e) => Ok(Err(e)),
+    }
+}
+
+/// `oxide replay <id> [--diff] [--json]` (§V2-F15): prints the replayed
+/// status, headers and body; `--diff` compares against the record
+/// (nonce-normalized); `--json` emits `{ ok, divergences: [..] }`. Exit
+/// codes: 0 when the replay matched (or no `--diff` was asked and the
+/// replay ran), 1 when `--diff` found divergences, 2 when the record
+/// could not be loaded or the replay refused.
+async fn cmd_replay(
+    root: &str,
+    id: &str,
+    diff: bool,
+    json: bool,
+    w: Writer<'_>,
+) -> anyhow::Result<i32> {
+    match run_replay(root, id).await? {
+        Err(e) => {
+            if json {
+                outln!(
+                    w,
+                    "{}",
+                    serde_json::json!({"ok": false, "error": {"code": e.0.code, "message": e.0.message}})
+                );
+            } else {
+                outln!(w, "{} {}", e.0.code, e.0.message);
+                if let Some(fix) = &e.0.fix {
+                    outln!(w, "  fix: {fix}");
+                }
+            }
+            Ok(2)
+        }
+        Ok(report) => {
+            if json {
+                // The spec's agent shape, verbatim: `{ ok, divergences: [..] }`.
+                outln!(
+                    w,
+                    "{}",
+                    serde_json::json!({"ok": report.ok, "divergences": report.divergences})
+                );
+                return Ok(if report.ok { 0 } else { 1 });
+            }
+            if report.stale_build {
+                outln!(
+                    w,
+                    "warning RPL-003: the record was made on an older build id; the replay ran anyway"
+                );
+            }
+            if report.divergences.is_empty() {
+                outln!(w, "replay {id}: the response matches the record");
+            } else {
+                outln!(w, "replay {id}: {} divergence(s)", report.divergences.len());
+            }
+            for d in &report.divergences {
+                outln!(w, "  - [{}] {}", d.kind, d.detail);
+            }
+            // The `--diff` verdict decides the exit; without `--diff` a
+            // clean run is a clean exit.
+            if diff {
+                Ok(if report.ok { 0 } else { 1 })
+            } else {
+                Ok(0)
+            }
+        }
+    }
+}
+
+/// `oxide migrate [source] [--apply]` (V2-E03): the plan-is-data engine
+/// in `oxide-fw-compiler` detects the source framework, prints the plan
+/// (renames, import rewrites, config keys, manual notes), and with
+/// `--apply` performs the mechanical halves. `--apply` requires a clean
+/// git tree unless `--force` — a half-migration must be revertible.
+/// Exit codes: 0 plan/apply ok, 1 apply failure, 2 refusal (unknown
+/// framework, source mismatch, dirty tree).
+async fn cmd_migrate(
+    root: &str,
+    source: Option<&str>,
+    apply: bool,
+    force: bool,
+    w: Writer<'_>,
+) -> anyhow::Result<i32> {
+    use oxide_fw_compiler::migrate::{Framework, apply_plan, detect_framework, plan_for};
+    let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
+
+    // Detect (the engine never guesses; `None` is the MIG-DETECT refusal
+    // naming the four spellings). An explicit `source` must match it.
+    let detected = detect_framework(&rootp);
+    if let Some(want) = source {
+        let want = match Framework::from_source_name(want) {
+            Some(f) => f,
+            None => {
+                outln!(
+                    w,
+                    "unknown source `{want}` — oxide migrate plans for sveltekit, next, nuxt or vite"
+                );
+                return Ok(2);
+            }
+        };
+        if detected != Some(want) {
+            match detected {
+                Some(actual) => {
+                    outln!(
+                        w,
+                        "source `{}` does not match the detected framework `{}`",
+                        want.as_str(),
+                        actual.as_str()
+                    );
+                }
+                None => {
+                    outln!(
+                        w,
+                        "source `{}` was named but no source framework could be detected in {}",
+                        want.as_str(),
+                        rootp.display()
+                    );
+                }
+            }
+            return Ok(2);
+        }
+    }
+    let plan = match plan_for(&rootp) {
         Ok(p) => p,
         Err(e) => {
-            outln!(w, "{e}");
+            outln!(w, "{} {}", e.0.code, e.0.message);
+            if let Some(fix) = &e.0.fix {
+                outln!(w, "  fix: {fix}");
+            }
             return Ok(2);
         }
     };
-    let converted = plan.converted_count();
-    let skipped = plan.skipped_count();
-    if write {
-        outln!(
-            w,
-            "migration plan ({} → oxide) — writing {converted} file(s), {skipped} follow-up(s):",
-            plan.label,
-        );
-    } else {
-        outln!(
-            w,
-            "migration plan ({} → oxide) — dry run; {converted} file(s) would be written, {skipped} follow-up(s):",
-            plan.label,
-        );
+
+    // The plan is data: print every row, then (optionally) apply.
+    outln!(
+        w,
+        "migration plan ({} → oxide): {} rename(s), {} import rewrite(s), {} config key(s), {} manual note(s)",
+        detected.map(Framework::as_str).unwrap_or("?"),
+        plan.renames.len(),
+        plan.rewrites.len(),
+        plan.config.len(),
+        plan.manual.len(),
+    );
+    for (from, to) in &plan.renames {
+        outln!(w, "  - {} → {}", from.display(), to.display());
     }
-    for c in &plan.conversions {
-        match &c.to {
-            Some(dst) => {
-                outln!(
-                    w,
-                    "  - {} → {}",
-                    crate::build_graph::slash_path(&c.from),
-                    crate::build_graph::slash_path(dst)
-                );
-                if let Some(note) = &c.note {
-                    outln!(w, "      note: {note}");
-                }
-            }
-            None => {
-                let note = c.note.as_deref().unwrap_or("(no reason given)");
-                outln!(
-                    w,
-                    "  - {}  ✗ skipped: {note}",
-                    crate::build_graph::slash_path(&c.from)
-                );
-            }
-        }
+    for r in &plan.rewrites {
+        outln!(w, "  - {} : {} → {}", r.file.display(), r.from, r.to);
     }
-    if !write {
+    for c in &plan.config {
+        outln!(w, "  - config: {} = {}", c.key, c.value);
+    }
+    for n in &plan.manual {
+        outln!(w, "  - manual: {}:{} {}", n.file.display(), n.line, n.text);
+    }
+    if !apply {
         outln!(
             w,
-            "  no files written — pass --write to apply (a dry run never modifies disk)"
+            "  no files written — pass --apply to perform the renames and rewrites (a dry run never modifies disk)"
         );
         return Ok(0);
     }
-    match crate::migrate::apply(&plan) {
-        Ok(()) => {
+
+    // The §V2-E03 git gate: a dirty tree refuses unless --force. The gate
+    // is advisory when the project is not a git repo (no VCS to consult).
+    if !force && git_tree_dirty(&rootp) {
+        outln!(
+            w,
+            "refusing --apply: the git tree is dirty (commit or stash first, or pass --force)"
+        );
+        return Ok(2);
+    }
+    match apply_plan(&rootp, &plan) {
+        Ok(report) => {
             outln!(
                 w,
-                "  wrote {converted} file(s) from source `{}`",
-                plan.source
+                "  applied {} rename(s), {} import rewrite(s); {} config key(s) and {} manual note(s) left pending",
+                report.renamed,
+                report.rewrote,
+                report.config_pending.len(),
+                report.manual,
             );
             Ok(0)
         }
         Err(e) => {
-            outln!(w, "  write errors (source: `{}`):", plan.source);
-            for line in e.lines() {
-                outln!(w, "    {line}");
+            outln!(w, "{} {}", e.0.code, e.0.message);
+            if let Some(fix) = &e.0.fix {
+                outln!(w, "  fix: {fix}");
             }
             Ok(1)
         }
+    }
+}
+
+/// The clean-tree gate: `git status --porcelain` non-empty means dirty.
+/// Not a git repo → `false` (nothing to consult, nothing to protect).
+fn git_tree_dirty(root: &std::path::Path) -> bool {
+    let out = std::process::Command::new("git")
+        .args(["-C", &root.to_string_lossy(), "status", "--porcelain"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => !o.stdout.is_empty(),
+        _ => false,
     }
 }
 
@@ -16342,12 +16789,10 @@ fn build_js_plugin_resolve_hook(
                             .enable_all()
                             .build()
                             .map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(Box::new(
-                                    oxide_fw_diagnostics::Diagnostic::error(
-                                        "PLG-BRIDGE",
-                                        format!("bridge runtime: {e}"),
-                                    ),
-                                ))
+                                OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
+                                    "PLG-BRIDGE",
+                                    format!("bridge runtime: {e}"),
+                                )))
                             })?;
                         rt.block_on(async move {
                             let need_load = {
@@ -16412,7 +16857,7 @@ fn build_js_plugin_resolve_hook(
                     })
                     .join()
                     .unwrap_or_else(|_| {
-                        Err(oxide_fw_diagnostics::OxideError(Box::new(
+                        Err(OxideError(Box::new(
                             oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 "plugin bridge thread panicked",
@@ -16451,12 +16896,10 @@ fn build_js_plugin_load_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(Box::new(
-                                oxide_fw_diagnostics::Diagnostic::error(
-                                    "PLG-BRIDGE",
-                                    format!("bridge runtime: {e}"),
-                                ),
-                            ))
+                            OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                format!("bridge runtime: {e}"),
+                            )))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -16518,7 +16961,7 @@ fn build_js_plugin_load_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(Box::new(
+                    Err(OxideError(Box::new(
                         oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "plugin bridge thread panicked",
@@ -16719,12 +17162,10 @@ fn build_js_plugin_render_chunk_hook(
                             .enable_all()
                             .build()
                             .map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(Box::new(
-                                    oxide_fw_diagnostics::Diagnostic::error(
-                                        "PLG-BRIDGE",
-                                        format!("bridge runtime: {e}"),
-                                    ),
-                                ))
+                                OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
+                                    "PLG-BRIDGE",
+                                    format!("bridge runtime: {e}"),
+                                )))
                             })?;
                         rt.block_on(async move {
                             let need_load = {
@@ -16790,7 +17231,7 @@ fn build_js_plugin_render_chunk_hook(
                     })
                     .join()
                     .unwrap_or_else(|_| {
-                        Err(oxide_fw_diagnostics::OxideError(Box::new(
+                        Err(OxideError(Box::new(
                             oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 "renderChunk bridge thread panicked",
@@ -16828,12 +17269,10 @@ fn build_js_plugin_generate_bundle_hook(
                         .enable_all()
                         .build()
                         .map_err(|e| {
-                            oxide_fw_diagnostics::OxideError(Box::new(
-                                oxide_fw_diagnostics::Diagnostic::error(
-                                    "PLG-BRIDGE",
-                                    format!("bridge runtime: {e}"),
-                                ),
-                            ))
+                            OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
+                                "PLG-BRIDGE",
+                                format!("bridge runtime: {e}"),
+                            )))
                         })?;
                     rt.block_on(async move {
                         let need_load = {
@@ -16897,7 +17336,7 @@ fn build_js_plugin_generate_bundle_hook(
                 })
                 .join()
                 .unwrap_or_else(|_| {
-                    Err(oxide_fw_diagnostics::OxideError(Box::new(
+                    Err(OxideError(Box::new(
                         oxide_fw_diagnostics::Diagnostic::error(
                             "PLG-BRIDGE",
                             "generateBundle bridge thread panicked",
@@ -16936,12 +17375,10 @@ fn build_js_plugin_transform_html_hook(
                             .enable_all()
                             .build()
                             .map_err(|e| {
-                                oxide_fw_diagnostics::OxideError(Box::new(
-                                    oxide_fw_diagnostics::Diagnostic::error(
-                                        "PLG-BRIDGE",
-                                        format!("bridge runtime: {e}"),
-                                    ),
-                                ))
+                                OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(
+                                    "PLG-BRIDGE",
+                                    format!("bridge runtime: {e}"),
+                                )))
                             })?;
                         rt.block_on(async move {
                             let need_load = {
@@ -17007,7 +17444,7 @@ fn build_js_plugin_transform_html_hook(
                     })
                     .join()
                     .unwrap_or_else(|_| {
-                        Err(oxide_fw_diagnostics::OxideError(Box::new(
+                        Err(OxideError(Box::new(
                             oxide_fw_diagnostics::Diagnostic::error(
                                 "PLG-BRIDGE",
                                 "transformHtml bridge thread panicked",
