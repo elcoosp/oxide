@@ -166,6 +166,20 @@ impl Framework {
             Framework::Vite => "vite",
         }
     }
+
+    /// The kebab-case spelling a user names on the CLI surface, parsed
+    /// back (`sveltekit|next|nuxt|vite`). `None` for anything else — the
+    /// CLI refuses an unknown source name rather than guessing.
+    #[must_use]
+    pub fn from_source_name(name: &str) -> Option<Self> {
+        match name {
+            "sveltekit" => Some(Framework::SvelteKit),
+            "next" => Some(Framework::Next),
+            "nuxt" => Some(Framework::Nuxt),
+            "vite" => Some(Framework::Vite),
+            _ => None,
+        }
+    }
 }
 
 /// The planner seam (§V2-E03): one implementation per source framework,
