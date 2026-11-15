@@ -78,6 +78,7 @@ fn pipeline(
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
+        response_observer: None,
         ..Default::default()
     }
 }
@@ -944,6 +945,7 @@ async fn metrics_endpoint_renders_prometheus_text() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
+        response_observer: None,
         ..Default::default()
     };
     let d = &echo_dispatch();
@@ -1024,6 +1026,7 @@ async fn vitals_endpoint_records_samples_into_metrics() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
+        response_observer: None,
         ..Default::default()
     };
     let body = br#"[{"name":"LCP","value":1234.5,"route":"/home"},{"name":"CLS","value":0.05,"route":"/home"}]"#;
@@ -1075,6 +1078,7 @@ async fn vitals_endpoint_tolerates_a_malformed_beacon() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
+        response_observer: None,
         ..Default::default()
     };
     let mut r = req("POST", "/_oxide/vitals", &[]);
@@ -1112,6 +1116,7 @@ async fn metrics_endpoint_404_when_not_configured() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
+        response_observer: None,
         ..Default::default()
     };
     let d = &echo_dispatch();
@@ -1153,6 +1158,7 @@ async fn pipeline_observes_native_branch_requests() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
+        response_observer: None,
         ..Default::default()
     };
     let d = &echo_dispatch();
@@ -1200,6 +1206,7 @@ async fn with_metrics_attaches_registry() {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
+        response_observer: None,
         ..Default::default()
     };
     let p = p.with_metrics(Arc::clone(&m));
@@ -1257,6 +1264,7 @@ fn inspector_pipeline() -> Pipeline {
         sockets: None,
         http3_port: 0,
         http3_advertise: false,
+        response_observer: None,
         ..Default::default()
     }
 }
