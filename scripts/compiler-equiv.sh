@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# §V2-C01 "Equivalence harness" (used by C02–C05):
+# §V2-C01 "Equivalence harness" (the acceptance gate of C02 solid — the
+# re-opened, in-repo backend — and the C03/C04/C05 upstream backends):
 #   scripts/compiler-equiv.sh <framework>
 #
 # Builds examples/smoke-app-<fw> twice — OXIDE_COMPILER_BACKEND=node then
@@ -46,7 +47,7 @@ build_and_render() {
 
 echo "== compiler equivalence: $FW =="
 if [[ ! -x "$BIN" ]]; then
-  echo "oxide binary missing at $BIN — build with: cargo build --release -p oxide-fw-cli --features native-vue,native-svelte,native-react-compiler"
+  echo "oxide binary missing at $BIN — build with: cargo build --release -p oxide-fw-cli --features native-solid,native-vue,native-svelte,native-react-compiler"
   exit 3
 fi
 build_and_render node   /tmp/equiv-$FW-node   || exit 4
