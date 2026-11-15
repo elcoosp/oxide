@@ -57,11 +57,11 @@
 // constructs its refusal directly — it needs `with_fix`, which the `err`
 // helper does not carry). The import is cfg-gated so the default-feature
 // build does not trip `-D unused-imports`.
-#[cfg(feature = "subset")]
-use crate::err;
-use crate::Result;
 #[cfg(not(feature = "subset"))]
 use crate::Diagnostic;
+use crate::Result;
+#[cfg(feature = "subset")]
+use crate::err;
 // `MetadataProvider` backs the `subset_core` charmap walk, which is
 // `subset`-only; the default build has no use for the trait import.
 #[cfg(feature = "subset")]
