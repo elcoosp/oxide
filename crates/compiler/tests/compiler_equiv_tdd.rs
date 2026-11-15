@@ -1,7 +1,7 @@
 //! §V2-C01 "Equivalence harness" pin: `scripts/compiler-equiv.sh
 //! <framework>` is the acceptance gate for every landed native compiler
-//! (C03 vue, C04 svelte; C02 solid is killed upstream, C05 is the
-//! opt-in React Compiler). The test shells out to the script and
+//! (C02 solid — the re-opened in-repo backend — C03 vue, C04 svelte; C05
+//! is the opt-in React Compiler). The test shells out to the script and
 //! asserts exit 0 + the green diff line.
 //!
 //! #[ignore]d: it needs a RELEASE `oxide` binary with the native
@@ -9,11 +9,18 @@
 //! and the per-WP acceptance runs execute it:
 //!
 //! ```text
-//! cargo build --release -p oxide-fw-cli --features native-vue,native-svelte,native-react-compiler
+//! cargo build --release -p oxide-fw-cli --features native-solid,native-vue,native-svelte,native-react-compiler
 //! cargo test -p oxide-fw-compiler --test compiler_equiv_tdd -- --ignored
+//! scripts/compiler-equiv.sh solid
 //! scripts/compiler-equiv.sh vue
 //! scripts/compiler-equiv.sh svelte
 //! ```
+
+#[test]
+#[ignore = "invokes scripts/compiler-equiv.sh <fw>; needs a release binary with the native features"]
+fn compiler_equiv_solid() {
+    run_equiv("solid");
+}
 
 #[test]
 #[ignore = "invokes scripts/compiler-equiv.sh <fw>; needs a release binary with the native features"]
