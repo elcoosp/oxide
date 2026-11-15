@@ -34,7 +34,8 @@
 //! # What is compiled in today
 //!
 //! The feature-gated backends push into [`NativeRegistry::from_enabled_features`]:
-//! `native-solid` (the C02 re-open — the in-repo Solid JSX transform, see
+//! `native-solid` (the C02 dependency arm — Solid 2.0's official Oxc
+//! compiler core, `solidjs-compiler` git-pinned, see
 //! `docs/decisions/C02-solid-native.md`), `native-vue` (C03, `verter_core`),
 //! `native-svelte` (C04, `svelte-compiler`) and `native-react-compiler`
 //! (C05, `oxc_react_compiler`). A default build compiles none of them:
@@ -88,8 +89,8 @@ pub struct CompileRequest<'a> {
     pub dev: bool,
 }
 
-/// One compile result: the emitted module text plus optional extracted CSS
-/// and warnings (§V2-C01).
+/// One compile result: the emitted module text plus optional extracted CSS,
+/// warnings and source map (§V2-C01).
 #[derive(Default, Debug)]
 pub struct CompileOutput {
     /// The emitted JavaScript module.
@@ -98,6 +99,13 @@ pub struct CompileOutput {
     pub css: Option<String>,
     /// Non-fatal diagnostics (upstream warnings, passed through verbatim).
     pub warnings: Vec<String>,
+    /// The emitted module's V3 source map (JSON), when the backend
+    /// produced one. The pool compiles return none (the `solid-compile`
+    /// oracle returns `js` only); the Solid upstream adapter emits one in
+    /// dev. The bundler-side per-file consumption is the precompile
+    /// integration's next seam extension — the field is carried, not
+    /// dropped.
+    pub source_map: Option<String>,
 }
 
 /// A native framework compiler (§V2-C01): string in, string out.
@@ -185,8 +193,8 @@ impl NativeRegistry {
     /// The registry of backends compiled into this binary.
     ///
     /// The compiled-in set is the feature-gated push list
-    /// (`register_compiled_in` — the C02 Solid re-open plus the C03/C04/C05
-    /// backends). A default build compiles none of them: `auto` answers the
+    /// (`register_compiled_in` — the C02 dependency arm plus the
+    /// C03/C04/C05 backends). A default build compiles none of them: `auto` answers the
     /// Node pool for every framework and `native` refuses with [`native_err`],
     /// which is the C01 contract the TDD pins hold.
     #[must_use]
@@ -202,7 +210,7 @@ impl NativeRegistry {
     /// nothing — a parameter that is never dereferenced mutably is not a lint
     /// finding, so no `allow` escape hatch rides this function.
     fn register_compiled_in(reg: &mut NativeRegistry) {
-        // The C02 re-open: the in-repo Solid JSX transform
+        // The C02 dependency arm: Solid 2.0's official Oxc compiler core
         // (`docs/decisions/C02-solid-native.md`).
         #[cfg(feature = "native-solid")]
         reg.register(Box::new(super::native::solid::SolidNative));
@@ -378,6 +386,7 @@ mod tests {
                 js: req.source.to_string(),
                 css: None,
                 warnings: Vec::new(),
+                source_map: None,
             })
         }
         fn health_fixture(&self) -> (&'static str, &'static str) {
