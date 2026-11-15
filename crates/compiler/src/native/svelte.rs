@@ -67,6 +67,7 @@ impl NativeCompiler for SvelteNative {
                     .iter()
                     .map(|w| w.message.to_string())
                     .collect(),
+                source_map: None,
             }),
             Err(e) => {
                 let mut d = oxide_fw_diagnostics::Diagnostic::error(
