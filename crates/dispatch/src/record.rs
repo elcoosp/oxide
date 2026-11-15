@@ -319,6 +319,32 @@ pub struct RequestRecord {
     pub response: RecordedResponse,
 }
 
+/// The deterministic sampling roll for one request (§V2-F15 prod sampling:
+/// `record: { sample: 0.001, onError: true }`). The caller needs one uniform
+/// value in `[0, 1)` per request to feed
+/// [`RecordPolicy::should_record`]; deriving it from the request id keeps
+/// the decision pure (no RNG state, no lock) and repeatable — the same
+/// request id rolls the same value, so a record decision never flips
+/// between the pipeline stages that consult it. SplitMix64 over the
+/// FNV-1a of the id: no dependency, and the low bits of an FNV digest do
+/// not skew the float they seed.
+#[must_use]
+pub fn sample_roll_for(request_id: &str) -> f64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in request_id.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    // SplitMix64 finalizer.
+    h = h.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    h ^= h >> 31;
+    // 53 bits of mantissa: every double in [0, 1) is representable, no
+    // rounding bias toward 1.0.
+    (h >> 11) as f64 / (1u64 << 53) as f64
+}
+
 /// The storage seam (§V2-F15): where finished records go. The filesystem
 /// impl is [`DirRecordStore`]; a hosted store (the F11 `DeployStore`
 /// targets) drops in behind the same trait.
@@ -668,6 +694,31 @@ impl Recording {
                 truncated,
             },
         }
+    }
+
+    /// The finish for a shared handle: the wiring holds the accumulator
+    /// behind an `Arc<Mutex<Recording>>` (the [`RecordingLoaderRunner`]
+    /// decorator and the response tee share it), so the finish runs
+    /// through a `MutexGuard` and cannot move the accumulator out. Same
+    /// record [`Self::finish`] produces, on the same fed state; the
+    /// accumulator resets to an empty one (a second finish would then
+    /// produce an empty record — the wiring finishes exactly once).
+    pub fn finish_shared(
+        &mut self,
+        request_id: &str,
+        build_id: &str,
+        status: u16,
+        response_headers: &[(String, String)],
+        response_body: &[u8],
+    ) -> RequestRecord {
+        let empty = Recording::new(self.redactor.clone(), "", "");
+        std::mem::replace(self, empty).finish(
+            request_id,
+            build_id,
+            status,
+            response_headers,
+            response_body,
+        )
     }
 }
 
