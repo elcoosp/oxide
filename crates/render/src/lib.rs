@@ -496,6 +496,87 @@ pub fn hydration_bootstrap_with_build(
     )
 }
 
+/// §V2-A04 (the prerendered-shell bake): insert the CURRENT build id into
+/// a prerendered shell's hydration bootstrap. The prerender pass writes
+/// the legacy three-field shape — the covered set's tail writers (message
+/// catalogs, the L0 seed, the enriched server manifest, the i18n stamp)
+/// run after it, so an id baked during the render would be stale by serve
+/// time and 409-loop the page. The emit tail instead re-bakes the shells
+/// AFTER `stamp_build_id` computed the id: every shell then echoes an
+/// ACCEPTED id on the data plane instead of riding the headerless
+/// allowance.
+///
+/// `Some` only when the document CHANGED: a shell already carrying the
+/// same id is left untouched (idempotent under repeated builds), a shell
+/// carrying a stale id re-bakes to the current one, and a document
+/// without the `window.__oxide` marker is a no-op. The id goes through the
+/// same percent-encoding the templates apply to the route id, so the
+/// script never carries a byte the JS string literal cannot hold.
+#[must_use]
+pub fn bake_build_id(html: &str, build_id: &str) -> Option<String> {
+    const MARKER: &str = "window.__oxide={route:\"";
+    if !html.contains(MARKER) {
+        return None;
+    }
+    let build = sanitize_route_id(build_id);
+    let mut out = String::with_capacity(html.len() + 32);
+    let mut rest = html;
+    let mut any = false;
+    while let Some(idx) = rest.find(MARKER) {
+        let after_marker = idx + MARKER.len();
+        let after = &rest[after_marker..];
+        // The route value ends at the next quote (the sanitize alphabet
+        // has none — the value cannot swallow the terminator).
+        let Some(end) = after.find('"') else {
+            out.push_str(rest);
+            rest = "";
+            break;
+        };
+        let route_value_end = after_marker + end + 1;
+        let consumed = &rest[..route_value_end];
+        let tail = &rest[route_value_end..];
+        if let Some(id_rest) = tail.strip_prefix(",build:\"") {
+            match id_rest.find('"') {
+                // Already carrying the CURRENT id: keep the bytes, keep
+                // scanning (the marker cannot re-match inside `tail` — it
+                // starts with a comma, so `find` always progresses).
+                Some(id_end) if id_rest[..id_end] == build => {
+                    out.push_str(consumed);
+                    rest = tail;
+                }
+                // A stale id (an incremental rebuild's shell): re-bake.
+                Some(id_end) => {
+                    out.push_str(consumed);
+                    out.push_str(",build:\"");
+                    out.push_str(&build);
+                    out.push('"');
+                    rest = &id_rest[id_end + 1..];
+                    any = true;
+                }
+                None => {
+                    out.push_str(rest);
+                    rest = "";
+                    break;
+                }
+            }
+        } else if tail.starts_with(',') {
+            // The legacy three-field shape: bake.
+            out.push_str(consumed);
+            out.push_str(",build:\"");
+            out.push_str(&build);
+            out.push('"');
+            rest = tail;
+            any = true;
+        } else {
+            // Not a bootstrap tail: keep scanning past the route value.
+            out.push_str(consumed);
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    any.then_some(out)
+}
+
 /// §V2-F05 step 1: the five-field hydration bootstrap — the A04 shape plus
 /// the `live` flag. Opted-in routes (`page.server.ts` `live: true`) get
 /// `live:true` so the client router connects to `GET /__oxide/live` after
