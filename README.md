@@ -7,7 +7,8 @@
     <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
     <a href="https://crates.io/crates/oxide-fw-cli"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
     <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
-    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-2410%20Rust%20%7C%20490%2F490%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-2366%20Rust%20%7C%20490%2F490%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-2386%20Rust%20%7C%20503%2F503%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
   </p>
   <p>
     <a href="#install">Install</a> ·
@@ -60,14 +61,14 @@ install.
 
 ## Features
 
-| | |
-| --- | --- |
-| **One engine, four frameworks** | One versioned adapter contract (`contract: 1`). Real streaming SSR is the default; framework libraries are optional peers. |
-| **Fast paths skip JS** | Redirects, rewrites, headers, auth and rate limits evaluate natively in Rust. `oxide.config.ts` is statically extracted — the config path never runs JavaScript. |
-| **One wire format** | ODF is a devalue-compatible binary format encoded in Rust, decoded by a zero-dependency TS module. `Date`, `Map`, `Set`, `BigInt` survive a cache round trip. |
-| **Three-tier cache** | L0 in-process, L1 data cache, L2 pluggable remote (Redis, S3, HTTP). Tags, stale-while-revalidate, single-flight, MAC-sealed remote payloads. |
+|                                        |                                                                                                                                                                                                                                                  |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **One engine, four frameworks**        | One versioned adapter contract (`contract: 1`). Real streaming SSR is the default; framework libraries are optional peers.                                                                                                                       |
+| **Fast paths skip JS**                 | Redirects, rewrites, headers, auth and rate limits evaluate natively in Rust. `oxide.config.ts` is statically extracted — the config path never runs JavaScript.                                                                                 |
+| **One wire format**                    | ODF is a devalue-compatible binary format encoded in Rust, decoded by a zero-dependency TS module. `Date`, `Map`, `Set`, `BigInt` survive a cache round trip.                                                                                    |
+| **Three-tier cache**                   | L0 in-process, L1 data cache, L2 pluggable remote (Redis, S3, HTTP). Tags, stale-while-revalidate, single-flight, MAC-sealed remote payloads.                                                                                                    |
 | **Static Rust server + Node SSR pool** | hyper 1.x + rustls: HTTP/1.1, HTTP/2, HTTP/3 over QUIC. Precompressed static serving (zstd → brotli → gzip), range requests, zero-downtime reload via SO_REUSEPORT. SSR runs in supervised Node ≥ 24 workers; the embedded-V8 backend is opt-in. |
-| **Twelve deploy targets** | Binary, Node, Static, Docker, Cloudflare (Workers + Pages), Lambda, Vercel (+ Functions), Netlify, Deno, Bun — behind a capability matrix that refuses at build time what the target cannot honour. |
+| **Twelve deploy targets**              | Binary, Node, Static, Docker, Cloudflare (Workers + Pages), Lambda, Vercel (+ Functions), Netlify, Deno, Bun — behind a capability matrix that refuses at build time what the target cannot honour.                                              |
 
 ## Architecture
 
@@ -78,23 +79,23 @@ request → hyper → limits → static → native rules → route match
 
 Cached, redirected, rewritten and static answers **never enter a JavaScript runtime**. Four traits sit between the pipeline and every external engine:
 
-| Trait | Purpose |
-| --- | --- |
-| `PageRenderer` | page module + data → HTML, buffered or streamed |
-| `LoaderRunner` | run `page.server.ts` loaders in the layout chain |
+| Trait                  | Purpose                                                     |
+| ---------------------- | ----------------------------------------------------------- |
+| `PageRenderer`         | page module + data → HTML, buffered or streamed             |
+| `LoaderRunner`         | run `page.server.ts` loaders in the layout chain            |
 | `MiddlewareDispatcher` | outer→inner; short-circuit, rewrite, or contribute `locals` |
-| `ActionDispatcher` | form POST routed to a named action |
+| `ActionDispatcher`     | form POST routed to a named action                          |
 
 Twenty Rust crates: `server` (hyper, static, compression, TLS), `render` (streaming SSR, HTML injection), `router` (tree, matcher, typegen), `cache` (three tiers), `odf` (wire format), `compiler` (Oxc passes), `bundler` (rolldown), `jshost` (V8 + Node), `graph` (incremental), `plugin` (Wasm), `adapters` (deploy), `cli`, `dispatch` (V8-free request orchestration), plus `assets`, `config`, `dev`, `diagnostics`, `schema`, `search` (the built-in tantivy engine, feature `search`), `core-wasm`.
 
 ## Framework adapters
 
-| Adapter | Package | Extensions | Peer deps |
-| --- | --- | --- | --- |
-| React | [`@oxide-fw/react`](https://www.npmjs.com/package/@oxide-fw/react) | `.tsx` | `react@^19`, `react-dom@^19` |
-| Vue *(preview)* | [`@oxide-fw/vue`](https://www.npmjs.com/package/@oxide-fw/vue) | `.vue` | `vue@^3.6`, `@vue/server-renderer@^3.6` |
-| Svelte | [`@oxide-fw/svelte`](https://www.npmjs.com/package/@oxide-fw/svelte) | `.svelte` | `svelte@^5` |
-| Solid *(preview)* | [`@oxide-fw/solid`](https://www.npmjs.com/package/@oxide-fw/solid) | `.tsx` | `solid-js@^2`, `@solidjs/web@^2` |
+| Adapter           | Package                                                              | Extensions | Peer deps                               |
+| ----------------- | -------------------------------------------------------------------- | ---------- | --------------------------------------- |
+| React             | [`@oxide-fw/react`](https://www.npmjs.com/package/@oxide-fw/react)   | `.tsx`     | `react@^19`, `react-dom@^19`            |
+| Vue _(preview)_   | [`@oxide-fw/vue`](https://www.npmjs.com/package/@oxide-fw/vue)       | `.vue`     | `vue@^3.6`, `@vue/server-renderer@^3.6` |
+| Svelte            | [`@oxide-fw/svelte`](https://www.npmjs.com/package/@oxide-fw/svelte) | `.svelte`  | `svelte@^5`                             |
+| Solid _(preview)_ | [`@oxide-fw/solid`](https://www.npmjs.com/package/@oxide-fw/solid)   | `.tsx`     | `solid-js@^2`, `@solidjs/web@^2`        |
 
 > Vue and Solid are labelled **preview** because their peer ranges pin release
 > candidates (`vue@^3.6.0-rc`, `solid-js@^2.0.0-rc`). They work, but the RC
@@ -106,14 +107,18 @@ The loader is framework-neutral. It lives in `page.server.ts` and returns a plai
 ```ts
 // src/routes/blog/[slug]/page.server.ts — same for all four adapters
 export async function load({ params }) {
-  return { post: await getPost(params.slug) }
+	return { post: await getPost(params.slug) };
 }
 ```
 
 ```tsx
 // src/routes/blog/[slug]/page.tsx — React
 export default function Post({ data }) {
-  return <article><h1>{data.post.title}</h1></article>
+	return (
+		<article>
+			<h1>{data.post.title}</h1>
+		</article>
+	);
 }
 ```
 
@@ -156,12 +161,12 @@ oxide start --root examples/smoke-app-react --port 3100
 
 **Pre-alpha. Built against a published specification and audited against it.**
 
-| | |
-| --- | --- |
-| Spec compliance | **95 / 100** on a 21-section scorecard — [every finding public](docs/deviations.md) |
-| CI | 20 jobs on Linux, macOS, Windows — 17 per pull request; nightly Miri, the release-profile check and smoke-deploy run on schedule/main |
-| Rust | 2,155 test functions; clippy-clean at `-D warnings` with **zero** `#[allow(clippy::*)]` |
-| Security | `cargo audit` exits 0; one advisory suppressed with a [reachability analysis](.cargo/audit.toml) |
+|                 |                                                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Spec compliance | **95 / 100** on a 21-section scorecard — [every finding public](docs/deviations.md)                                                   |
+| CI              | 20 jobs on Linux, macOS, Windows — 17 per pull request; nightly Miri, the release-profile check and smoke-deploy run on schedule/main |
+| Rust            | 2,155 test functions; clippy-clean at `-D warnings` with **zero** `#[allow(clippy::*)]`                                               |
+| Security        | `cargo audit` exits 0; one advisory suppressed with a [reachability analysis](.cargo/audit.toml)                                      |
 
 `v0.2.0` through `v0.13.0` are tagged; the crates.io / npm publication step is still pending. Releases follow a **48-hour / 5-consecutive-green-CI** soak rule — see [PUBLISHING.md](PUBLISHING.md).
 
