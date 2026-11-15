@@ -10862,6 +10862,19 @@ async fn build_identity_advertises_and_rejects_stale_on_the_wire() {
         stamped,
         "the stamped id IS build_id_of_dist's answer over the final dist"
     );
+    // The prerendered-shell bake (the A04 deviation closure): the build's
+    // emit tail rewrote the shell's three-field bootstrap to the four-field
+    // A04 shape carrying the STAMPED id — a prerendered page echoes an
+    // ACCEPTED id on the data plane instead of riding the headerless
+    // allowance, with no 409 loop (the id is the CURRENT one by
+    // construction). The bake runs after the stamp, and the shells live
+    // outside the covered set (dist/client, dist/server, routes.manifest),
+    // so the id stays the recomputed value above.
+    let shell = std::fs::read_to_string(dist.join("index.html")).expect("the prerendered shell");
+    assert!(
+        shell.contains(&format!("build:\"{stamped}\"")),
+        "the prerendered shell carries the stamped build id"
+    );
     // The spec's observable proof: an unchanged rebuild prints the SAME id.
     let mut buf2 = Vec::new();
     let code2 = crate::run_with_writer(
@@ -10886,4 +10899,429 @@ async fn build_identity_advertises_and_rejects_stale_on_the_wire() {
         stamped,
         "an unchanged rebuild keeps the id"
     );
+}
+
+// ---------------------------------------------------------------- live (F05)
+
+/// An incremental de-chunker for the SSE response body: hyper streams the
+/// live endpoint with `transfer-encoding: chunked`, and the reader below
+/// accumulates frames across reads — chunk-size markers must never leak
+/// into the de-chunked buffer an assertion scans.
+struct SseDechunker {
+    body: Vec<u8>,
+    line: Vec<u8>,
+    pending: usize,
+    state: SseState,
+}
+
+#[derive(PartialEq)]
+enum SseState {
+    Size,
+    Data,
+    Crlf,
+    Done,
+}
+
+impl SseDechunker {
+    fn new() -> Self {
+        Self {
+            body: Vec::new(),
+            line: Vec::new(),
+            pending: 0,
+            state: SseState::Size,
+        }
+    }
+
+    fn feed(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            match self.state {
+                SseState::Size => {
+                    self.line.push(*b);
+                    if self.line.ends_with(b"\r\n") {
+                        let text = String::from_utf8_lossy(&self.line);
+                        match usize::from_str_radix(text.trim(), 16) {
+                            Ok(0) => self.state = SseState::Done,
+                            Ok(size) => {
+                                self.pending = size;
+                                self.state = SseState::Data;
+                            }
+                            Err(_) => self.state = SseState::Done,
+                        }
+                        self.line.clear();
+                    }
+                }
+                SseState::Data => {
+                    self.body.push(*b);
+                    self.pending -= 1;
+                    if self.pending == 0 {
+                        self.state = SseState::Crlf;
+                    }
+                }
+                SseState::Crlf => {
+                    self.line.push(*b);
+                    if self.line.ends_with(b"\r\n") {
+                        self.state = SseState::Size;
+                        self.line.clear();
+                    }
+                }
+                SseState::Done => {}
+            }
+        }
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
+}
+
+/// Open a raw HTTP/1.1 GET with extra headers (the SSE endpoint's
+/// `Origin`/`Sec-Fetch-Site` evidence) and return the de-chunking reader
+/// positioned after the response head. The stream is NOT drained to the
+/// end — the caller reads frames incrementally.
+async fn open_sse(
+    addr: std::net::SocketAddr,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (SseDechunker, tokio::net::tcp::OwnedReadHalf) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let stream = loop {
+        match TcpStream::connect(addr).await {
+            Ok(s) => break s,
+            Err(e) => {
+                if std::time::Instant::now() >= deadline {
+                    panic!("connect to {addr} never succeeded after 3s: {e}");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        }
+    };
+    let (mut r, mut w) = stream.into_split();
+    let extra = headers
+        .iter()
+        .map(|(k, v)| format!("{k}: {v}\r\n"))
+        .collect::<String>();
+    let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n{extra}Connection: close\r\n\r\n");
+    w.write_all(req.as_bytes()).await.expect("write request");
+    w.flush().await.expect("flush");
+    let mut head = Vec::new();
+    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+        let mut chunk = [0u8; 2048];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(10), r.read(&mut chunk))
+            .await
+            .expect("head read timed out")
+            .expect("head read failed");
+        if n == 0 {
+            break;
+        }
+        head.extend_from_slice(&chunk[..n]);
+    }
+    let raw_head = String::from_utf8_lossy(&head).into_owned();
+    assert!(
+        raw_head.starts_with("HTTP/1.1 200"),
+        "the SSE endpoint answers 200: {}",
+        raw_head.lines().next().unwrap_or("")
+    );
+    assert!(
+        raw_head
+            .to_lowercase()
+            .contains("content-type: text/event-stream"),
+        "the SSE head carries the event-stream content type"
+    );
+    let mut de = SseDechunker::new();
+    // Body bytes that arrived with the head (the first frame may ride the
+    // same segment) start the de-chunk buffer.
+    if let Some(idx) = head.windows(4).position(|w| w == b"\r\n\r\n") {
+        de.feed(&head[idx + 4..]);
+    }
+    (de, r)
+}
+
+/// Read SSE frames (de-chunked) until `needle` appears at or after `from`
+/// in the body text, or the deadline passes. Returns the accumulated body.
+async fn sse_read_until(
+    de: &mut SseDechunker,
+    sock: &mut tokio::net::tcp::OwnedReadHalf,
+    needle: &str,
+    from: usize,
+    timeout: std::time::Duration,
+) -> String {
+    use tokio::io::AsyncReadExt as _;
+    let deadline = std::time::Instant::now() + timeout;
+    let mut chunk = [0u8; 4096];
+    loop {
+        let text = de.text();
+        if text[from..].contains(needle) {
+            return text;
+        }
+        if std::time::Instant::now() >= deadline {
+            return text;
+        }
+        match tokio::time::timeout(std::time::Duration::from_millis(200), sock.read(&mut chunk))
+            .await
+        {
+            Ok(Ok(0)) => return text, // closed
+            Ok(Ok(n)) => de.feed(&chunk[..n]),
+            Ok(Err(_)) => return text, // closed by error
+            Err(_) => continue,        // quiet window; poll the deadline
+        }
+    }
+}
+
+/// The `data:` payloads of every `event: data` frame in the accumulated
+/// SSE text (base64; one line per frame).
+fn sse_data_payloads(text: &str) -> Vec<String> {
+    text.split("\n\n")
+        .filter_map(|frame| {
+            if !frame.contains("event: data") {
+                return None;
+            }
+            frame
+                .lines()
+                .rev()
+                .find_map(|l| l.strip_prefix("data: "))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// The `n` value of a decoded /__data envelope (the ox-live fixture's
+/// loader counter), or `None` when the payload is not a decodable ODF
+/// envelope carrying a number there.
+fn envelope_n(raw: &[u8]) -> Option<f64> {
+    if raw.len() < 4 || &raw[..4] != b"ODF1" {
+        return None;
+    }
+    let v = oxide_fw_odf::decode(raw).ok()?;
+    let oxide_fw_odf::Value::Object(map) = v else {
+        return None;
+    };
+    let data = map.get("data")?;
+    let oxide_fw_odf::Value::Object(data_map) = data else {
+        return None;
+    };
+    let oxide_fw_odf::Value::Number(n) = data_map.get("n")? else {
+        return None;
+    };
+    Some(*n)
+}
+
+/// Minimal raw HTTP/1.1 POST (the action form post — `?/<action>` names
+/// the action; the body is the form entries).
+async fn http_post_form(
+    addr: std::net::SocketAddr,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut stream = loop {
+        match TcpStream::connect(addr).await {
+            Ok(s) => break s,
+            Err(e) => {
+                if std::time::Instant::now() >= deadline {
+                    panic!("connect to {addr} never succeeded after 3s: {e}");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        }
+    };
+    let extra = headers
+        .iter()
+        .map(|(k, v)| format!("{k}: {v}\r\n"))
+        .collect::<String>();
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\n{extra}content-length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(req.as_bytes())
+        .await
+        .expect("write request");
+    stream.flush().await.expect("flush");
+    let mut buf = Vec::with_capacity(4 * 1024);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        stream.read_to_end(&mut buf),
+    )
+    .await
+    .expect("read timed out")
+    .expect("read failed");
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// §V2-F05/F06 acceptance over the wire against the smoke app's live
+/// fixture (`src/routes/ox-live`):
+///
+/// 1. the same-origin SSE connection answers `200 text/event-stream` and
+///    its FIRST frame is a decodable full snapshot (the F05 invariant —
+///    a fresh connection never needs a replay);
+/// 2. cross-origin and evidence-less requests are refused (`403` — the
+///    mandatory Origin gate);
+/// 3. the `bump` action's `revalidate.path('/ox-live')` fans out through
+///    the hub: the subscriber re-runs the SAME data-route path as
+///    `/__data` (stored cookie snapshot rides) and the stream delivers a
+///    NEW data frame whose loader counter advanced — no page reload, no
+///    hand-written socket code.
+///
+/// The F06 delta shape on this wire (full-then-patch chaining) is pinned
+/// V8-free in `crates/server/tests/live_tdd.rs`
+/// (`frames_carry_full_then_patch_payloads`); here the frame magic is only
+/// sanity-checked (the sending policy may legitimately ship either).
+///
+/// `#[ignore]` like every e2e here: spawns Node workers, binds ports and
+/// needs the workspace `node_modules`. CI runs it named, single-threaded.
+#[tokio::test]
+#[ignore]
+async fn live_pushes_snapshots_over_the_wire() {
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app-react");
+    assert!(
+        smoke.join("src/routes/ox-live/page.server.ts").is_file(),
+        "the live fixture route is missing at {}",
+        smoke.display()
+    );
+
+    let stack = crate::framework_shim::build_framework_stack(
+        Some(&smoke.join("oxide.config.ts")),
+        oxide_fw_config::JsBackend::Node,
+        None,
+        None,
+    )
+    .await;
+    let smoke_str = smoke.to_str().expect("smoke path utf-8");
+    let started = crate::start_dev_server_full(
+        smoke_str,
+        Some(0),
+        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        None,
+        Vec::new(),
+        stack,
+        None,
+    )
+    .await
+    .expect("live-phase server");
+
+    // Warm the route (pool compile + first load) so the SSE connect's rerun
+    // does not race the worker spin-up.
+    let warm = crate::tests::http_get(started.addr, "/ox-live").await;
+    assert!(
+        warm.starts_with("HTTP/1.1 200"),
+        "the fixture route answers 200: {}",
+        warm.lines().next().unwrap_or("")
+    );
+
+    let origin = format!("http://127.0.0.1:{}", started.addr.port());
+
+    // (2) The Origin gate BEFORE any subscription: cross-origin and
+    // evidence-less requests are refused.
+    let cross = http_get_with_header(
+        started.addr,
+        "/__oxide/live?route=%2Fox-live&build=dev",
+        "origin",
+        "http://evil.test",
+    )
+    .await;
+    assert!(
+        cross.starts_with("HTTP/1.1 403"),
+        "a cross-origin live request is refused: {}",
+        cross.lines().next().unwrap_or("")
+    );
+    let evidenceless =
+        crate::tests::http_get(started.addr, "/__oxide/live?route=%2Fox-live&build=dev").await;
+    assert!(
+        evidenceless.starts_with("HTTP/1.1 403"),
+        "a request with no origin evidence is refused: {}",
+        evidenceless.lines().next().unwrap_or("")
+    );
+
+    // (1) The same-origin connection: 200 + event-stream, first frame is a
+    // full decodable snapshot.
+    let (mut de, mut sock) = open_sse(
+        started.addr,
+        "/__oxide/live?route=%2Fox-live&url=%2Fox-live&build=dev",
+        &[
+            ("origin", origin.as_str()),
+            ("sec-fetch-site", "same-origin"),
+        ],
+    )
+    .await;
+    let first_text = sse_read_until(
+        &mut de,
+        &mut sock,
+        "event: data",
+        0,
+        std::time::Duration::from_secs(30),
+    )
+    .await;
+    let payloads = sse_data_payloads(&first_text);
+    assert!(
+        !payloads.is_empty(),
+        "the connect frame is a data event: {first_text}"
+    );
+    let first_raw = base64_decode_bytes(payloads.last().expect("first payload checked non-empty"));
+    let n1 = envelope_n(&first_raw).expect("the connect frame decodes to the live envelope");
+    assert!(
+        &first_raw[..4] == b"ODF1",
+        "a fresh connection receives a FULL snapshot (F05 invariant)"
+    );
+    let after_first = first_text.len();
+
+    // (3) The revalidate fan-out: the action's `revalidate.path` event
+    // reaches the hub, the runner re-runs the data route with the stored
+    // headers, and the stream pushes the NEW snapshot.
+    let post = http_post_form(
+        started.addr,
+        "/ox-live?/bump",
+        &[("origin", origin.as_str())],
+        "",
+    )
+    .await;
+    assert!(
+        post.starts_with("HTTP/1.1 2"),
+        "the bump action succeeds: {}",
+        post.lines().next().unwrap_or("")
+    );
+
+    let second_text = sse_read_until(
+        &mut de,
+        &mut sock,
+        "event: data",
+        after_first,
+        std::time::Duration::from_secs(30),
+    )
+    .await;
+    let payloads2 = sse_data_payloads(&second_text);
+    assert!(
+        payloads2.len() >= 2,
+        "a NEW data frame arrived after the revalidate (fan-out): {}",
+        second_text
+    );
+    let second_raw = base64_decode_bytes(payloads2.last().expect("payloads2 checked non-empty"));
+    let n2 = envelope_n(&second_raw).expect("the pushed frame decodes");
+    assert!(
+        n2 > n1,
+        "the pushed snapshot is the RE-RUN data ({n1} -> {n2})"
+    );
+    assert!(
+        &second_raw[..4] == b"ODF1" || &second_raw[..4] == b"ODP1",
+        "the delta payload is an ODF full or an ODP1 patch (F06 policy)"
+    );
+
+    let _ = started.shutdown.send(true);
+}
+
+fn base64_decode_bytes(b64: &str) -> Vec<u8> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .expect("the data payload is base64")
 }
