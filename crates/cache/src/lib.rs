@@ -244,9 +244,9 @@ pub fn build_id(parts: &[&[u8]]) -> String {
 /// to the covered set that exists, because the wiring runs this on
 /// whatever the emit phase actually produced.
 ///
-/// The wiring that computes this at the end of `phase_emit` and writes
-/// `dist/build-id` / `.oxide/build-id` is deferred to the A01-phase-3 CLI
-/// adoption (V8 link); see `docs/deviations.md`.
+/// The end-of-emit wiring is [`stamp_build_id`] (the CLI build calls it
+/// once `phase_emit`'s writes are final); the boot consumes the stamped
+/// file through [`read_build_id`].
 #[must_use = "the build id is the generation identity; dropping it loses the emit"]
 pub fn build_id_of_dist(dist: &std::path::Path) -> Result<String> {
     use std::collections::BTreeMap;
@@ -310,6 +310,76 @@ pub fn build_id_of_dist(dist: &std::path::Path) -> Result<String> {
         .collect::<Vec<_>>()
         .join("\n");
     Ok(build_id(&[lines.as_bytes()]))
+}
+
+/// Stamp the canonical A04 build id over one emitted build (§V2-A04
+/// step 1's write half): compute [`build_id_of_dist`] over the dist AS
+/// THE EMIT LEFT IT and write the id to
+///
+/// - `dist/build-id` (plain text, one line) — the file `oxide start`,
+///   `oxide preview` and every build-id consumer read back through
+///   [`read_build_id`];
+/// - `<dist>/../.oxide/build-id` — the project-root copy the spec names.
+///
+/// Neither stamped file sits inside the covered set (`dist/client`,
+/// `dist/server`, `.oxide/routes.manifest`), so re-stamping an unchanged
+/// dist yields the same id — "build twice with no source change prints
+/// the same `dist/build-id`" holds, and a stamp doubles as the A04
+/// observable proof instead of perturbing it.
+///
+/// Both writes are atomic (temp file + rename) so a reader never observes
+/// a half-written id, and the LAST writer wins exactly like the emit's
+/// other artifacts.
+///
+/// `# Errors`
+///
+/// [`OxideError`] with code `CAC-BUILDID` when the id computation fails
+/// (missing dist, unreadable covered file) or either write cannot be
+/// completed — a build whose identity cannot be stamped is a failed
+/// build, not a warning: F10's pools, the data-plane check and the
+/// attest subject all key off this value.
+pub fn stamp_build_id(dist: &std::path::Path) -> Result<String> {
+    let id = build_id_of_dist(dist)?;
+    let root = dist
+        .parent()
+        .ok_or_else(|| err("CAC-BUILDID", "dist has no parent project root"))?;
+    write_atomic(&dist.join("build-id"), id.as_bytes())?;
+    write_atomic(&root.join(".oxide").join("build-id"), id.as_bytes())?;
+    Ok(id)
+}
+
+/// The one read site for a stamped build id (§V2-A04): the trimmed text
+/// of `dist/build-id`. `None` when the file is absent or unreadable —
+/// the boot falls back to its pre-stamp sources (the client manifest's
+/// field, then the dev constant) instead of failing a serve on a dist
+/// that predates the stamp.
+#[must_use]
+pub fn read_build_id(dist: &std::path::Path) -> Option<String> {
+    let raw = fs::read_to_string(dist.join("build-id")).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Write `bytes` to `path` through a temp file + rename in the SAME
+/// directory (rename across filesystems fails; the temp must sit beside
+/// its target). A stale temp file from a crashed writer is reused as the
+/// scratch name, never read.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| err("CAC-BUILDID", format!("no parent for {}", path.display())))?;
+    fs::create_dir_all(dir)
+        .map_err(|e| err("CAC-BUILDID", format!("mkdir {}: {e}", dir.display())))?;
+    let tmp = dir.join(".oxide-stamp-tmp");
+    fs::write(&tmp, bytes)
+        .map_err(|e| err("CAC-BUILDID", format!("write {}: {e}", tmp.display())))?;
+    fs::rename(&tmp, path)
+        .map_err(|e| err("CAC-BUILDID", format!("rename {}: {e}", path.display())))?;
+    Ok(())
 }
 
 /// blake3 hex of one file's bytes (streamed in 64 KiB chunks; build trees
