@@ -64,13 +64,22 @@ export async function enqueue(it: OutboxItem): Promise<string> {
   return id
 }
 
-// Replay every queued item (the 'online' listener and the boot's
-// connectivity check both call this). `send` is injectable so the tests
-// drive the delivery rule without a network.
+// Replay every queued item (the `online` listener, the boot module's
+// flush listener and the app all call this). `send` is injectable so the
+// tests drive the delivery rule without a network. A store-less
+// environment (storage disabled in the browser, an import without
+// IndexedDB) has nothing queued — the flush resolves empty instead of
+// rejecting, so the fire-and-forget trigger sites never surface an
+// unhandled rejection.
 export async function flush(
   send: (i: Item) => Promise<Response> = (i) => fetch(i.url, { method: i.method, headers: i.headers, body: i.body }),
 ): Promise<void> {
-  const d = await db()
+  let d: IDBDatabase
+  try {
+    d = await db()
+  } catch {
+    return // no store → nothing queued → nothing to replay
+  }
   const items: Item[] = await new Promise((res) => {
     const q = d.transaction('q').objectStore('q').getAll()
     q.onsuccess = () => res(q.result as Item[])
