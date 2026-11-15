@@ -142,6 +142,15 @@ name = "interactivity"
 harness = false
 required-features = ["bench-util"]
 
+# V2-C02: the native-Solid walkthrough example. The module it imports
+# (`oxide_fw_compiler::solid`) is gated behind `native-solid`, so without
+# the explicit target + required-features the auto-discovered example
+# broke `cargo check --workspace --all-targets` (E0433 on every default
+# feature set — the gate the msrv job and the tier-1 check run).
+[[example]]
+name = "solid_native"
+required-features = ["native-solid"]
+
 [lints]
 workspace = true
 
