@@ -3349,3 +3349,101 @@ with the upstream migration note; every upstream failure still maps onto
 (`solid_native_spike.rs`) hold the upstream emission shapes and byte
 determinism; `scripts/compiler-equiv.sh solid` stays the capable-host
 parity gate.
+
+## V2-F08 — the dev cargo-build/watch half lands (`feat/server-lib-dev-loop`, 2026-11-15)
+
+**What landed.** `crates/rustfn/src/swap.rs` — the swappable host state the
+dev loop drives: `SwappableHost` (a `RustFnHost` behind a short mutex) with
+the swap verb (mount the rebuilt library, re-point every §9.4 binding under
+it, UNREGISTER the ids the new bindings no longer name — the consult's
+JS-pool fallback takes a removed export back), the two-phase `call_now`
+(resolve the library `Arc` + export name under the lock, run the call
+OUTSIDE it — a swap never waits on a call), and `retire_idle` — the spec's
+retire rule enforced: a mount an id still references is never retired, a
+mount an in-flight call still holds (`Arc::strong_count > 1`) survives the
+pass and is reclaimed by the next one. The host primitives it drives landed
+on `RustFnHost` (`unregister`, `resolve_call`, `retire_idle_mounts` with the
+index re-compaction). `crates/dev/src/server_lib.rs` — the loop: the watch
+set is the spec's exactly (`**/*.server.rs` + `Cargo.toml`, never `target/`),
+one poll-shaped step per tick (no internal threads — the dev task's interval
+drives it), build → load → bindings → swap, every seam injectable
+(`LibBuild` / `LibLoad` / `ServerLibSwap`; production `CargoLibBuild` runs
+the spec's `cargo build --lib` and refuses with `DEV-RFN-001` carrying
+cargo's stderr tail; `CopyLoader` is the host's copy-then-load; `HostSwapper`
+drives the swappable host). The §9.4 id bindings re-derive through the ONE
+`server_fn_id` definition the compiler crate owns (§9.4, D6) — the loop
+never re-implements the digest; a missing or corrupt types payload refuses
+`DEV-RFN-002` LOUD (a zero-binding swap would silently drop every id). A
+failed step refuses and the previous mount keeps serving — a broken rebuild
+never takes the running dev server's native fns down.
+
+**Deltas.** (1) One `SwappableHost` per native crate (the swap's
+drop-by-bindings semantics are per-crate — a shared host would drop another
+crate's ids; the consult adapter consults each host in turn). (2) The loop's
+mount dir defaults to `<crate_dir>/.oxide/rust`; the CLI adoption passes the
+app root's (the consult's mount walk) and the build secret. (3) The retire
+pass also keeps the boot mounts referenced — the reference check is
+defensive over the swap-only shape (through the swap API the newest mount is
+always the referenced one). (4) The `reg` all-off arm of
+`NativeRegistry::from_enabled_features` gained a compiled-away use: this
+rustc (1.100) lints an unused `&mut` parameter under `unused_variables`, and
+the previous session's "never dereferenced mutably is not a lint finding"
+carve-out no longer holds — the default-feature `cargo check -p
+oxide-fw-compiler` was RED at HEAD in this environment (baseline repair, no
+`#[allow]` escape).
+
+**Tests.** 9 swap pins (`crates/rustfn/tests/swap_tdd.rs`: re-point + new
+behavior, drop, add, the sorted report, the two-phase call, the in-flight
+retire pin with a REAL blocked call, the orphan-only reclaim, the Send+Sync
+handle, the generation counter) + 11 loop pins + 2 `#[ignore]` real-cargo
+pins (`crates/dev/tests/server_lib_tdd.rs`: the broken-crate `DEV-RFN-001`
+refusal and the full fixture loop — real `cargo build`, real copy, real
+swap, the rebuilt `thumbnail` answers through the re-derived §9.4 id) + the
+`server_lib` criterion group (the quiet-tick poll cost over 8/32 files, one
+full fake step, the swap at 4/16 bindings, the bindings derivation, the
+event filter) + the `server_lib_loop` walkthrough example.
+
+## V2-F09 — the client matcher lands (`feat/search-client-matcher`, 2026-11-15)
+
+**What landed.** `packages/core/src/client/searchEngine.ts` — the spec's
+`import { search } from 'oxide/search'`: the server mode rides
+`window.__oxide.search === 'server'` (the boot flag's type extended) and
+calls `GET /_oxide/search` with the endpoint's wire rules (limit default 10
+/ cap 100, empty-string filters = absent, a non-200 throws with the status);
+the static mode lazily loads `dist/search/static.json` (default
+`/search/static.json`, exactly once — the fetch and injected loaders both
+memoized) and runs the server's `StaticMatcher` arithmetic VERBATIM:
+postings hits, the title/excerpt prefix arms with the max-3 title boost,
+the score sort with the doc-order tiebreak, the limit take, the post-take
+tag filter. An empty/whitespace query refuses locally with an empty result —
+the server would 400 `SRC-104`, but a UI's empty input box is a normal
+state, so the client never fetches for it.
+
+**Deltas.** (1) The tag filter's landed post-take position is PINNED, not
+"fixed": the parity contract (the server's own StaticMatcher parity test)
+only holds if both implementations run the same arithmetic, quirk included;
+a narrower tag can return fewer hits than the limit allowed. (2) The
+injected loader seam memoizes per function identity (a WeakMap) so once-
+semantics is uniform across the ready-index, loader and fetch paths. (3)
+The client does not ship a UI — the spec defers the island's markup to the
+user; this module is what every such island calls.
+
+**Tests.** 13 node pins (`test/search-engine.test.ts`: the tokenize rules,
+the title/body/excerpt scoring arms, the prefix postings, the sort + doc
+tiebreak, the limit/total split, the post-take tag quirk both ways, the
+local empty-query refusal with a fetch spy, the wire params, the boot flag,
+the once-lazy load, the 429 throw, the malformed-export throw) + the
+`search-engine.bench.ts` micro-bench (match/100-docs ≈ 458 ns/op, tokenize
+≈ 679 ns/op).
+
+**Micro-debt in the same diff.** `crates/rustfn/src/types.rs`'s
+`types_json` serialize failure wrote an EMPTY types payload silently — the
+boot id reconstruction would register ZERO native fns with no diagnostic
+(the silently-empty-write shape). The `String` return is the export
+contract (`export_table!` emits the call), so the failure is now a loud
+`RFN-004` error naming the serde cause, the fallback unchanged.
+`crates/dispatch/src/replay.rs`'s two base64 `unwrap_or_default()`s
+misdiagnosed a corrupt record: a truncated request body compared as "not
+the recorded call" (`RPL-002`) and a truncated response body reported a
+spurious body divergence — both now surface the corruption (`RPL-006`, new
+registry + reference rows) instead of blaming the code path.
