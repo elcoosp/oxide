@@ -688,3 +688,256 @@ mod f06 {
         );
     }
 }
+
+// ===========================================================================
+// The endpoint wiring API (this session): the pieces the CLI's dispatch arm
+// composes into `GET /__oxide/live` — the query parse, the rerun request the
+// runner dispatches, the stale-terminated stream body and the subscribe-or-
+// 503 response assembly. Still V8-free: the arm itself (route lookup, hub
+// wiring, the revalidate hooks) is the CLI's, and is pinned over the wire by
+// the `#[ignore]` e2e in `crates/cli/src/tests.rs` (`live_pushes_snapshots_
+// over_the_wire`, CI step `live-e2e`).
+// ===========================================================================
+
+mod wiring {
+    use std::net::IpAddr;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use base64::Engine as _;
+    use bytes::Bytes;
+    use futures::StreamExt;
+    use oxide_fw_server::live::{
+        live_endpoint_response, live_stream_with_stale, parse_live_query, rerun_request,
+    };
+    use oxide_fw_server::{LiveHub, OxideRequest, Sub};
+
+    const LOOPBACK: IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+
+    fn sub(route: &str) -> Arc<Sub> {
+        Arc::new(Sub::new(
+            route,
+            "/blog/rust",
+            vec![("cookie".to_string(), "a=1".to_string())],
+            std::iter::empty::<String>(),
+            None,
+        ))
+    }
+
+    fn odf_full(data: &str) -> Bytes {
+        // Enough stable ballast that a one-row change diffs to a patch under
+        // half the full payload — the F06 sending policy's threshold. A tiny
+        // envelope would ship the full even for a one-row change (the patch
+        // envelope's own bytes dominate), which is the policy working, not a
+        // bug — so the pin's fixture gives the diff room to win.
+        let ballast = "0123456789abcdef".repeat(8);
+        let v = oxide_fw_odf::Value::from_json(&serde_json::json!({
+            "route": "routes/index",
+            "url": "/",
+            "params": {},
+            "data": {
+                "changed": data,
+                "rows": [ballast, ballast, ballast, ballast, ballast, ballast, ballast, ballast],
+            },
+        }));
+        Bytes::from(oxide_fw_odf::encode(&v).expect("the fixture encodes"))
+    }
+
+    // ---------------------------------------------------------- query parse
+
+    #[test]
+    fn parse_live_query_reads_route_and_url() {
+        let q = parse_live_query(
+            "route=%2Fblog%2Frust&url=%2Fblog%2Frust%3Fpage%3D2&build=abcd000000000001",
+        )
+        .expect("a well-formed live query");
+        assert_eq!(q.route, "/blog/rust");
+        assert_eq!(q.url, "/blog/rust?page=2");
+    }
+
+    #[test]
+    fn parse_live_query_requires_a_route() {
+        assert!(parse_live_query("").is_none(), "empty query");
+        assert!(parse_live_query("url=%2F").is_none(), "no route param");
+        assert!(parse_live_query("route=").is_none(), "empty route value");
+    }
+
+    // ---------------------------------------------------------- rerun request
+
+    /// §V2-F05 step 5: the runner re-runs the SAME data-route path as
+    /// `/__data` — the request this pin holds is what the dispatch closure
+    /// receives, so middleware, locals, layout loads and gating behave
+    /// identically (no second implementation).
+    #[test]
+    fn rerun_request_replays_the_data_route_with_the_stored_headers() {
+        let s = sub("/blog/rust");
+        let req: OxideRequest = rerun_request(&s);
+        assert_eq!(req.method, "GET");
+        assert_eq!(req.url, "/__data?route=%2Fblog%2Frust");
+        assert!(req.body.is_empty(), "the data route is a GET with no body");
+        assert_eq!(
+            req.header("cookie"),
+            Some("a=1"),
+            "the header snapshot rides (cookie-gated loaders re-run per client)"
+        );
+        assert!(
+            req.request_id.starts_with("req-"),
+            "a real request id shape"
+        );
+    }
+
+    #[test]
+    fn rerun_request_carries_the_peer_for_honest_rate_limiting() {
+        let s = Arc::new(Sub::new(
+            "/",
+            "/",
+            Vec::new(),
+            std::iter::empty::<String>(),
+            Some(LOOPBACK),
+        ));
+        assert_eq!(rerun_request(&s).peer, Some(LOOPBACK));
+    }
+
+    // -------------------------------------------------------- the SSE body
+
+    /// The accepted subscription answers the §V2-F05 step-2 head; the body
+    /// holds the subscription Guard, so an ended/disconnected body
+    /// unsubscribes (the endpoint's own `guard_drop_unsubscribes` pin, at
+    /// the response layer).
+    #[tokio::test]
+    async fn endpoint_response_streams_and_releases_the_slot_when_the_body_ends() {
+        let hub = LiveHub::new(10, 20);
+        let s = sub("/blog/rust");
+        let resp = live_endpoint_response(&hub, Arc::clone(&s), Duration::from_millis(10), None)
+            .expect("under capacity");
+        assert_eq!(resp.status, 200);
+        assert!(
+            resp.header("content-type")
+                .is_some_and(|v| v.starts_with("text/event-stream")),
+            "SSE head: {:?}",
+            resp.headers
+        );
+        assert_eq!(hub.count(), 1, "subscribed");
+        let mut body = resp.stream.expect("the SSE body is a stream");
+        // The keepalive ping proves the body frames; then the drop releases.
+        let frame = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .expect("a keepalive frame within 2s")
+            .expect("stream alive")
+            .expect("no io error");
+        assert!(String::from_utf8_lossy(&frame).contains("event: ping"));
+        drop(body);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(hub.count(), 0, "the ended body unsubscribed");
+    }
+
+    #[tokio::test]
+    async fn over_capacity_answers_the_503_response() {
+        let hub = LiveHub::new(0, 20);
+        let resp = live_endpoint_response(&hub, sub("/"), Duration::from_secs(20), None)
+            .expect_err("max 0 refuses everything");
+        assert_eq!(resp.status, 503);
+        assert!(
+            resp.header("retry-after").is_some(),
+            "the capacity response carries retry-after"
+        );
+        assert_eq!(hub.count(), 0);
+    }
+
+    /// §V2-F05 step 3 + step 5: a rerun that redirects/errors clears the
+    /// snapshot; the wiring turns that into `event: stale` + end, so the
+    /// client reloads once instead of hanging on a silent stream.
+    #[tokio::test]
+    async fn cleared_snapshot_emits_the_stale_frame_and_ends() {
+        let s = sub("/blog/rust");
+        s.push_snapshot(odf_full("v1"));
+        let mut body = live_stream_with_stale(
+            s.tx.subscribe(),
+            Duration::from_millis(10),
+            "abcd000000000002",
+        );
+        // First frame: the full snapshot the channel already holds.
+        let first = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .expect("initial snapshot frame")
+            .expect("alive")
+            .expect("no io error");
+        let text = String::from_utf8_lossy(&first).into_owned();
+        assert!(text.contains("event: data"), "first frame is data: {text}");
+        // The failed rerun clears the snapshot: stale + end. Pings may
+        // interleave with the data/stale frames (10 ms keepalive), so the
+        // reads filter for the event they assert on.
+        s.clear_snapshot();
+        let second = next_frame_containing(&mut body, "event: stale").await;
+        let text = String::from_utf8_lossy(&second).into_owned();
+        assert!(
+            text.contains("abcd000000000002"),
+            "the stale frame carries the current build id: {text}"
+        );
+        let ended = tokio::time::timeout(Duration::from_secs(1), body.next()).await;
+        assert!(
+            matches!(ended, Ok(None)),
+            "the stream ends after stale (no hang, no extra frame): {ended:?}"
+        );
+    }
+
+    /// The F06 wire shape end to end at the frame boundary: connect pushes a
+    /// full `ODF1` snapshot; the next rerun ships an `ODP1` patch chained
+    /// from it — the client sniffs the magic (`decodeOdfOrPatch`).
+    #[tokio::test]
+    async fn frames_carry_full_then_patch_payloads() {
+        let s = sub("/blog/rust");
+        s.push_snapshot(odf_full("v1"));
+        let mut body = live_stream_with_stale(s.tx.subscribe(), Duration::from_millis(10), "x");
+        let first = next_frame_containing(&mut body, "event: data").await;
+        let text = String::from_utf8_lossy(&first).into_owned();
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(sse_data_payload(&text))
+            .expect("the data payload is base64");
+        assert_eq!(&raw[..4], b"ODF1", "the connect frame is a full snapshot");
+
+        // The runner's rerun path: the diff is small, so the payload is a
+        // patch chained from the previous full. `prepare_rerun` computes
+        // WITHOUT sending (the runner is the one send point), so the pin
+        // sends the policy's output exactly as `Runner::run` does.
+        let payload = s
+            .prepare_rerun(Some(odf_full("v2")))
+            .expect("a rerun payload");
+        s.tx.send(Some(payload)).expect("the send point");
+        let second = next_frame_containing(&mut body, "event: data").await;
+        let text = String::from_utf8_lossy(&second).into_owned();
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(sse_data_payload(&text))
+            .expect("the data payload is base64");
+        assert_eq!(&raw[..4], b"ODP1", "the rerun frame is a patch");
+    }
+
+    /// The next frame containing `needle` — keepalive pings may interleave
+    /// with data frames (10 ms keepalive in these pins), so a raw `next()`
+    /// can hand back a ping. Times out (panics) if the frame never comes.
+    async fn next_frame_containing(
+        body: &mut (impl futures::Stream<Item = std::result::Result<Bytes, std::io::Error>> + Unpin),
+        needle: &str,
+    ) -> Bytes {
+        loop {
+            let f = tokio::time::timeout(Duration::from_secs(2), body.next())
+                .await
+                .expect("frame within 2s")
+                .expect("stream alive")
+                .expect("no io error");
+            if String::from_utf8_lossy(&f).contains(needle) {
+                return f;
+            }
+        }
+    }
+
+    /// The bytes after the LAST `data: ` line of a frame (the payload is
+    /// single-line base64; the frame terminator is the blank line).
+    fn sse_data_payload(frame: &str) -> &str {
+        frame
+            .lines()
+            .rev()
+            .find_map(|l| l.strip_prefix("data: "))
+            .expect("a data line in the frame")
+    }
+}
