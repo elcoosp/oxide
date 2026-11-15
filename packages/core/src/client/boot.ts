@@ -11,6 +11,7 @@
 import { hydrateIslands, type IslandsOptions } from './islands.ts'
 import { createRouter } from './router.ts'
 import { prefetchAdvertised, startLearnedPrefetch } from './prefetch.ts'
+import { connectLive } from './live.ts'
 import { type MixedIslandRegistry, decodeOdf } from './odf-decode.ts'
 import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
@@ -228,7 +229,13 @@ export function bootWithRouter(
   )
   void loadMessages()
   const w = globalThis as {
-    __oxide?: { route?: string; data?: string; layouts?: string[]; interactionReplay?: boolean }
+    __oxide?: {
+      route?: string
+      data?: string
+      layouts?: string[]
+      interactionReplay?: boolean
+      live?: boolean
+    }
     __oxideBoot?: BootState
     location?: { pathname: string; search: string }
   }
@@ -251,6 +258,47 @@ export function bootWithRouter(
   let lastInput:
     | Parameters<NonNullable<BootAdapter['update']>>[number]
     | undefined
+
+  // §V2-F05: the live-loader lifecycle. The router's in-place data update
+  // is the same `adapter.update` a navigation uses — the SSE stream's
+  // decoded envelope IS a ClientInput (route/url/params/data/deferred/
+  // locale/layouts), so the apply hook feeds it straight through. The
+  // connection follows the CURRENT input: opened after hydration when the
+  // bootstrap advertised `live: true`, re-opened when a navigation lands
+  // on a live route (the /__data envelope's `live` flag rides the input),
+  // closed on navigation away — every update flows through the wrapped
+  // `adapter.update` below, which is the sync point.
+  let disposeLive: (() => void) | undefined
+  let liveRoute: string | undefined
+  const livePathOf = (input: { url?: string; route?: string }): string | undefined => {
+    const raw = typeof input.url === 'string' && input.url.length > 0 ? input.url : input.route
+    if (typeof raw !== 'string' || raw.length === 0) return undefined
+    return raw.split(/[?#]/)[0] || '/'
+  }
+  const applyLive = (data: unknown): void => {
+    try {
+      adapter.update(data as Parameters<NonNullable<BootAdapter['update']>>[number])
+    } catch (err) {
+      console.warn?.('oxide: live update threw', err)
+    }
+  }
+  const syncLive = (input: { route?: string; url?: string; live?: boolean }): void => {
+    const path = livePathOf(input)
+    if (input.live === true && path !== undefined) {
+      if (liveRoute !== path) {
+        disposeLive?.()
+        disposeLive = undefined
+        disposeLive = connectLive(path, applyLive)
+        liveRoute = path
+      }
+      return
+    }
+    if (liveRoute !== undefined) {
+      disposeLive?.()
+      disposeLive = undefined
+      liveRoute = undefined
+    }
+  }
   const onModuleUpdated = (url: string): void => {
     const caps = (
       adapter as { capabilities?: { hmr?: string } }
@@ -350,6 +398,7 @@ export function bootWithRouter(
       params: {} as Record<string, string>,
       data,
       layouts,
+      ...(payload.live ? { live: true } : {}),
     }
     // The replay input for component-HMR re-renders (see onModuleUpdated).
     // Set BEFORE hydrate so an edit that arrives during boot still has a
@@ -361,6 +410,10 @@ export function bootWithRouter(
     } catch (e) {
       console.error?.('oxide: root hydration failed; SPA router not attached', e)
     }
+    // §V2-F05: the hydration-time connection. The bootstrap advertised
+    // `live: true` for this route; the stream closes when a navigation
+    // updates through the wrapped adapter below.
+    syncLive(input)
   }
 
   // (b) Islands + deferred scripts — the same work `boot()` did, so
@@ -606,6 +659,10 @@ export function bootWithRouter(
       ...adapter,
       update: (input: Parameters<NonNullable<BootAdapter['update']>>[number]) => {
         lastInput = input
+        // §V2-F05: every navigation (goto commit, popstate, prefetch-fed
+        // nav) lands here — sync the live connection with the route the
+        // page is on now (the envelope's `live` flag rode the input).
+        syncLive(input)
         return adapter.update(input)
       },
     },
@@ -678,6 +735,9 @@ export function bootWithRouter(
   return () => {
     disposeRouter()
     disposePrefetch?.()
+    disposeLive?.()
+    disposeLive = undefined
+    liveRoute = undefined
     doc.removeEventListener('ox:data', onData as EventListener)
     bootGlue?.dispose()
     bootGlue = undefined
