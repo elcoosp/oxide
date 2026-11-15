@@ -20,6 +20,7 @@ import { connectHmr, scheduleStashRestore } from './hmr.ts'
 import { startReplay } from './replay.ts'
 import type { FrameworkAdapter } from '../types.ts'
 import { loadMessages, setMessageLocales } from './messages.ts'
+import { onSwFlushMessage } from './outbox.ts'
 // Side-effect import: installs `globalThis.__oxide_hmr__` in
 // the browser so any module that reads `import.meta.hot` (including
 // files served by the native ESM dev server) sees a live handle. A
@@ -716,5 +717,17 @@ export function installBootRuntime(reg?: { adapters?: MixedIslandRegistry['adapt
   const w = maybeWindow()
   if (w) ensureInstalled(w)
 }
+
+// §V2-F14: the page answers the service worker's flush fan-out. The
+// emitted worker (`crates/bundler/src/pwa.rs`) posts `OXIDE_OUTBOX_FLUSH`
+// to every client on activate — a build swap is a flush point for the
+// offline action outbox — and this listener replays the queue when it
+// arrives. Registered once at module scope: page-lifetime glue like the
+// outbox module's own `online` listener (a router teardown does not stop
+// the worker from messaging the page), evaluated at most once per
+// document. Guarded for the SSR / config-loader environment, and a no-op
+// on a page without a service-worker registration to listen on
+// (`onSwFlushMessage`'s module-safety contract).
+if (typeof window !== 'undefined') onSwFlushMessage()
 
 export {}
