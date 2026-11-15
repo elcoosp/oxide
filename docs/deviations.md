@@ -3235,3 +3235,82 @@ click spec) runs in CI's jshost-e2e (browsers installed); the cold-build
 ≥3× acceptance number needs the release build with the features on a
 dedicated machine — the criterion groups carry the per-backend
 compile-time shape meanwhile.
+
+## V2-C02 — the Solid native compiler re-open (2026-11-14, `feat/native-solid-backend`)
+
+**What landed.** The kill record (`docs/decisions/C02-solid-kill.md`) set
+re-run conditions; the re-measure found the condition met in spirit —
+`@solidjs/compiler` 2.0.0-rc.21 on npm is real and official (the Solid
+2.0 RC's default Oxc JSX compiler, the Node `transform()` contract the
+supported surface) — while the dependency arm stayed unmet (crates.io
+404s `solidjs-compiler`; the `solidjs/solid` `main` tree carries no
+`packages/compiler`/`Cargo.toml`, so nothing a `rev` can pin). The WP
+re-opened with the **in-repo transform arm**: `crates/compiler/src/native/solid.rs`
+(`SolidNative`, behind the new `native-solid` feature — no external
+dependency rides it), implementing the worker oracle's contract over the
+workspace oxc 0.155 stack: parse (tsx/jsx) → the TypeScript pass (JSX
+preserved; `only_remove_type_imports` keeps unused value imports — the
+sucrase parity) → the JSX walk → the `@solidjs/web` emission (DOM:
+hoisted `template` constants with `<!>` markers, `firstChild`/
+`nextSibling` walk binds, `insert` before markers, `setAttribute` +
+the small known-property set, `$$evt` delegated handlers + the module-tail
+`delegateEvents`, `createComponent` getter props, DOM fragments as
+arrays; SSR: `ssr` template literals, `escape` text holes,
+`ssrAttribute` with the known-boolean set, `ssrHydrationKey` after every
+tag name, components interpolated, client-only constructs dropped with
+warnings) → one codegen print → the worker's `solid-js/web` →
+`@solidjs/web` import rewrite. The registry pushes the backend
+(`register_compiled_in` — the push list moved into a helper fn, which
+also removed the file's `#[allow(unused_mut)]`), the CLI forwards
+`native-solid`, the release recipe compiles it in.
+
+**Spec deltas (recorded, not silent).**
+
+1. **The vendoring arm is void; the transform is in-repo.** Nothing is
+   sourceable at upstream `main`, so `vendor/`/`UPSTREAM_REV` do not
+   exist and `version()` is this transform's own revision (`1.0.0` — the
+   D40 CAS dimension to bump on any output-shape change), not an
+   upstream rev.
+2. **The spike file is `solid_native_spike.rs` and NOT `#[ignore]`d**
+   (the spec's `solid_native.rs` + `#[ignore]` sketch assumed a Node
+   oracle comparison inside the test): the transform is in-repo, so the
+   25 shape pins run under the feature with no Node host; the
+   Node-oracle equivalence stays with `scripts/compiler-equiv.sh solid`
+   (the capable-host acceptance, the C03/C04 shape).
+3. **The pre-C02 registry pins moved to an `empty()` base** (`tests/native_registry_tdd.rs`):
+   they hold the SELECTION ENGINE over injected fakes, and
+   `from_enabled_features()` stopped being empty the moment real
+   backends register — a real `pick("solid", "tsx")` would shadow the
+   fake a pin drives (this also repaired the two pins that were red at
+   the starting commit under `--all-features` — the empty-registry
+   premise pre-dated the C03/C04/C05 landings). The feature-to-registry
+   mapping is pinned feature-aware in the lib tests
+   (`from_enabled_features_matches_the_compiled_in_set`).
+4. **The compiler-equiv solid arm rides `scripts/compiler-equiv.sh`**
+   (the smoke app renders through the pool and the native backend; the
+   Playwright island leg stays the CI jshost-e2e surface) and the
+   ignored `compiler_equiv_solid` integration pin joins its siblings —
+   both need the V8-linked release CLI this sandbox cannot build, so
+   they ride the capable-host gates like every prior backend's arm.
+5. **Byte fidelity vs babel-preset-solid is not claimed** — the emitted
+   shape is runtime-correct for the pinned subset (the tests pin THIS
+   backend's deterministic output), and the rendered-HTML equivalence is
+   the harness gate. The hydration contract mirrors the worker's
+   `hydratable: true` in the SSR shape; the DOM shape is
+   hydration-agnostic.
+6. **The v1 refusal scope** (`CMP-SOL-001`): spreads, `ref`, `use:`,
+   `oncapture:`, object-literal `style`/`classList` (string forms are
+   supported), `innerHTML`, SSR fragments, unparseable sources — each
+   refusal names the construct and the Node-pool fix; `auto` falls back
+   silently, `native` fails the build, matching the C01 contract.
+
+**Micro-debt and drift in the same diff.** The compiler crate's only
+`#[allow]` (`unused_mut` on `from_enabled_features`) is gone (the
+push-list helper shape); the stale module docs ("What is compiled in
+today — nothing yet", the C02 kill references) updated to the four
+landed backends; the missing `CMP-VUE-001`/`CMP-SVT-001`/`CMP-RCC-001`
+registry rows added (the codes existed in code with no registry entry —
+drift) plus `CMP-SOL-001`; the `native_registry` example's stand-in
+comment ("a stand-in for a real C02 backend") updated to name the landed
+backend; the spec status table's C01 row (partial → merged, the tail
+recorded) and the C02–C11 group row (partial → merged, per-WP records).
