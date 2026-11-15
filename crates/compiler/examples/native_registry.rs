@@ -18,10 +18,11 @@ use oxide_fw_compiler::native::{
 };
 use oxide_fw_diagnostics::OxideError;
 
-/// A stand-in for a real C02 backend (the vendored `solidjs-compiler`
-/// build): it names the framework, the extensions it handles and the
-/// version the CAS key folds in. The same shape a host crate registers a
-/// compiled-in backend with.
+/// A stand-in backend for the walkthrough (the real C02 Solid backend is
+/// `crate::solid::SolidNative`, feature-gated; this example compiles
+/// feature-free): it names the framework, the extensions it handles and
+/// the version the CAS key folds in. The same shape a host crate
+/// registers a compiled-in backend with.
 struct SolidNative {
     healthy: bool,
 }
