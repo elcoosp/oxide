@@ -384,3 +384,75 @@ test('router: normalizeInput carries the envelope live flag (§V2-F05)', async (
   assert.equal(mustEl(updates, 1).live, undefined, 'non-live envelopes stay untouched')
   void dispatch
 })
+
+// §V2-F07: the data fetch rides the resumable lifecycle — a response the
+// server marked `x-oxide-stream: <id>` is pumped through the reattach
+// protocol, and the router reassembles the chunks for the ODF decode. An
+// unmarked response keeps the buffered read (the pre-F07 pins above).
+test('router: a stream-marked /__data response reassembles after a mid-stream drop (§V2-F07)', async () => {
+  const bytes = encodeLite(ROUTES['/about'])
+  const mid = 5
+  const calls: Array<{ url: string; headers?: Record<string, string> }> = []
+  const fetchImpl = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    calls.push({ url: String(input), headers })
+    if (calls.length === 1) {
+      // The first pass emits a prefix of the ODF bytes then drops.
+      return Promise.resolve(droppingResponse([bytes.slice(0, mid)], 'sid1'))
+    }
+    // The reattach: the backlog the consumer has not seen yet.
+    return Promise.resolve(okResponse([bytes.slice(mid)]))
+  }
+  const { doc, history } = { doc: fakeDoc(), history: new FakeHistory() }
+  const updates: ClientInput[] = []
+  const router = createRouter({
+    adapter: { update: (input: ClientInput) => updates.push(input) },
+    manifest: { routes: {} },
+    doc,
+    history,
+    location: { href: 'http://x.test/', pathname: '/', search: '' },
+    fetch: fetchImpl as typeof fetch,
+  })
+  await router.goto('/about')
+  assert.equal(calls.length, 2, 'one fetch + one reattach')
+  assert.equal(
+    mustEl(calls, 1).headers['Range'],
+    `bytes=${mid}-`,
+    'the reattach carries the exact byte count the consumer saw'
+  )
+  const first = mustEl(updates, 0)
+  assert.deepEqual(first.data, { title: 'About' }, 'the reassembled bytes decode as ODF')
+  assert.equal(first.route, '/about')
+})
+
+/** A response whose body streams `chunks` then errors mid-stream (the
+ *  §V2-F07 drop) — pull-based, so the drop lands after the consumer has
+ *  read the prefix (WHATWG semantics discard chunks enqueued before an
+ *  error in the same tick). */
+function droppingResponse(chunks: Uint8Array[], id: string): Response {
+  let i = 0
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (i < chunks.length) {
+        const c = chunks[i]
+        if (c === undefined) throw new Error('fixture bounds')
+        controller.enqueue(c)
+        i += 1
+        return
+      }
+      controller.error(new Error('connection dropped'))
+    },
+  })
+  return new Response(body, { status: 200, headers: { 'x-oxide-stream': id } })
+}
+
+/** A response whose body streams `chunks` then completes normally. */
+function okResponse(chunks: Uint8Array[]): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const c of chunks) controller.enqueue(c)
+      controller.close()
+    },
+  })
+  return new Response(body, { status: 200 })
+}
