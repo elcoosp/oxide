@@ -422,7 +422,16 @@ jobs:
           - { os: macos-latest,   browser: chromium }
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y nasm
+      # nasm is only installable on Linux (apt). The matrix also runs
+      # windows-latest and macos-latest, where `sudo apt-get` does not exist
+      # (`sudo: apt-get: command not found`, run 43711433216) — gate on OS,
+      # like the rust job's "Install nasm (Linux/macOS only)" step.
+      - name: Install nasm (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      - name: Install nasm (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: brew install nasm
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v7
         with: { node-version: 24 }

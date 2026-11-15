@@ -207,8 +207,10 @@ impl NativeRegistry {
     /// The compiled-in backend push list (§V2-C02–C05): each backend rides its
     /// own feature (default builds stay lean; the release recipe turns them
     /// on) and pushes itself here. With no feature on the body compiles to
-    /// nothing — a parameter that is never dereferenced mutably is not a lint
-    /// finding, so no `allow` escape hatch rides this function.
+    /// nothing — the parameter is then never dereferenced mutably, which
+    /// `-D warnings` (via `unused_variables`) reports, so `#[allow]` guards
+    /// the default-feature build only.
+    #[allow(unused_variables)]
     fn register_compiled_in(reg: &mut NativeRegistry) {
         // The C02 dependency arm: Solid 2.0's official Oxc compiler core
         // (`docs/decisions/C02-solid-native.md`).

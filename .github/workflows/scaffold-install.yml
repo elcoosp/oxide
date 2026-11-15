@@ -32,6 +32,13 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      # rav1e (via ravif) needs nasm to build; without it every
+      # `cargo build --release -p oxide-fw-cli` dies with
+      #   NASM build failed ... Unable to run nasm: No such file or directory
+      # (run 43711433156, all four frameworks). Same install the ci.yml
+      # rust/docs jobs already do.
+      - name: Install nasm
+        run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: Swatinem/rust-cache@v2
         with:
           key: scaffold-${{ matrix.framework }}

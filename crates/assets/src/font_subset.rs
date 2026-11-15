@@ -53,11 +53,18 @@
 //! `unicode-range`) are range declarations, not glyph-usage sources: the
 //! source ships byte-identical unless `used` is configured.
 
-use crate::{Result, err};
-// The feature-off arm constructs the refusal directly (it needs
-// `with_fix`, which the `err` helper does not carry).
+// `err` is only used by the `subset`-feature arm (the feature-off arm
+// constructs its refusal directly — it needs `with_fix`, which the `err`
+// helper does not carry). The import is cfg-gated so the default-feature
+// build does not trip `-D unused-imports`.
+#[cfg(feature = "subset")]
+use crate::err;
+use crate::Result;
 #[cfg(not(feature = "subset"))]
 use crate::Diagnostic;
+// `MetadataProvider` backs the `subset_core` charmap walk, which is
+// `subset`-only; the default build has no use for the trait import.
+#[cfg(feature = "subset")]
 use skrifa::MetadataProvider as _;
 use std::collections::BTreeSet;
 
