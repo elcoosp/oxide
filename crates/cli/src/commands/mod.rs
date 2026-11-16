@@ -4,6 +4,8 @@ mod attest;
 pub(crate) use attest::*;
 mod author;
 pub(crate) use author::*;
+mod deploy;
+pub(crate) use deploy::*;
 mod docs;
 pub(crate) use docs::*;
 mod fmt;
