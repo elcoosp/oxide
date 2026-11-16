@@ -76,3 +76,44 @@ test('Island escapes props into base64, never raw markup', () => {
   assert.ok(!html.includes('</script>'), 'no script tag should appear in output')
   assert.match(html, /data-ox-props="[A-Za-z0-9+/=]+"/)
 })
+
+// §V2-F01 item 4: a FOREIGN island (the `framework` prop set to another
+// framework) emits the self-contained pending placeholder the worker's
+// `island:render` op + the core `resolveForeign` transform resolve — no
+// chunk/strategy attrs (the foreign chunk is the island's own), and the
+// children are NOT rendered (a foreign framework's children cannot be SSR'd
+// by this adapter).
+test('Island emits the pending placeholder for a foreign framework island', () => {
+  const html = render(
+    createElement(Island, {
+      component: 'Price',
+      chunk: '/islands/Price.vue',
+      framework: 'vue',
+      props: { a: 1 },
+      children: createElement('span', null, 'ignored'),
+    }),
+  )
+  assert.match(html, /^<ox-island\b/)
+  assert.match(html, /data-ox-island="Price"/)
+  assert.match(html, /data-ox-fw="vue"/)
+  assert.match(html, /data-ox-pending="1"/)
+  assert.doesNotMatch(html, /data-ox-chunk/, 'the foreign placeholder carries no chunk attr')
+  assert.doesNotMatch(html, /data-ox-strategy/, 'the foreign placeholder carries no strategy attr')
+  assert.doesNotMatch(html, /<span/, 'foreign children are not rendered by this adapter')
+  const want = encodePropsB64({ a: 1 }).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  assert.match(html, new RegExp(`data-ox-props="${want}"`))
+  assert.match(html, /"><\/ox-island>$/, 'the placeholder is self-contained (no children)')
+})
+
+test('Island framework matching the page framework renders the local shape', () => {
+  const html = render(
+    createElement(
+      Island,
+      { component: 'Counter', chunk: '/islands/counter.js', framework: 'react', props: { initial: 3 } },
+      createElement('span', null, '3'),
+    ),
+  )
+  assert.match(html, /data-ox-chunk="\/islands\/counter\.js"/)
+  assert.doesNotMatch(html, /data-ox-pending/, 'a local island is never pending')
+  assert.match(html, /<span>3<\/span>/)
+})
