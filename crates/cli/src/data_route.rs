@@ -15,7 +15,7 @@ pub struct RouteDataArgs<'a> {
     pub started: std::time::Instant,
     pub middleware_locals: &'a serde_json::Value,
     pub middleware_headers: &'a [(String, String)],
-    pub layout_module_paths: &'a [(String, std::path::PathBuf)],
+    pub layout_module_paths: &'a [LayoutLoadSpec],
     pub locale: &'a str,
     pub session_codec: Option<&'a oxide_fw_server::SessionCodec>,
     pub middleware_ms: f64,
@@ -101,7 +101,7 @@ pub struct RouteDataInnerArgs<'a> {
     pub started: std::time::Instant,
     pub middleware_locals: &'a serde_json::Value,
     pub middleware_headers: &'a [(String, String)],
-    pub layout_module_paths: &'a [(String, std::path::PathBuf)],
+    pub layout_module_paths: &'a [LayoutLoadSpec],
     pub locale: &'a str,
     pub session_codec: Option<&'a oxide_fw_server::SessionCodec>,
 }
@@ -151,10 +151,10 @@ pub(crate) async fn route_data_response_inner(
     let mut locals_for_load = middleware_locals.clone();
     let mut layout_session_cookie: Option<String> = None;
     if let Some(runner) = loader_runner {
-        for (lid, lpath) in layout_module_paths {
+        for spec in layout_module_paths {
             let mut linput = oxide_fw_server::LoaderRunInput::new(
-                lpath.to_string_lossy().to_string(),
-                lid.clone(),
+                spec.path.to_string_lossy().to_string(),
+                spec.id.clone(),
                 &route_q,
             );
             linput.method = req.method.clone();
@@ -349,7 +349,7 @@ pub(crate) async fn route_data_response_inner(
     // with new props instead of swapping in the new route.
     let layout_ids: Vec<String> = layout_module_paths
         .iter()
-        .map(|(lid, _)| lid.clone())
+        .map(|spec| spec.id.clone())
         .collect();
     let mut payload = serde_json::json!({
         "route": route_label,
