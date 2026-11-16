@@ -5,6 +5,7 @@
 //   tooling:module           → require(call.module)[call.export](...call.args)
 //   framework:load           → dynamic import of a config path → descriptor
 //   framework:render         → dynamic import → adapter.render(input) → JSON chunked
+//   island:render            → globalThis.__oxide_island_renderers[fw](name, propsB64) → {html} (§V2-F01)
 //   loader:run               → dynamic import → load(event) → {ok, status, location, data}
 //   framework:invalidate     → bump moduleGeneration → {generation: N}
 //   generate-params:run      → import module, call generateParams → {params: [...]}
@@ -599,6 +600,29 @@ function loadModule(name) {
 // round-trip and keeps the tooling-pool protocol generic.
 // ---------------------------------------------------------------------------
 
+// V2-E01: the Solid component-refresh boundary — the compile step's
+// emission (spec §V2-E01: the `solid-refresh` registration, add if absent).
+// The boundary self-accepts and hands the fresh module to the core runtime's
+// `__oxide_solid_refresh` shim (packages/core/src/client/hot.ts), which uses
+// the solid-refresh runtime when the project prebundles it and falls back to
+// the boot replay otherwise. Gated on: the dev `hmr` flag (the BUILD's
+// precompile passes nothing, so a production bundle never carries the
+// boundary), the client mode (SSR modules have no client runtime), and the
+// module not already carrying an `import.meta.hot` boundary (the
+// inject_hmr_boundary no-op convention — one definition site).
+function solidHmrBoundary(js, ssr, hmr) {
+  if (hmr !== true || ssr === true) return js;
+  if (js.includes("import.meta.hot")) return js;
+  return (
+    js +
+    "\nif (import.meta.hot) {\n" +
+    "  import.meta.hot.accept((mod) => {\n" +
+    "    globalThis.__oxide_solid_refresh?.(mod)\n" +
+    "  })\n" +
+    "}\n"
+  );
+}
+
 async function dispatchSolidCompile(id, input) {
   const { source, filename, ssr } = input.payload ?? {};
   const projectRoot = typeof input.payload?.root === "string" ? input.payload.root : null;
@@ -660,7 +684,7 @@ async function dispatchSolidCompile(id, input) {
       callErr(id, "JSH-SOLID", `solid babel fallback: ${e?.message ?? e}`);
       return;
     }
-    callOk(id, { js });
+    callOk(id, { js: solidHmrBoundary(js, ssr, input.payload?.hmr) });
   };
 
   const nativeUsable =
@@ -725,7 +749,7 @@ async function dispatchSolidCompile(id, input) {
       return;
     }
   }
-  callOk(id, { js });
+  callOk(id, { js: solidHmrBoundary(js, ssr, input.payload?.hmr) });
 }
 
 async function dispatchVueCompile(id, input) {
@@ -776,6 +800,27 @@ async function dispatchVueCompile(id, input) {
       callErr(id, "JSH-VUE", `vue type-strip: ${e.message ?? e}`);
       return;
     }
+  }
+  // V2-E01: the Vue component-refresh boundary — emitted by the compile
+  // step (spec §V2-E01: `__VUE_HMR_RUNTIME__.reload(id, comp)`). The
+  // boundary self-accepts, hands the FRESH module's default export (the
+  // component) to the framework's own HMR runtime, and marks the URL as
+  // refreshed in place so the boot replay skips it (the state the reload
+  // preserves — a replayed `update` would remount and destroy it). Gated
+  // exactly like the Solid boundary above: the dev `hmr` flag, the client
+  // mode, and the no-double-boundary convention.
+  if (input.payload?.hmr === true && generate !== "ssr" && !js.includes("import.meta.hot")) {
+    js +=
+      "\nimport { __VUE_HMR_RUNTIME__ as __oxide_vhr } from 'vue'\n" +
+      "if (import.meta.hot) {\n" +
+      "  import.meta.hot.accept((mod) => {\n" +
+      "    const __oxide_comp = mod && (mod.default ?? mod)\n" +
+      "    if (__oxide_comp && __oxide_vhr && typeof __oxide_vhr.reload === 'function') {\n" +
+      `      __oxide_vhr.reload(${JSON.stringify(shortId)}, __oxide_comp)\n` +
+      "      globalThis.__oxide_hmr__?.markInPlaceRefresh?.(import.meta.hot.url)\n" +
+      "    }\n" +
+      "  })\n" +
+      "}\n";
   }
   callOk(id, { js });
 }
@@ -1081,6 +1126,42 @@ async function dispatchComponentsLoad(id, input) {
     callOk(id, { generation: moduleGeneration, ids: Object.keys(routes) });
   } catch (e) {
     callErr(id, "JSH-COMPONENTS", `components:load failed: ${e?.message ?? e}`);
+  }
+}
+
+async function dispatchIslandRender(id, input) {
+  // §V2-F01 item 4: the foreign-island render op. The page adapter renders
+  // islands of its own framework; a foreign island rides the self-contained
+  // pending placeholder and the host resolves it here — every adapter in the
+  // project registers its island renderer in the isolate
+  // (`globalThis.__oxide_island_renderers[fw]`) when its adapter module is
+  // imported, and this op dispatches `(name, propsB64)` to the named
+  // framework's renderer. Parity with the V8 isolate rides A08.
+  const fw = String(input.payload?.fw ?? "");
+  const name = String(input.payload?.name ?? "");
+  const propsB64 = input.payload?.propsB64 ?? "";
+  if (fw.length === 0) {
+    callErr(id, "JSH-ISLAND", "island:render requires a `fw` string");
+    return;
+  }
+  const render = globalThis.__oxide_island_renderers?.[fw];
+  if (typeof render !== "function") {
+    callErr(
+      id,
+      "JSH-ISLAND",
+      `no island renderer registered for framework \`${fw}\` — the adapter module must register one on import`,
+    );
+    return;
+  }
+  try {
+    const html = await render(name, propsB64);
+    callOk(id, { html: String(html ?? "") });
+  } catch (e) {
+    callErr(
+      id,
+      "JSH-ISLAND",
+      `island render failed for ${fw}/${name}: ${e?.message ?? e}`,
+    );
   }
 }
 
@@ -2447,6 +2528,7 @@ async function handleCallInner(msg) {
   if (entry.kind === "plugin:call") { await dispatchPluginCall(id, input); return; }
   if (entry.kind === "framework:load") { await dispatchFrameworkLoad(id, input); return; }
   if (entry.kind === "framework:render") { await dispatchFrameworkRender(id, input); return; }
+  if (entry.kind === "island:render") { await dispatchIslandRender(id, input); return; }
   if (entry.kind === "loader:run") { await dispatchLoaderRun(id, input); return; }
   if (entry.kind === "framework:invalidate") { await dispatchFrameworkInvalidate(id, input); return; }
   if (entry.kind === "components:load") { await dispatchComponentsLoad(id, input); return; }
