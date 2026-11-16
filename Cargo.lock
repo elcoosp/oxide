@@ -6452,6 +6452,7 @@ dependencies = [
  "rolldown",
  "rolldown_common",
  "rolldown_plugin",
+ "rolldown_utils",
  "serde",
  "serde_json",
  "sha2",
