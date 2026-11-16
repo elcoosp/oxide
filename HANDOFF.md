@@ -1,3 +1,31 @@
+# Handoff — the F04 stage wiring landed V8-complete + the F02 build half (`feat/experiments-stage-wiring` + `feat/auto-islands-build-adoption`: `stage_experiments` in the dispatch stage table (the substrate's `resolve` + the `|exp:` L0 dimension + the locals slot + the minted cookies that never cache + the exposure counters), the `oxide why --route` experiment dimension, the `make_entry` set-cookie strip; and the `framework.autoIslands` build scan (`crates/cli/src/build/auto_islands.rs`) writing `.oxide/island-manifest.json` and merging the hydration registry; plus the M0 six-clippy-residual pass and the recorded selfcheck substitutions)
+
+## Where things stand
+
+**Branch:** `main` (uncommitted changes plus `ship.toml` / `.github/pr-body.md`, both gitignored). **Verified this session (rustc 1.100.0 stable, nasm 2.16.03 from source, 2-core / 8 GB-disk sandbox):**
+
+- `cargo fmt --all --check`, `cargo check --workspace --all-targets`, `cargo clippy -p oxide-fw-server -p oxide-fw-cli -p oxide-fw-dispatch --all-targets --no-deps -- -D warnings` and `cargo test -p oxide-fw-server -p oxide-fw-dispatch -p oxide-fw-compiler -p oxide-fw-cache --all-features --no-fail-fast` — all green at closeout (see `.github/pr-body.md`'s ledger for the exact counts). The V8-linked `oxide-fw-cli` binary was compiled (check/clippy) but NOT run, per the recorded constraint.
+- `split_selfcheck.py --phases/--stages` green with the two recorded substitutions (M0's `unwrap_or_default` rewrite as STAGE_RULES on the route stage; F02's merged-registry call-site as PHASE_SUBS 211).
+- Examples executed: `cargo run -p oxide-fw-dispatch --example experiments` (the new F04 walkthrough) and `cargo run -p oxide-fw-compiler --example auto_islands`.
+
+## What landed
+
+**M0 — the six CLI clippy residuals** (empty-line-after-doc, unwrap_or_default, two needless returns, two doc-lazy-continuation), fixed not suppressed; the route-stage rewrite is recorded as an orig-side substitution in `split_selfcheck.py` STAGE_RULES.
+
+**M1 — the F04 CLI stage wiring**, complete: `crates/cli/src/dispatch/stages/experiments.rs` (the stage + `experiments_of_config` + `vary_with_experiments` + 3 unit pins), the stage table registration, `DispatchDeps.experiments` + the boot conversion at `serve/start.rs`, `DispatchOpts.experiments` for the pins, `ctx.exp_resolved`, the `|exp:` vary dimension + flight-key recompute, the locals slot merge, the minted-cookie ride (never stored — the store refusal plus the `make_entry` `set-cookie` strip), `Metrics.observe_experiment` + the sorted exposition (pinned V8-free, green), the `oxide why --route` dimension print, 3 pipeline pins + the `experiments` walkthrough example (executed). The substrate deltas and the wiring contract are recorded in `docs/deviations.md`.
+
+**M2 — F02's build half**, complete: `crates/cli/src/build/auto_islands.rs` (the gate-on scan → side-car → merged registry; gate-off identity), the PHASE_SUBS-recorded call-site in `phase_plan`, 3 CLI pins (compile-verified). **C09 and F11 were scoped and NOT started** (the batch rule: only fully-wired items ship; their rows still name the remaining halves). M3 (B02 prerender tail, B03 hoists, B04 Arc-request) untouched.
+
+## Sandbox notes for the next session
+
+- The standing gotchas hold: `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_TEST_DEBUG=0`, nasm on PATH, the v8 build script runs under plain `cargo check` (~6-7 min once). Disk peaked ~55%.
+- The touched-crate `-D warnings` gates surfaced three pre-existing lints outside this session's files (`server/src/live.rs`, the server's `rustfn_dispatch_tdd` fake, `dispatch`'s `loads_tdd` probe) — fixed mechanically; they are NOT crate-wide hygiene passes.
+- `metrics.rs`'s pedantic findings are the file's recorded pre-existing debt (the non-opted-crate convention); the ADDED regions print zero.
+
+## Where to pick up, in one sentence
+
+Wire C09's ImageJobs endpoint (the server seam + the CLI adapter over the landed engine) and F11's `oxide deploy` command over the landed delta/objstore engines, then the F02 dev-warn half and the M3 perf tails.
+
 # Handoff — the V2-F14 tail landed V8-free (`feat/pwa-precache-emitter` + `feat/offline-enhance-outbox`: the `crates/bundler/src/pwa.rs` PWA worker emitter — the object-safe `ShellSource` seam, the pure `plan_precache` over the typed `sw:`/`offline:` keys, the deterministic `sw_source` worker and the `dist/sw.js` emission; and the client wire — the offline `enhance` enqueue path + the `onSwFlushMessage` flush trigger, closing the loop with the landed `stage_idempotency` + outbox; plus the drift/micro-debt pass — the pre-existing `resolveForeign` double-space red pin fixed, the synthetic-tsconfig empty-write and the three `CACHE-S3` silent tag-key fallbacks are loud, the `rustfn` bench's fmt-parse blocker removed, the README badge re-measured and the missing `macros`/`rustfn` architecture rows added)
 
 ## Where things stand
