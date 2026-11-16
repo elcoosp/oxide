@@ -308,6 +308,19 @@ export function bootWithRouter(
       adapter as { capabilities?: { hmr?: string } }
     ).capabilities
     if (caps?.hmr === 'refresh') return
+    // §V2-E01: the framework's own HMR runtime already applied this update
+    // IN PLACE (the Vue compile step's emission marks the URL after
+    // `__VUE_HMR_RUNTIME__.reload` via the accept callback — the accept fires
+    // BEFORE this hook). A replayed `update` would remount the route and
+    // destroy the state the framework refresh preserved — the same exclusion
+    // the `refresh` capability above gets for React, now per-URL for the
+    // component frameworks.
+    const inPlace = (
+      globalThis as {
+        __oxide_hmr__?: { wasRefreshedInPlace?: (u: string) => boolean }
+      }
+    ).__oxide_hmr__
+    if (url && inPlace?.wasRefreshedInPlace?.(url) === true) return
     if (lastInput === undefined) return
     try {
       adapter.update(lastInput)
