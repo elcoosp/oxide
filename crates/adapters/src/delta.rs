@@ -235,6 +235,31 @@ pub trait DeployStore {
     fn read_pointer(&self) -> Result<Option<String>, OxideError>;
 }
 
+/// An already-shared store satisfies the seam by delegation, so callers
+/// hand `Arc<dyn DeployStore>` (the CLI's target construction) to the
+/// orchestrators interchangeably — the same accepted-generations pattern
+/// the image CAS seam records.
+impl<T: DeployStore + ?Sized> DeployStore for std::sync::Arc<T> {
+    fn load_manifest(&self) -> Result<Option<RemoteManifest>, OxideError> {
+        (**self).load_manifest()
+    }
+    fn store_manifest(&self, manifest: &RemoteManifest) -> Result<(), OxideError> {
+        (**self).store_manifest(manifest)
+    }
+    fn put(&self, path: &str, bytes: &[u8]) -> Result<(), OxideError> {
+        (**self).put(path, bytes)
+    }
+    fn delete(&self, path: &str) -> Result<(), OxideError> {
+        (**self).delete(path)
+    }
+    fn put_pointer(&self, build_id: &str) -> Result<(), OxideError> {
+        (**self).put_pointer(build_id)
+    }
+    fn read_pointer(&self) -> Result<Option<String>, OxideError> {
+        (**self).read_pointer()
+    }
+}
+
 /// The `dir:/path` target: a plain directory tree on local disk, laid out
 /// exactly like the object store (§V2-F11's third target spelling). The
 /// pointer swap is a temp-file write plus `rename`, atomic within one
