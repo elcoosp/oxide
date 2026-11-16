@@ -54,6 +54,13 @@ def items_of(path, text=None):
 # 170: the `Bundler as _` trait import moved to the rb.bundle call sites.
 # 1047: server_manifest loses `mut` — the render-mode mutation runs in phase_emit.
 PHASE_SUBS = {
+    # V2-F01 (this diff): the vendor-group derivation rides the §15-E
+    # anchor — the block (the merged-registry call + the vendor groups
+    # into client_opts) precedes the recorded comment.
+    472: (
+        '// §15-E: JS-plugin resolveId / load hooks. Build once; both envs share',
+        '    // §V2-F01: the mixed-registry client bundle splits the per-framework\n    // vendors (the rolldown `advancedChunks` groups) so each framework\'s\n    // runtime loads once, on the first island of that framework. Derived\n    // from the same merged registry the boot entry consumed — the same\n    // `island_framework` inference — via the planner\'s `vendor_groups`\n    // (empty for a single-framework build, so the chunk shape stays\n    // byte-identical). The registry call is idempotent (the side-car write\n    // is the same bytes; the summary line rides the boot entry\'s emission).\n    // (the registry call is idempotent — the side-car write is the same\n    // bytes; the summary line rides the boot entry\'s emission)\n    if !islands_for_boot(cfg, tree, rootp, &mut *w)?.is_empty() {\n        let merged_islands = islands_for_boot(cfg, tree, rootp, &mut *w)?;\n        let mut resolved = std::collections::BTreeMap::new();\n        for (name, spec) in &merged_islands {\n            let src = spec.src();\n            let first_line = std::fs::read_to_string(rootp.join(&src))\n                .map(|b| b.lines().next().unwrap_or("").to_string())\n                .unwrap_or_default();\n            resolved.insert(\n                name.clone(),\n                oxide_fw_compiler::islands::ResolvedIsland {\n                    src: src.to_string(),\n                    framework: oxide_fw_config::island_framework(\n                        src,\n                        spec.framework(),\n                        &framework,\n                        &first_line,\n                    ),\n                },\n            );\n        }\n        client_opts.vendor_groups = oxide_fw_compiler::islands::plan_island_boot(&framework, &resolved)\n            .vendor_groups()\n            .into_iter()\n            .map(|g| oxide_fw_bundler::VendorGroup { name: g.name, test: g.test })\n            .collect();\n    }\n    // §15-E: JS-plugin resolveId / load hooks. Build once; both envs share',
+    ),
     37: ('return Ok(0);', 'return Ok(None);'),
     170: ('use oxide_fw_bundler::Bundler as _;', None),
     1047: ('let mut server_manifest = read_json', 'let server_manifest = read_json'),
@@ -483,6 +490,54 @@ def stages_check():
                     "    // chain answer below is one hit into it.",
                     "    let route_ctx = cx.route_ctx.clone();",
                 ]),
+            ),
+        ],
+        # V2-F09 adoption (this diff), recorded substitution: the render
+        # stage injects the boot's search-mode flag script — the client
+        # matcher (`packages/core/src/client/searchEngine.ts`) queries
+        # `/_oxide/search` when the engine serves — riding the same
+        # `</body>` injection as the bootstrap, and both body-tag format
+        # sites gain the `{search_flag_tag}` slot. Unconfigured (`None`,
+        # the inert default) emits nothing, so the pre-F09 bytes are
+        # unchanged; the rule is orig-side (HEAD predates the flag).
+        'render': [
+            (
+                re.compile(
+                    r"_ => oxide_fw_render::hydration_bootstrap\("
+                    r"\s*&odf_b64,"
+                    r"\s*&route_for_odf,"
+                    r"\s*&nonce,"
+                    r"\s*\),"
+                    r"\s*\}"
+                    r"\s*\};"
+                ),
+                NL.join([
+                    "            _ => oxide_fw_render::hydration_bootstrap(",
+                    "                &odf_b64,",
+                    "                &route_for_odf,",
+                    "                &nonce,",
+                    "            ),",
+                    "        }",
+                    "    };",
+                    "    // §V2-F09: the boot's search-mode flag — the client",
+                    "    // matcher (`packages/core/src/client/searchEngine.ts`)",
+                    "    // queries `/_oxide/search` when the engine serves. The",
+                    "    // script rides the same `</body>` injection as the",
+                    "    // bootstrap; unconfigured (`None`, the inert default)",
+                    "    // emits nothing and every byte stays pre-F09 identical.",
+                    "    let search_flag_tag = match d.search_flag {",
+                    "        Some(mode) => oxide_fw_render::boot_search_flag_script(mode, &nonce),",
+                    "        None => String::new(),",
+                    "    };",
+                ]),
+            ),
+            (
+                re.compile(r'"\{odf_tag\}\{deferred_tag\}\{hmr_tag\}\{\}"'),
+                '"{odf_tag}{deferred_tag}{hmr_tag}{search_flag_tag}{}"',
+            ),
+            (
+                re.compile(r'format!\("\{odf_tag\}\{deferred_tag\}\{hmr_tag\}"\)'),
+                'format!("{odf_tag}{deferred_tag}{hmr_tag}{search_flag_tag}")',
             ),
         ],
     }
