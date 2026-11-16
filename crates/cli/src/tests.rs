@@ -11536,8 +11536,6 @@ async fn stream_reattach_route_rate_limits_per_ip() {
 
 #[tokio::test]
 async fn resumable_endpoint_response_is_teed_into_the_store() {
-    use futures::StreamExt as _;
-
     /// An endpoint dispatcher whose `route.ts` returned a streamed,
     /// `resumable(...)`-marked response: the shape the spec's helper
     /// produces.
@@ -11885,10 +11883,7 @@ async fn stream_resume_reattach_delivers_the_missed_bytes() {
 fn dechunk(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut rest = raw;
-    loop {
-        let Some(line_end) = find_subslice(rest, b"\r\n") else {
-            break;
-        };
+    while let Some(line_end) = find_subslice(rest, b"\r\n") {
         let size_line = &rest[..line_end];
         let size = usize::from_str_radix(std::str::from_utf8(size_line).unwrap_or("").trim(), 16)
             .unwrap_or(0);
