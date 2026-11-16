@@ -8,6 +8,7 @@
 
 use crate::*;
 use oxide_fw_dispatch::flow::Flow;
+use oxide_fw_router::MatchedView;
 
 // >>> stage-wrapper (not part of the moved body; split_selfcheck --stages strips this block)
 pub(crate) async fn stage_match(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
@@ -86,13 +87,34 @@ pub(crate) async fn stage_match(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     } else {
         vec![match_path]
     };
-    let matched: Option<oxide_fw_router::MatchResult> = match archived {
-        Some(a) => candidates.iter().find_map(|p| a.match_path(p)),
-        None => candidates.iter().find_map(|p| tree.match_path(p)),
-    };
-    let (status, label) = match &matched {
-        Some(m) => (200u16, pattern_of(&m.route.segments)),
-        None => (404u16, "_unmatched".to_string()),
+    // V2-B02: the match goes through the unified view seam — one shape
+    // over `RouteTree::match_ref` (borrowed entry) and
+    // `ArchivedTree::match_ref` (index into the mmap), reached through the
+    // candidate index on both trees. `into_match_result` produces the
+    // byte-identical owned shape the stages consume; the prelude's live
+    // gate reads `is_live_route` in place with no materialization.
+    let matched: Option<oxide_fw_router::MatchResult> = candidates.iter().find_map(|p| {
+        match archived {
+            Some(a) => MatchedView::archived(a, p),
+            None => MatchedView::live(tree, p),
+        }
+        .map(|v| v.into_match_result())
+    });
+    // V2-B01: the per-route context is one table hit — the metrics label
+    // is the precomputed pattern (no per-request `pattern_of` walk), and
+    // the route step reads the chain answers from the same hit.
+    let route_ctx: Option<std::sync::Arc<oxide_fw_router::RouteContext>> =
+        match cx.ctx_table.as_ref() {
+            Some(table) => match &matched {
+                Some(m) => table.get(&m.route.id.0).cloned(),
+                None => table.unmatched().cloned(),
+            },
+            None => None,
+        };
+    let (status, label) = match (&matched, &route_ctx) {
+        (Some(_), Some(rc)) => (200u16, rc.pattern.to_string()),
+        (Some(m), None) => (200u16, pattern_of(&m.route.segments)),
+        (None, _) => (404u16, "_unmatched".to_string()),
     };
     // >>> stage-wrapper (not part of the moved body; split_selfcheck --stages strips this block)
     cx.normalized = normalized;
@@ -100,6 +122,7 @@ pub(crate) async fn stage_match(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     cx.resolved_locale = resolved_locale;
     cx.is_data_request = is_data_request;
     cx.matched = matched;
+    cx.route_ctx = route_ctx;
     cx.status = status;
     cx.label = label;
     Flow::Continue
