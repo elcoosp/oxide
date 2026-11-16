@@ -181,37 +181,3 @@ pub(crate) fn chunk_signals_error(chunk: &bytes::Bytes) -> bool {
 pub(crate) fn str_signals_error(s: &str) -> bool {
     chunk_signals_error(&bytes::Bytes::copy_from_slice(s.as_bytes()))
 }
-
-/// §10.3: splice `<script type="module" src="/<url>">` into a streaming HTML
-/// response right before the closing `</body>` tag. Works when `</body>` is
-/// split across chunk boundaries by keeping a rolling tail of the last
-/// `CLOSE.len() - 1` bytes and scanning for the tag on each new chunk.
-///
-/// §9.3: parse an `application/x-www-form-urlencoded` body into the
-/// `[key, value]` entry list the worker's `action:run` op accepts. Percent
-/// decoding handles `+` as space. A malformed pair is skipped, not fatal.
-pub(crate) fn parse_form_urlencoded(body: &[u8]) -> Vec<(String, String)> {
-    let s = String::from_utf8_lossy(body);
-    s.split('&')
-        .filter(|p| !p.is_empty())
-        .map(|pair| {
-            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            (
-                oxide_fw_server::percent_decode(&k.replace('+', " ")),
-                oxide_fw_server::percent_decode(&v.replace('+', " ")),
-            )
-        })
-        .collect()
-}
-
-/// §9.3: the action name from a form-action query. `?/comment` → `comment`.
-/// The SvelteKit convention: a query that begins with `/` names an action.
-pub(crate) fn action_from_query(url: &str) -> Option<String> {
-    let q = url.split_once('?')?.1;
-    let q = q.split('#').next().unwrap_or(q);
-    let rest = q.strip_prefix('/')?;
-    if rest.is_empty() || rest.contains('/') {
-        return None;
-    }
-    Some(oxide_fw_server::percent_decode(rest))
-}
