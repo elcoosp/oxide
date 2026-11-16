@@ -2,18 +2,6 @@
 
 use crate::*;
 
-/// §9.2 / §20 / O3c: the wall-clock time the parallel load path saved.
-/// When the last-layout load and the page load run under `tokio::join!`,
-/// the total load phase is `max(a, b)` instead of `a + b`; the saving is
-/// `min(a, b)`. Zero when they are the same duration (nothing saved) or
-/// when the sequential path ran (caller passes 0.0 for one side).
-///
-/// Pure so the arithmetic is testable without a real server: the
-/// arithmetic *is* the marking, the recorder just carries the number.
-pub(crate) fn parallel_load_savings_ms(a_ms: f64, b_ms: f64) -> f64 {
-    a_ms.min(b_ms).max(0.0)
-}
-
 pub(crate) fn session_ttl_secs() -> u64 {
     SESSION_TTL_SECS.load(std::sync::atomic::Ordering::Relaxed)
 }
