@@ -40,6 +40,7 @@ fn opts(root: &Path, env: BundleEnv, entries: &[(&str, &str)]) -> BundleOptions 
         generate_bundle_hook: None,
         transform_html_hook: None,
         css_transform: None,
+        vendor_groups: Vec::new(),
         inline_dynamic_imports: false,
         resolve_conditions: None,
         virtual_modules: Default::default(),
