@@ -2535,6 +2535,13 @@ pub struct ImageEndpoint {
     pub in_flight: Arc<std::sync::atomic::AtomicUsize>,
     /// §16.1: largest accepted width/height.
     pub max_dimension: u32,
+    /// V2-C09: the job engine. `Some` routes every cache-miss transform
+    /// through single-flight + the bounded lanes + the CAS (the spec's
+    /// `oha -c 64` acceptance: 64 concurrent cold-cache requests for one
+    /// variant produce exactly one encode). `None` (tests, and every
+    /// construction site that predates the wiring) keeps the direct
+    /// per-request transform, byte-identical.
+    pub jobs: Option<Arc<dyn ImageJobRunner>>,
 }
 
 /// §16.1: attach an LQIP data URI (if the backend produced one) as a
@@ -2589,7 +2596,38 @@ fn clone_image_endpoint(e: &ImageEndpoint) -> ImageEndpoint {
         max_concurrency: e.max_concurrency,
         in_flight: Arc::clone(&e.in_flight),
         max_dimension: e.max_dimension,
+        jobs: e.jobs.as_ref().map(Arc::clone),
     }
+}
+
+/// V2-C09: the job-runner seam — the object-safe slice of the landed
+/// `ImageJobs` engine (single-flight per output key, the bounded CPU/AVIF
+/// lanes, the CAS lookup/store) the server routes transforms through. The
+/// server has no compile-time tie to the asset crate: the CLI adapts
+/// `ImageJobs` to this trait at boot.
+pub type BoxedImageJob =
+    Box<dyn FnOnce() -> std::result::Result<ImageEndpointResult, String> + Send>;
+
+pub type BoxedImageJobFuture = std::pin::Pin<
+    Box<dyn std::future::Future<Output = std::result::Result<ImageEndpointResult, String>> + Send>,
+>;
+
+pub trait ImageJobRunner: Send + Sync {
+    /// Run one transform under the engine: the CAS answers first, the
+    /// single-flight map dedupes concurrent misses onto one encode, and
+    /// the CPU/AVIF lane bounds the concurrent encodes. `job` is the
+    /// boxed transform the engine runs in `spawn_blocking`. `format` is
+    /// the requested output format — an engine-CAS hit carries raw bytes
+    /// only, so the adapter synthesizes the metadata from it (the
+    /// in-process result cache, which holds the full metadata including
+    /// the LQIP, answers first anyway).
+    fn run_job(
+        &self,
+        key: &str,
+        avif: bool,
+        format: Option<&'static str>,
+        job: BoxedImageJob,
+    ) -> BoxedImageJobFuture;
 }
 
 /// The backend seam. `oxide_fw_assets::ImageBackend` is adapted to this in the
@@ -3135,6 +3173,22 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
         placeholder: parsed.placeholder.clone(),
     };
 
+    // V2-C09: with the engine wired, the transform is the async arm's
+    // (`jobs.run_job` awaits the single-flight leader) — the sync prefix
+    // hands off after the shed; the in-flight counter the shed incremented
+    // is decremented there. Two transforms stay on the direct path: a
+    // placeholder request (the LQIP header needs the transform's metadata
+    // and the engine's CAS stores bytes only) and a format-less one (the
+    // source's own content type is only known after the decode).
+    if endpoint.jobs.is_some() && parsed.placeholder.is_none() && format_static.is_some() {
+        return NativePrefix::LocalImage {
+            endpoint: Arc::new(clone_image_endpoint(endpoint)),
+            request: req,
+            key,
+            rule_headers: Vec::new(),
+        };
+    }
+
     let result = endpoint.backend.process(req);
     if endpoint.max_concurrency > 0 {
         endpoint
@@ -3182,6 +3236,81 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
             OxideResponse::new(400, format!("image transform failed: {msg}"))
                 .with_header("content-type", "text/plain; charset=utf-8"),
         ),
+    }
+}
+
+/// V2-C09: the deferred local-transform arm — run the engine (or, when a
+/// caller built the endpoint without the engine, the direct transform —
+/// the fn stays total), release the shed's in-flight slot, and compose the
+/// same response the legacy sync path composes: the immutable cache
+/// headers, the backend cache_key ETag, the LQIP pipe, and the bounded
+/// result-cache write.
+async fn serve_local_image(
+    endpoint: &ImageEndpoint,
+    request: ImageEndpointRequest,
+    key: String,
+) -> OxideResponse {
+    // `parse_image_query` maps `format` to the content type directly
+    // (`"avif"` → `"image/avif"`), so the AVIF lane check is the string
+    // equality against the mapped value.
+    let avif = request.format == Some("image/avif");
+    let result: std::result::Result<ImageEndpointResult, String> = match endpoint.jobs.as_ref() {
+        Some(runner) => {
+            let backend = Arc::clone(&endpoint.backend);
+            let format = request.format;
+            runner
+                .run_job(
+                    &key,
+                    avif,
+                    format,
+                    Box::new(move || backend.process(request)),
+                )
+                .await
+        }
+        None => endpoint.backend.process(request),
+    };
+    if endpoint.max_concurrency > 0 {
+        endpoint
+            .in_flight
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    match result {
+        Ok(result) => {
+            let etag = format!(
+                "\"{}\"",
+                &result.cache_key[..16.min(result.cache_key.len())]
+            );
+            if let Ok(mut c) = endpoint.result_cache.lock() {
+                // Bound the cache; entries are immutable, so dropping the
+                // oldest-inserted half is safe and cheap.
+                if c.len() > 256 {
+                    let keep: Vec<String> = c.keys().skip(128).cloned().collect();
+                    c.retain(|k, _| keep.contains(k));
+                }
+                c.insert(
+                    key,
+                    ImageCacheEntry {
+                        bytes: Bytes::from(result.bytes.clone()),
+                        content_type: result.content_type.to_string(),
+                        etag: etag.clone(),
+                        placeholder: result.placeholder.clone(),
+                    },
+                );
+            }
+            OxideResponse::new(200, Bytes::from(result.bytes))
+                .with_header("content-type", result.content_type)
+                // §16.1: transformed images are content-addressed by the
+                // backend's cache key, so they are safe to cache immutably.
+                .with_header("Cache-Control", "public, max-age=31536000, immutable")
+                .with_header("ETag", etag)
+                .with_header("Vary", "Accept")
+                // §16.1: the LQIP was only piped on the cache-hit branch,
+                // so a client saw `x-oxide-lqip` on the second request and
+                // never on the first. The fresh render carries it too.
+                .pipe_image_placeholder(result.placeholder.clone())
+        }
+        Err(msg) => OxideResponse::new(400, format!("image transform failed: {msg}"))
+            .with_header("content-type", "text/plain; charset=utf-8"),
     }
 }
 
@@ -3928,6 +4057,17 @@ enum NativePrefix {
         format: Option<&'static str>,
         rule_headers: Vec<(String, String)>,
     },
+    /// V2-C09: a local image transform routed through the job engine. The
+    /// sync prefix validated the query, resolved the source, computed the
+    /// single-flight key and shed over the concurrency ceiling; the async
+    /// arm runs the engine (CAS → single-flight → lanes → encode) and
+    /// composes the same response the direct path composes.
+    LocalImage {
+        endpoint: Arc<ImageEndpoint>,
+        request: ImageEndpointRequest,
+        key: String,
+        rule_headers: Vec<(String, String)>,
+    },
     /// Proceed to dispatch carrying the merged rule headers.
     Dispatch(Vec<(String, String)>, Option<String>),
 }
@@ -4067,6 +4207,29 @@ impl Pipeline {
                     m.observe("_static", started.elapsed(), finished.status);
                 }
                 Box::pin(std::future::ready(finished).instrument(span))
+            }
+            NativePrefix::LocalImage {
+                endpoint,
+                request,
+                key,
+                rule_headers,
+            } => {
+                let request_id = req.request_id.clone();
+                let method = req.method.clone();
+                let cookie = req.header("cookie").map(str::to_string);
+                Box::pin(
+                    async move {
+                        let resp = serve_local_image(&endpoint, request, key).await;
+                        self.finish_response_with_request(
+                            resp,
+                            &rule_headers,
+                            &request_id,
+                            Some(&method),
+                            cookie.as_deref(),
+                        )
+                    }
+                    .instrument(span),
+                )
             }
             NativePrefix::RemoteImage {
                 endpoint,
@@ -6607,6 +6770,7 @@ mod image_endpoint_tests {
         std::fs::write(dir.path().join("a.png"), b"not-a-real-png-but-bytes")
             .expect("write source");
         let ep = ImageEndpoint {
+            jobs: None,
             asset_root: dir.path().to_path_buf(),
             signing_secret: None,
             backend,
@@ -6626,6 +6790,231 @@ mod image_endpoint_tests {
             NativePrefix::Raw(r) => (r.status, r.headers, r.body.to_vec()),
             _ => panic!("expected a Raw response from the image endpoint"),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // V2-C09: the job-routed transform (the engine wired behind the
+    // `ImageJobRunner` seam).
+    // ------------------------------------------------------------------
+
+    /// The fake runner: counts `run_job` calls, optionally fails, and
+    /// runs the boxed job (so the real backend's bytes flow through) while
+    /// stamping the deterministic metadata the adapter synthesizes.
+    struct FakeRunner {
+        calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    impl ImageJobRunner for FakeRunner {
+        fn run_job(
+            &self,
+            key: &str,
+            _avif: bool,
+            format: Option<&'static str>,
+            job: BoxedImageJob,
+        ) -> BoxedImageJobFuture {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let key = key.to_string();
+            let fail = self.fail;
+            Box::pin(async move {
+                if fail {
+                    return Err("encode exploded".to_string());
+                }
+                let r = job()?;
+                Ok(ImageEndpointResult {
+                    bytes: r.bytes,
+                    content_type: format.unwrap_or("image/png"),
+                    cache_key: key,
+                    placeholder: None,
+                })
+            })
+        }
+    }
+
+    /// A plain transform with the engine wired is NOT answered inline — the
+    /// sync prefix defers it through `NativePrefix::LocalImage` so the
+    /// single-flight await happens on the async arm.
+    #[tokio::test]
+    async fn jobs_wired_defers_the_transform_to_the_async_arm() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::clone(&calls),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: None,
+        });
+        let (_dir, ep) = endpoint_with(backend, 0, 8192);
+        let ep = ImageEndpoint {
+            jobs: Some(Arc::new(FakeRunner {
+                calls: Arc::new(AtomicUsize::new(0)),
+                fail: false,
+            })),
+            ..ep
+        };
+        let url = "/_oxide/image?url=/a.png&w=400&format=avif";
+        match serve_image_endpoint(Some(&ep), url) {
+            NativePrefix::LocalImage { request, key, .. } => {
+                assert_eq!(
+                    request.format,
+                    Some("image/avif"),
+                    "the format rides the request"
+                );
+                assert_eq!(key.len(), 64, "the key is the blake3 hex digest: {key}");
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    0,
+                    "the sync prefix must not transform"
+                );
+            }
+            other => match other {
+                NativePrefix::Raw(r) => panic!(
+                    "expected a LocalImage deferral, got Raw({} {})",
+                    r.status,
+                    String::from_utf8_lossy(&r.body)
+                ),
+                _ => panic!("expected a LocalImage deferral, got another variant"),
+            },
+        }
+    }
+
+    /// The deferred arm runs the engine's boxed job and composes the same
+    /// response shape the legacy path composes: immutable cache headers,
+    /// the key-derived ETag, the format's content type.
+    #[tokio::test]
+    async fn serve_local_image_composes_the_job_response() {
+        let runner_calls = Arc::new(AtomicUsize::new(0));
+        let backend_calls = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::clone(&backend_calls),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: None,
+        });
+        let (_dir, ep) = endpoint_with(backend, 0, 8192);
+        let ep = ImageEndpoint {
+            jobs: Some(Arc::new(FakeRunner {
+                calls: Arc::clone(&runner_calls),
+                fail: false,
+            })),
+            ..ep
+        };
+        let resp = serve_local_image(
+            &ep,
+            ImageEndpointRequest {
+                source: b"not-a-real-png-but-bytes".to_vec(),
+                format: Some("image/avif"),
+                width: Some(400),
+                height: None,
+                quality: Some(75),
+                placeholder: None,
+            },
+            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+        )
+        .await;
+        assert_eq!(resp.status, 200);
+        assert_eq!(
+            resp.body.as_ref(),
+            b"W400H0Q75",
+            "the backend's bytes flow through the job"
+        );
+        assert_eq!(
+            runner_calls.load(Ordering::SeqCst),
+            1,
+            "the runner ran once"
+        );
+        assert_eq!(
+            backend_calls.load(Ordering::SeqCst),
+            1,
+            "the boxed job ran the backend"
+        );
+        assert!(
+            resp.headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v == "image/avif"),
+            "the format's content type: {:?}",
+            resp.headers
+        );
+        assert!(
+            resp.headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("etag") && v == "\"deadbeefdeadbeef\""),
+            "the key-derived ETag (first 16 hex): {:?}",
+            resp.headers
+        );
+        assert!(
+            resp.headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("cache-control") && v.contains("immutable")),
+            "immutable Cache-Control: {:?}",
+            resp.headers
+        );
+    }
+
+    /// A failing encode surfaces as the same 400 the legacy path produces.
+    #[tokio::test]
+    async fn serve_local_image_error_is_400() {
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::new(AtomicUsize::new(0)),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: None,
+        });
+        let (_dir, ep) = endpoint_with(backend, 0, 8192);
+        let ep = ImageEndpoint {
+            jobs: Some(Arc::new(FakeRunner {
+                calls: Arc::new(AtomicUsize::new(0)),
+                fail: true,
+            })),
+            ..ep
+        };
+        let resp = serve_local_image(
+            &ep,
+            ImageEndpointRequest {
+                source: b"bytes".to_vec(),
+                format: Some("image/webp"),
+                width: None,
+                height: None,
+                quality: None,
+                placeholder: None,
+            },
+            "k".to_string(),
+        )
+        .await;
+        assert_eq!(resp.status, 400);
+        assert!(
+            String::from_utf8_lossy(&resp.body).contains("encode exploded"),
+            "the runner's error surfaces: {resp:?}"
+        );
+    }
+
+    /// A placeholder (LQIP) request stays on the direct path even with the
+    /// engine wired — the LQIP header needs the transform's metadata and
+    /// the engine's CAS stores bytes only.
+    #[tokio::test]
+    async fn placeholder_requests_stay_on_the_direct_path() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::clone(&calls),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: Some("data:image/png;base64,AAAA".to_string()),
+        });
+        let (_dir, ep) = endpoint_with(backend, 0, 8192);
+        let ep = ImageEndpoint {
+            jobs: Some(Arc::new(FakeRunner {
+                calls: Arc::new(AtomicUsize::new(0)),
+                fail: false,
+            })),
+            ..ep
+        };
+        let url = "/_oxide/image?url=/a.png&w=400&format=png&placeholder=blur";
+        let (s, h, _) = body_of(serve_image_endpoint(Some(&ep), url));
+        assert_eq!(s, 200);
+        assert!(
+            h.iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("x-oxide-lqip")),
+            "the LQIP header is intact on the direct path: {h:?}"
+        );
     }
 
     /// The second identical request must not reach the backend — the
