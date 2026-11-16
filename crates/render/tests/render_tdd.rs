@@ -366,6 +366,27 @@ fn hydration_bootstrap_with_build_exact_shape() {
 }
 
 #[test]
+fn boot_search_flag_script_exact_shape() {
+    // §V2-F09: the boot's search-mode flag rides its own guarded script so
+    // the pinned bootstrap shapes stay byte-identical; the client matcher
+    // reads `window.__oxide.search` at search() call time.
+    let out = boot_search_flag_script("server", "n");
+    assert_eq!(
+        out,
+        "<script nonce='n'>window.__oxide&&(window.__oxide.search=\"server\")</script>"
+    );
+}
+
+#[test]
+fn boot_search_flag_mode_is_alphabet_guarded() {
+    // The mode is server-controlled (`server`/`static`), but the field
+    // sits in a JS string literal: anything outside the route-id alphabet
+    // degrades to percent-encoding instead of breaking the script.
+    let out = boot_search_flag_script("ser\"ver", "n");
+    assert!(out.contains("search=\"ser%22ver\""), "{out}");
+}
+
+#[test]
 fn legacy_bootstrap_has_no_build_field() {
     // Additive substrate: the 3-arg shape is unchanged (the V8-linked CLI
     // call site keeps compiling until the A01-phase-3 wiring lands).
