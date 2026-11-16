@@ -90,6 +90,11 @@ pub(crate) async fn stage_route(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     let _pool = routed_pool;
     let routes_root = routed_routes_root;
 
+    // V2-B01: the matched (or unmatched not-found) route's precomputed
+    // context — set by stage_match from the generation's table; every
+    // chain answer below is one hit into it.
+    let route_ctx = cx.route_ctx.clone();
+
     // Pre-compute the loader inputs synchronously so the async block
     // owns plain data (no borrow of `matched`).
     let (module_path, route_id, params, has_server_module, render_mode, needs_parent, is_live): LoaderInputs = match matched {
@@ -151,13 +156,22 @@ pub(crate) async fn stage_route(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     // cannot happen (each directory yields at most one middleware
     // file). An unmatched URL still gets the root middleware, matching
     // the previous behaviour.
-    // P-06: served from the tree's precomputed prefix index — no full
-    // entry scan, no per-candidate `format!`, no sort per request.
-    let middleware_module_paths: Vec<std::path::PathBuf> = tree
-        .middleware_files_for(route_id.as_deref().unwrap_or(""))
-        .into_iter()
-        .map(|f| routes_root.join(f))
-        .collect();
+    // P-06 → V2-B01: served from the precomputed route context (one table
+    // hit per request — the chain, outer→inner, is a boot-time answer); the
+    // tree's P-06 index stays as the degenerate fallback (a matched route
+    // is always a table hit within the prelude's matched pair).
+    let middleware_module_paths: Vec<std::path::PathBuf> = match &route_ctx {
+        Some(rc) => rc
+            .middleware_chain
+            .iter()
+            .map(|f| routes_root.join(f))
+            .collect(),
+        None => tree
+            .middleware_files_for(route_id.as_deref().unwrap_or(""))
+            .into_iter()
+            .map(|f| routes_root.join(f))
+            .collect(),
+    };
     // P-07b: built on first use. The JSON param map is consumed only by
     // the middleware loop and the §10.2 endpoint dispatcher; a page
     // request with no middleware file and no route.ts skips the
@@ -181,20 +195,38 @@ pub(crate) async fn stage_route(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     // `componentFor` cannot find. Precompute both here, before
     // `matched` is consumed, so the async render block below can use
     // them.
-    // P-06: not-found route + layout chain, precomputed by the tree index.
-    let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) =
-        match tree.not_found_route() {
-            Some((id, chain)) => (Some(id), chain.into_iter().map(|r| r.0).collect()),
-            None => (None, Vec::new()),
-        };
+    // P-06 → V2-B01: not-found route + layout chain from the table (the
+    // first `NotFound` entry's precomputed context, same source the
+    // dispatch answers use); the tree's index stays as the fallback.
+    let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) = match cx
+        .ctx_table
+        .as_ref()
+        .and_then(|t| t.unmatched())
+        .map(|c| {
+            (
+                Some(c.route_id.0.clone()),
+                c.layout_chain.iter().map(|i| i.0.clone()).collect(),
+            )
+        })
+        .or_else(|| {
+            tree.not_found_route()
+                .map(|(id, chain)| (Some(id), chain.into_iter().map(|r| r.0).collect()))
+        }) {
+        Some(pair) => pair,
+        None => (None, Vec::new()),
+    };
 
     // §10.2 step 5: resolve the NEAREST ancestor `error.tsx` for the
     // matched route (innermost boundary wins — a `routes/blog/error`
     // shadows `routes/error`). Precomputed here so the async render
     // block can pass it as `input.error_route_id`. The adapter
     // renders this component when the page throws.
-    // P-06: nearest error boundary from the precomputed index.
-    let error_route_id: Option<String> = tree.error_route_for(route_id.as_deref().unwrap_or(""));
+    // P-06 → V2-B01: nearest error boundary from the precomputed context
+    // (the innermost `error.tsx`, one table hit).
+    let error_route_id: Option<String> = match &route_ctx {
+        Some(rc) => rc.error_route.as_ref().map(|i| i.0.clone()),
+        None => tree.error_route_for(route_id.as_deref().unwrap_or("")),
+    };
     // The URL pattern (`pattern_of(segments)`) is for metrics labels;
     // the ROUTE ID is what the framework adapter's `componentFor`
     // expects. Two conventions to reconcile here:
@@ -222,28 +254,31 @@ pub(crate) async fn stage_route(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     // adapters use for `componentFor` (same convention as the page
     // id after `/page` is stripped). An unmatched URL gets an empty
     // chain.
-    let layout_ids: Vec<String> = match matched {
-        Some(m) => m.layout_chain.iter().map(|id| id.0.clone()).collect(),
+    // §8.2 / §16.3 → V2-B01: the layout chain (outermost first) from the
+    // precomputed context — the oracle-equal chain without the per-match
+    // recompute.
+    let layout_ids: Vec<String> = match &route_ctx {
+        Some(rc) => rc.layout_chain.iter().map(|i| i.0.clone()).collect(),
         None => Vec::new(),
     };
-    // §9.2: layout module paths for the parallel layout-loads phase.
-    // Each layout id (`routes/blog/layout`) maps to its
-    // `layout.server.ts` on disk, in outermost → innermost order.
-    let layout_module_paths: Vec<(String, std::path::PathBuf)> = layout_ids
-        .iter()
-        .filter_map(|lid| {
-            tree.entries
-                .iter()
-                .find(|e| e.id.0 == *lid && matches!(e.kind, oxide_fw_router::RouteKind::Layout))
-                .map(|e| {
-                    (
-                        lid.clone(),
-                        routes_root.join(e.file.with_file_name("layout.server.ts")),
-                    )
-                })
-        })
-        .filter(|(_, p)| p.is_file())
-        .collect();
+    // §9.2 → V2-B01: layout load specs from the precomputed context — the
+    // `layout.server.ts` paths are flag-driven (`has_server_module`), so
+    // the per-layout `is_file()` stat the walk paid per request is gone,
+    // and the A06 `parent()` verdict rides the same row
+    // (`LayoutLoadSpec`). Unmatched requests have no layout chain (the
+    // specs are empty, as the walk produced).
+    let layout_module_paths: Vec<LayoutLoadSpec> = match &route_ctx {
+        Some(rc) => rc
+            .layout_loads
+            .iter()
+            .map(|l| LayoutLoadSpec {
+                id: l.id.0.clone(),
+                path: routes_root.join(&l.server_file),
+                needs_parent: l.needs_parent,
+            })
+            .collect(),
+        None => Vec::new(),
+    };
 
     // §9.3: a form POST to `?/<name>` is an action invocation. Only a
     // POST with a named action on a route that has a server module is
