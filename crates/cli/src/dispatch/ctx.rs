@@ -92,6 +92,10 @@ pub(crate) struct RequestCtx {
     pub(crate) stage_load_start: std::time::Instant,
     pub(crate) boot_script_url_for_render: Option<String>,
     pub(crate) boot_script_integrity_for_render: Option<String>,
+    /// V2-F04: the §15.4 evaluation outcome (`stage_experiments`). `None`
+    /// when no `experiments` config row was eligible (the pre-F04 shapes);
+    /// the pins read the assigned map and the vary suffix off it.
+    pub(crate) exp_resolved: Option<oxide_fw_dispatch::experiments::Resolved>,
 }
 
 impl RequestCtx {
@@ -168,6 +172,7 @@ impl RequestCtx {
             stage_load_start: std::time::Instant::now(),
             boot_script_url_for_render: None,
             boot_script_integrity_for_render: None,
+            exp_resolved: None,
         }
     }
 }
