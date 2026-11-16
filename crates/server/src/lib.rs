@@ -109,7 +109,9 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 }
 
 /// A platform-agnostic request handed to the pipeline (web-standard shape, G5).
-#[derive(Debug)]
+/// Debug is manual (SPEC-24): the derived form printed RAW headers, so any
+/// `{:?}` of a request leaked `cookie`/`authorization` values; the impl
+/// redacts through `is_secret_key` like `log_request` does.
 pub struct OxideRequest {
     pub method: String,
     pub url: String,
@@ -143,6 +145,22 @@ pub struct OxideRequest {
     /// including) that one, so outer middleware does not run twice. Internal,
     /// like `rewrite_hops` — never read from an inbound header.
     pub mw_resume_after: Option<String>,
+}
+
+impl std::fmt::Debug for OxideRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OxideRequest")
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field("headers", &RedactedHeaders(&self.headers))
+            .field("body_len", &self.body.len())
+            .field("request_id", &self.request_id)
+            .field("trace", &self.trace)
+            .field("peer", &self.peer)
+            .field("rewrite_hops", &self.rewrite_hops)
+            .field("mw_resume_after", &self.mw_resume_after)
+            .finish()
+    }
 }
 
 impl Clone for OxideRequest {
@@ -194,6 +212,28 @@ pub fn is_secret_key(k: &str) -> bool {
         || k.contains("token")
         || k.contains("password")
         || k.contains("api_key")
+}
+
+/// SPEC-24: the shared redacting headers renderer for the `Debug` impls.
+/// `log_request` guards the request log line; this guards every `{:?}` of a
+/// request or response (panics, diagnostics, tracing fields) the same way —
+/// a header in the `is_secret_key` class renders as `[redacted]`, never its
+/// value.
+struct RedactedHeaders<'a>(&'a [(String, String)]);
+
+impl std::fmt::Debug for RedactedHeaders<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|(k, v)| {
+                let v = if is_secret_key(k) {
+                    "[redacted]"
+                } else {
+                    v.as_str()
+                };
+                (k.as_str(), v)
+            }))
+            .finish()
+    }
 }
 
 /// SPEC-24 / §20: one structured request log line with secret headers
@@ -264,7 +304,7 @@ impl std::fmt::Debug for OxideResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OxideResponse")
             .field("status", &self.status)
-            .field("headers", &self.headers)
+            .field("headers", &RedactedHeaders(&self.headers))
             .field("body_len", &self.body.len())
             .field("has_stream", &self.stream.is_some())
             .finish()
