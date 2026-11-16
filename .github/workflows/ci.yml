@@ -258,6 +258,79 @@ jobs:
       - name: V8 backend fixture gate
         run: ./tests/fixtures/check-v8.sh
 
+  # V2-A01 phase 1 (the cli lib.rs -> module-tree split): the move is
+  # behavior-preserving, so every smoke app's dist/ must hash identically at
+  # the pre-split base commit and at HEAD. The job builds the CLI at both
+  # commits, hashes each of the four smoke apps' dist trees with
+  # scripts/dist-digest.sh and diffs the two sets — any byte drift in the
+  # emitted artifacts fails the split.
+  cli-split-digest:
+    name: cli phase-1 split dist-digest (V2-A01)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the pre-split base commit is checked out below
+      - name: Install nasm
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Resolve the pre-split base commit
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="$(git rev-parse "$(git rev-parse HEAD)~1")"; fi
+          echo "BASE_SHA=$BASE" >> "$GITHUB_ENV"
+      - name: Digest each smoke app at HEAD (post-split)
+        run: |
+          cargo build -p oxide-fw-cli
+          : > /tmp/digests-head.txt
+          for app in examples/smoke-app-*; do
+            ./target/debug/oxide build --root "$app"
+            echo "$app $(./scripts/dist-digest.sh "$app")" >> /tmp/digests-head.txt
+          done
+          cat /tmp/digests-head.txt
+      - name: Digest each smoke app at the base commit (pre-split)
+        run: |
+          git checkout "$BASE_SHA"
+          cargo build -p oxide-fw-cli
+          : > /tmp/digests-base.txt
+          for app in examples/smoke-app-*; do
+            ./target/debug/oxide build --root "$app"
+            echo "$app $(./scripts/dist-digest.sh "$app")" >> /tmp/digests-base.txt
+          done
+          cat /tmp/digests-base.txt
+      - name: The four digests must be identical across the split
+        run: diff /tmp/digests-base.txt /tmp/digests-head.txt
+
+  # V2-F09 (feature `search`): the search pins are gated behind the feature
+  # (`#![cfg(feature = "search")]`), so the default-feature `rust` job never
+  # compiles them. This job enables the feature: the V8-free server endpoint
+  # pins run everywhere, and the two CLI pins (the serve wire-up and the
+  # dev-loop refresh swap) run through the V8-linked lib test the way the
+  # jshost-e2e job does.
+  search-feature:
+    name: search-feature pins (V2-F09)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install nasm
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: The V8-free server endpoint pins
+        run: cargo test -p oxide-fw-server --features search --test search_endpoint_tdd
+      - name: The CLI serve wire-up and dev-refresh pins
+        run: |
+          cargo test -p oxide-fw-cli --features search --lib \
+            the_search_serve_wire_up_opens_the_built_index \
+            the_dev_search_refresh_swaps_the_serve_side_index
+
   bench-gate:
     name: bench regression gate (>5% fails, §21)
     runs-on: macos-latest
