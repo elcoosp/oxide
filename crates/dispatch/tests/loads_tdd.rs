@@ -16,7 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oxide_fw_diagnostics::OxideError;
-use oxide_fw_dispatch::loads::{LoadNode, LoadResult, run_load_graph};
+use oxide_fw_dispatch::loads::{
+    GraphOutcomes, LoadNode, LoadResult, run_load_graph, run_load_graph_outcomes,
+};
 use oxide_fw_server::{LoaderOutput, LoaderRunInput, LoaderRunner};
 
 use async_trait::async_trait;
@@ -30,6 +32,12 @@ struct FakeRunner {
     short_routes: Vec<(&'static str, u16)>,
     /// Routes whose runner call fails (`Err` — runner crash, not HTTP error).
     fail_routes: Vec<&'static str>,
+    /// Routes served through the streaming entry (the settle receiver is
+    /// live: one `{settled: route}` frame is sent before the sender drops).
+    stream_routes: Vec<&'static str>,
+    /// Per-route delay overrides: `(routes, delay_ms)` pairs, first match
+    /// wins; the default `delay_ms` applies elsewhere.
+    delay_routes: Vec<(Vec<&'static str>, u64)>,
     calls: Mutex<Vec<String>>,
 }
 
@@ -39,6 +47,8 @@ impl FakeRunner {
             delay_ms,
             short_routes: Vec::new(),
             fail_routes: Vec::new(),
+            stream_routes: Vec::new(),
+            delay_routes: Vec::new(),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -50,6 +60,17 @@ impl FakeRunner {
 
     fn failing(mut self, routes: &[&'static str]) -> Self {
         self.fail_routes = routes.to_vec();
+        self
+    }
+
+    fn streaming(mut self, routes: &[&'static str]) -> Self {
+        self.stream_routes = routes.to_vec();
+        self
+    }
+
+    /// Per-route delay override (the default `delay_ms` applies elsewhere).
+    fn delay_for(mut self, routes: &[&'static str], delay_ms: u64) -> Self {
+        self.delay_routes.push((routes.to_vec(), delay_ms));
         self
     }
 
@@ -66,7 +87,13 @@ impl LoaderRunner for FakeRunner {
 
     async fn run(&self, input: LoaderRunInput) -> oxide_fw_server::Result<LoaderOutput> {
         self.calls.lock().unwrap().push(input.route.clone());
-        tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+        let delay = self
+            .delay_routes
+            .iter()
+            .find(|(routes, _)| routes.contains(&input.route.as_str()))
+            .map(|(_, d)| *d)
+            .unwrap_or(self.delay_ms);
+        tokio::time::sleep(Duration::from_millis(delay)).await;
         if self.fail_routes.contains(&input.route.as_str()) {
             return Err(OxideError(Box::new(
                 oxide_fw_diagnostics::Diagnostic::error(
@@ -91,6 +118,26 @@ impl LoaderRunner for FakeRunner {
             "saw_parent": input.parent_data,
         })))
     }
+
+    async fn run_streaming(
+        &self,
+        input: LoaderRunInput,
+    ) -> oxide_fw_server::Result<(LoaderOutput, tokio::sync::mpsc::Receiver<serde_json::Value>)>
+    {
+        if !self.stream_routes.contains(&input.route.as_str()) {
+            return LoaderRunner::run(self, input)
+                .await
+                .map(|out| (out, tokio::sync::mpsc::channel(1).1));
+        }
+        let out = LoaderRunner::run(self, input).await?;
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let _ = tx
+            .send(
+                serde_json::json!({ "deferredSettle": { "id": "d1", "value": out.data["node"] } }),
+            )
+            .await;
+        Ok((out, rx))
+    }
 }
 
 fn node(route: &str, needs_parent: bool) -> LoadNode {
@@ -101,7 +148,7 @@ fn node(route: &str, needs_parent: bool) -> LoadNode {
 }
 
 /// Unwrap helper that names the variant on failure.
-fn expect_data(result: LoadResult) -> Vec<Arc<LoaderOutput>> {
+fn expect_data(result: LoadResult) -> Vec<LoaderOutput> {
     match result {
         LoadResult::Data(data) => data,
         other => panic!("expected LoadResult::Data, got {other:?}"),
@@ -240,7 +287,13 @@ async fn a_runner_failure_maps_to_failed() {
         node("routes/blog/layout", false),
     ];
     match run_load_graph(Arc::clone(&runner) as Arc<dyn LoaderRunner>, nodes).await {
-        LoadResult::Failed(message) => {
+        LoadResult::Failed {
+            index,
+            code,
+            message,
+        } => {
+            assert_eq!(index, 1, "the first failure in input order is node 1");
+            assert_eq!(code, "RT-TEST");
             assert_eq!(message, "runner crashed on routes/blog/layout");
         }
         other => panic!("expected Failed, got {other:?}"),
@@ -259,7 +312,13 @@ async fn a_runner_failure_poisons_only_its_dependents() {
         node("routes/other/page", false),
     ];
     match run_load_graph(Arc::clone(&runner) as Arc<dyn LoaderRunner>, nodes).await {
-        LoadResult::Failed(message) => {
+        LoadResult::Failed {
+            index,
+            code,
+            message,
+        } => {
+            assert_eq!(index, 0, "the chain head failed; the dependent never ran");
+            assert_eq!(code, "RT-TEST");
             assert_eq!(message, "runner crashed on routes/layout");
         }
         other => panic!("expected Failed, got {other:?}"),
@@ -313,4 +372,157 @@ async fn short_circuit_by_a_head_load_is_returned_without_parent_data() {
         }
         other => panic!("expected ShortCircuit, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// V2-A06 CLI wiring seam: per-node outcomes (settle receivers + elapsed) and
+// the streaming entry. The `stage_loaders` wiring adopts these — the page
+// node runs through `run_streaming` (B2 settle streaming), the layout nodes
+// through `run`, and the waterfall's `overlap-saved` mark reads the elapsed
+// column.
+// ---------------------------------------------------------------------------
+
+/// The outcomes helper that names the variants on failure.
+fn expect_outcomes(pair: (LoadResult, GraphOutcomes)) -> (Vec<LoaderOutput>, GraphOutcomes) {
+    match pair {
+        (LoadResult::Data(data), outcomes) => (data, outcomes),
+        (other, _) => panic!("expected LoadResult::Data, got {other:?}"),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn streaming_node_returns_its_settle_receiver_by_index() {
+    // Only the node listed in `streaming` runs through `run_streaming` and
+    // contributes a receiver; every other slot stays `None` — the wiring
+    // takes the page's receiver without touching the layouts'.
+    let runner = Arc::new(FakeRunner::new(5).streaming(&["routes/a/page"]));
+    let nodes = vec![node("routes/a/layout", false), node("routes/a/page", false)];
+    let (data, mut outcomes) = expect_outcomes(
+        run_load_graph_outcomes(Arc::clone(&runner) as Arc<dyn LoaderRunner>, nodes, &[1]).await,
+    );
+    assert_eq!(data.len(), 2);
+    assert!(outcomes.settles[0].is_none(), "layout ran non-streaming");
+    let mut rx = outcomes.settles[1].take().expect("page settle receiver");
+    let frame = rx.recv().await.expect("the settle frame is queued");
+    assert_eq!(frame["deferredSettle"]["value"], "routes/a/page");
+    assert!(
+        rx.recv().await.is_none(),
+        "the sender dropped after one frame"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn streaming_page_still_reads_its_parent_data() {
+    // Streaming and `needs_parent` compose: the page runs through the
+    // streaming entry AND receives the predecessor's resolved data.
+    let runner = Arc::new(
+        FakeRunner::new(10)
+            .streaming(&["routes/a/page"])
+            .delay_for(&["routes/a/layout"], 20),
+    );
+    let nodes = vec![node("routes/a/layout", false), node("routes/a/page", true)];
+    let (data, outcomes) = expect_outcomes(
+        run_load_graph_outcomes(Arc::clone(&runner) as Arc<dyn LoaderRunner>, nodes, &[1]).await,
+    );
+    assert_eq!(data[1].data["saw_parent"]["node"], "routes/a/layout");
+    assert!(outcomes.settles[1].is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn outcomes_elapsed_reports_each_node_in_input_order() {
+    // Paused clock: 30/10/20 ms delays complete out of order but the
+    // elapsed column is in INPUT order — the wiring's waterfall mark reads
+    // it positionally.
+    let runner = Arc::new(
+        FakeRunner::new(10)
+            .delay_for(&["routes/a/layout"], 30)
+            .delay_for(&["routes/mid/page"], 20),
+    );
+    let nodes = vec![
+        node("routes/a/layout", false),
+        node("routes/fast/page", false),
+        node("routes/mid/page", false),
+    ];
+    let (_data, outcomes) = expect_outcomes(
+        run_load_graph_outcomes(Arc::clone(&runner) as Arc<dyn LoaderRunner>, nodes, &[]).await,
+    );
+    assert_eq!(outcomes.elapsed_ms.len(), 3);
+    assert!(
+        (25.0..40.0).contains(&outcomes.elapsed_ms[0]),
+        "node 0 ran 30 ms (took {})",
+        outcomes.elapsed_ms[0]
+    );
+    assert!(
+        (5.0..15.0).contains(&outcomes.elapsed_ms[1]),
+        "node 1 ran 10 ms (took {})",
+        outcomes.elapsed_ms[1]
+    );
+    assert!(
+        (15.0..25.0).contains(&outcomes.elapsed_ms[2]),
+        "node 2 ran 20 ms (took {})",
+        outcomes.elapsed_ms[2]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn outcomes_are_complete_when_the_graph_short_circuits() {
+    // Over-run semantics: the independent sibling still ran, so its settle
+    // receiver and elapsed are collected even though the terminal result is
+    // a short-circuit — the wiring can drop them without losing frames that
+    // block a worker.
+    let runner = Arc::new(
+        FakeRunner::new(5)
+            .short(&[("routes/layout", 302)])
+            .streaming(&["routes/page"]),
+    );
+    let nodes = vec![node("routes/layout", false), node("routes/page", false)];
+    let (result, outcomes) =
+        run_load_graph_outcomes(Arc::clone(&runner) as Arc<dyn LoaderRunner>, nodes, &[1]).await;
+    match result {
+        LoadResult::ShortCircuit(out) => assert_eq!(out.status, 302),
+        other => panic!("expected ShortCircuit, got {other:?}"),
+    }
+    assert!(outcomes.settles[1].is_some(), "the sibling still streamed");
+    assert!(
+        outcomes.elapsed_ms[1] > 0.0,
+        "the sibling's elapsed was still recorded"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_result_carries_the_failing_node_index() {
+    // The wiring distinguishes the layout failure body from the page one;
+    // the index — first failure in input order — is what tells them apart.
+    let runner = Arc::new(FakeRunner::new(5).failing(&["routes/blog/layout"]));
+    let nodes = vec![
+        node("routes/layout", false),
+        node("routes/blog/layout", false),
+        node("routes/blog/page", true),
+    ];
+    let (result, outcomes) =
+        run_load_graph_outcomes(Arc::clone(&runner) as Arc<dyn LoaderRunner>, nodes, &[]).await;
+    match result {
+        LoadResult::Failed {
+            index,
+            code,
+            message,
+        } => {
+            assert_eq!(index, 1);
+            assert_eq!(code, "RT-TEST");
+            assert_eq!(message, "runner crashed on routes/blog/layout");
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    // The poisoned dependent's slot is zero-length: it never ran.
+    assert_eq!(outcomes.elapsed_ms[2], 0.0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn run_load_graph_delegates_to_the_outcomes_seam() {
+    // The original entry point keeps its shape (settles dropped, elapsed
+    // dropped) — every pre-existing pin rides it unchanged.
+    let runner = Arc::new(FakeRunner::new(5).streaming(&["routes/page"]));
+    let nodes = vec![node("routes/page", false)];
+    let result = run_load_graph(Arc::clone(&runner) as Arc<dyn LoaderRunner>, nodes).await;
+    assert_eq!(expect_data(result).len(), 1);
 }
