@@ -108,7 +108,13 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
                 let wraps = if layout_base == "routes" || layout_base.is_empty() {
                     true
                 } else {
-                    route_id.starts_with(&format!("{layout_base}/"))
+                    // §V2-B02: the RAW id — the same prefix rule the
+                    // dispatch `RouteContextTable` builds its chains with
+                    // (the matcher-oracle). The CANONICAL id (the `/page`
+                    // suffix stripped) made a group's own index page
+                    // canonical-equal to the layout base and miss the
+                    // group layout the table finds.
+                    e.id.0.starts_with(&format!("{layout_base}/"))
                 };
                 if wraps {
                     chain.push((candidate.id.0.clone(), layout_base.len()));
@@ -157,7 +163,11 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
                 let wraps = if base == "routes" || base.is_empty() {
                     true
                 } else {
-                    route_id.starts_with(&format!("{base}/"))
+                    // §V2-B02: the RAW id — the table's prefix rule (see the
+                    // layout-chain note above): the canonical id made a
+                    // group-root error boundary unreachable for the group's
+                    // own index page.
+                    e.id.0.starts_with(&format!("{base}/"))
                 };
                 if !wraps {
                     continue;
