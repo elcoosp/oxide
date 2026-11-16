@@ -176,6 +176,11 @@ impl L0Cache {
     /// ENVELOPE ([`encode_segments`]) — one independent zstd frame per
     /// sentinel-split segment — so a compressed hit reuses the frames and
     /// never re-compresses the page. Plain bodies (no nonce) stay plain.
+    ///
+    /// §V2-F04 item 3: `set-cookie` (and the per-request CSP nonce header)
+    /// never enter the stored entry — a hit re-serves the body with the
+    /// live request's nonce, and a cookie belongs to the response that
+    /// produced it.
     pub fn make_entry(
         &self,
         status: u16,
@@ -194,7 +199,16 @@ impl L0Cache {
             status,
             headers: headers
                 .into_iter()
-                .filter(|(k, _)| !k.eq_ignore_ascii_case("content-security-policy"))
+                // §V2-F04 item 3: `set-cookie` is never stored — a minted
+                // experiment identity (or a loader cookie) belongs to the
+                // response that produced it, not to every later hit. The
+                // render path already refuses to store a cookie-setting
+                // response; this strip is the belt-and-braces for the
+                // other make_entry call sites.
+                .filter(|(k, _)| {
+                    !k.eq_ignore_ascii_case("content-security-policy")
+                        && !k.eq_ignore_ascii_case("set-cookie")
+                })
                 .collect(),
             tags,
             policy: Policy {
