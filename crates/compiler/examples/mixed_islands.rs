@@ -64,4 +64,18 @@ fn main() {
         )
         .contains("const modules = {")
     );
+
+    // §V2-F01 build path (this milestone): the CLI's boot entry IS the
+    // planner's emission. A single-framework build's vendor groups stay
+    // EMPTY (the byte-identical chunk shape), a mixed build derives the
+    // per-framework `advancedChunks` groups from the same plan — the
+    // groups the boot entry's lazy adapter imports pull on first island.
+    println!(
+        "single-framework vendor groups: {:?}",
+        plan.vendor_groups().len()
+    );
+    for g in mixed.vendor_groups() {
+        println!("  {}  test: {}", g.name, g.test);
+    }
+    println!("mixed islands.json bytes: {}", mixed.islands_json().len());
 }
