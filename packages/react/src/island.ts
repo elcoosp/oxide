@@ -26,6 +26,9 @@ import { encodePropsB64 } from '@oxide-fw/core/odf-encode'
  *  `{ media: '(...)' }` for a CSS media query. */
 export type IslandStrategy = 'load' | 'idle' | 'visible' | { media: string }
 
+/** The adapter packages' own framework — the default for `IslandProps.framework`. */
+export const REACT_FRAMEWORK = 'react'
+
 export interface IslandProps {
   /** Stable name — must match a key in `config.islands` so the build can
    *  resolve the emitted chunk. Also the value written to `data-ox-island`
@@ -33,13 +36,22 @@ export interface IslandProps {
   component: string
   /** Logical chunk id (`/islands/counter.js` or `Counter`). The build
    *  rewrites this to the hashed URL emitted to `dist/client/`; the dev
-   *  server resolves it live. */
-  chunk: string
+   *  server resolves it live. A foreign island (see `framework`) carries
+   *  none — its chunk belongs to its own adapter's build. */
+  chunk?: string
   /** Hydration timing; default `'load'`. */
   strategy?: IslandStrategy
   /** Props forwarded to the client island. Serialized as base64-encoded
    *  JSON into `data-ox-props`; the client boot script decodes it. */
   props?: Record<string, unknown>
+  /** The island's own framework (§V2-F01). When set and different from this
+   *  adapter's framework, the component emits the SELF-CONTAINED pending
+   *  placeholder — `<ox-island data-ox-island data-ox-fw data-ox-pending='1'
+   *  data-ox-props>` with no rendered children — that the worker's
+   *  `island:render` op + the core `resolveForeign` stream transform resolve
+   *  with the island's own adapter. Children are ignored in that case (a
+   *  foreign framework's children cannot be SSR'd here). */
+  framework?: string
   /** Optional island placeholder markup. Omitted when the island has no
    *  fallback content — `createElement(Island, props, child)` fills it via
    *  React's trailing-children mechanism, which requires the prop to be
@@ -63,9 +75,23 @@ export function Island({
   chunk,
   strategy = 'load',
   props = {},
+  framework,
   children,
 }: IslandProps): ReactNode {
   const propsB64 = encodePropsB64(props)
+  // §V2-F01 item 4: the foreign placeholder is self-contained — the pending
+  // flag is what the core `resolveForeign` transform selects on, `data-ox-fw`
+  // names the island's own framework for the worker's `island:render` op,
+  // and no chunk/strategy attrs ride it.
+  if (framework !== undefined && framework !== REACT_FRAMEWORK) {
+    return createElement('ox-island', {
+      suppressHydrationWarning: true,
+      'data-ox-island': component,
+      'data-ox-fw': framework,
+      'data-ox-pending': '1',
+      'data-ox-props': propsB64,
+    })
+  }
   return createElement(
     'ox-island',
     {
