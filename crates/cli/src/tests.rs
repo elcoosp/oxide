@@ -4558,6 +4558,313 @@ async fn middleware_headers_ride_l0_hits() {
     );
 }
 
+// ------------------------------------------- V2-F04 experiments (§15.4)
+//
+// The stage wiring pins. The engine's shapes are pinned V8-free in
+// `crates/dispatch/tests/experiments_tdd.rs`; these exercise the PIPELINE:
+// the vary dimension splitting the L0 entries per cohort, the minted
+// identity riding the response but never the cache, and the assigned map
+// reaching the loader locals. V8-linked test target — compile-verified
+// locally, riding the CI `nextest` workspace job.
+
+/// A header-sticky experiment over every route: two variants, 100%
+/// traffic (the assignment is then a pure function of the sticky value,
+/// so the pins can compute the expected variant through the engine).
+fn header_experiment() -> oxide_fw_dispatch::experiments::Experiment {
+    oxide_fw_dispatch::experiments::Experiment {
+        id: "hero".to_string(),
+        traffic: 100,
+        sticky: oxide_fw_dispatch::experiments::Sticky::Header("x-bucket".to_string()),
+        variants: vec!["control".to_string(), "treatment".to_string()],
+        routes: Vec::new(),
+    }
+}
+
+/// A cookie-sticky experiment over every route: two variants, 100%
+/// traffic, minting into the `oxide_hero` cookie when absent.
+fn cookie_experiment() -> oxide_fw_dispatch::experiments::Experiment {
+    oxide_fw_dispatch::experiments::Experiment {
+        id: "hero".to_string(),
+        traffic: 100,
+        sticky: oxide_fw_dispatch::experiments::Sticky::Cookie("oxide_hero".to_string()),
+        variants: vec!["control".to_string(), "treatment".to_string()],
+        routes: Vec::new(),
+    }
+}
+
+fn test_request_with_header(
+    method: &str,
+    url: &str,
+    name: &str,
+    value: &str,
+) -> oxide_fw_server::OxideRequest {
+    let headers = vec![(name.to_string(), value.to_string())];
+    oxide_fw_server::OxideRequest {
+        method: method.into(),
+        url: url.into(),
+        headers: std::sync::Arc::new(headers),
+        header_index: Default::default(),
+        body: bytes::Bytes::new(),
+        request_id: "dispatch-test-header".into(),
+        trace: None,
+        peer: None,
+        rewrite_hops: 0,
+        mw_resume_after: None,
+    }
+}
+
+/// The variant the engine assigns to a sticky value under the two-variant
+/// 100%-traffic experiments above.
+fn variant_of(exp: &oxide_fw_dispatch::experiments::Experiment, sticky: &str) -> String {
+    let idx = oxide_fw_dispatch::experiments::assign(exp, sticky)
+        .expect("100% traffic assigns every identity");
+    exp.variants[idx].clone()
+}
+
+#[tokio::test]
+async fn experiment_cohorts_get_separate_l0_entries_and_exposure_counters() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        tier,
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let renderer_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
+        Some(Arc::new(CountingRenderer {
+            calls: Arc::clone(&renderer_calls),
+        }));
+
+    let exp = header_experiment();
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        std::sync::Arc::clone(&metrics),
+        DispatchOpts {
+            page_renderer,
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            experiments: vec![exp.clone()],
+            ..Default::default()
+        },
+    );
+
+    // Cohort A renders (its own key misses), cohort B renders (a DIFFERENT
+    // key — the `|exp:` dimension, so B does not hit A's entry), then
+    // cohort A hits its own entry without re-rendering.
+    let a = dispatch(test_request_with_header("GET", "/", "x-bucket", "a")).await;
+    assert_eq!(a.status, 200, "cohort A first request");
+    let a_cache = a
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
+        .map(|(_, v)| v.as_str());
+    assert_ne!(a_cache, Some("L0-hit"), "cohort A first request misses");
+    let b = dispatch(test_request_with_header("GET", "/", "x-bucket", "b")).await;
+    let b_cache = b
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
+        .map(|(_, v)| v.as_str());
+    assert_ne!(
+        b_cache,
+        Some("L0-hit"),
+        "cohort B must NOT hit cohort A's entry — the vary dimension separates the keys: \
+         headers {:?}",
+        b.headers
+    );
+    let a_again = dispatch(test_request_with_header("GET", "/", "x-bucket", "a")).await;
+    let a_again_cache = a_again
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
+        .map(|(_, v)| v.as_str());
+    assert!(
+        matches!(a_again_cache, Some("L0-hit") | Some("L0-coalesced")),
+        "cohort A's second request hits its own entry: {:?}",
+        a_again.headers
+    );
+    assert_eq!(
+        renderer_calls.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "exactly two renders — one per cohort, no cross-cohort contamination"
+    );
+
+    // §V2-F04 item 4: the exposure counters — one per assigned pair, the
+    // variant computed through the same engine the stage called.
+    let exposition = metrics.render();
+    let want_a = variant_of(&exp, "a");
+    let want_b = variant_of(&exp, "b");
+    assert!(
+        exposition.contains(&format!(
+            "oxide_experiment_assignment{{experiment=\"hero\",variant=\"{want_a}\"}} 1"
+        )),
+        "cohort A's exposure counted: {exposition}"
+    );
+    assert!(
+        exposition.contains(&format!(
+            "oxide_experiment_assignment{{experiment=\"hero\",variant=\"{want_b}\"}} 1"
+        )),
+        "cohort B's exposure counted: {exposition}"
+    );
+}
+
+#[tokio::test]
+async fn minted_experiment_cookie_rides_the_response_and_never_the_cache() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        tier,
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let page_renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> =
+        Some(Arc::new(DataCapturingRenderer::new()));
+
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        metrics,
+        DispatchOpts {
+            page_renderer,
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            experiments: vec![cookie_experiment()],
+            ..Default::default()
+        },
+    );
+
+    // First request: no cookie → the engine mints one; its Set-Cookie
+    // rides THIS response.
+    let first = dispatch(test_request("GET", "/")).await;
+    assert_eq!(first.status, 200, "first request status");
+    let minted = first
+        .headers
+        .iter()
+        .find(|(k, v)| k.eq_ignore_ascii_case("set-cookie") && v.starts_with("oxide_hero="))
+        .map(|(_, v)| v.clone());
+    assert!(
+        minted.is_some(),
+        "the absent cookie identity is minted and set on the response: {:?}",
+        first.headers
+    );
+
+    // Second request WITH the minted cookie: no new mint (the identity is
+    // stable), so no experiment Set-Cookie on that response.
+    let cookie = minted
+        .as_ref()
+        .map(|v| v.split(';').next().unwrap_or(v).to_string())
+        .unwrap_or_default();
+    let second = dispatch(test_request_with_cookie("GET", "/", &cookie)).await;
+    let second_mint = second
+        .headers
+        .iter()
+        .find(|(k, v)| k.eq_ignore_ascii_case("set-cookie") && v.starts_with("oxide_hero="))
+        .map(|(_, v)| v.clone());
+    assert!(
+        second_mint.is_none(),
+        "a present cookie identity is never re-minted: {:?}",
+        second.headers
+    );
+
+    // §V2-F04 item 3: the minted cookie never enters the cached entry. The
+    // first response sets a cookie, so the L0 store refused it — the
+    // cached entry (if any was stored at all) cannot carry the header.
+    // Provable directly: store an entry with a set-cookie header through
+    // make_entry and read the stored headers back.
+    let tier2: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
+    let cache = l0_cache::L0Cache::new(tier2, "test-build", std::time::Duration::from_secs(300));
+    let entry = cache.make_entry(
+        200,
+        vec![
+            (
+                "content-type".to_string(),
+                "text/html; charset=utf-8".to_string(),
+            ),
+            (
+                "set-cookie".to_string(),
+                "oxide_hero=abc; Path=/".to_string(),
+            ),
+        ],
+        b"body".to_vec(),
+        Vec::new(),
+    );
+    assert!(
+        !entry
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("set-cookie")),
+        "make_entry strips set-cookie from the stored entry: {:?}",
+        entry.headers
+    );
+}
+
+/// A loader that records the locals every run saw (the §9.2 locals
+/// contract the experiment assignments ride).
+struct LocalsProbe {
+    seen: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_server::LoaderRunner for LocalsProbe {
+    fn name(&self) -> &'static str {
+        "locals-probe"
+    }
+    async fn run(
+        &self,
+        input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
+        self.seen.lock().unwrap().push(input.locals.clone());
+        Ok(oxide_fw_server::LoaderOutput::ok(serde_json::json!({
+            "route": input.route,
+        })))
+    }
+}
+
+#[tokio::test]
+async fn experiment_assignments_reach_the_loader_locals() {
+    use std::sync::Arc;
+
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let loader: Option<Arc<dyn oxide_fw_server::LoaderRunner>> = Some(Arc::new(LocalsProbe {
+        seen: Arc::clone(&seen),
+    }));
+
+    let exp = header_experiment();
+    let want = variant_of(&exp, "a");
+    let dispatch = build_dispatch(
+        tree_with_page_and_server_module(),
+        metrics,
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: routes_root(),
+            experiments: vec![exp],
+            ..Default::default()
+        },
+    );
+
+    let resp = dispatch(test_request_with_header("GET", "/", "x-bucket", "a")).await;
+    assert_eq!(resp.status, 200, "the page renders");
+    let locals = seen.lock().unwrap().clone();
+    assert!(!locals.is_empty(), "the page loader ran at least once");
+    assert!(
+        locals.iter().all(|l| l
+            .get("experiments")
+            .and_then(|e| e.get("hero"))
+            .and_then(|v| v.as_str())
+            == Some(want.as_str())),
+        "every loader run saw the pipeline-owned experiments slot with the assigned \
+         variant: {locals:?}"
+    );
+}
+
 // ---- §9.2 parallel layout loads ----------------------------------------
 //
 // `build_dispatch` overlaps the last-layout load with the page load when
@@ -4729,7 +5036,6 @@ async fn layout_then_page_sequential_when_page_calls_parent() {
 /// adoption — the verdicts the stage feeds the graph and the parent-data
 /// threading the §9.2 contract asks for. They ride the CI `nextest`
 /// workspace job (V8-linked test target: compile-verified locally).
-
 /// A runner that records each call's `(route, parent_data)` pair and
 /// reports peak concurrency like [`ConcurrencyProbe`].
 struct ParentDataProbe {
