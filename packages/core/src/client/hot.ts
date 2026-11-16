@@ -72,6 +72,14 @@ const MAX_TRACKED_URLS = 500
 const freshModules = new Map<string, unknown>()
 const MAX_TRACKED_FRESH = 500
 
+// §V2-E01: the in-place refresh registry. A URL the framework's own HMR
+// runtime refreshed IN PLACE (the Vue compile step's emission marks it after
+// `__VUE_HMR_RUNTIME__.reload`, and a future solid-refresh adoption marks
+// the same way) is excluded from the boot replay — the replay would remount
+// the route and destroy the state the framework refresh preserved. Bounded
+// like the URL map above; the boot gate consults `wasRefreshedInPlace`.
+const inPlaceRefresh = new Map<string, boolean>()
+
 function install(): void {
   // §3.5: install in Web Workers too. Today the previous guard
   // (`typeof window === 'undefined'`) bailed, so `import.meta.hot` was
@@ -98,11 +106,15 @@ function install(): void {
     __oxide_refresh?: unknown
     __oxide_refresh_reg?: (t: unknown, id: string) => void
     __oxide_refresh_sig?: () => (...args: unknown[]) => unknown
+    __oxide_solid_refresh?: (mod: unknown) => void
     $RefreshRuntime$?: {
       performReactRefresh?: () => void
       injectIntoGlobalHook?: (w: unknown) => void
       register?: (t: unknown, id: string) => void
       createSignatureFunctionForTransform?: () => unknown
+    }
+    $SolidRefreshRuntime$?: {
+      performSolidRefresh?: (mod: unknown) => void
     }
   }
   if (g.__oxide_hmr__) return // idempotent
@@ -259,6 +271,20 @@ function install(): void {
     getFreshModule(url: string): unknown {
       return freshModules.get(url)
     },
+    // §V2-E01: mark/unmark the in-place refresh registry. `markInPlaceRefresh`
+    // is called by the framework boundary AFTER its own runtime applied the
+    // update in place (the Vue emission's accept callback); `wasRefreshedInPlace`
+    // is the boot gate's read — a marked URL skips the route replay.
+    markInPlaceRefresh(url: string): void {
+      inPlaceRefresh.set(url, true)
+      if (inPlaceRefresh.size > MAX_TRACKED_URLS) {
+        const oldest = inPlaceRefresh.keys().next().value
+        if (oldest !== undefined) inPlaceRefresh.delete(oldest)
+      }
+    },
+    wasRefreshedInPlace(url: string): boolean {
+      return inPlaceRefresh.has(url)
+    },
   }
 
   // `__oxide_refresh` is what Oxc's inject_hmr_boundary calls in the accept
@@ -388,6 +414,33 @@ function install(): void {
       } else {
         pendingRegistrations.push({ t, id })
       }
+    }
+  }
+
+  // §V2-E01: the Solid component-refresh shim — the mirror of
+  // `__oxide_refresh`. The compile step's boundary hands the fresh module
+  // here; when the project prebundles `solid-refresh` (the probe below
+  // populated `$SolidRefreshRuntime$`), the shim delegates to
+  // `performSolidRefresh(mod)` — the state-preserving in-place path.
+  // Without a runtime the shim does NOTHING and marks nothing: the boot
+  // replay (`__oxide_on_module_updated`, fired by `reloadModule` after this
+  // accept) re-renders the route with the fresh module. Unlike React's
+  // fallback it must NOT `location.reload()` — the replay already applies
+  // the edit, and a reload would discard the page for nothing.
+  if (hasWindow && typeof g.__oxide_solid_refresh === 'undefined') {
+    g.__oxide_solid_refresh = (mod: unknown): void => {
+      const rt = g.$SolidRefreshRuntime$
+      if (rt && typeof rt.performSolidRefresh === 'function') {
+        try {
+          rt.performSolidRefresh(mod)
+          return
+        } catch (e) {
+          console.error('[hot] performSolidRefresh() threw:', e)
+          return
+        }
+      }
+      // No runtime (the project has not installed solid-refresh): the boot
+      // replay is the fallback — nothing to mark.
     }
   }
 
@@ -535,6 +588,59 @@ function install(): void {
         })
         .catch(() => {
           // Not installed — a full reload is the fallback, no user-visible error.
+        })
+    }
+  }
+
+  // §V2-E01: the Solid refresh runtime probe — the same shape as React's
+  // (probe-first so a non-Solid project's missing runtime is a silent 404,
+  // ESM-dev-only because `/@prebundle/` exists nowhere else). When the
+  // project prebundles `solid-refresh`, the import populates
+  // `$SolidRefreshRuntime$` and `__oxide_solid_refresh` refreshes in place;
+  // otherwise the boot replay keeps today's semantics. A worker skips the
+  // pull entirely (no DOM, no components).
+  if (hasWindow && typeof g.$SolidRefreshRuntime$ === 'undefined') {
+    const nav = (typeof window !== 'undefined' ? window : globalThis) as unknown as {
+      location?: { protocol: string }
+      document?: { querySelectorAll(s: string): ArrayLike<{ getAttribute?(a: string): string | null }> }
+    }
+    const scheme = nav.location?.protocol ?? ''
+    let isEsmDev = false
+    if (scheme === 'http:' || scheme === 'https:') {
+      const scripts = nav.document?.querySelectorAll('script[type="module"]')
+      if (scripts) {
+        for (let i = 0; i < scripts.length; i++) {
+          const src = scripts[i]?.getAttribute?.('src') ?? ''
+          if (src.includes('/@boot/') || src.includes('/@prebundle/')) {
+            isEsmDev = true
+            break
+          }
+        }
+      }
+    }
+    if (isEsmDev) {
+      // Dynamic import via a variable path so TypeScript cannot resolve the
+      // module at type-check time (the URL exists only while `oxide dev`
+      // runs; the probe's catch handles the 404 that any other host
+      // returns).
+      const solidRuntimeUrl: string = '/@prebundle/solid-refresh-runtime.js'
+      fetch(solidRuntimeUrl)
+        .then((probe) => {
+          if (!probe.ok) throw new Error('solid-refresh runtime not prebundled')
+          return import(/* @vite-ignore */ solidRuntimeUrl) as Promise<{
+            default?: unknown
+            performSolidRefresh?: (mod: unknown) => void
+          }>
+        })
+        .then((mod) => {
+          const rt = (mod.default ?? mod) as { performSolidRefresh?: (mod: unknown) => void }
+          if (typeof rt.performSolidRefresh === 'function') {
+            g.$SolidRefreshRuntime$ = rt
+          }
+        })
+        .catch(() => {
+          // Not installed — the boot replay is the fallback, silent like the
+          // React probe's miss.
         })
     }
   }
