@@ -56,6 +56,10 @@
       "types": "./dist/client-router.d.ts",
       "default": "./dist/client-router.js"
     },
+    "./search": {
+      "types": "./dist/search.d.ts",
+      "default": "./dist/search.js"
+    },
     "./bytes": {
       "types": "./dist/bytes.d.ts",
       "default": "./dist/bytes.js"
