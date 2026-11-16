@@ -10,12 +10,23 @@ use crate::*;
 #[derive(Clone)]
 pub(crate) struct SwappableRouteTree {
     inner: std::sync::Arc<std::sync::RwLock<std::sync::Arc<oxide_fw_router::RouteTree>>>,
+    /// V2-B01: the per-generation `RouteContextTable` — every per-route
+    /// dispatch answer (middleware chain, layout loads + verdicts, error
+    /// boundary, metrics pattern) computed once per tree generation. A
+    /// dev rescan's `store` rebuilds it, so a swapped tree never serves
+    /// stale answers; `load_pair` hands the dispatch a matched pair so a
+    /// swap between the two loads cannot mix generations.
+    ctx_table:
+        std::sync::Arc<std::sync::RwLock<std::sync::Arc<oxide_fw_router::RouteContextTable>>>,
 }
 
 impl SwappableRouteTree {
     pub fn new(tree: std::sync::Arc<oxide_fw_router::RouteTree>) -> Self {
+        let ctx_table =
+            oxide_fw_router::RouteContextTable::build_with_default_pattern(&tree.entries);
         Self {
             inner: std::sync::Arc::new(std::sync::RwLock::new(tree)),
+            ctx_table: std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(ctx_table))),
         }
     }
 
@@ -25,8 +36,31 @@ impl SwappableRouteTree {
             .clone()
     }
 
+    /// V2-B01: the tree and its context table for ONE generation, read
+    /// under a single guard — the dispatch stage tree consumes them as a
+    /// matched pair (a matched route id is always a table hit within the
+    /// generation).
+    pub fn load_pair(
+        &self,
+    ) -> (
+        std::sync::Arc<oxide_fw_router::RouteTree>,
+        std::sync::Arc<oxide_fw_router::RouteContextTable>,
+    ) {
+        let guard = std::sync::RwLock::read(&self.inner).expect("route tree lock poisoned");
+        let table = std::sync::RwLock::read(&self.ctx_table)
+            .expect("route context table lock poisoned")
+            .clone();
+        (std::sync::Arc::clone(&*guard), table)
+    }
+
     pub fn store(&self, tree: std::sync::Arc<oxide_fw_router::RouteTree>) {
+        // V2-B01: the table rebuilds from the incoming generation BEFORE the
+        // slot swap (the Arc move) — one pass over the entries, dev-rescan
+        // cost only.
+        let rebuilt = oxide_fw_router::RouteContextTable::build_with_default_pattern(&tree.entries);
         *std::sync::RwLock::write(&self.inner).expect("route tree lock poisoned") = tree;
+        *std::sync::RwLock::write(&self.ctx_table).expect("route context table lock poisoned") =
+            std::sync::Arc::new(rebuilt);
     }
 }
 
