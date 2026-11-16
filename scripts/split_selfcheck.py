@@ -78,8 +78,19 @@ def phases_check():
     import build_phase_split as gen
     from build_phase_split import SPANS, REBINDS, borrow_rules
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    head = subprocess.run(['git', '-C', repo, 'show', 'HEAD:crates/cli/src/build/cmd.rs'],
-                          capture_output=True, text=True, check=True).stdout
+    # V2-A01 drift fix (this diff): the phase-2 orchestrator commit
+    # (d4400e5e) replaced build/cmd.rs's full cmd_build body with the
+    # orchestrator (41 lines), so `HEAD:.../build/cmd.rs` no longer holds
+    # the body the SPANS were recorded against — the proof asserted the
+    # recorded PHASE_SUBS against orchestrator lines and failed. The
+    # pre-split body is pinned at the last revision where build/cmd.rs
+    # still carried it (aa0159ac, "phase 2 - phase_emit stamps and
+    # summary"; the next commit is the orchestrator swap).
+    pre_split_ref = 'aa0159ac'
+    head = subprocess.run(
+        ['git', '-C', repo, 'show',
+         pre_split_ref + ':crates/cli/src/build/cmd.rs'],
+        capture_output=True, text=True, check=True).stdout
     hlines = head.split(NL)
     owner = {}
     for ph, (lo2, hi2) in SPANS.items():
@@ -168,22 +179,308 @@ def stages_check():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import build_stage_split as gen
     from build_stage_split import SPANS, ASYNC_SPANS, STAGE_ORDER
+    # V2-A05/A06 adoption (this diff): two stages deliberately diverge from
+    # the verbatim split — their bodies now call the tested V8-free
+    # substrates instead of the inline loops they were moved with. Recorded
+    # like the PHASE_SUBS/EXEMPT precedents (each in docs/deviations.md):
+    # the verbatim-vs-HEAD proof is waived for these phases and replaced by
+    # PRESENCE markers of the adoption (the substrate call plus the
+    # superseded-loop markers' absence). Every other stage stays verbatim.
+    STAGE_ADOPTED = {
+        'middleware': {
+            'require': ['run_chain(', 'ChainOutcome::Respond', 'ChainOutcome::Rewrite',
+                        'ChainOutcome::Continue', 'finish_middleware_stage'],
+            # the inline walk is gone: the per-layer dispatcher loop and the
+            # inline last-writer-wins merge no longer exist in the stage.
+            'absent': ['middleware_module_paths.iter().any', 'for mp in &middleware_module_paths'],
+        },
+        'loaders': {
+            'require': ['run_load_graph_outcomes(', 'LoadNode {', 'LoadResult::ShortCircuit',
+                        'LoadResult::Failed { index, code',
+                        'LoadResult::Data(outs)', 'LOAD_OVERLAP_STAGE'],
+            'absent': ['for (lid, lpath) in layouts_to_run', 'tokio::join!'],
+        },
+    }
+    # V2-A06 adoption (this diff), recorded substitution: stage_route's
+    # layout-module walk carries the scanner verdict per layout
+    # (`LayoutLoadSpec` — id + path + `needs_parent`) instead of the bare
+    # (id, path) pair. Recorded here as an orig-side rule so the phase
+    # STAYS token-checked modulo the recorded delta (the generator's
+    # emit_stage output predates the adoption; the selfcheck is the
+    # living gate).
+    STAGE_RULES = {
+        # V2-B01 adoption (this diff), recorded substitution: the prelude
+        # loads the tree AND its context table as one matched pair
+        # (`SwappableRouteTree::load_pair`, inside the stage-wrapper glue —
+        # the checked body no longer carries the bare tree load line).
+        'prelude': [
+            (
+                re.compile(r"let tree = swappable\.load\(\);"),
+                "",
+            ),
+            # V2-B02 adoption (this diff): the live gate reads the match
+            # through the unified view (`is_live_route`, no owned
+            # materialization on either tree).
+            (
+                re.compile(
+                    r"let matched = candidates\.iter\(\)\.find_map\(\|p\| match archived \{"
+                    r"\s*Some\(a\) => a\.match_path\(p\),"
+                    r"\s*None => tree\.match_path\(p\),"
+                    r"\s*\}\);"
+                    r"\s*if !matched\.as_ref\(\)\.is_some_and\(\|m\| m\.route\.live\.is_some\(\)\) \{"
+                ),
+                NL.join([
+                    "        // V2-B02: the gate reads the match through the unified view —",
+                    "        // `is_live_route` reads both trees in place (the mmap entry for the",
+                    "        // archive, the borrowed entry for the live tree), with no owned",
+                    "        // `MatchResult` materialization on a path that only answers",
+                    "        // \"is this route opted in?\".",
+                    "        let matched = candidates.iter().find_map(|p| match archived {",
+                    "            Some(a) => oxide_fw_router::MatchedView::archived(a, p),",
+                    "            None => oxide_fw_router::MatchedView::live(&tree, p),",
+                    "        });",
+                    "        if !matched.as_ref().is_some_and(|m| m.is_live_route()) {",
+                ]),
+            ),
+        ],
+        # V2-B01/B02 adoption (this diff), recorded substitution: stage_match
+        # matches through the unified `MatchedView` seam (both trees' hot
+        # paths) and takes the metrics label from the precomputed
+        # `RouteContext.pattern` (the table hit set by the prelude).
+        'match': [(
+            re.compile(
+            r"let matched: Option<oxide_fw_router::MatchResult> = match archived \{"
+            r"\s*Some\(a\) => candidates\.iter\(\)\.find_map\(\|p\| a\.match_path\(p\)\),"
+            r"\s*None => candidates\.iter\(\)\.find_map\(\|p\| tree\.match_path\(p\)\),"
+            r"\s*\};"
+            r"\s*let \(status, label\) = match &matched \{"
+            r"\s*Some\(m\) => \(200u16, pattern_of\(&m\.route\.segments\)\),"
+            r"\s*None => \(404u16, \"_unmatched\"\.to_string\(\)\),"
+            r"\s*\};",
+            ),
+            NL.join([
+                "    // V2-B02: the match goes through the unified view seam — one shape",
+                "    // over `RouteTree::match_ref` (borrowed entry) and",
+                "    // `ArchivedTree::match_ref` (index into the mmap), reached through the",
+                "    // candidate index on both trees. `into_match_result` produces the",
+                "    // byte-identical owned shape the stages consume; the prelude's live",
+                "    // gate reads `is_live_route` in place with no materialization.",
+                "    let matched: Option<oxide_fw_router::MatchResult> = candidates.iter().find_map(|p| {",
+                "        match archived {",
+                "            Some(a) => MatchedView::archived(a, p),",
+                "            None => MatchedView::live(tree, p),",
+                "        }",
+                "        .map(|v| v.into_match_result())",
+                "    });",
+                "    // V2-B01: the per-route context is one table hit — the metrics label",
+                "    // is the precomputed pattern (no per-request `pattern_of` walk), and",
+                "    // the route step reads the chain answers from the same hit.",
+                "    let route_ctx: Option<std::sync::Arc<oxide_fw_router::RouteContext>> = match cx",
+                "        .ctx_table",
+                "        .as_ref()",
+                "    {",
+                "        Some(table) => match &matched {",
+                "            Some(m) => table.get(&m.route.id.0).cloned(),",
+                "            None => table.unmatched().cloned(),",
+                "        },",
+                "        None => None,",
+                "    };",
+                "    let (status, label) = match (&matched, &route_ctx) {",
+                "        (Some(_), Some(rc)) => (200u16, rc.pattern.to_string()),",
+                "        (Some(m), None) => (200u16, pattern_of(&m.route.segments)),",
+                "        (None, _) => (404u16, \"_unmatched\".to_string()),",
+                "    };",
+            ]),
+        )],
+        'route': [
+            # V2-B01 adoption (this diff): every chain answer reads the
+            # precomputed `RouteContext` (one table hit); the tree's P-06
+            # indexes stay as the degenerate fallbacks. Recorded orig-side
+            # so the phase stays token-checked modulo the recorded deltas.
+            (
+                re.compile(
+                    r"    // P-06: served from the tree's precomputed prefix index — no full"
+                    r"\s*// entry scan, no per-candidate `format!`, no sort per request\."
+                    r"\s*let middleware_module_paths: Vec<std::path::PathBuf> = tree"
+                    r"\s*\.middleware_files_for\(route_id\.as_deref\(\)\.unwrap_or\(.{2}\)\)"
+                    r"\s*\.into_iter\(\)"
+                    r"\s*\.map\(\|f\| routes_root\.join\(f\)\)"
+                    r"\s*\.collect\(\);"
+                ),
+                NL.join([
+                    "    // P-06 → V2-B01: served from the precomputed route context (one table",
+                    "    // hit per request — the chain, outer→inner, is a boot-time answer); the",
+                    "    // tree's P-06 index stays as the degenerate fallback (a matched route",
+                    "    // is always a table hit within the prelude's matched pair).",
+                    "    let middleware_module_paths: Vec<std::path::PathBuf> = match &route_ctx {",
+                    "        Some(rc) => rc",
+                    "            .middleware_chain",
+                    "            .iter()",
+                    "            .map(|f| routes_root.join(f))",
+                    "            .collect(),",
+                    "        None => tree",
+                    "            .middleware_files_for(route_id.as_deref().unwrap_or(\"\"))",
+                    "            .into_iter()",
+                    "            .map(|f| routes_root.join(f))",
+                    "            .collect(),",
+                    "    };",
+                ]),
+            ),
+            (
+                re.compile(
+                    r"    // P-06: not-found route \+ layout chain, precomputed by the tree index\."
+                    r"\s*let \(unmatched_route_id, unmatched_layout_ids\): \(Option<String>, Vec<String>\) ="
+                    r"\s*match tree\.not_found_route\(\) \{"
+                    r"\s*Some\(\(id, chain\)\) => \(Some\(id\), chain\.into_iter\(\)\.map\(\|r\| r\.0\)\.collect\(\)\),"
+                    r"\s*None => \(None, Vec::new\(\)\),"
+                    r"\s*\};"
+                ),
+                NL.join([
+                    "    // P-06 → V2-B01: not-found route + layout chain from the table (the",
+                    "    // first `NotFound` entry's precomputed context, same source the",
+                    "    // dispatch answers use); the tree's index stays as the fallback.",
+                    "    let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) =",
+                    "        match cx",
+                    "            .ctx_table",
+                    "            .as_ref()",
+                    "            .and_then(|t| t.unmatched())",
+                    "            .map(|c| {",
+                    "                (",
+                    "                    Some(c.route_id.0.clone()),",
+                    "                    c.layout_chain.iter().map(|i| i.0.clone()).collect(),",
+                    "                )",
+                    "            })",
+                    "            .or_else(|| {",
+                    "                tree.not_found_route().map(|(id, chain)| {",
+                    "                    (Some(id), chain.into_iter().map(|r| r.0).collect())",
+                    "                })",
+                    "            }) {",
+                    "            Some(pair) => pair,",
+                    "            None => (None, Vec::new()),",
+                    "        };",
+                ]),
+            ),
+            (
+                re.compile(
+                    r"    // P-06: nearest error boundary from the precomputed index\."
+                    r"\s*let error_route_id: Option<String> ="
+                    r"\s*tree\.error_route_for\(route_id\.as_deref\(\)\.unwrap_or\(.{2}\)\);"
+                ),
+                NL.join([
+                    "    // P-06 → V2-B01: nearest error boundary from the precomputed context",
+                    "    // (the innermost `error.tsx`, one table hit).",
+                    "    let error_route_id: Option<String> = match &route_ctx {",
+                    "        Some(rc) => rc.error_route.as_ref().map(|i| i.0.clone()),",
+                    "        None => tree.error_route_for(route_id.as_deref().unwrap_or(\"\")),",
+                    "    };",
+                ]),
+            ),
+            (
+                re.compile(
+                    r"    let layout_ids: Vec<String> = match matched \{"
+                    r"\s*Some\(m\) => m\.layout_chain\.iter\(\)\.map\(\|id\| id\.0\.clone\(\)\)\.collect\(\),"
+                    r"\s*None => Vec::new\(\),"
+                    r"\s*\};"
+                ),
+                NL.join([
+                    "    // §8.2 / §16.3 → V2-B01: the layout chain (outermost first) from the",
+                    "    // precomputed context — the oracle-equal chain without the per-match",
+                    "    // recompute.",
+                    "    let layout_ids: Vec<String> = match &route_ctx {",
+                    "        Some(rc) => rc.layout_chain.iter().map(|i| i.0.clone()).collect(),",
+                    "        None => Vec::new(),",
+                    "    };",
+                ]),
+            ),
+            (
+                re.compile(
+                    r"    // §9\.2: layout module paths for the parallel layout-loads phase\."
+                    r"\s*// Each layout id \(`routes/blog/layout`\) maps to its"
+                    r"\s*// `layout\.server\.ts` on disk, in outermost → innermost order\."
+                    r"\s*let layout_module_paths: Vec<\(String, std::path::PathBuf\)> = layout_ids"
+                    r"\s*\.iter\(\)"
+                    r"\s*\.filter_map\(\|lid\| \{"
+                    r"\s*tree\.entries"
+                    r"\s*\.iter\(\)"
+                    r"\s*\.find\(\|e\| \{"
+                    r"\s*e\.id\.0 == \*lid && matches!\(e\.kind, oxide_fw_router::RouteKind::Layout\)"
+                    r"\s*\}\)"
+                    r"\s*\.map\(\|e\| \{"
+                    r"\s*\("
+                    r"\s*lid\.clone\(\),"
+                    r"\s*routes_root\.join\(e\.file\.with_file_name\(.layout\.server\.ts.\)\),"
+                    r"\s*\)"
+                    r"\s*\}\)"
+                    r"\s*\}\)"
+                    r"\s*\.filter\(\|\(_, p\)\| p\.is_file\(\)\)"
+                    r"\s*\.collect\(\);"
+                ),
+                NL.join([
+                    "    // §9.2 → V2-B01: layout load specs from the precomputed context — the",
+                    "    // `layout.server.ts` paths are flag-driven (`has_server_module`), so",
+                    "    // the per-layout `is_file()` stat the walk paid per request is gone,",
+                    "    // and the A06 `parent()` verdict rides the same row",
+                    "    // (`LayoutLoadSpec`). Unmatched requests have no layout chain (the",
+                    "    // specs are empty, as the walk produced).",
+                    "    let layout_module_paths: Vec<LayoutLoadSpec> = match &route_ctx {",
+                    "        Some(rc) => rc",
+                    "            .layout_loads",
+                    "            .iter()",
+                    "            .map(|l| LayoutLoadSpec {",
+                    "                id: l.id.0.clone(),",
+                    "                path: routes_root.join(&l.server_file),",
+                    "                needs_parent: l.needs_parent,",
+                    "            })",
+                    "            .collect(),",
+                    "        None => Vec::new(),",
+                    "    };",
+                ]),
+            ),
+            (
+                re.compile(
+                    r"    let routes_root = routed_routes_root;"
+                ),
+                NL.join([
+                    "    let routes_root = routed_routes_root;",
+                    "",
+                    "    // V2-B01: the matched (or unmatched not-found) route's precomputed",
+                    "    // context — set by stage_match from the generation's table; every",
+                    "    // chain answer below is one hit into it.",
+                    "    let route_ctx = cx.route_ctx.clone();",
+                ]),
+            ),
+        ],
+    }
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # V2-A01 drift fix (this diff): the phase-3 stage-runner commit
+    # (2a77c967) replaced entry.rs's request closure with the stage
+    # runner, so `HEAD:.../entry.rs` no longer holds the closure the
+    # SPANS were recorded against — the proof read a 244-line file and
+    # IndexError'd on the first span. The pre-split closure text is
+    # pinned at the last revision where entry.rs still carried it
+    # (2e0a13bc, "phase 3 - stage_render and finish"; the next commit is
+    # the runner swap).
+    pre_split_ref = '2e0a13bc'
     head = subprocess.run(
-        ['git', '-C', repo, 'show', 'HEAD:crates/cli/src/dispatch/entry.rs'],
+        ['git', '-C', repo, 'show',
+         pre_split_ref + ':crates/cli/src/dispatch/entry.rs'],
         capture_output=True, text=True, check=True).stdout
     hlines = head.split(NL)
     orig = []
     for ph in STAGE_ORDER:
+        if ph in STAGE_ADOPTED:
+            continue
         lo, hi = SPANS[ph]
         chunk = gen.transform_span(hlines, lo, hi, flow_only=ph in gen.FLOW_STAGES)
         if ph in ASYNC_SPANS:
             chunk = [l[4:] if l.startswith('    ') else (l if l.strip() else '')
                      for l in chunk]
-        chunk = gen.apply_rules(NL.join(chunk), gen.stage_borrow_rules(ph)).split(NL)
+        rules = gen.stage_borrow_rules(ph) + STAGE_RULES.get(ph, [])
+        chunk = gen.apply_rules(NL.join(chunk), rules).split(NL)
         orig.extend(norm(t) if t.strip() else '' for t in chunk)
     src = os.path.join(repo, 'crates', 'cli', 'src', 'dispatch', 'stages')
     got = []
+    adopted_checked = []
     for ph in STAGE_ORDER:
         fp = os.path.join(src, gen.STAGE_FILE.get(ph, ph) + '.rs')
         plines = open(fp).read().split(NL)
@@ -192,6 +489,24 @@ def stages_check():
             sys.exit(1)
         last = max(i for i, t2 in enumerate(plines) if t2.strip())
         assert plines[last].strip() == '}', plines[last]
+        if ph in STAGE_ADOPTED:
+            # Adoption proof: the substrate markers must be present and the
+            # superseded inline-loop markers gone. The phase's tokens are
+            # dropped from BOTH streams (the HEAD side below re-derives the
+            # same phase list), so the remaining stages stay order-checked.
+            flat = re.sub(r'\s+', '', NL.join(plines))
+            for marker in STAGE_ADOPTED[ph]['require']:
+                if re.sub(r'\s+', '', marker) not in flat:
+                    print('DIFF: adopted stage %s lost the adoption marker: %s'
+                          % (ph, marker))
+                    sys.exit(1)
+            for marker in STAGE_ADOPTED[ph]['absent']:
+                if re.sub(r'\s+', '', marker) in flat:
+                    print('DIFF: adopted stage %s still carries the superseded loop: %s'
+                          % (ph, marker))
+                    sys.exit(1)
+            adopted_checked.append(ph)
+            continue
         in_wrapper = True
         for i, t2 in enumerate(plines):
             s = t2.strip()
@@ -240,8 +555,10 @@ def stages_check():
         if re.sub(r'\s+', '', marker) not in re.sub(r'\s+', '', entry):
             print('DIFF: entry.rs lost the stage-runner marker: %s' % marker)
             sys.exit(1)
-    print('# stage bodies checked: %d tokens vs HEAD %d tokens, files: %s'
-          % (len(got_join), len(orig_join), ', '.join(STAGE_ORDER)))
+    print('# stage bodies checked: %d tokens vs HEAD %d tokens, files: %s; '
+          'adopted (marker-checked): %s'
+          % (len(got_join), len(orig_join), ', '.join(p for p in STAGE_ORDER if p not in STAGE_ADOPTED),
+             ', '.join(adopted_checked)))
     print('stages_selfcheck: zero diffs — the stage split is verbatim modulo '
           'indent, rustfmt layout, the recorded substitutions and the derived '
           'borrow rewrites')
