@@ -105,7 +105,7 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
             let boot_src = generate_island_boot_entry(
                 rootp,
                 &framework,
-                &cfg.framework.islands,
+                &islands_for_boot(cfg, tree, rootp, &mut *w)?,
                 &loading_dir_map,
                 cfg.offline.enabled && cfg.sw.enabled,
             );
