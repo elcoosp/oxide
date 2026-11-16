@@ -17,12 +17,14 @@
 import nodeAssert from 'node:assert/strict'
 import type { FrameworkAdapter, ClientInput } from '../packages/core/src/types.ts'
 import { createRouter } from '../packages/core/src/client/router.ts'
-import { decodeIslandProps } from '../packages/core/src/client/islands.ts'
+import { decodeIslandProps, hydrateIslands, hydrateMixedIslands, type IslandsAdapter } from '../packages/core/src/client/islands.ts'
 import { enhance } from '../packages/core/src/client/enhance.ts'
-import { hydrateIslands } from '../packages/core/src/client/islands.ts'
 import { serverFn, getServerFn, revalidate, _revalidateLog } from '../packages/core/src/server/index.ts'
 import { encodeLite } from '../packages/core/test/helpers/odf-lite.ts'
 import { createFakeDom, simulateSwap } from '../packages/react/test/helpers/fake-dom.ts'
+import { parseSearch, type StandardSchemaV1Like } from '../packages/core/src/client/search-params.ts'
+import { tt } from '../packages/core/src/client/tt.ts'
+import { search, type StaticDoc, type StaticIndex } from '../packages/core/src/client/searchEngine.ts'
 import { atlasRoutes as atlas, expect, asRenderInput, type AtlasRoute } from './atlas/atlas.ts'
 
 export interface Assertion {
@@ -563,6 +565,137 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
     assert(updates.length === 1, 'goto still dispatched adapter.update')
     dispose()
     return 'prefetch → cache hit'
+  })
+
+  // --- the v0.2 drafts (§22 + the newly wired V2 features) -------------------
+  // One assertion per newly wired V2 feature, through the same client
+  // modules apps ship. C09 and F11 are server/CLI surfaces: their fixture
+  // assertions are `tests/image_acceptance.sh` (the 64-concurrent
+  // single-flight wire check) and `tests/deploy_acceptance.sh` (the
+  // <5%-of-bytes delta + the unstamped refusal) — both CI-executed in the
+  // jshost-e2e job. E01's in-place registry is pinned by its recorded
+  // core/worker suites (the registry surface lives behind
+  // `createHotContext`, not a per-adapter import).
+
+  await push('typed-search: parseSearch validates through the Standard Schema contract (V2-E02)', async () => {
+    // A minimal Standard Schema V1 stub (the contract the generated
+    // `searchSchema` modules satisfy): sync validate, a default applied on
+    // a missing key, a refusal on a non-number.
+    const schema: StandardSchemaV1Like<Record<string, string>, { page: number }> = {
+      '~standard': {
+        validate(value) {
+          const pageRaw = value.page ?? '1'
+          const page = Number(pageRaw)
+          if (!Number.isFinite(page)) {
+            return { issues: [{ message: 'page is not a number' }] }
+          }
+          return { value: { page } }
+        },
+      },
+    }
+    const ok = await parseSearch(schema, new URLSearchParams('?page=3'))
+    assert(ok.ok === true, 'a valid query validates')
+    if (!ok.ok) throw new Error('unreachable')
+    deepEqual(ok.search, { page: 3 }, 'the validated output rides `search`')
+    assert(ok.corrected === undefined, "a String()-equal coercion ('3' → 3) is not a redirect")
+    const defaulted = await parseSearch(schema, new URLSearchParams(''))
+    assert(defaulted.ok === true, 'a missing key validates through the default')
+    if (!defaulted.ok) throw new Error('unreachable')
+    deepEqual(defaulted.search, { page: 1 }, 'the default applied')
+    assert(defaulted.corrected === 'page=1', 'the changed value rides the corrected query')
+    const bad = await parseSearch(schema, new URLSearchParams('?page=NaN'))
+    deepEqual(
+      bad,
+      { ok: false, code: 'OX-SRC-001', issues: [{ message: 'page is not a number' }] },
+      'the refusal carries OX-SRC-001 + the schema issues verbatim',
+    )
+    return 'validate / default / OX-SRC-001'
+  })
+
+  await push('islands: the mixed registry hydrates by framework and refuses unknown islands (V2-F01)', async () => {
+    // Re-host the adapter's REAL island SSR (the markup the §10.3
+    // assertion pinned) plus a registry-unknown ghost, and hydrate both
+    // through the mixed registry the mixed boot entry emits: the island's
+    // own `fw` picks the adapter, an unknown name marks an error instead
+    // of hydrating through a wrong adapter.
+    const html = await render({ ...atlas.islands })
+    const hostMatch = /<ox-island[^>]*>[\s\S]*?<\/ox-island>/.exec(html)
+    if (hostMatch === null) throw new Error('the rendered islands markup carries an ox-island host')
+    const hostMarkup = mustEl(hostMatch, 0)
+    const islandName = /data-ox-island='([^']+)'/.exec(hostMarkup)?.[1]
+    const chunk = /data-ox-chunk='([^']+)'/.exec(hostMarkup)?.[1]
+    if (islandName === undefined || chunk === undefined) {
+      throw new Error('the host carries its name + chunk')
+    }
+    const dom = createFakeDom(
+      `<body>${hostMarkup}<ox-island data-ox-island="ghost" data-ox-chunk="ghost" data-ox-strategy="load"></ox-island></body>`,
+    )
+    const hosts = dom.doc.querySelectorAll('ox-island')
+    const live = mustEl(hosts, 0)
+    const ghost = mustEl(hosts, 1)
+    const before = live.innerHTML
+    let dispatched = 0
+    const clientAdapter: IslandsAdapter = {
+      hydrateIsland: (el, mod, props) => {
+        dispatched++
+        return adapter.hydrateIsland!(el as unknown as Element, mod, props)
+      },
+    }
+    const mod = opts.islandChunks?.[chunk]
+    assert(mod, `island chunk '${chunk}' resolvable`)
+    const dispose = hydrateMixedIslands(
+      {
+        adapters: { [name]: async () => ({ clientAdapter }) },
+        islands: { [islandName]: { fw: name, load: async () => mod } },
+      },
+      { doc: dom.doc },
+    )
+    await tick()
+    assert(dispatched === 1, 'the mixed registry dispatched into the named framework adapter')
+    assert(live.innerHTML === before, 'hydration renders identical markup')
+    assert(ghost.getAttribute('data-ox-hydrated') === 'error', 'an unknown island marks an error, never a wrong hydration')
+    assert((ghost.getAttribute('data-ox-error') ?? '').includes('unknown island ghost'), 'the error names the island')
+    dispose()
+    return `mixed registry ok (fw=${name})`
+  })
+
+  await push('tt: the oxide policy registers once per realm and falls back to identity (V2-E04)', () => {
+    // Node has no Trusted Types platform: the import-time factory takes
+    // the identity fallback (never a throw at import), and the realm-wide
+    // handle the inline scripts (the deferred swapper) read is installed.
+    const html = tt.createHTML('<p>atlas</p>')
+    assert(html === '<p>atlas</p>', 'the identity fallback passes the markup through')
+    const handle = (globalThis as { __oxide_tt?: { createHTML(s: string): string } }).__oxide_tt
+    assert(handle !== undefined, 'the realm-wide __oxide_tt handle is installed')
+    assert(handle!.createHTML('<b>x</b>') === '<b>x</b>', 'the handle is the same policy surface the swapper reads')
+    return 'identity fallback + realm handle'
+  })
+
+  await push('search: the static matcher rides the server arithmetic verbatim (V2-F09)', async () => {
+    const docs: StaticDoc[] = [
+      { id: 'd0', url: '/alpha', title: 'Alpha Router', excerpt: 'the router contract', tags: ['docs'] },
+      { id: 'd1', url: '/beta', title: 'Beta Actions', excerpt: 'actions and enhance', tags: ['guide'] },
+      { id: 'd2', url: '/gamma', title: 'Alpha Islands', excerpt: 'islands everywhere', tags: ['docs'] },
+    ]
+    const index: StaticIndex = { docs, postings: { router: [0], islands: [2] } }
+    deepEqual(await search('   '), { total: 0, hits: [] }, 'an empty query answers locally without a fetch')
+    // 'alpha' is a title prefix of d0 AND d2 — the title arm's boost, the
+    // score sort with the doc-order tiebreak.
+    const res = await search('alpha', { staticIndex: index })
+    assert(res.total === 2, `both title-prefix docs scored: ${res.total}`)
+    deepEqual(res.hits.map((h) => h.id), ['d0', 'd2'], 'the doc-order tiebreak holds')
+    assert(mustEl(res.hits, 0).score === 3, 'the title prefix arm scores 3')
+    const postings = await search('router', { staticIndex: index })
+    deepEqual(postings.hits.map((h) => h.id), ['d0'], 'a postings hit rides the body boost')
+    const capped = await search('alpha', { staticIndex: index, limit: 1 })
+    assert(capped.hits.length === 1, 'the limit takes')
+    assert(capped.total === 2, 'total counts pre-limit')
+    // The post-take tag filter (the pinned parity quirk): the tag filter
+    // rides AFTER the take, so a tag matching only a doc beyond the take
+    // window empties the hits while total still counts them.
+    const tagged = await search('alpha', { staticIndex: index, limit: 1, tag: 'guide' })
+    assert(tagged.total === 2 && tagged.hits.length === 0, 'the tag filter rides after the take')
+    return 'postings / prefix / tiebreak / limit+tag quirk'
   })
 
   return results
