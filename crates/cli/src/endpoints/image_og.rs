@@ -60,6 +60,7 @@ pub(crate) fn build_image_endpoint(
         .collect();
 
     Some(std::sync::Arc::new(oxide_fw_server::ImageEndpoint {
+        jobs: build_image_jobs(rootp, cfg),
         backend: std::sync::Arc::new(AssetsImageBackend),
         asset_root,
         signing_secret,
@@ -76,4 +77,66 @@ pub(crate) fn build_image_endpoint(
         in_flight: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         max_dimension: cfg.images.max_dimension,
     }))
+}
+
+/// V2-C09: the CLI adapter — the landed `ImageJobs` engine behind the
+/// server's object-safe `ImageJobRunner` seam. The lanes ride the
+/// `images.maxConcurrency` knob (the CPU lane its value, the AVIF lane half
+/// of it, both never zero — the spec's lane shape), and the CAS is the
+/// disk store under `.oxide/image-cas` (blake3-named files — the output
+/// key is the digest, so the store survives restarts and answers the
+/// spec's "exactly one encode on a cold cache" acceptance across processes).
+fn build_image_jobs(
+    rootp: &Path,
+    cfg: &oxide_fw_config::OxideConfig,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::ImageJobRunner>> {
+    let cpu = cfg.images.max_concurrency.max(1);
+    let avif = (cpu / 2).max(1);
+    let cas = oxide_fw_assets::DirImageCas::new(rootp.join(".oxide").join("image-cas"));
+    let jobs = oxide_fw_assets::ImageJobs::with_lanes(cas, cpu, avif);
+    Some(std::sync::Arc::new(ImageJobsRunner(jobs)))
+}
+
+/// The adapter: the server's boxed-job seam over the engine's generic
+/// `run`. The job's string error becomes an `AST-IMG`-coded
+/// `OxideError` on the way in and degrades back to its `Display` on the
+/// way out — the server composes the same 400 body either path.
+struct ImageJobsRunner(oxide_fw_assets::ImageJobs);
+
+impl oxide_fw_server::ImageJobRunner for ImageJobsRunner {
+    fn run_job(
+        &self,
+        key: &str,
+        avif: bool,
+        format: Option<&'static str>,
+        job: oxide_fw_server::BoxedImageJob,
+    ) -> oxide_fw_server::BoxedImageJobFuture {
+        let jobs = self.0.clone();
+        let key = key.to_string();
+        Box::pin(async move {
+            let outcome = jobs
+                .run(&key, avif, move || {
+                    job()
+                        .map(|r| r.bytes)
+                        .map_err(|e| oxide_fw_assets::job_error("AST-IMG", e))
+                })
+                .await;
+            match outcome {
+                Ok(arc) => Ok(oxide_fw_server::ImageEndpointResult {
+                    bytes: (*arc).clone(),
+                    // The metadata is deterministic from the request: the
+                    // format string IS the content type
+                    // (`parse_image_query` maps it), the ETag rides the
+                    // endpoint's key (the same digest inputs the backend's
+                    // cache key hashes), and a placeholder request never
+                    // reaches the engine (the sync prefix deflects it —
+                    // the CAS stores bytes only).
+                    content_type: format.unwrap_or("application/octet-stream"),
+                    cache_key: key.to_string(),
+                    placeholder: None,
+                }),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    }
 }
