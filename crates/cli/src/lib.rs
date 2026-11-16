@@ -30,7 +30,23 @@ type LoaderInputs = (
     bool,
 );
 
-type LayoutSideEffects = Vec<(Vec<String>, Vec<(String, String)>)>;
+/// V2-A06: one layout's §9.2 load spec — the module path plus the scanner's
+/// token-exact `parent()` verdict (A06 step 1 applies `calls_parent` to
+/// `layout.server.ts`, not only to pages). The §9.2 load graph runs the
+/// layout concurrently unless its own verdict says it awaits its
+/// predecessor's data; the /__data path keeps the sequential chain and
+/// reads only the id/path pair.
+#[derive(Clone, Debug)]
+pub struct LayoutLoadSpec {
+    /// The layout route id (`routes/blog/layout`), as the loader input's
+    /// route field expects.
+    pub(crate) id: String,
+    /// The `layout.server.ts` path on disk (routes-root joined).
+    pub(crate) path: std::path::PathBuf,
+    /// Whether this layout's load may call `await parent()` — the load
+    /// graph serializes it behind its predecessor when true.
+    pub(crate) needs_parent: bool,
+}
 
 /// The wasm-bindgen-processed `oxide-fw-core-wasm` artifact, embedded at
 /// CLI build time so a user project without a cargo workspace containing
