@@ -6139,6 +6139,40 @@ fn extract_img_w_spec_rejects_non_image() {
     assert!(extract_img_w_spec(r#"import x from './hero.png?w=abc'"#).is_none());
 }
 
+// V2-C09 (SEC-08): `OXIDE_IMAGE_UNSIGNED` is the operator's explicit
+// signing DISABLE — the adapter maps it to `Some("")` and the server's
+// check treats an empty secret exactly like `None` (the empty-secret pin
+// in the server crate holds the wire half). Before the pairing, the env
+// produced a secret that DEMANDED signatures — stricter than unsigned.
+#[test]
+fn the_unsigned_env_disables_the_image_endpoint_signing() {
+    use crate::build_image_endpoint;
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("public")).expect("public dir");
+    unsafe {
+        std::env::set_var("OXIDE_IMAGE_UNSIGNED", "1");
+    }
+    let ep = build_image_endpoint(dir.path(), &OxideConfig::default()).expect("endpoint");
+    assert!(
+        ep.signing_secret.as_deref().unwrap_or_default().is_empty(),
+        "the unsigned env maps to the empty (disabled) secret, got {:?}",
+        ep.signing_secret
+    );
+    unsafe {
+        std::env::remove_var("OXIDE_IMAGE_UNSIGNED");
+    }
+    let ep = build_image_endpoint(dir.path(), &OxideConfig::default()).expect("endpoint");
+    let secret = ep
+        .signing_secret
+        .clone()
+        .expect("the default is the build secret");
+    assert_eq!(
+        secret.len(),
+        64,
+        "the build secret is the 64-hex `.oxide/secret` stamp: {secret}"
+    );
+}
+
 #[test]
 fn extract_img_w_spec_handles_jpeg() {
     use crate::extract_img_w_spec;
