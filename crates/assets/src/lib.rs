@@ -59,7 +59,7 @@ pub use i18n::{
     Catalog, I18nConfig, LanguageRange, href, locale_prefix, negotiate, parse_accept_language,
     strip_locale_prefix,
 };
-pub use image_jobs::{ImageCas, ImageJobs};
+pub use image_jobs::{DirImageCas, ImageCas, ImageJobs, job_error};
 pub use lightningcss_backend::LightningCssBackend;
 pub use og_backend::SvgOgBackend;
 #[cfg(feature = "svg-oxvg")]
