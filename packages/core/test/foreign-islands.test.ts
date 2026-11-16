@@ -104,3 +104,59 @@ test('resolveForeign flushes a trailing carry (the split placeholder at the end)
     assert.ok(out.endsWith('</ox-island>'), `split at ${cut} ends with the island shell`)
   }
 })
+
+// §V2-F01: the adapters' `<Island>` twins emit the pending placeholder with
+// the framework SSR's native DOUBLE quotes (React 19, Vue 3, Svelte 5 and
+// Solid SSR all render `attr="value"`); the render crate's own element uses
+// the single-quoted shape pinned above. The transform must accept both —
+// the quote style rides the captured attribute sides unchanged.
+const PLACEHOLDER_DQ =
+  '<ox-island data-ox-island="Price" data-ox-fw="vue" data-ox-pending="1" data-ox-props="eyJhIjoxfQ=="></ox-island>'
+
+test('resolveForeign matches the double-quoted placeholder the adapter twins emit', async () => {
+  const src = streamOf(`<main>${PLACEHOLDER_DQ}</main>`)
+  const out = await collect(
+    resolveForeign(src, async (fw, name, propsB64) => {
+      assert.equal(fw, 'vue')
+      assert.equal(name, 'Price')
+      assert.equal(propsB64, 'eyJhIjoxfQ==')
+      return '<span>rendered</span>'
+    }),
+  )
+  assert.equal(
+    out,
+    '<main><ox-island data-ox-island="Price" data-ox-fw="vue" data-ox-props="eyJhIjoxfQ=="><span>rendered</span></ox-island></main>',
+  )
+  assert.ok(!out.includes('data-ox-pending'), 'the pending flag is stripped from the resolved island')
+})
+
+test('resolveForeign resolves a double-quoted placeholder split at every byte offset', async () => {
+  const text = `<p>before</p>${PLACEHOLDER_DQ}<p>after</p>`
+  const render = async (fw: string, name: string, props: string) =>
+    `<r fw=${fw} name=${name} props=${props} />`
+  const expected = await collect(resolveForeign(streamOf(text), render))
+  for (let cut = 1; cut < text.length; cut++) {
+    let calls = 0
+    const out = await collect(
+      resolveForeign(streamOf(text, [cut]), async (...a) => {
+        calls += 1
+        return render(...a)
+      }),
+    )
+    assert.equal(out, expected, `split at byte ${cut}`)
+    assert.equal(calls, 1, `render ran once for the split at byte ${cut}`)
+  }
+})
+
+test('resolveForeign leaves a double-quoted hydrated island untouched', async () => {
+  const hydrated = '<ox-island data-ox-island="Counter" data-ox-fw="react"><b>already</b></ox-island>'
+  let calls = 0
+  const out = await collect(
+    resolveForeign(streamOf(hydrated), async () => {
+      calls += 1
+      return 'nope'
+    }),
+  )
+  assert.equal(out, hydrated)
+  assert.equal(calls, 0)
+})
