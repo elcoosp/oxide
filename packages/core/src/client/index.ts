@@ -38,6 +38,22 @@ export {
   type StaticIndex,
   type StaticDoc,
 } from './searchEngine.ts'
+// V2-E02: typed search params + the runtime of the generated href overloads.
+export {
+  parseSearch,
+  type SearchParseResult,
+  type SearchParseSuccess,
+  type SearchParseFailure,
+  type StandardIssue,
+  type StandardSchemaV1Like,
+} from './search-params.ts'
+export {
+  hrefFor, goto,
+  type HrefOpts, type GotoOpts, type GotoRouter, type HrefParam,
+} from './href.ts'
+// §V2-E04: the realm's Trusted Types policy — importing this module is
+// the "defined once" statement; sinks route through `tt.createHTML`.
+export { tt, type OxideTrustedTypesPolicy } from './tt.ts'
 
 // Phase 1 (Native ESM dev server): re-export the HMR runtime's public type.
 // The `hot.ts` module side-effect (`install()`) is guarded so importing it
