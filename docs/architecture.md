@@ -77,7 +77,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   `DEP-IO`, `DEP-MANIFEST`, `DEP-POINTER`, `DEP-ROOT` and `DEP-ROLLBACK`
   registry rows, 15 TDD pins, the `delta` criterion group and the
   `delta_deploy` walkthrough example ride along. Deltas and deferrals
-  (the `s3://`/`r2://` object_store target, the `oxide deploy` CLI command) —
+  (the `s3://`/`r2://` object_store target, the `oxide deploy` (V2-F11: the delta-deploy engine + the `dir:`/object-store targets behind `deploy-s3`) CLI command) —
   see `docs/deviations.md`.
 
 - **`adapters`**: the object-store deploy target (§V2-F11 tail,
@@ -96,7 +96,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   helpers (the `dir:` target delegates — byte-identical messages, the 15
   parent pins hold). The `DEP-URL` registry row, 10 TDD pins, the
   `object_store` criterion group and the `object_store_deploy`
-  walkthrough example ride along. The `oxide deploy` CLI command remains
+  walkthrough example ride along. The `oxide deploy` (V2-F11: the delta-deploy engine + the `dir:`/object-store targets behind `deploy-s3`) CLI command remains
   the F11 tail — see `docs/deviations.md`.
 
 - **`render`**: the B08 phase-2 streaming nonce splicer
