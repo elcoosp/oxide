@@ -21,6 +21,7 @@ export default defineConfig({
     "client-messages": "./src/client/messages.ts",
     "client-route-manifest": "./src/client/route-manifest.ts",
     "client-router": "./src/client/router.ts",
+    "search": "./src/client/searchEngine.ts"
     "bytes": "./src/bytes.ts",
     "fn": "./src/fn.ts",
     "image-sizes": "./src/image-sizes.ts",
