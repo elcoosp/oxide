@@ -67,6 +67,14 @@ PHASE_SUBS = {
            'splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL),'),
     1501: ('let fresh = saved.replace(&old_nonce, &nonce);',
            'let fresh = splice_nonce(&saved, &old_nonce, &nonce);'),
+    # V2-F02 adoption (this diff): the boot entry consumes the MERGED
+    # island registry — the config's islands plus the auto-discovered
+    # interactive files when `framework.autoIslands` is on. Everything
+    # the merge does lives in build/auto_islands.rs (the scan, the
+    # .oxide/island-manifest.json side-car, the explicit-wins merge);
+    # the phase body keeps the one recorded call-site line.
+    211: ('&cfg.framework.islands,',
+          '&islands_for_boot(cfg, tree, rootp, &mut *w)?,'),
 }
 
 def phases_check():
@@ -358,6 +366,33 @@ def stages_check():
                     "            Some(pair) => pair,",
                     "            None => (None, Vec::new()),",
                     "        };",
+                ]),
+            ),
+            # M0 clippy residual (this diff), recorded substitution: the
+            # not-found fallback's `match { Some(pair) => pair, None =>
+            # (None, Vec::new()) }` became `.unwrap_or_default()` (the
+            # `clippy::unwrap_or_default` simplification; the tuple's
+            # Default is exactly that pair). Two orig-side rules on the
+            # PREVIOUS rule's output (rules run in order): the `match`
+            # keyword drops and the braces tail becomes the method call,
+            # so the span stays token-checked modulo the recorded delta.
+            (
+                re.compile(r"\) =\n        match cx"),
+                NL.join([
+                    ") =",
+                    "        cx",
+                ]),
+            ),
+            (
+                re.compile(
+                    r"\}\) \{"
+                    r"\s*Some\(pair\) => pair,"
+                    r"\s*None => \(None, Vec::new\(\)\),"
+                    r"\s*\};"
+                ),
+                NL.join([
+                    "        })",
+                    "        .unwrap_or_default();",
                 ]),
             ),
             (
