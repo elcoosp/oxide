@@ -34,7 +34,7 @@ struct FakeNative {
 #[async_trait::async_trait]
 impl NativeFnSource for FakeNative {
     fn has(&self, id: &str) -> bool {
-        self.ids.iter().any(|owned| *owned == id)
+        self.ids.contains(&id)
     }
     async fn call(&self, _id: &str, _args: &[u8]) -> Result<Vec<u8>, DispatchError> {
         self.called.store(true, std::sync::atomic::Ordering::SeqCst);
