@@ -106,6 +106,9 @@ pub(crate) struct DispatchOpts {
     /// engine shapes — the pins build them directly, no config parse).
     /// Empty keeps the pre-F04 shapes.
     pub(crate) experiments: Vec<oxide_fw_dispatch::experiments::Experiment>,
+    /// V2-F09: the pins' search mode (`Some("server")` exercises the
+    /// flag-script arm). `None` keeps the pre-F09 shapes.
+    pub(crate) search_flag: Option<&'static str>,
 }
 
 #[cfg(test)]
@@ -156,6 +159,7 @@ pub(crate) fn build_dispatch(
         // V2-F04: the pins' experiments (empty default — the stage
         // short-circuits, keys stay the pre-F04 baseline).
         experiments: opts.experiments,
+        search_flag: opts.search_flag,
     })
 }
 
