@@ -79,6 +79,7 @@ pub(crate) fn emit_config_bundle(
         // chunks copied alongside and its `__toESM` dynamic-import wrappers
         // resolved by the loader; a single inlined file is simpler and what the
         // bare V8 host wants.
+        vendor_groups: Vec::new(),
         inline_dynamic_imports: true,
         // BUG-SOLID: resolve conditions must match the V8 loader
         // (`v8_loader.rs`). `worker` FIRST gives `@solidjs/web` its SSR build
