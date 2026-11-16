@@ -366,6 +366,49 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
     // content is the generated TSX, which the bundler reads from
     // `precompiled` rather than disk.
     let mut client_opts = client_opts;
+    // §V2-F01: the mixed-registry client bundle splits the per-framework
+    // vendors (the rolldown `advancedChunks` groups) so each framework's
+    // runtime loads once, on the first island of that framework. Derived
+    // from the same merged registry the boot entry consumed — the same
+    // `island_framework` inference — via the planner's `vendor_groups`
+    // (empty for a single-framework build, so the chunk shape stays
+    // byte-identical). The registry call is idempotent (the side-car write
+    // is the same bytes; the summary line rides the boot entry's emission).
+    // (the registry call is idempotent — the side-car write is the same
+    // bytes; the summary line rides the boot entry's emission)
+    let vendor_framework = cfg
+        .framework
+        .adapter
+        .clone()
+        .or_else(|| cfg.framework.name.clone())
+        .unwrap_or_else(|| "react".to_string());
+    if !islands_for_boot(cfg, tree, rootp, &mut *w)?.is_empty() {
+        let merged_islands = islands_for_boot(cfg, tree, rootp, &mut *w)?;
+        let mut resolved = std::collections::BTreeMap::new();
+        for (name, spec) in &merged_islands {
+            let src = spec.src();
+            let first_line = std::fs::read_to_string(rootp.join(&src))
+                .map(|b| b.lines().next().unwrap_or("").to_string())
+                .unwrap_or_default();
+            resolved.insert(
+                name.clone(),
+                oxide_fw_compiler::islands::ResolvedIsland {
+                    src: src.to_string(),
+                    framework: oxide_fw_config::island_framework(
+                        src,
+                        spec.framework(),
+                        &vendor_framework,
+                        &first_line,
+                    ),
+                },
+            );
+        }
+        client_opts.vendor_groups = oxide_fw_compiler::islands::plan_island_boot(&vendor_framework, &resolved)
+            .vendor_groups()
+            .into_iter()
+            .map(|g| oxide_fw_bundler::VendorGroup { name: g.name, test: g.test })
+            .collect();
+    }
     // §15-E: JS-plugin resolveId / load hooks. Build once; both envs share
     // the closures (`ResolveHook`/`LoadHook` are `Arc<dyn Fn>` — cheap to
     // clone; worker discovery is lazy on first call). Assigned by field on
