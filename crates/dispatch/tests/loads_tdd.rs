@@ -91,8 +91,7 @@ impl LoaderRunner for FakeRunner {
             .delay_routes
             .iter()
             .find(|(routes, _)| routes.contains(&input.route.as_str()))
-            .map(|(_, d)| *d)
-            .unwrap_or(self.delay_ms);
+            .map_or(self.delay_ms, |(_, d)| *d);
         tokio::time::sleep(Duration::from_millis(delay)).await;
         if self.fail_routes.contains(&input.route.as_str()) {
             return Err(OxideError(Box::new(
