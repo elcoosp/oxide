@@ -14,6 +14,9 @@ use oxide_fw_dispatch::flow::Flow;
 pub(crate) async fn stage_prelude(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     let req = &cx.req;
     let swappable = &d.swappable;
+    // V2-B01: the tree and its context table for ONE generation (a single
+    // read guard) — the stage tree consumes them as a matched pair.
+    let (tree, ctx_table) = swappable.load_pair();
     let generations_for_render = &d.generations;
     let esm_state = &d.esm_state;
     let pool = d.pool.clone();
@@ -23,7 +26,6 @@ pub(crate) async fn stage_prelude(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow
     let archived = &d.archived;
     let streams_for_dispatch = &d.streams;
     // <<< stage-wrapper
-    let tree = swappable.load();
     let started = std::time::Instant::now();
     // V2-A04: the build id the render arm bakes into the streamed
     // shell's hydration bootstrap — read once per request, under the
@@ -179,11 +181,16 @@ pub(crate) async fn stage_prelude(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow
         } else {
             vec![route_path.clone()]
         };
+        // V2-B02: the gate reads the match through the unified view —
+        // `is_live_route` reads both trees in place (the mmap entry for the
+        // archive, the borrowed entry for the live tree), with no owned
+        // `MatchResult` materialization on a path that only answers
+        // "is this route opted in?".
         let matched = candidates.iter().find_map(|p| match archived {
-            Some(a) => a.match_path(p),
-            None => tree.match_path(p),
+            Some(a) => oxide_fw_router::MatchedView::archived(a, p),
+            None => oxide_fw_router::MatchedView::live(&tree, p),
         });
-        if !matched.as_ref().is_some_and(|m| m.route.live.is_some()) {
+        if !matched.as_ref().is_some_and(|m| m.is_live_route()) {
             return Flow::Respond(not_accepted(404, "live: no live route at that path"));
         }
         // The header snapshot the rerun replays (cookies included; the
@@ -261,6 +268,7 @@ pub(crate) async fn stage_prelude(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow
     }
     // >>> stage-wrapper (not part of the moved body; split_selfcheck --stages strips this block)
     cx.tree = tree;
+    cx.ctx_table = Some(ctx_table);
     cx.boot_build_id = boot_build_id;
     cx.rewrite_hop = rewrite_hop;
     cx.raw = raw;
