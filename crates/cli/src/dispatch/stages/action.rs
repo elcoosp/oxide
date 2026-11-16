@@ -39,7 +39,9 @@ pub(crate) async fn stage_action(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow 
         && let Some(dispatcher) = action_dispatcher.as_deref()
     {
         let form_json = {
-            let entries = parse_form_urlencoded(&req_owned.body);
+            // §V2-A02: the ONE definition site is the dispatch crate's url
+            // module (the CLI's duplicate copy is deleted with this diff).
+            let entries = oxide_fw_dispatch::url::parse_form_urlencoded(&req_owned.body);
             serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
         };
         let action_trace = req_owned.trace.as_ref().and_then(|t| {
