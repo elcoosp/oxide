@@ -309,7 +309,7 @@ pub fn boundary_fallback(id: u32, fallback_html: &str) -> String {
 ///
 /// `querySelector` matches either. A deployment that emits one host shape
 /// is unaffected by the selector being wider.
-pub const SWAPPER_SRC: &str = r#"function(id){var t=document.querySelector("[data-ox-c='"+id+"']"),p=document.querySelector("[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div");d.innerHTML=t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}}"#;
+pub const SWAPPER_SRC: &str = r#"function(id){var t=document.querySelector("[data-ox-c='"+id+"']"),p=document.querySelector("[data-ox-b='"+id+"']");if(t&&p){var d=document.createElement("div"),W=window.__oxide_tt;d.innerHTML=W?W.createHTML(t.innerHTML):t.innerHTML;p.replaceWith.apply(p,d.childNodes);document.dispatchEvent(new CustomEvent("ox:swap",{detail:{id:id,value:t.innerHTML}}))}}"#;
 
 /// Streamed boundary resolution (§7.1): the content template plus a self-contained
 /// swapper IIFE with `id` baked in. The script does not depend on `window.__oxSwap`
@@ -493,6 +493,26 @@ pub fn hydration_bootstrap_with_build(
         b64 = odf_b64,
         route = sanitize_route_id(route_id),
         build = sanitize_route_id(build_id),
+    )
+}
+
+/// §V2-F09: the boot's search-mode flag — an additive `window.__oxide`
+/// property assignment riding its own script, so the client matcher
+/// (`packages/core/src/client/searchEngine.ts`) knows the engine serves
+/// and queries `/_oxide/search` instead of the static export. A separate
+/// script (not a `hydration_bootstrap` variant) keeps the pinned
+/// bootstrap shapes byte-identical; the guard form keeps the script
+/// total when the bootstrap did not run (an error page with no payload
+/// assigns nothing instead of throwing). `mode` rides the same
+/// `[a-z0-9-/]` alphabet guard the route id gets, so a hostile or
+/// misspelled mode degrades deterministically instead of breaking the
+/// script.
+#[must_use]
+pub fn boot_search_flag_script(mode: &str, nonce: &str) -> String {
+    let n = escape_attr(nonce);
+    format!(
+        "<script nonce='{n}'>window.__oxide&&(window.__oxide.search=\"{}\")</script>",
+        sanitize_route_id(mode),
     )
 }
 
