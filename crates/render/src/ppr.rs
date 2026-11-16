@@ -131,7 +131,8 @@ pub fn client_resolver(nonce: &str) -> String {
     out.push_str("var ts=document.querySelectorAll(\"template[data-ox-c]\");");
     out.push_str("for(var j=0;j<ts.length;j++){var t=ts[j];");
     out.push_str("if(t.getAttribute('data-ox-c')!==id)continue;");
-    out.push_str("var d=document.createElement('div');d.innerHTML=t.innerHTML;");
+    out.push_str("var d=document.createElement('div'),W=window.__oxide_tt;");
+    out.push_str("d.innerHTML=W?W.createHTML(t.innerHTML):t.innerHTML;");
     out.push_str("h.replaceWith.apply(h,d.childNodes);");
     out.push_str(
         "document.dispatchEvent(new CustomEvent('ox:swap',{detail:{id:id,value:t.innerHTML}}));",
