@@ -113,6 +113,7 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
             std::fs::create_dir_all(&boot_dir)?;
             let boot_path = boot_dir.join("island-boot.mjs");
             std::fs::write(&boot_path, boot_src)?;
+            crate::boot_entry::write_islands_json(rootp, &framework, cfg, tree, &mut *w)?;
             client_entries.insert("__boot__".to_string(), boot_path);
             if cfg.framework.islands.is_empty() {
                 outln!(
@@ -387,7 +388,7 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
         let mut resolved = std::collections::BTreeMap::new();
         for (name, spec) in &merged_islands {
             let src = spec.src();
-            let first_line = std::fs::read_to_string(rootp.join(&src))
+            let first_line = std::fs::read_to_string(rootp.join(src))
                 .map(|b| b.lines().next().unwrap_or("").to_string())
                 .unwrap_or_default();
             resolved.insert(
@@ -403,11 +404,15 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
                 },
             );
         }
-        client_opts.vendor_groups = oxide_fw_compiler::islands::plan_island_boot(&vendor_framework, &resolved)
-            .vendor_groups()
-            .into_iter()
-            .map(|g| oxide_fw_bundler::VendorGroup { name: g.name, test: g.test })
-            .collect();
+        client_opts.vendor_groups =
+            oxide_fw_compiler::islands::plan_island_boot(&vendor_framework, &resolved)
+                .vendor_groups()
+                .into_iter()
+                .map(|g| oxide_fw_bundler::VendorGroup {
+                    name: g.name,
+                    test: g.test,
+                })
+                .collect();
     }
     // §15-E: JS-plugin resolveId / load hooks. Build once; both envs share
     // the closures (`ResolveHook`/`LoadHook` are `Arc<dyn Fn>` — cheap to
