@@ -4057,3 +4057,87 @@ vs archive index), so the dispatch switch needs a unified match view over
 this diff landed makes that a contained follow-up; deferring keeps this
 milestone's hot-path diff purely structural (proven verbatim by
 `split_selfcheck.py --stages`).
+
+## V2-F04 stage wiring + V2-F02 build adoption — the CLI halves (2026-11-16)
+
+The F04 substrate's recorded "to unclose" list and the F02 row's
+"remaining thin halves" landed as the M1/M2 milestones:
+
+1. **`stage_experiments` is wired** (`crates/cli/src/dispatch/stages/
+   experiments.rs`, registered between `stage_middleware` and
+   `stage_data_route` — inside the spec's "between prelude and the L0
+   lookup" span so the vary dimension lands before the key is consumed
+   and the assignments land before the loaders/data route read the
+   locals). The stage short-circuits when no `experiments` config row
+   exists (keys stay the pre-F04 bytes); otherwise it composes the
+   substrate's `resolve` with the request probes (cookie header, header
+   lookup, peer IP, the SEC-09 CSPRNG mint) and makes four write-backs:
+   the `|exp:` vary dimension + the recomputed single-flight key (the
+   same `key_for` spelling `stage_route` used), the assigned map into
+   the pipeline-owned locals slot the loaders read, the minted
+   `Set-Cookie` headers onto the per-request middleware-header list
+   (applied on the L0-hit/coalesced paths AND every render response,
+   never stored — the store refuses a cookie-setting response and
+   `make_entry` now strips `set-cookie` as belt-and-braces, the §V2-F04
+   item-3 spec text), and one `oxide_experiment_assignment{experiment,
+   variant}` exposure counter per assignment. `DispatchDeps.experiments`
+   carries the config rows converted at boot (`experiments_of_config` —
+   the field-by-field wiring mapping; the config crate still does not
+   depend on dispatch); the test helper builds the engine shapes
+   directly via `DispatchOpts.experiments`.
+
+2. **`oxide why --route` prints the experiment dimension** (§V2-F04
+   item 4): for each configured experiment eligible on the route path
+   it prints the sticky strategy and variants plus the `|exp:` key
+   dimension shape the L0 key carries when a request lands in a cohort.
+
+3. **The exposure metric** is the server crate's `Metrics.observe_
+   experiment` (a per-pair counter map beside the vitals map; the
+   exposition renders sorted `oxide_experiment_assignment` lines with
+   the SEC-07 escaping). Pinned V8-free (`experiment_assignments_
+   render_per_pair_counters`) and green in this sandbox.
+
+4. **F02's build half landed** (`crates/cli/src/build/auto_islands.rs`,
+   the one-line call-site recorded as PHASE_SUBS line 211): when
+   `framework.autoIslands` is on, the build scans the client tree (the
+   routes-dir client sources — `*.server.*`/`.d.ts` excluded — plus the
+   registered islands), classifies through `scan_interactivity` + the
+   import fixpoint, writes `.oxide/island-manifest.json` and feeds
+   `generate_island_boot_entry` the merged registry (explicit wins; the
+   engine's `hydrates` decision decides every scanned file; pure
+   classifications skip). Gate off (the default) returns the config
+   registry unchanged and writes nothing. Three pins ride the CLI crate
+   (gate-off identity, gate-on scan/merge + side-car parse, the scan-set
+   filter).
+
+**Deliberately queued:** the F02 dev-time warn when a pure-classified
+component receives `on*` props — it needs the dev transform pipeline's
+per-component props surface, a separate adoption from the build scan;
+the row keeps naming it. C09 (the ImageJobs endpoint wiring) and F11
+(the `oxide deploy` command) were scoped this session and NOT started —
+their rows still name the remaining halves honestly (the batch rule:
+ship only fully-wired items).
+
+**Pipeline pins (V8-linked, compile-verified here, riding the CI
+`cargo nextest run --workspace` job):** `experiment_cohorts_get_
+separate_l0_entries_and_exposure_counters` (two cohorts miss into
+separate keys, the third request hits its own entry, exactly two
+renders, both exposure counters counted with the engine-computed
+variants), `minted_experiment_cookie_rides_the_response_and_never_the_
+cache` (mint on the first response, stable identity on the second,
+`make_entry` strips `set-cookie`), `experiment_assignments_reach_the_
+loader_locals` (every loader run sees the pipeline-owned `experiments`
+slot with the assigned variant) — plus the stage's unit pins
+(`vary_with_experiments` byte shapes, the config conversion).
+
+**Micro-debt retired along the way:** the six recorded CLI clippy
+residuals (the `empty_line_after_doc_comments` in `tests.rs`, the
+`unwrap_or_default` simplification in `stage_route`'s not-found
+fallback — recorded as an orig-side STAGE_RULES substitution so the
+span stays token-checked, two `needless_return`s in `stage_middleware`,
+the `doc_lazy_continuation` in `stage_loaders`' doc header), plus the
+pre-existing lints the touched-crate gates surfaced (`needless_borrow`
+in `server/src/live.rs`, `manual_contains` in the server's
+`rustfn_dispatch_tdd` fake, `map_unwrap_or` in `dispatch`'s
+`loads_tdd` probe). `split_selfcheck.py --phases/--stages` are green
+at HEAD with both recorded substitutions.
