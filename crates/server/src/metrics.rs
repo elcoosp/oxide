@@ -77,6 +77,10 @@ pub struct Metrics {
     /// raw value (milliseconds for the time metrics, unitless for CLS) — the
     /// `render` output exposes `_count` and `_sum` for a Prometheus summary.
     pub web_vitals: RwLock<HashMap<String, VitalAgg>>,
+    /// §V2-F04: the experiment-exposure counters, keyed
+    /// `"<experiment>/<variant>"` (the pair the dispatch's experiment stage
+    /// assigns). exposition: `oxide_experiment_assignment{experiment,variant}`.
+    pub experiments: RwLock<HashMap<String, AtomicU64>>,
 }
 
 /// A reported web-vital aggregate: how many samples, and their summed value.
@@ -140,6 +144,29 @@ impl Metrics {
         let agg = map.entry(key).or_default();
         agg.count = agg.count.saturating_add(1);
         agg.sum += value;
+    }
+
+    /// §V2-F04: count one experiment exposure — the dispatch's experiment
+    /// stage calls this per assigned (experiment, variant) pair after the
+    /// §15.4 evaluation. Counters are per pair, so the exposition splits
+    /// traffic per cohort.
+    ///
+    /// # Panics
+    ///
+    /// Only if the experiments lock is poisoned (a prior holder panicked
+    /// mid-update) — the same contract the registry's other maps carry.
+    pub fn observe_experiment(&self, experiment: &str, variant: &str) {
+        let key = format!("{experiment}/{variant}");
+        let map = self.experiments.read().expect("experiments lock");
+        if let Some(c) = map.get(&key) {
+            c.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        drop(map);
+        let mut map = self.experiments.write().expect("experiments lock");
+        map.entry(key)
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn render(&self) -> String {
@@ -239,6 +266,28 @@ impl Metrics {
             }
         }
 
+        {
+            // §V2-F04: the experiment-exposure counters, per (experiment,
+            // variant) pair, sorted for a stable exposition.
+            let experiments = self.experiments.read().expect("experiments lock");
+            if !experiments.is_empty() {
+                out.push_str("# HELP oxide_experiment_assignment Experiment exposures by experiment and variant\n");
+                out.push_str("# TYPE oxide_experiment_assignment counter\n");
+                let mut keys: Vec<&String> = experiments.keys().collect();
+                keys.sort();
+                for k in keys {
+                    let (experiment, variant) = k.split_once('/').unwrap_or((k.as_str(), ""));
+                    let experiment_e = prom_escape(experiment);
+                    let variant_e = prom_escape(variant);
+                    let _ = writeln!(
+                        out,
+                        "oxide_experiment_assignment{{experiment=\"{experiment_e}\",variant=\"{variant_e}\"}} {}",
+                        experiments[k].load(Ordering::Relaxed)
+                    );
+                }
+            }
+        }
+
         let map = self.inner.read().expect("metrics lock");
         out.push_str("# HELP oxide_request_duration_ms Request latency by route\n");
         out.push_str("# TYPE oxide_request_duration_ms histogram\n");
@@ -275,6 +324,38 @@ mod tests {
         let s = Metrics::new().render();
         assert!(s.contains("# TYPE oxide_requests_total counter"));
         assert!(s.contains("oxide_requests_total 0"));
+    }
+
+    // V2-F04 (§15.4): the experiment-exposure counter. Each (experiment,
+    // variant) pair accumulates on assignment and the exposition names the
+    // pair as labels, so a dashboard can split exposure per cohort.
+    #[test]
+    fn experiment_assignments_render_per_pair_counters() {
+        let m = Metrics::new();
+        m.observe_experiment("hero", "control");
+        m.observe_experiment("hero", "control");
+        m.observe_experiment("hero", "treatment");
+        let s = m.render();
+        assert!(
+            s.contains("# TYPE oxide_experiment_assignment counter"),
+            "the assignment counter type line: {s}"
+        );
+        assert!(
+            s.contains("oxide_experiment_assignment{experiment=\"hero\",variant=\"control\"} 2"),
+            "the control arm counts both exposures: {s}"
+        );
+        assert!(
+            s.contains("oxide_experiment_assignment{experiment=\"hero\",variant=\"treatment\"} 1"),
+            "the treatment arm counts its exposure: {s}"
+        );
+        // Label values go through the SEC-07 escape (a quote in a variant
+        // name cannot break the exposition format).
+        m.observe_experiment("q", "v\"2");
+        let s = m.render();
+        assert!(
+            s.contains("oxide_experiment_assignment{experiment=\"q\",variant=\"v\\\"2\"} 1"),
+            "the escaped variant renders: {s}"
+        );
     }
 
     #[test]
