@@ -4723,6 +4723,188 @@ async fn layout_then_page_sequential_when_page_calls_parent() {
     );
 }
 
+/// V2-A06 (this diff): the load-graph CLI pins. The substrate pins the
+/// graph's concurrency and ordering against fakes
+/// (`crates/dispatch/tests/loads_tdd.rs`); these two pin the PIPELINE
+/// adoption — the verdicts the stage feeds the graph and the parent-data
+/// threading the §9.2 contract asks for. They ride the CI `nextest`
+/// workspace job (V8-linked test target: compile-verified locally).
+
+/// A runner that records each call's `(route, parent_data)` pair and
+/// reports peak concurrency like [`ConcurrencyProbe`].
+struct ParentDataProbe {
+    seen: std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+    active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    max_active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ParentDataProbe {
+    fn new() -> Self {
+        Self {
+            seen: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            active: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            max_active: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_server::LoaderRunner for ParentDataProbe {
+    fn name(&self) -> &'static str {
+        "parent-data-probe"
+    }
+    async fn run(
+        &self,
+        input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
+        use std::sync::atomic::Ordering;
+        self.seen
+            .lock()
+            .unwrap()
+            .push((input.route.clone(), input.parent_data.clone()));
+        let n = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        loop {
+            let prev = self.max_active.load(Ordering::SeqCst);
+            if n <= prev {
+                break;
+            }
+            if self
+                .max_active
+                .compare_exchange(prev, n, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Ok(oxide_fw_server::LoaderOutput::ok(serde_json::json!({
+            "route": input.route,
+        })))
+    }
+}
+
+/// Scan a two-layout project (root + `blog/`) into a live `RouteTree`,
+/// each layout carrying a `layout.server.ts` whose source the scanner's
+/// `parent()` verdict reads.
+fn scan_two_layout_project(
+    page_server_src: &str,
+    blog_layout_server_src: &str,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    std::sync::Arc<oxide_fw_router::RouteTree>,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::create_dir_all(root.join("blog")).unwrap();
+    std::fs::write(
+        root.join("layout.tsx"),
+        "export default function L(p) { return p.children }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("layout.server.ts"),
+        "export async function load() { return {}; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("blog/layout.tsx"),
+        "export default function B(p) { return p.children }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("blog/layout.server.ts"), blog_layout_server_src).unwrap();
+    std::fs::write(
+        root.join("blog/page.tsx"),
+        "export default function P() { return null }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("blog/page.server.ts"), page_server_src).unwrap();
+    let tree = std::sync::Arc::new(oxide_fw_router::RouteTree::scan(&root).unwrap());
+    (dir, root, tree)
+}
+
+#[tokio::test]
+async fn load_graph_threads_layout_data_to_a_parent_calling_page() {
+    // §9.2: a page that calls `parent()` reads the innermost layout's
+    // resolved data. The graph threads it through the predecessor slot;
+    // the pin proves the PIPELINE feeds the verdicts (the page
+    // serializes) and the data lands.
+    let (_dir, root, tree) = scan_two_layout_project(
+        "export async function load({ parent }) { return await parent(); }\n",
+        "export async function load({ parent }) { return await parent(); }\n",
+    );
+    let blog_layout = tree
+        .entries
+        .iter()
+        .find(|e| e.id.0 == "routes/blog/layout")
+        .expect("blog layout scanned");
+    assert!(
+        blog_layout.needs_parent,
+        "the blog layout's own verdict is set (it calls parent())"
+    );
+    let probe = std::sync::Arc::new(ParentDataProbe::new());
+    let seen = std::sync::Arc::clone(&probe.seen);
+    let loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> = Some(probe);
+    let dispatch = build_dispatch(
+        tree,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/blog")).await;
+    assert_eq!(resp.status, 200, "matched page renders");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3, "two layouts + the page ran");
+    assert_eq!(
+        seen[0].1,
+        serde_json::Value::Null,
+        "the outer layout is the chain head"
+    );
+    assert_eq!(
+        seen[1].1["route"], "routes/layout",
+        "the blog layout read the outer layout's data"
+    );
+    assert_eq!(
+        seen[2].1["route"], "routes/blog/layout",
+        "the page read the innermost layout's data"
+    );
+}
+
+#[tokio::test]
+async fn independent_layout_loads_overlap_with_the_page_under_the_load_graph() {
+    // §9.2 MUST, generalized by the graph: with no `parent()` anywhere,
+    // BOTH layout loads and the page run concurrently — the pre-A06
+    // pipeline overlapped only the (last-layout, page) pair, capping
+    // peak concurrency at 2 on a two-layout route.
+    let (_dir, root, tree) = scan_two_layout_project(
+        "export async function load() { return {}; }\n",
+        "export async function load() { return {}; }\n",
+    );
+    let probe = std::sync::Arc::new(ParentDataProbe::new());
+    let max_active = std::sync::Arc::clone(&probe.max_active);
+    let loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> = Some(probe);
+    let dispatch = build_dispatch(
+        tree,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/blog")).await;
+    assert_eq!(resp.status, 200, "matched page renders");
+    assert_eq!(
+        max_active.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "two layouts + page overlap — the graph, not the join pair"
+    );
+}
+
 // ---- Wave 3 item 2: prerender error-status carried through L0 seed -----
 //
 // `write_prerender` must return the status the adapter's buffered output
@@ -7393,27 +7575,6 @@ async fn strip_close_and_append_settles_records_settle_stage() {
         names.contains(&"render"),
         "initial stages preserved (merged, not replaced): {names:?}"
     );
-}
-
-// ------------------------------ §20 / O3c: parallel-load savings
-
-#[test]
-fn parallel_load_savings_equals_shorter_side() {
-    // Parallel path: layout took 40ms, page took 15ms. Sequential would
-    // cost 55ms; parallel costs 40ms. Saving = 15ms = min(a, b).
-    assert!((parallel_load_savings_ms(40.0, 15.0) - 15.0).abs() < 0.001);
-    assert!((parallel_load_savings_ms(15.0, 40.0) - 15.0).abs() < 0.001);
-}
-
-#[test]
-fn parallel_load_savings_zero_when_equal_or_sequential() {
-    // Equal durations — nothing saved.
-    assert!((parallel_load_savings_ms(20.0, 20.0) - 20.0).abs() < 0.001);
-    // Sequential caller passes one side as 0 — no saving to record.
-    assert!((parallel_load_savings_ms(20.0, 0.0) - 0.0).abs() < 0.001);
-    assert!((parallel_load_savings_ms(0.0, 20.0) - 0.0).abs() < 0.001);
-    // Never negative even with a clock skew into the past.
-    assert!((parallel_load_savings_ms(-1.0, 20.0) - 0.0).abs() < 0.001);
 }
 
 // ------------------------------ §16.6 / §V2-F14: service worker emitter
