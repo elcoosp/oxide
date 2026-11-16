@@ -253,6 +253,7 @@ oxc_codegen = { version = "0.155.0" }
 # grep for `incremental_write` before believing it again.)
 rolldown = { version = "1.2.15", features = ["experimental"] }
 rolldown_common = { version = "1.2.15" }
+rolldown_utils = { version = "1.2.15" }
 rolldown_plugin = { version = "1.2.15" }
 arcstr = "1"
 lightningcss = { version = "1.0.0-alpha.72", features = ["bundler", "sourcemap"] }
