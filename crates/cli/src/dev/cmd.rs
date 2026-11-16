@@ -565,7 +565,30 @@ pub(crate) async fn cmd_dev(
             }
         }
     }
-    let watcher = oxide_fw_dev::Watcher::with_notify(watch_roots.clone());
+    // V2-E12: the workspace links join the watch set — the linked packages
+    // the app actually imports (by name, from its dependency manifest)
+    // resolve to their REAL trees (`preserveSymlinks: false`), so an edit
+    // to `../packages/ui/src` invalidates the app without watching every
+    // sibling in the monorepo (the coarse SPEC-16 walk above only ever saw
+    // in-project directories). A malformed workspace manifest is a loud
+    // `DEV-WS-001` warn and a roots-only boot — dev keeps working, the
+    // failure is named (the seam's "never silent" contract); an
+    // uninstalled dependency skips with a warn inside the seam itself.
+    let watcher = match oxide_fw_dev::Watcher::with_workspace_links(
+        watch_roots.clone(),
+        &oxide_fw_dev::ManifestWorkspaceLinks,
+        &rootp,
+    ) {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!(
+                code = %e.0.code,
+                msg = %e.0.message,
+                "workspace link discovery failed; watching the app roots only"
+            );
+            oxide_fw_dev::Watcher::with_notify(watch_roots.clone())
+        }
+    };
     let mut seen = std::collections::BTreeSet::new();
     // §1.3 (boot baseline): the on-disk state at boot is NOT a change. Seed
     // the hash set so the first poll tick diffs boot-time file touches
