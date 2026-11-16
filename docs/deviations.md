@@ -4206,8 +4206,12 @@ at HEAD with both recorded substitutions.
 
 **Deltas.**
 - The `route_ctx`-style double resolution inside the build's `phase_plan` (the vendor block resolves inline; the boot entry
-  resolves through the helper) stays — both sides are pure and build-time-only; the recorded PHASE_SUBS 472 shape is untouched.
-  Queueing the vendor block's re-point at `resolve_islands` as micro-debt would cost another sub rewrite of the recorded block.
+  resolves through the helper) was CLOSED by the M1 micro-debt re-point (2026-11-16): the vendor block now resolves through
+  `boot_entry::resolve_islands` (the ONE definition site) and the inline resolution loop is deleted — no duplicate
+  `island_framework` inference remains in the phase body. The recorded PHASE_SUBS 472 replacement carries the re-pointed
+  block (the token-stream delta is the deleted loop + the updated comment); `--phases` stays green. The project-framework
+  derivation (`vendor_framework`) stays a local binding — the boot block's `framework` is scoped inside `boot_chunk_url`'s
+  else branch, and hoisting it would rewrite a recorded region for no behavioral change.
 - The planner's mixed branch keeps its own statement order (the registry `installBootRuntime({ adapters, islands })` before the
   loading map) — the mixed shape has no byte-identity contract; the order pins (`the_loading_map_contract_survives_the_mixed_shape`) hold.
 
@@ -4259,3 +4263,53 @@ spec's Arc sketch targeted the pre-split closure clone that no longer exists; re
 `split_selfcheck.py` green with the five new recorded substitutions; the touched-crate battery (compiler, bundler, server,
 dispatch, router, cache) check+tests green; the CLI compile-verifies via `cargo check -p oxide-fw-cli --all-targets` (V8-linked,
 rides CI) with the nonce-stability pin riding CI's nextest workspace job.
+
+## V2-M1 micro-debt re-point, V2-C09 serve-acceptance, V2-F11 deploy gate + acceptance, V2-R01 drafts (this diff, 2026-11-16)
+
+**M1 — the vendor block's `resolve_islands` re-point.** The recorded micro-debt item (the F01-build-path entry above) is
+closed: `crates/cli/src/build/plan.rs`'s vendor-group block resolves the merged registry through
+`boot_entry::resolve_islands` — the ONE definition site — and the inline `island_framework` loop is DELETED. No duplicate
+resolution logic remains in the phase body. The recorded PHASE_SUBS 472 replacement carries the re-pointed block (the
+token-stream delta is the deleted loop + the updated comment; `--phases` stays green, 2376 lines). The project-framework
+derivation (`vendor_framework`) stays a local binding: the boot block's `framework` is scoped inside `boot_chunk_url`'s
+else branch, and hoisting it would rewrite a recorded region for zero behavioral change.
+
+**C09 — the SEC-08 disable-arm pairing + the wire acceptance.** The serve wire's one landing gap: the CLI adapter maps
+`OXIDE_IMAGE_UNSIGNED` to `Some("")`, but `serve_image_endpoint` required a signature for ANY `Some(secret)` — the
+documented "operator explicitly disables signing" arm made the endpoint STRICTER (a guaranteed-403 dead end). Fixed at
+the ONE definition site: the server's check treats an empty secret exactly like `None`
+(`signing_secret.as_deref().filter(|s| !s.is_empty())`); the adapter needs no change. Pins: the red-first
+`an_empty_signing_secret_answers_unsigned_requests` (server) and
+`the_unsigned_env_disables_the_image_endpoint_signing` (CLI — the mapping + the default build-secret shape). The wire
+acceptance is `tests/image_acceptance.sh`, CI-executed in the jshost-e2e job after the skew step's CLI build: 64
+concurrent requests for ONE variant on a cold cache (`images.maxConcurrency: 64` — the shed ceiling matches the load so
+the single-flight, not the shed, answers the burst), asserting every response 200 with byte-identical bodies and the
+`DirImageCas` holds EXACTLY one entry — the encode counted at the store. DELTA vs the spec text: the load driver is
+node's fetch at `-c 64` (`oha` is not installed on the runner and the acceptance's substance is the concurrency shape +
+the one-encode count, which the CAS entry proves without log parsing); the spec's `oha -c 64` name is the shape, and
+`benchmarks/load.sh`'s oha-with-fallback convention (F19/R03) still applies to the load-bench scripts.
+
+**F11 — the parked-pin gate + the wire acceptance.** The ten object-store `DeployStore` pins are
+`#![cfg(feature = "s3")]` and the default-feature CI jobs never compiled them — the PARKED-TEST rule calls that a
+deferral for in-scope code, so the additive `deploy-s3-feature` CI job (the `search-feature` pattern: checkout, nasm,
+toolchain, rust-cache) enables the gate: `cargo test -p oxide-fw-adapters --features s3` (the network-free
+`file://`/`mem://` pins), `cargo check -p oxide-fw-adapters --features s3 --examples` (the two `s3`-gated walkthrough
+examples), `cargo check -p oxide-fw-cli --features deploy-s3 --all-targets` (the CLI's `s3://`/`r2://` arm behind the
+release-build feature). The wire acceptance is `tests/deploy_acceptance.sh`, CI-executed in the jshost-e2e job: the REAL
+`oxide deploy` over the delta engine + the `DirStore` target — the full deploy's `bytes up` ≈ the dist (a 1 MB pad asset
+dominates), the second deploy after a one-line page change uploads under 5% of the first deploy's bytes (the spec's
+acceptance, parsed from the `deploy ok — … bytes up` line), an unchanged re-run uploads 0, `--rollback` swaps `current`
+back to the previous build id, and an unstamped dist refuses `DEP-BUILDID` (exit non-zero).
+
+**R01 — the conformance drafts.** The §22 suite gained one assertion per newly wired V2 feature whose surface is the
+client runtime: E02 (`parseSearch` through a minimal Standard Schema V1 stub — validate, the default's `corrected`
+redirect, the `OX-SRC-001` refusal with the schema issues verbatim), F01 (the mixed registry `hydrateMixedIslands` over
+the adapter's REAL island SSR markup + a registry-unknown ghost — the named framework hydrates, the unknown marks
+`data-ox-hydrated: error`, never a wrong adapter's hydration), E04 (the `oxide` TT policy's identity fallback + the
+realm-wide `__oxide_tt` handle the deferred swapper reads), F09 (the static matcher's server arithmetic verbatim —
+postings hits, the title-prefix arm, the score sort with the doc-order tiebreak, the limit take, and the post-take tag
+filter the row pins as a parity quirk). 25 → 29 assertions × four adapters, ALL GREEN locally (the four real framework
+SSRs; the run table prints 29 rows). C09 and F11 are server/CLI surfaces — their fixture assertions are the two
+acceptance scripts above. E01's in-place registry lives behind `createHotContext` (not a per-adapter import) — its
+recorded core/worker suites remain its behavior pins. Suite-level typecheck: the additions carry zero `tsc` findings in
+`conformance/suite.ts` under the conformance tsconfig.
