@@ -59,6 +59,7 @@ let opts = BundleOptions {
 #   inline_dynamic_imports: false,
 #   resolve_conditions: None,
 #   virtual_modules: BTreeMap::new(),
+#   vendor_groups: Vec::new(),
 };
 
 let out = RolldownBundler::new(".").bundle(&opts)?;
