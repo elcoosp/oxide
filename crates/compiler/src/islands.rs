@@ -241,7 +241,6 @@ impl IslandBootPlan {
                 let _ = writeln!(out, "  {name:?}: {ident},");
             }
             out.push_str("};\n\n");
-            out.push_str("installBootRuntime();\n");
         }
 
         // §8.4 loading boundaries: a `route directory → loading component`
@@ -265,6 +264,11 @@ impl IslandBootPlan {
         }
 
         if !self.mixed {
+            // The legacy order (§8.4 sequencing): the loading map resolves
+            // before `installBootRuntime()` runs — the byte-identity pin
+            // (`single_framework_boot_entry_is_byte_identical_to_the_legacy_
+            // emission`) holds the contract.
+            out.push_str("installBootRuntime();\n");
             out.push_str(
                 "window.__oxideRegisterAdapter(clientAdapter, async (chunk) => {\n  \
                  return modules[chunk] ?? (await import(chunk));\n});\n",
