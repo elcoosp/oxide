@@ -2,42 +2,6 @@
 
 use crate::*;
 
-/// §V2-F01: the `.oxide/islands.json` tooling payload — every registry
-/// entry resolved through the config crate's inference order (explicit
-/// `framework` → extension → first-line pragma → project framework) and
-/// serialized by the compiler-side boot planner. The file read is
-/// best-effort: an unreadable island file contributes an empty pragma
-/// line, so the inference still answers (the project framework).
-pub(crate) fn islands_json_source(
-    root: &Path,
-    framework: &str,
-    islands: &BTreeMap<String, oxide_fw_config::IslandSpec>,
-) -> String {
-    let mut resolved = BTreeMap::new();
-    for (name, spec) in islands {
-        let src = spec.src();
-        let first_line = std::fs::read(root.join(src))
-            .map(|b| {
-                let text = String::from_utf8_lossy(&b);
-                text.lines().next().unwrap_or("").to_string()
-            })
-            .unwrap_or_default();
-        resolved.insert(
-            name.clone(),
-            oxide_fw_compiler::islands::ResolvedIsland {
-                src: src.to_string(),
-                framework: oxide_fw_config::island_framework(
-                    src,
-                    spec.framework(),
-                    framework,
-                    &first_line,
-                ),
-            },
-        );
-    }
-    oxide_fw_compiler::islands::plan_island_boot(framework, &resolved).islands_json()
-}
-
 pub(crate) fn canonical_route_id(id: &str) -> String {
     id.strip_suffix("/page").unwrap_or(id).to_string()
 }
@@ -216,7 +180,7 @@ pub(crate) async fn build_client_bundle(
         // resolution, so the overlay's facts match what the client hydrates).
         std::fs::write(
             boot_dir.join("islands.json"),
-            islands_json_source(rootp, &framework, &cfg.framework.islands),
+            crate::boot_entry::islands_json_source(rootp, &framework, &cfg.framework.islands),
         )?;
         client_entries.insert("__boot__".to_string(), boot_path);
     }
