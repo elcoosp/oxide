@@ -968,7 +968,7 @@ pub(crate) async fn start_server_inner_full(
         std::sync::Arc::clone(&stream_wiring.store),
         std::time::Duration::from_secs(crate::serve::streams::SWEEP_CADENCE_SECS),
     );
-    let dispatch = build_dispatch_swappable(DispatchArgs {
+    let dispatch = build_dispatch_swappable(DispatchDeps {
         swappable: swappable_tree.clone(),
         metrics: std::sync::Arc::clone(&metrics),
         proxy_rules: proxy_rules.clone(),
@@ -1001,6 +1001,9 @@ pub(crate) async fn start_server_inner_full(
         generations: generations.clone(),
         live: live_state.clone(),
         serving_pools: serving_pools.clone(),
+        flight_map: std::sync::Arc::new(dashmap::DashMap::new()),
+        self_dispatch: std::sync::Arc::new(std::sync::OnceLock::new()),
+        stream_counter: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         streams: Some(std::sync::Arc::clone(&stream_wiring)),
         brownout: brownout_wiring.as_ref().map(std::sync::Arc::clone),
     });
