@@ -390,6 +390,25 @@ pub(crate) async fn start_server_inner_full(
     // the dispatch delegate (per-route labels). Cardinality is bounded by the
     // route pattern (e.g. `/blog/[slug]`), never the resolved URL.
     let metrics = std::sync::Arc::new(oxide_fw_server::Metrics::new());
+    // §V2-B03 item 4: freeze the route labels BEFORE the server starts — a
+    // registered label's `observe` answers through the frozen map with no
+    // lock. The same entry filter and `default_pattern_of` spelling the
+    // dispatch context table builds with (dispatch/entry.rs), so the frozen
+    // labels match what the matcher stage observes.
+    metrics.register_routes(
+        tree.entries
+            .iter()
+            .filter(|e| {
+                !matches!(
+                    e.kind,
+                    oxide_fw_router::RouteKind::Layout
+                        | oxide_fw_router::RouteKind::Middleware
+                        | oxide_fw_router::RouteKind::Error
+                        | oxide_fw_router::RouteKind::Loading
+                )
+            })
+            .map(|e| std::sync::Arc::from(oxide_fw_router::default_pattern_of(e))),
+    );
 
     let assets = load_client_assets(&rootp);
     let image_endpoint = if cfg.images_endpoint.enabled {
