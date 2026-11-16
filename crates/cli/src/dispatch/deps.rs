@@ -94,4 +94,11 @@ pub(crate) struct DispatchDeps {
     /// V2-F07: the per-process stream-id counter the endpoint tee mints
     /// `stream_id(request_id, counter)` values with.
     pub stream_counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// V2-F04: the configured `experiments` (`crates/config`'s
+    /// `ExperimentConfig` rows converted to the engine's shapes at boot —
+    /// the conversion is wiring code, the config crate must not depend on
+    /// dispatch). Empty for the test helper and every experiment-free
+    /// config: the stage short-circuits and every L0 key stays
+    /// byte-identical to the pre-F04 baseline.
+    pub experiments: Vec<oxide_fw_dispatch::experiments::Experiment>,
 }
