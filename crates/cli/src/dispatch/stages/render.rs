@@ -250,6 +250,16 @@ pub(crate) async fn stage_render(
                         _ => oxide_fw_render::hydration_bootstrap(&odf_b64, &route_for_odf, &nonce),
                     }
                 };
+                // §V2-F09: the boot's search-mode flag — the client
+                // matcher (`packages/core/src/client/searchEngine.ts`)
+                // queries `/_oxide/search` when the engine serves. The
+                // script rides the same `</body>` injection as the
+                // bootstrap; unconfigured (`None`, the inert default)
+                // emits nothing and every byte stays pre-F09 identical.
+                let search_flag_tag = match d.search_flag {
+                    Some(mode) => oxide_fw_render::boot_search_flag_script(mode, &nonce),
+                    None => String::new(),
+                };
                 // §7.1 / §9.2: resolved defer() values ride a JSON
                 // script element so the boot module can dispatch
                 // `ox:swap` for each. Serialized through serde_json
@@ -286,7 +296,7 @@ pub(crate) async fn stage_render(
                         // the dev `/@boot/` URL has no digest and
                         // stays byte-identical.
                         let tag = format!(
-                            "{odf_tag}{deferred_tag}{hmr_tag}{}",
+                            "{odf_tag}{deferred_tag}{hmr_tag}{search_flag_tag}{}",
                             boot_script_tag(
                                 url,
                                 &nonce,
@@ -296,7 +306,7 @@ pub(crate) async fn stage_render(
                         oxide_fw_server::inject_before_close(bridged, b"</body>", tag.as_bytes())
                     }
                     None => {
-                        let extra = format!("{odf_tag}{deferred_tag}{hmr_tag}");
+                        let extra = format!("{odf_tag}{deferred_tag}{hmr_tag}{search_flag_tag}");
                         if extra.is_empty() {
                             bridged
                         } else {
