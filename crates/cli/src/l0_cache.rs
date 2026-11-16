@@ -29,7 +29,7 @@
 //! A hit is served only while fresh; SWR / stale serving is a follow-up that
 //! needs the background-revalidation task from §11.3.
 
-use oxide_fw_cache::{CacheHandler, CacheKey, Entry, Layer, Policy};
+use oxide_fw_cache::{CacheHandler, Entry, Policy};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -79,7 +79,14 @@ impl L0Cache {
     /// Build the canonical key for a route + params + Vary dimensions (§11.2).
     /// P-04: hashes borrowed parts directly — no intermediate `String` clones.
     fn key(&self, route: &str, params: &str, vary: &str) -> String {
-        CacheKey::canonical_parts(Layer::L0, route, params, vary, &self.build_id)
+        // V2-B05 integration (this diff): the L0 key adopts the cache crate's
+        // `KeyStr` hash — the first 32 hex chars of the blake3 digest the
+        // canonical spelling hashes — replacing the 64-char canonical string.
+        // Put and get sides share this one builder, so a mixed-format cache
+        // cannot arise at runtime; a stale `dist/server/l0-seed.json` from a
+        // pre-B05 build carries old-format keys and is cleared by a rebuild or
+        // `oxide cache clear` (see docs/deviations.md).
+        oxide_fw_cache::key_of("L0", route, params, vary, &self.build_id).to_string()
     }
 
     /// Look up a fresh cached response for `route`. Returns `None` on a miss
@@ -243,7 +250,10 @@ impl L0Cache {
     /// PERF-04: build the canonical L0 key without an `L0Cache` instance
     /// (the dispatch needs the single-flight key before it has the cache).
     pub fn key_for(route: &str, params: &str, vary: &str, build_id: &str) -> String {
-        CacheKey::canonical_parts(Layer::L0, route, params, vary, build_id)
+        // V2-B05: the same `KeyStr` hash form as [`Self::key`] — the
+        // single-flight key, the PPR shell key and the seed manifest keys all
+        // ride this builder, so every consumer sees the 32-char form.
+        oxide_fw_cache::key_of("L0", route, params, vary, build_id).to_string()
     }
 
     /// Invalidate one route's cached responses by tag (§11.3).
