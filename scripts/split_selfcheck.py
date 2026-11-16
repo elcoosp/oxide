@@ -59,7 +59,19 @@ PHASE_SUBS = {
     # into client_opts) precedes the recorded comment.
     472: (
         '// §15-E: JS-plugin resolveId / load hooks. Build once; both envs share',
-        '    // §V2-F01: the mixed-registry client bundle splits the per-framework\n    // vendors (the rolldown `advancedChunks` groups) so each framework\'s\n    // runtime loads once, on the first island of that framework. Derived\n    // from the same merged registry the boot entry consumed — the same\n    // `island_framework` inference — via the planner\'s `vendor_groups`\n    // (empty for a single-framework build, so the chunk shape stays\n    // byte-identical). The registry call is idempotent (the side-car write\n    // is the same bytes; the summary line rides the boot entry\'s emission).\n    // (the registry call is idempotent — the side-car write is the same\n    // bytes; the summary line rides the boot entry\'s emission)\n    if !islands_for_boot(cfg, tree, rootp, &mut *w)?.is_empty() {\n        let merged_islands = islands_for_boot(cfg, tree, rootp, &mut *w)?;\n        let mut resolved = std::collections::BTreeMap::new();\n        for (name, spec) in &merged_islands {\n            let src = spec.src();\n            let first_line = std::fs::read_to_string(rootp.join(&src))\n                .map(|b| b.lines().next().unwrap_or("").to_string())\n                .unwrap_or_default();\n            resolved.insert(\n                name.clone(),\n                oxide_fw_compiler::islands::ResolvedIsland {\n                    src: src.to_string(),\n                    framework: oxide_fw_config::island_framework(\n                        src,\n                        spec.framework(),\n                        &framework,\n                        &first_line,\n                    ),\n                },\n            );\n        }\n        client_opts.vendor_groups = oxide_fw_compiler::islands::plan_island_boot(&framework, &resolved)\n            .vendor_groups()\n            .into_iter()\n            .map(|g| oxide_fw_bundler::VendorGroup { name: g.name, test: g.test })\n            .collect();\n    }\n    // §15-E: JS-plugin resolveId / load hooks. Build once; both envs share',
+        '    // §V2-F01: the mixed-registry client bundle splits the per-framework\n    // vendors (the rolldown `advancedChunks` groups) so each framework\'s\n    // runtime loads once, on the first island of that framework. Derived\n    // from the same merged registry the boot entry consumed — the same\n    // `island_framework` inference — via the planner\'s `vendor_groups`\n    // (empty for a single-framework build, so the chunk shape stays\n    // byte-identical). The registry call is idempotent (the side-car write\n    // is the same bytes; the summary line rides the boot entry\'s emission).\n    // (the registry call is idempotent — the side-car write is the same\n    // bytes; the summary line rides the boot entry\'s emission)\n    let vendor_framework = cfg\n        .framework\n        .adapter\n        .clone()\n        .or_else(|| cfg.framework.name.clone())\n        .unwrap_or_else(|| "react".to_string());\n    if !islands_for_boot(cfg, tree, rootp, &mut *w)?.is_empty() {\n        let merged_islands = islands_for_boot(cfg, tree, rootp, &mut *w)?;\n        let mut resolved = std::collections::BTreeMap::new();\n        for (name, spec) in &merged_islands {\n            let src = spec.src();\n            let first_line = std::fs::read_to_string(rootp.join(src))\n                .map(|b| b.lines().next().unwrap_or("").to_string())\n                .unwrap_or_default();\n            resolved.insert(\n                name.clone(),\n                oxide_fw_compiler::islands::ResolvedIsland {\n                    src: src.to_string(),\n                    framework: oxide_fw_config::island_framework(\n                        src,\n                        spec.framework(),\n                        &vendor_framework,\n                        &first_line,\n                    ),\n                },\n            );\n        }\n        client_opts.vendor_groups =\n            oxide_fw_compiler::islands::plan_island_boot(&vendor_framework, &resolved)\n                .vendor_groups()\n                .into_iter()\n                .map(|g| oxide_fw_bundler::VendorGroup {\n                    name: g.name,\n                    test: g.test,\n                })\n                .collect();\n    }\n    // §15-E: JS-plugin resolveId / load hooks. Build once; both envs share',
+    ),
+    218: (
+        '            std::fs::write(&boot_path, boot_src)?;',
+        '            std::fs::write(&boot_path, boot_src)?;\n            crate::boot_entry::write_islands_json(rootp, &framework, cfg, tree, &mut *w)?;',
+    ),
+    1182: (
+        '                    route_id.starts_with(&format!("{base}/"))',
+        '                    // §V2-B02: the RAW id — the table\'s prefix rule (see the\n                    // layout-chain note above): the canonical id made a\n                    // group-root error boundary unreachable for the group\'s\n                    // own index page.\n                    e.id.0.starts_with(&format!("{base}/"))',
+    ),
+    1133: (
+        '                    route_id.starts_with(&format!("{layout_base}/"))',
+        '                    // §V2-B02: the RAW id — the same prefix rule the\n                    // dispatch `RouteContextTable` builds its chains with\n                    // (the matcher-oracle). The CANONICAL id (the `/page`\n                    // suffix stripped) made a group\'s own index page\n                    // canonical-equal to the layout base and miss the\n                    // group layout the table finds.\n                    e.id.0.starts_with(&format!("{layout_base}/"))',
     ),
     37: ('return Ok(0);', 'return Ok(None);'),
     170: ('use oxide_fw_bundler::Bundler as _;', None),
@@ -491,6 +503,36 @@ def stages_check():
                     "    let route_ctx = cx.route_ctx.clone();",
                 ]),
             ),
+            # V2-A02 helper dedup (this diff): the stage calls the dispatch
+            # crate's url module — the ONE definition site; the CLI's
+            # duplicate copy (serve/stream.rs) is deleted with this diff.
+            (
+                re.compile(r"action_from_query\(&req\.url\)"),
+                "oxide_fw_dispatch::url::action_from_query(&req.url)",
+            ),
+            # §V2-B03 item 1 (this diff): the params map only POST actions
+            # consume is built for the actions that exist — a GET (the hot
+            # path) builds none.
+            (
+                re.compile(
+                    r"let action_params: serde_json::Map<String, serde_json::Value> = params"
+                    r"\s*\.iter\(\)"
+                    r"\s*\.map\(\|\(k, v\)\| \(k\.clone\(\), serde_json::Value::String\(v\.clone\(\)\)\)\)"
+                    r"\s*\.collect\(\);"
+                ),
+                NL.join([
+                    "    // §V2-B03 item 1: the params map only POST actions consume is built",
+                    "    // for the actions that exist — a GET (the hot path) builds none.",
+                    "    let action_params: serde_json::Map<String, serde_json::Value> = if action_name.is_some() {",
+                    "        params",
+                    "            .iter()",
+                    "            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))",
+                    "            .collect()",
+                    "    } else {",
+                    "        serde_json::Map::new()",
+                    "    };",
+                ]),
+            ),
         ],
         # V2-F09 adoption (this diff), recorded substitution: the render
         # stage injects the boot's search-mode flag script — the client
@@ -538,6 +580,37 @@ def stages_check():
             (
                 re.compile(r'format!\("\{odf_tag\}\{deferred_tag\}\{hmr_tag\}"\)'),
                 'format!("{odf_tag}{deferred_tag}{hmr_tag}{search_flag_tag}")',
+            ),
+            # §V2-B03 item 3 / PERF-03 (this diff): the render stage reused
+            # the route stage's once-hashed nonce (`cx.request_nonce`)
+            # instead of re-hashing the request id at the two injection
+            # sites — the streamed head's nonce and the L0 store's nonce
+            # are the same bytes (§17.1 strict-dynamic). The rule covers
+            # both occurrences (re.sub replaces every match).
+            (
+                re.compile(
+                    r"let nonce = oxide_fw_server::nonce_for\(&req_owned\.request_id\);"
+                ),
+                NL.join([
+                    "// §V2-B03 item 3 (PERF-03): the route stage hashed the nonce once",
+                    "// per request into `cx.request_nonce`; re-deriving it re-hashed the",
+                    "// same request id — reuse the carried one.",
+                    "let nonce = request_nonce.clone();",
+                ]),
+            ),
+        ],
+        # V2-A02 helper dedup (this diff): the action stage parses the form
+        # body through the dispatch crate's url module — the ONE definition
+        # site; the CLI's duplicate copy (serve/stream.rs) is deleted with
+        # this diff.
+        'action': [
+            (
+                re.compile(r"let entries = parse_form_urlencoded\(&req_owned\.body\);"),
+                NL.join([
+                    "// §V2-A02: the ONE definition site is the dispatch crate's url",
+                    "// module (the CLI's duplicate copy is deleted with this diff).",
+                    "let entries = oxide_fw_dispatch::url::parse_form_urlencoded(&req_owned.body);",
+                ]),
             ),
         ],
     }
