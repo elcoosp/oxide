@@ -3005,7 +3005,11 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
         }
     };
 
-    if let Some(secret) = endpoint.signing_secret.as_deref() {
+    // SEC-08: a secret is signing ENABLED; an empty one (the CLI's
+    // `OXIDE_IMAGE_UNSIGNED` disable arm maps to `Some("")`) is signing
+    // DISABLED — the request reaches the transform unsigned instead of
+    // hitting a guaranteed-403 dead end.
+    if let Some(secret) = endpoint.signing_secret.as_deref().filter(|s| !s.is_empty()) {
         let Some(sig) = parsed.signature.as_deref() else {
             return NativePrefix::Raw(
                 OxideResponse::new(403, "image request not signed")
@@ -6984,6 +6988,50 @@ mod image_endpoint_tests {
         assert!(
             String::from_utf8_lossy(&resp.body).contains("encode exploded"),
             "the runner's error surfaces: {resp:?}"
+        );
+    }
+
+    /// SEC-08: an EMPTY signing secret is signing DISABLED — the CLI's
+    /// `OXIDE_IMAGE_UNSIGNED` maps to `Some("")`, and the check treats an
+    /// empty secret exactly like `None`: an unsigned request reaches the
+    /// transform instead of a guaranteed-403 dead end (the documented
+    /// "operator explicitly disables signing" behavior, pinned on the
+    /// server side where the check lives).
+    #[tokio::test]
+    async fn an_empty_signing_secret_answers_unsigned_requests() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(CountingBackend {
+            calls: Arc::clone(&calls),
+            concurrency_seen: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+            placeholder: None,
+        });
+        let (_dir, ep) = endpoint_with(backend, 0, 8192);
+        let ep = ImageEndpoint {
+            signing_secret: Some(String::new()),
+            ..ep
+        };
+        match serve_image_endpoint(Some(&ep), "/_oxide/image?url=/a.png&w=400&format=png") {
+            NativePrefix::Raw(r) => {
+                assert_ne!(
+                    r.status,
+                    403,
+                    "an empty secret must not demand a signature: {}",
+                    String::from_utf8_lossy(&r.body)
+                );
+                assert_eq!(
+                    r.status,
+                    200,
+                    "the unsigned request reached the transform: {}",
+                    String::from_utf8_lossy(&r.body)
+                );
+            }
+            _ => panic!("expected a Raw response for the unsigned request"),
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the transform ran exactly once"
         );
     }
 
