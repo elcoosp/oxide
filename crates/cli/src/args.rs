@@ -321,6 +321,25 @@ pub enum Command {
     /// provenance, its ed25519 signature (with `--pubkey`) and every
     /// subject digest against the dist on disk. `--rebuild` re-runs the
     /// build in a scratch copy and compares the dist digests.
+    /// Deploy the last build's `dist/` to a target (V2-F11): upload only
+    /// what changed, swap the `current` pointer atomically. Targets:
+    /// `dir:/path` (every build), `s3://bucket/prefix` / `r2://...` (S3
+    /// API; release builds with the `deploy-s3` feature).
+    Deploy {
+        /// The deploy target.
+        target: String,
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// Age off the store's pending deletions (`deploy.skewWindow`) and
+        /// delete the superseded releases (the pointer's release is never
+        /// pruned — the rollback-safety rule).
+        #[arg(long)]
+        prune: bool,
+        /// Swap the pointer back to the previous build (the one-write
+        /// rollback).
+        #[arg(long)]
+        rollback: bool,
+    },
     Verify {
         /// Project directory (default: cwd).
         #[arg(long, default_value = ".")]
@@ -427,7 +446,8 @@ impl Command {
             | Command::Render { root, .. }
             | Command::Perf { root, .. }
             | Command::Docs { root, .. }
-            | Command::Verify { root, .. } => root.as_str(),
+            | Command::Verify { root, .. }
+            | Command::Deploy { root, .. } => root.as_str(),
             Command::Schema => return None,
         })
     }
@@ -620,6 +640,12 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             pubkey,
             rebuild,
         } => cmd_verify(&root, dist.as_deref(), pubkey.as_deref(), rebuild, w).await,
+        Command::Deploy {
+            target,
+            root,
+            prune,
+            rollback,
+        } => cmd_deploy(&target, &root, prune, rollback, w),
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
