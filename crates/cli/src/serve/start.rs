@@ -1009,6 +1009,14 @@ pub(crate) async fn start_server_inner_full(
         // V2-F04: the configured experiments, converted to the engine's
         // shapes at boot (the field-by-field wiring mapping).
         experiments: crate::dispatch::stages::experiments_of_config(&cfg.experiments),
+        // V2-F09: the boot's search mode — the flag rides the render
+        // stage's hydration injection when the engine serves; unconfigured
+        // (or a build without the `search` feature) emits nothing, so the
+        // client matcher keeps its static-export fallback.
+        #[cfg(feature = "search")]
+        search_flag: search_endpoint.as_ref().map(|_| "server" as &'static str),
+        #[cfg(not(feature = "search"))]
+        search_flag: None,
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
