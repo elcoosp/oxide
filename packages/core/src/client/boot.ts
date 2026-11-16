@@ -16,6 +16,10 @@ import { type MixedIslandRegistry, decodeOdf } from './odf-decode.ts'
 import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
+// §V2-E04: the boot defines the realm's Trusted Types policy once — the
+// side-effect import creates the `oxide` policy and registers
+// `globalThis.__oxide_tt` before any sink runs.
+import './tt.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
 import { connectHmr, scheduleStashRestore } from './hmr.ts'
 import { startReplay } from './replay.ts'
