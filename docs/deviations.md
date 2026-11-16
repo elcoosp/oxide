@@ -102,12 +102,17 @@ reference host, CONVENTIONS §8) — this sandbox has no V8 toolchain budget,
 so the following integration points are **deliberately deferred** and must
 land with the A01/A02 (cli split + `oxide-dispatch` crate) milestone:
 
-1. **`match_ref` consumers (B02).** The CLI dispatch path still calls
-   `match_path` (which now internally uses the candidate index, so it is
-   already faster); switching the dispatch closure to `match_ref` +
+1. **`match_ref` consumers (B02).** *(CLOSED since — 2026-11-16: the
+   dispatch match sites go through the unified `MatchedView` seam — see
+   "V2-B01 + B02 unified match view adoption" below.)* The CLI dispatch path
+   still calls `match_path` (which now internally uses the candidate index,
+   so it is already faster); switching the dispatch closure to `match_ref` +
    `RouteContextTable::get` needs the `DispatchDeps` refactor (B01's
    "Integration" step in spec V2).
-2. **`RouteContextTable` at boot (B01).** Built and tested in
+2. **`RouteContextTable` at boot (B01).** *(CLOSED since — 2026-11-16: the
+   table rides the `SwappableRouteTree` generation, rebuilt on every dev
+   rescan — see the adoption entry below; the build-time prerender scans
+   remain a queued micro-follow-up.)* Built and tested in
    `crates/router/src/context.rs` (oracle-verified against
    `matcher::layout_chain`); `start_server_inner_full` does not construct it
    yet. The acceptance "rg 'for candidate in &tree.entries' crates/cli
@@ -184,6 +189,8 @@ helpers to `oxide_fw_dispatch::url::*` in the same commit series.
 
 ## V2-A06 parallel load graph — deferred CLI adoption, pedantic adoption scope (2026-11-08)
 
+*(Status: CLOSED since — the CLI adoption landed 2026-11-16, see "V2-A05 + A06 CLI stage adoption" below.)*
+
 The V2-A06 milestone landed both spec steps V8-free (token-exact
 `needs_parent` for pages AND layouts in `oxide-fw-router`; the
 `run_load_graph` substrate in `oxide-fw-dispatch::loads`). What is
@@ -220,6 +227,8 @@ sequential loop in favor of `run_load_graph`, adopts the layout verdicts,
 and runs the remaining-crate pedantic hygiene pass in the same series.
 
 ## V2-A05 middleware chain + unified locals — deferred CLI adoption (2026-11-08)
+
+*(Status: the chain half is CLOSED since — `stage_middleware` walks the chain through the substrate since 2026-11-16, see "V2-A05 + A06 CLI stage adoption" below; the `RequestLocals`-in-`stage_prelude` half remains queued.)*
 
 The V2-A05 milestone landed the spec's step 1 complete and V8-free:
 `oxide-fw-dispatch::chain` (`run_chain`, the §8.5 chain runner with the
@@ -260,6 +269,151 @@ What is deliberately deferred, and why:
 with `run_chain`, builds `RequestLocals` in `stage_prelude`, and deletes
 the closure's ad-hoc locals special-casing in the same series.
 
+## V2-A05 + A06 CLI stage adoption — the stage-tree wiring (2026-11-16)
+
+The A01 phase-3 stage tree made the CLI dispatch closure compilable in this
+sandbox (`cargo check --all-targets` links no binaries), so the two deferred
+substrate adoptions landed as the M1 milestone:
+
+1. **`stage_middleware` walks the chain through the substrate.** The ~200-line
+   inline dispatcher loop became
+   `oxide_fw_dispatch::chain::run_chain(..)` over `cx.middleware_module_paths`
+   (the P-06 chain, unchanged), with `ChainRequest` carrying the request-shaped
+   fields and the stage keeping what the substrate leaves to the caller: the
+   §16.6 session decode into the initial locals, the B-22 resume marker
+   handling (the substrate filters a marker naming an absent layer), the
+   response mapping for `ChainOutcome::Respond` (location header, the B-05
+   short-circuit session write-back), the §8.5 rewrite re-dispatch through
+   `self_dispatch` with the hop bump, the error envelope, the post-chain
+   B-05 write-back and the F15 record capture (shared `finish_middleware_stage`
+   postlude so the three paths cannot drift). Two deliberate deltas, both
+   substrate-authoritative: a `{ redirect: …, short: false }` answer now stops
+   the chain and is honored (the spec's `redirect_stops_chain`; the old loop
+   ignored it unless `short` rode along), and when `self_dispatch` is missing
+   (unreachable in production — the wrapper publishes before the first
+   request) the rewrite target is dropped and the accumulated state serves,
+   instead of the old code silently running the remaining layers.
+
+2. **`stage_loaders` runs the §9.2 load graph.** The sequential layout loop
+   and the (last-layout, page) `tokio::join!` pair became ONE
+   `run_load_graph_outcomes` call: a `LoadNode` per layout with its OWN
+   scanner verdict (`LayoutLoadSpec` carries `needs_parent` from the A06
+   step-1 token-exact scan — a layout that calls `parent()` serializes behind
+   its predecessor, one that does not runs concurrently), plus the page node
+   when the route has a server module. The page node runs through the
+   runner's streaming entry (B2 settle streaming preserved — the graph's new
+   `streaming` index set hands the receiver back via `GraphOutcomes`);
+   `GraphOutcomes` also carries the per-node elapsed column (the node's own
+   runner call, parent wait excluded) and the failing node's index + full
+   diagnostic (`LoadResult::Failed { index, code, message }` — the CLI keeps
+   its layout-vs-page error bodies and the real diagnostic code in the log).
+   Side effects accumulate outer-to-inner in input order and the page
+   OVERWRITES the accumulated cookies/headers — the preexisting overwrite
+   semantics, byte-identical. The waterfall's `overlap-saved` mark
+   generalizes from `min(layout, page)` to `sum(elapsed) − wall` (for the
+   pre-A06 two-node join the two formulas agree exactly); the superseded
+   `parallel_load_savings_ms` helper and its pins are deleted with it. The
+   /__data path keeps its sequential chain and reads only the spec's
+   id/path pair (parallelizing it is a follow-up).
+
+**Test placement (the V2.0 item-3 rule):** the substrate deltas are pinned
+V8-free in `crates/dispatch/tests/loads_tdd.rs` (12 → 17 pins: the settle
+receiver by index, streaming+parent composition, the elapsed column in input
+order, outcomes-complete-on-short-circuit, the failed index/code, the
+delegation) and ran green here; the pipeline pins
+(`load_graph_threads_layout_data_to_a_parent_calling_page`,
+`independent_layout_loads_overlap_with_the_page_under_the_load_graph` — the
+two-layout three-way overlap the join pair could not express) live in
+`crates/cli/src/tests.rs`, compile-verified locally and riding the CI
+`cargo nextest run --workspace` job (the cli crate is V8-linked). The
+pre-existing pins — `layout_and_page_overlap_*`, `middleware_chain_runs_*`,
+`middleware_rewrite_does_not_rerun_outer_layers` — stay byte-identical and
+pin the adoption's behavior contract.
+
+**Gate-script drift fixed (additive refinements):** `split_selfcheck.py`
+was broken at HEAD twice over — `stages_check` read
+`HEAD:crates/cli/src/dispatch/entry.rs`, which the phase-3 runner commit
+(2a77c967) had already reduced to the 244-line stage runner, so the recorded
+SPANS (against the 2,836-line pre-split closure) IndexError'd; and
+`phases_check` read `HEAD:crates/cli/src/build/cmd.rs`, which the phase-2
+orchestrator commit (d4400e5e) had already reduced to 41 lines, failing the
+recorded PHASE_SUBS asserts. Both now pin the last revision where the
+pre-split text still lived (`2e0a13bc` for stages, `aa0159ac` for phases) —
+the proofs are GREEN again (52,183 stage tokens and 2,335 phase lines vs
+HEAD, zero diffs). The M1 adoption itself is recorded the established way:
+`STAGE_ADOPTED` marker-checks for `middleware`/`loaders` (require the
+substrate call, absent the superseded loops) and a recorded orig-side
+substitution for `stage_route`'s `LayoutLoadSpec` verdict carry — the other
+eight stages stay token-checked verbatim.
+
+## V2-B01 + B02 unified match view adoption — the dispatch match path (2026-11-16)
+
+The A01 phase-3 seam made both Wave-B integration points contained; they
+landed as the M2 milestone:
+
+1. **`RouteContextTable` at boot (B01).** The table rides the tree
+   generation: `SwappableRouteTree` builds it in `new` (`build_with_default_pattern`
+   — the crate-default pattern function matches the CLI's `pattern_of`
+   exactly), rebuilds it in `store` (a dev rescan never serves stale
+   per-route answers), and `load_pair` hands the dispatch the tree and its
+   table under ONE read guard — a swap between the two loads cannot mix
+   generations, so a matched route id is always a table hit. The prelude
+   stores the pair on the request context; `stage_match` resolves
+   `route_ctx` (matched id → `table.get`, unmatched → `table.unmatched`)
+   and the metrics label becomes the precomputed `rc.pattern` (the
+   per-request `pattern_of` walk stays only as the degenerate fallback).
+   `stage_route` reads every chain answer from the context: the middleware
+   chain (`rc.middleware_chain`, routes-root joined), the not-found
+   route + chain (`table.unmatched()`), the innermost error boundary
+   (`rc.error_route`), the layout chain (`rc.layout_chain`), and the layout
+   load specs (`rc.layout_loads` — the A06 `parent()` verdict rides the
+   same row, so the per-layout `is_file()` **stat per request is gone**;
+   the table is flag-driven on `has_server_module`). The tree's P-06
+   indexes stay as the degenerate fallbacks on the `None` arms (a matched
+   route always hits; the fallbacks cover an unmatched URL on a tree with
+   no not-found entry, where the old code answered the root chain).
+
+2. **The unified match view (B02).** `crates/router/src/view.rs`:
+   `MatchedView` — the one seam over `MatchRef` (borrowed entry) and
+   `ArchivedMatchRef` (index into the mmap, per the P-01 liveness
+   deviation) — with in-place accessors (`route_id`, `score`, `params`,
+   `is_live_route`, `layout_chain`) and `into_match_result` (the
+   byte-identical owned shape `match_path` returns). Adoption: `stage_match`
+   matches through the seam on both trees (the candidate index hot path,
+   owned result only at the end) and the prelude's F05 live gate reads
+   `is_live_route` with NO materialization (it used to build a full owned
+   `MatchResult` — entry clone + params map — to answer
+   `route.live.is_some()`).
+
+**Deliberately queued (recorded honestly):** the build-time prerender scans
+(`build/prerender.rs` — the layout-chain/layout-modules/error finds) are
+per-route-per-BUILD, not the per-request walk the B01 evidence targets;
+adopting them there needs the group-route divergence resolved first (the
+scan matches wraps against the CANONICAL id, the table's prefix walk uses
+the raw id — the table is the matcher-oracle, so adopting it CHANGES
+prerender layout discovery for group routes and with it the A01 Step-0
+build digests). Queued as the follow-up with the digest re-measure.
+
+**Test placement:** the view is pinned V8-free in `view.rs` (4 tests:
+live-arm oracle equality over 8 paths incl. catch-all/param/escaped shapes,
+archived-arm oracle equality over the same paths through a real archived
+mmap, the live-field read on both arms, params parity incl. the owned
+catch-all join) — all green here; the router crate goes 79 → 83 tests. The
+pipeline pins ride the CLI's CI job (V8-linked): the existing
+`middleware_*`/`layout_and_page_*` pins keep the behavior contract, and the
+two new M1 pins exercise the graph through the table-sourced verdicts.
+## V2-E12 workspace links — dev-boot adoption (2026-11-16)
+
+`crates/cli/src/dev/cmd.rs`'s watch-set boot replaces `Watcher::with_notify(roots)`
+with `Watcher::with_workspace_links(roots, &ManifestWorkspaceLinks, &rootp)` — the
+linked packages the app imports resolve to their real trees and join the watch
+set. Deliberate delta: a malformed workspace manifest is a LOUD `DEV-WS-001`
+warn + roots-only boot rather than a failed dev boot — the seam's "never a
+silent roots-only boot" contract is met by naming the failure; dev keeps
+working. The seam's own pins (`crates/dev/tests/workspace_tdd.rs`) ran green
+in-crate; the boot call-site is compile-verified (V8-linked) and rides the CI
+nextest job. The remaining E12 half (config-side workspace declarations, the
+`config` crate surface) stays queued.
 ## V2-F04 experiments substrate — spec pseudocode deltas and deferred wiring
 
 **Status.** Substrate landed (`crates/dispatch/src/experiments.rs`,
