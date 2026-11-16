@@ -282,15 +282,21 @@ pub(crate) async fn stage_route(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     // POST with a named action on a route that has a server module is
     // eligible; everything else falls through to the loader/render path.
     let action_name: Option<String> = if req.method.eq_ignore_ascii_case("POST") {
-        action_from_query(&req.url)
+        oxide_fw_dispatch::url::action_from_query(&req.url)
     } else {
         None
     };
     let action_dispatcher = actions_for_dispatch.clone();
-    let action_params: serde_json::Map<String, serde_json::Value> = params
-        .iter()
-        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-        .collect();
+    // §V2-B03 item 1: the params map only POST actions consume is built
+    // for the actions that exist — a GET (the hot path) builds none.
+    let action_params: serde_json::Map<String, serde_json::Value> = if action_name.is_some() {
+        params
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect()
+    } else {
+        serde_json::Map::new()
+    };
     let action_route = route_id_for_render.clone().unwrap_or_default();
 
     let page_renderer = page_renderer.clone();
