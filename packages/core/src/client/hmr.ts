@@ -28,6 +28,7 @@
 // it and the config loader can evaluate it in the Node worker.
 
 import { decodeOdf } from './odf-decode.ts'
+import { tt } from './tt.ts'
 
 export interface HmrMessage {
   type: string
@@ -306,7 +307,9 @@ export function showOverlay(diag: { code?: string; message?: string; fix?: strin
   const capturedEl = el
   const code = diag.code ?? 'ERROR'
   const msg = diag.message ?? ''
-  el.innerHTML = ''
+  // §V2-E04: the overlay's one innerHTML sink routes through the realm's
+  // `oxide` policy (clearing is still a sink assignment).
+  el.innerHTML = tt.createHTML('')
   const head = doc.createElement('div')
   head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'
   const title = doc.createElement('strong')
