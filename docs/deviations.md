@@ -3871,3 +3871,35 @@ phase-1 selfcheck now carries an explicit `EXEMPT` list for the four items this 
 deliberately edited (`StartedServer`, `build_dispatch_swappable`,
 `start_server_inner_full`, `cmd_serve`) — presence and single-copy still asserted for
 them, byte-equality-to-HEAD waived, the other 236 moved items still verbatim.
+
+## V2-B05/B08 CLI integration — deltas (2026-11-16)
+
+**B05 `KeyStr` in `L0Cache::key` (closed this diff).** The CLI's L0 key
+builders (`key`/`key_for`/the test `key_of`) adopt `oxide_fw_cache::key_of`
+— the 32-hex-char blake3 prefix the cache crate's `KeyStr` carries — instead
+of the 64-char `CacheKey::canonical_parts` spelling. Put and get sides share
+the one builder, so no mixed-format cache can arise at runtime; a stale
+`dist/server/l0-seed.json` from a pre-B05 build holds old-format keys and is
+cleared by a rebuild or `oxide cache clear` (the L0 tier is boot-seeded from
+that manifest, never persisted independently). The deviation row's "keys
+change length" note is this entry.
+
+**B08 `NonceSplicer` at the CLI splice sites (closed this diff).** The
+prerender pass's four whole-document `str::replace` calls (three
+`html.replace(&nonce, NONCE_SENTINEL)` seed splices + the reuse path's
+`saved.replace(&old_nonce, &nonce)`) go through
+`oxide_fw_render::splice::NonceSplicer` driven single-shot
+(`build/splice_nonce.rs`). The needle is ASCII hex and the replacement is the
+ASCII sentinel, so a match can never split a multi-byte sequence and the
+output is always valid UTF-8. The B08 dhat <1.1× allocation acceptance rides
+the CLI CI job (V8-linked; the three equivalence/boundary pins compile-verify
+here and run under the `nextest` workspace job).
+
+**B01/B02 remain deliberately queued.** `RouteTree::match_ref` /
+`ArchivedTree::match_ref` return structurally different views (`&RouteEntry`
+vs archive index), so the dispatch switch needs a unified match view over
+`RequestCtx.matched` plus a `RouteContextTable` built in
+`start_server_inner_full`. The phase-3 `DispatchDeps`/`RequestCtx`/stage seam
+this diff landed makes that a contained follow-up; deferring keeps this
+milestone's hot-path diff purely structural (proven verbatim by
+`split_selfcheck.py --stages`).
