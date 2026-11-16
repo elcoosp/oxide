@@ -218,7 +218,10 @@ pub(crate) async fn stage_render(
                 // `finish_response`; we compute the same value here
                 // from the request id. Both the deferred script and
                 // (when present) the boot module share it.
-                let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
+                // §V2-B03 item 3 (PERF-03): the route stage hashed the nonce once
+                // per request into `cx.request_nonce`; re-deriving it re-hashed the
+                // same request id — reuse the carried one.
+                let nonce = request_nonce.clone();
                 // PERF-01 / §8.4: the SAME `window.__oxide` ODF
                 // payload prerendered pages embed, injected into
                 // the live streamed shell (the sliding-window
@@ -429,7 +432,10 @@ pub(crate) async fn stage_render(
                             && !middleware_sets_cookie
                         && let Some(cache) = l0.as_ref()
                 {
-                    let nonce = oxide_fw_server::nonce_for(&req_owned.request_id);
+                    // §V2-B03 item 3 (PERF-03): the route stage hashed the nonce once
+                    // per request into `cx.request_nonce`; re-deriving it re-hashed the
+                    // same request id — reuse the carried one.
+                    let nonce = request_nonce.clone();
                     let cache = std::sync::Arc::clone(cache);
                     let l0_route = l0_route.clone();
                     let l0_path = l0_path.clone();
