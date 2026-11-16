@@ -198,7 +198,7 @@ pub(crate) async fn stage_route(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     // P-06 → V2-B01: not-found route + layout chain from the table (the
     // first `NotFound` entry's precomputed context, same source the
     // dispatch answers use); the tree's index stays as the fallback.
-    let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) = match cx
+    let (unmatched_route_id, unmatched_layout_ids): (Option<String>, Vec<String>) = cx
         .ctx_table
         .as_ref()
         .and_then(|t| t.unmatched())
@@ -211,10 +211,8 @@ pub(crate) async fn stage_route(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
         .or_else(|| {
             tree.not_found_route()
                 .map(|(id, chain)| (Some(id), chain.into_iter().map(|r| r.0).collect()))
-        }) {
-        Some(pair) => pair,
-        None => (None, Vec::new()),
-    };
+        })
+        .unwrap_or_default();
 
     // §10.2 step 5: resolve the NEAREST ancestor `error.tsx` for the
     // matched route (innermost boundary wins — a `routes/blog/error`
