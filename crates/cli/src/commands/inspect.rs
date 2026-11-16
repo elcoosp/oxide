@@ -635,6 +635,49 @@ pub(crate) async fn cmd_why_route(
     };
     let mode = oxide_fw_compiler::infer_render_mode(&source, &display_path);
     outln!(w, "route {route_id} — mode: {}", mode.mode);
+    // V2-F04 (§15.4): the L0-key experiment dimension. An experiment
+    // evaluated natively becomes a `|exp:` dimension on the L0 key, so a
+    // personalized route stays cacheable per cohort. The assignments are
+    // per identity, so the printed dimension is the shape the key carries
+    // when a request to this route lands in a cohort.
+    let route_url = format!(
+        "/{}",
+        route_id
+            .strip_prefix("routes/")
+            .unwrap_or(route_id)
+            .strip_suffix("/page")
+            .unwrap_or(route_id.strip_prefix("routes/").unwrap_or(route_id))
+    );
+    let eligible: Vec<&oxide_fw_config::ExperimentConfig> = cfg
+        .experiments
+        .iter()
+        .filter(|e| e.routes.is_empty() || e.routes.iter().any(|r| route_url.starts_with(r)))
+        .collect();
+    if !eligible.is_empty() {
+        outln!(
+            w,
+            "l0 key experiment dimension: |exp:<id>=<variant> — cohorts get separate entries"
+        );
+        for e in eligible {
+            let sticky = match &e.sticky {
+                oxide_fw_config::StickyConfig::Cookie { cookie_name } => {
+                    format!("cookie `{cookie_name}` (minted when absent)")
+                }
+                oxide_fw_config::StickyConfig::Header { header_name } => {
+                    format!("header `{header_name}`")
+                }
+                oxide_fw_config::StickyConfig::IpHash => "client ip (hashed bucket)".to_string(),
+            };
+            outln!(
+                w,
+                "  experiment {} — traffic {}%, sticky: {}, variants: [{}]",
+                e.id,
+                e.traffic,
+                sticky,
+                e.variants.join(", ")
+            );
+        }
+    }
     let reasons = oxide_fw_compiler::infer_reasons(&source, &display_path);
     tracing::debug!(
         route = %route_id,
