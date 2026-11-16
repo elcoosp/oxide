@@ -4029,6 +4029,156 @@ fn loading_map_keys_preserve_dynamic_tokens() {
     assert!(out.contains("\"/\""), "root loading key is /: {out}");
 }
 
+#[test]
+fn build_boot_entry_delegates_to_the_compiler_planner() {
+    // §V2-F01 M1: the CLI generator is the planner's seam — its output is
+    // byte-identical to `boot_entry_source` over the same resolved set
+    // (the registry resolution lives in ONE place: `resolve_islands`).
+    use oxide_fw_compiler::islands::{ResolvedIsland, plan_island_boot};
+    let mut islands = std::collections::BTreeMap::new();
+    islands.insert(
+        "Counter".to_string(),
+        oxide_fw_config::IslandSpec::Plain("src/islands/counter.tsx".to_string()),
+    );
+    islands.insert(
+        "Price".to_string(),
+        oxide_fw_config::IslandSpec::Plain("src/islands/Price.vue".to_string()),
+    );
+    let out = crate::generate_island_boot_entry(
+        std::path::Path::new("/proj"),
+        "react",
+        &islands,
+        &std::collections::BTreeMap::new(),
+        false,
+    );
+    // The extension inference: `.vue` → vue; a `.tsx` island falls to the
+    // project framework. The direct plan mirrors exactly that resolution.
+    let mut resolved = std::collections::BTreeMap::new();
+    resolved.insert(
+        "Counter".to_string(),
+        ResolvedIsland {
+            src: "src/islands/counter.tsx".to_string(),
+            framework: "react".to_string(),
+        },
+    );
+    resolved.insert(
+        "Price".to_string(),
+        ResolvedIsland {
+            src: "src/islands/Price.vue".to_string(),
+            framework: "vue".to_string(),
+        },
+    );
+    let planned = plan_island_boot("react", &resolved).boot_entry_source(
+        std::path::Path::new("/proj"),
+        &std::collections::BTreeMap::new(),
+        false,
+    );
+    assert_eq!(out, planned, "the generator IS the planner's emission");
+    assert!(
+        out.contains("installBootRuntime({ adapters, islands });"),
+        "{out}"
+    );
+}
+
+#[test]
+fn mixed_registry_build_entry_is_the_registry_shape() {
+    // §V2-F01 M1: the BUILD path's boot entry for a mixed registry is the
+    // registry shape — one lazy adapter import per framework present (what
+    // pulls the rolldown `advancedChunks` vendor chunks the plan derived)
+    // and the client's mixed registry hydrates each island through its own
+    // adapter; the legacy registerAdapter line is gone.
+    let mut islands = std::collections::BTreeMap::new();
+    islands.insert(
+        "Counter".to_string(),
+        oxide_fw_config::IslandSpec::Plain("src/islands/counter.tsx".to_string()),
+    );
+    islands.insert(
+        "Price".to_string(),
+        oxide_fw_config::IslandSpec::Plain("src/islands/Price.vue".to_string()),
+    );
+    let out = crate::generate_island_boot_entry(
+        std::path::Path::new("/proj"),
+        "react",
+        &islands,
+        &std::collections::BTreeMap::new(),
+        false,
+    );
+    assert!(out.contains("const adapters = {"), "{out}");
+    assert!(
+        out.contains("react: () => import('@oxide-fw/react'),"),
+        "{out}"
+    );
+    assert!(out.contains("vue: () => import('@oxide-fw/vue'),"), "{out}");
+    assert!(out.contains(
+        "  \"Price\": { fw: 'vue', load: () => import(\"/proj/src/islands/Price.vue\") },"
+    ));
+    assert!(
+        out.contains("installBootRuntime({ adapters, islands });"),
+        "{out}"
+    );
+    assert!(
+        !out.contains("window.__oxideRegisterAdapter"),
+        "no legacy registerAdapter in the registry shape: {out}"
+    );
+}
+
+#[test]
+fn single_framework_build_entry_keeps_the_legacy_shape_through_the_seam() {
+    // §V2-F01 M1 contract: a single-framework registry keeps the legacy
+    // boot entry byte-identically (the planner's byte-identity pins hold
+    // the emission; this pin holds the CLI seam's resolution: a `.tsx`
+    // island in a react project resolves to react and the legacy shape
+    // survives — modules map, registerAdapter, no registry).
+    let mut islands = std::collections::BTreeMap::new();
+    islands.insert(
+        "Counter".to_string(),
+        oxide_fw_config::IslandSpec::Plain("src/islands/counter.tsx".to_string()),
+    );
+    let out = crate::generate_island_boot_entry(
+        std::path::Path::new("/proj"),
+        "react",
+        &islands,
+        &std::collections::BTreeMap::new(),
+        false,
+    );
+    assert!(out.contains("const modules = {"), "{out}");
+    assert!(
+        out.contains("window.__oxideRegisterAdapter(clientAdapter"),
+        "{out}"
+    );
+    assert!(out.contains("installBootRuntime();"), "{out}");
+    assert!(!out.contains("const adapters = {"), "{out}");
+    assert!(!out.contains("installBootRuntime({"), "{out}");
+}
+
+#[tokio::test]
+async fn prerendered_nonce_is_stable_within_a_page() {
+    // §V2-B03 item 3 (PERF-03) / §17.1: every nonce-carrying tag in ONE
+    // prerendered page carries the SAME build-time nonce — the boot module,
+    // the deferred-settle scripts and the streamed head's stamps share the
+    // single per-request derivation. The render stage re-derived it at two
+    // sites before this milestone; the same bytes by determinism, but from
+    // three definition sites instead of one.
+    let _serial_guard = TEST_SERIAL_LOCK.lock().await;
+    let (_d, root) = fixture_project();
+    let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "{out}");
+    let html = std::fs::read_to_string(root.join("dist/index.html")).expect("prerendered index");
+    let nonces: std::collections::BTreeSet<String> = html
+        .match_indices("nonce=\"")
+        .map(|(i, _)| {
+            let rest = &html[i + 7..];
+            let end = rest.find('"').expect("closed nonce attribute");
+            rest[..end].to_string()
+        })
+        .collect();
+    assert_eq!(
+        nonces.len(),
+        1,
+        "one nonce per prerendered page, got {nonces:?} in: {html}"
+    );
+}
+
 #[tokio::test]
 async fn remote_cache_handler_maps_handler_config() {
     // §11.2 / SPEC-12: `remote_cache_handler` is the live seam between
