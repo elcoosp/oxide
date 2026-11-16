@@ -748,7 +748,7 @@ fn live_stream_core(
                         // stays silent (the substrate contract the pins
                         // held before the wiring landed).
                         if let Some(build) = stale.as_deref() {
-                            let frame = sse_frame(STALE_EVENT, None, &build);
+                            let frame = sse_frame(STALE_EVENT, None, build);
                             return Some((
                                 Ok(Bytes::from(frame)),
                                 (rx, tick, initial, seq, stale, true),
