@@ -275,6 +275,13 @@ pub async fn serve_pool_compiled_module(
         // The Solid fallback (babel-preset-solid) resolves @babel/core from
         // the PROJECT's node_modules — the src-relative filename cannot
         // locate it, so pass the root explicitly. Other ops ignore it.
+        // V2-E01: the dev compile emits the component-refresh boundary (the
+        // Vue `__VUE_HMR_RUNTIME__.reload` tail, the Solid
+        // `__oxide_solid_refresh` accept). The BUILD's precompile passes
+        // nothing, so a production bundle never carries the boundary. With
+        // the boundary present, `inject_hmr_boundary` below no-ops (its
+        // contains-`import.meta.hot` guard) — one definition site.
+        "hmr": true,
         "root": state.root.to_string_lossy(),
     });
     let req = oxide_fw_jshost::CallInput {
