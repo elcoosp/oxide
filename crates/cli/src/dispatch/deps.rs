@@ -101,4 +101,11 @@ pub(crate) struct DispatchDeps {
     /// config: the stage short-circuits and every L0 key stays
     /// byte-identical to the pre-F04 baseline.
     pub experiments: Vec<oxide_fw_dispatch::experiments::Experiment>,
+    /// V2-F09: the boot's search mode — `Some("server")` when the
+    /// built-in engine serves (`search.collections` configured AND the
+    /// build's index opened, feature `search`); `None` (the inert
+    /// default) keeps the client on its static-export fallback: the
+    /// render stage emits no flag script and `window.__oxide.search`
+    /// stays unset.
+    pub search_flag: Option<&'static str>,
 }
