@@ -21,6 +21,13 @@ pub(crate) type RoutedGenerationHandles = (
 pub(crate) struct RequestCtx {
     pub(crate) req: oxide_fw_server::OxideRequest,
     pub(crate) tree: std::sync::Arc<oxide_fw_router::RouteTree>,
+    /// V2-B01: the generation's `RouteContextTable` (set by the prelude
+    /// alongside the tree, as a matched pair) — the per-route dispatch
+    /// answers come from one HashMap hit instead of per-request scans.
+    pub(crate) ctx_table: Option<std::sync::Arc<oxide_fw_router::RouteContextTable>>,
+    /// V2-B01: the matched (or unmatched not-found) route's precomputed
+    /// context — set by `stage_match` from the table.
+    pub(crate) route_ctx: Option<std::sync::Arc<oxide_fw_router::RouteContext>>,
     pub(crate) started: std::time::Instant,
     pub(crate) boot_build_id: Option<String>,
     pub(crate) rewrite_hop: u32,
@@ -51,7 +58,10 @@ pub(crate) struct RequestCtx {
     pub(crate) error_route_id: Option<String>,
     pub(crate) route_id_for_render: Option<String>,
     pub(crate) layout_ids: Vec<String>,
-    pub(crate) layout_module_paths: Vec<(String, std::path::PathBuf)>,
+    /// V2-A06: the layouts' §9.2 load specs — module paths plus the
+    /// scanner's per-layout `parent()` verdict the load graph serializes
+    /// on (see [`crate::LayoutLoadSpec`]).
+    pub(crate) layout_module_paths: Vec<crate::LayoutLoadSpec>,
     pub(crate) action_name: Option<String>,
     pub(crate) action_dispatcher: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
     pub(crate) endpoint_for_dispatch:
@@ -96,6 +106,8 @@ impl RequestCtx {
         Self {
             req,
             tree,
+            ctx_table: None,
+            route_ctx: None,
             started: std::time::Instant::now(),
             boot_build_id: None,
             rewrite_hop: 0,
