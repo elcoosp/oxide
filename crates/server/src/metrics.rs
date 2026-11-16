@@ -56,6 +56,12 @@ fn prom_escape(s: &str) -> String {
 #[derive(Debug, Default)]
 pub struct Metrics {
     inner: RwLock<HashMap<String, RouteMetrics>>,
+    /// §V2-B03 item 4: the frozen route-label map `register_routes` fills
+    /// before the server starts and nothing mutates afterwards, so a
+    /// registered label's `observe` takes NO lock (the fallback
+    /// `RwLock` map below stays for the dynamic labels — `_unmatched`,
+    /// `_proxy`, `_data` — and any route the pre-start registration missed).
+    frozen: std::sync::OnceLock<HashMap<std::sync::Arc<str>, RouteMetrics>>,
     pub requests_total: AtomicU64,
     pub errors_total: AtomicU64,
     pub cache_hits_l0: AtomicU64,
@@ -100,6 +106,12 @@ impl Metrics {
         if status >= 500 {
             self.errors_total.fetch_add(1, Ordering::Relaxed);
         }
+        // §V2-B03 item 4: the frozen registered map answers without a lock;
+        // `RouteMetrics::observe` is atomic-only.
+        if let Some(m) = self.frozen.get().and_then(|map| map.get(route)) {
+            m.observe(latency);
+            return;
+        }
         {
             let map = self.inner.read().expect("metrics lock");
             if let Some(m) = map.get(route) {
@@ -111,6 +123,20 @@ impl Metrics {
         map.entry(route.to_string())
             .or_insert_with(RouteMetrics::new)
             .observe(latency);
+    }
+
+    /// §V2-B03 item 4: freeze the route labels BEFORE the server starts.
+    /// Every `RouteContext.pattern` the boot built goes in; the map is
+    /// never mutated afterwards, so a registered label's `observe` needs
+    /// no lock (the fallback `RwLock` map keeps serving the dynamic
+    /// labels and anything the registration missed). A second call after
+    /// the map is frozen is a no-op (the first registration wins).
+    pub fn register_routes(&self, labels: impl IntoIterator<Item = std::sync::Arc<str>>) {
+        let map: HashMap<std::sync::Arc<str>, RouteMetrics> = labels
+            .into_iter()
+            .map(|label| (label, RouteMetrics::new()))
+            .collect();
+        let _ = self.frozen.set(map);
     }
 
     /// PERF-02: record the pool's current gauges (worker count, in-flight,
@@ -288,31 +314,54 @@ impl Metrics {
             }
         }
 
-        let map = self.inner.read().expect("metrics lock");
         out.push_str("# HELP oxide_request_duration_ms Request latency by route\n");
         out.push_str("# TYPE oxide_request_duration_ms histogram\n");
-        for (route, m) in map.iter() {
-            let count = m.count.load(Ordering::Relaxed);
-            let route_e = prom_escape(route);
-            for (i, bound) in BUCKET_BOUNDS_MS.iter().enumerate() {
-                out.push_str(&format!(
-                    "oxide_request_duration_ms_bucket{{route=\"{route_e}\",le=\"{bound}\"}} {}\n",
-                    m.buckets[i].load(Ordering::Relaxed)
-                ));
+        // §V2-B03 item 4: the frozen registered labels render too (a zero
+        // histogram is the "route exists" signal dashboards expect), in a
+        // stable sorted order; the fallback map's dynamic labels follow,
+        // skipping anything the frozen map already reported.
+        let frozen = self.frozen.get();
+        if let Some(frozen_map) = frozen {
+            let mut labels: Vec<(&str, &RouteMetrics)> =
+                frozen_map.iter().map(|(k, v)| (&**k, v)).collect();
+            labels.sort_by_key(|(k, _)| *k);
+            for (route, m) in labels {
+                render_route_histogram(&mut out, route, m);
             }
-            out.push_str(&format!(
-                "oxide_request_duration_ms_bucket{{route=\"{route_e}\",le=\"+Inf\"}} {count}\n"
-            ));
-            out.push_str(&format!(
-                "oxide_request_duration_ms_sum{{route=\"{route_e}\"}} {}\n",
-                (m.sum_us.load(Ordering::Relaxed) as f64) / 1000.0
-            ));
-            out.push_str(&format!(
-                "oxide_request_duration_ms_count{{route=\"{route_e}\"}} {count}\n"
-            ));
+        }
+        let map = self.inner.read().expect("metrics lock");
+        for (route, m) in map.iter() {
+            if frozen.is_some_and(|f| f.contains_key(route.as_str())) {
+                continue;
+            }
+            render_route_histogram(&mut out, route, m);
         }
         out
     }
+}
+
+/// One route's `oxide_request_duration_ms` histogram lines (buckets, sum,
+/// count) — the §V2-B03 render union's shared body for the frozen and the
+/// fallback maps.
+fn render_route_histogram(out: &mut String, route: &str, m: &RouteMetrics) {
+    let count = m.count.load(Ordering::Relaxed);
+    let route_e = prom_escape(route);
+    for (i, bound) in BUCKET_BOUNDS_MS.iter().enumerate() {
+        out.push_str(&format!(
+            "oxide_request_duration_ms_bucket{{route=\"{route_e}\",le=\"{bound}\"}} {}\n",
+            m.buckets[i].load(Ordering::Relaxed)
+        ));
+    }
+    out.push_str(&format!(
+        "oxide_request_duration_ms_bucket{{route=\"{route_e}\",le=\"+Inf\"}} {count}\n"
+    ));
+    out.push_str(&format!(
+        "oxide_request_duration_ms_sum{{route=\"{route_e}\"}} {}\n",
+        (m.sum_us.load(Ordering::Relaxed) as f64) / 1000.0
+    ));
+    out.push_str(&format!(
+        "oxide_request_duration_ms_count{{route=\"{route_e}\"}} {count}\n"
+    ));
 }
 
 #[cfg(test)]
@@ -324,6 +373,34 @@ mod tests {
         let s = Metrics::new().render();
         assert!(s.contains("# TYPE oxide_requests_total counter"));
         assert!(s.contains("oxide_requests_total 0"));
+    }
+
+    // §V2-B03 item 4: a REGISTERED route label observes through the frozen
+    // map without touching the fallback lock — hold that lock for write in
+    // another thread and assert `observe` on the registered label still
+    // returns (a regression would deadlock and the recv_timeout fails).
+    #[test]
+    fn observe_registered_route_takes_no_lock() {
+        use std::sync::Arc as StdArc;
+        use std::sync::mpsc;
+        let m = std::sync::Arc::new(Metrics::new());
+        m.register_routes([StdArc::from("/blog")]);
+        let (tx, rx) = mpsc::channel::<()>();
+        let guard_m = std::sync::Arc::clone(&m);
+        let guard = std::thread::spawn(move || {
+            // Hold the fallback map's write lock while the observe runs.
+            let _g = guard_m.inner.write().expect("metrics lock");
+            tx.send(()).expect("guard thread signals");
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .expect("the guard thread took the write lock");
+        m.observe("/blog", std::time::Duration::from_millis(4), 200);
+        guard.join().expect("guard thread joined");
+        assert_eq!(m.requests_total.load(Ordering::Relaxed), 1);
+        // An UNREGISTERED label still goes through the fallback path.
+        m.observe("/dynamic", std::time::Duration::from_millis(1), 200);
+        assert_eq!(m.requests_total.load(Ordering::Relaxed), 2);
     }
 
     // V2-F04 (§15.4): the experiment-exposure counter. Each (experiment,
