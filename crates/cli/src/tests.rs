@@ -3820,6 +3820,70 @@ impl oxide_fw_server::PageRenderer for Ox500FallbackRenderer {
 }
 
 #[tokio::test]
+async fn live_render_injects_search_flag_when_engine_serves() {
+    use std::sync::Arc;
+
+    // V2-F09: with the boot's search mode set (`Some("server")` — what
+    // `cmd_serve` derives from the configured engine), the live path's
+    // `</body>` injection carries the guarded flag script so the client
+    // matcher queries `/_oxide/search` instead of the static export.
+    let tree = tree_with_server_route();
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            loader_runner: Some(Arc::new(ScriptedLoader::ok(
+                serde_json::json!({ "title": "Hi" }),
+            ))),
+            routes_root: routes_root(),
+            search_flag: Some("server"),
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(resp.status, 200);
+    let collected = collect_response_body(resp).await;
+    let body = String::from_utf8_lossy(&collected).to_string();
+    assert!(
+        body.contains("window.__oxide&&(window.__oxide.search=\"server\")"),
+        "the guarded search flag rides the injection: {body}"
+    );
+}
+
+#[tokio::test]
+async fn live_render_omits_search_flag_when_unconfigured() {
+    use std::sync::Arc;
+
+    // V2-F09: the inert default — `search_flag: None` (unconfigured, or a
+    // build without the `search` feature) emits nothing, and the client
+    // matcher keeps its static-export fallback.
+    let tree = tree_with_server_route();
+    let metrics = Arc::new(oxide_fw_server::Metrics::new());
+    let dispatch = build_dispatch(
+        tree,
+        metrics,
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            loader_runner: Some(Arc::new(ScriptedLoader::ok(
+                serde_json::json!({ "title": "Hi" }),
+            ))),
+            routes_root: routes_root(),
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(resp.status, 200);
+    let collected = collect_response_body(resp).await;
+    let body = String::from_utf8_lossy(&collected).to_string();
+    assert!(
+        !body.contains("__oxide.search"),
+        "no flag script without the engine: {body}"
+    );
+}
+
+#[tokio::test]
 async fn live_render_injects_odf_payload_script() {
     use std::sync::Arc;
 
@@ -12492,4 +12556,120 @@ async fn brownout_sheds_low_and_reports_the_level() {
     );
 
     let _ = started.shutdown.send(true);
+}
+
+// ---------------------------------------------------------------- V2-F11:
+// `oxide deploy` over the landed delta-deploy engine (`cmd_deploy`).
+
+#[test]
+fn cmd_deploy_dir_target_runs_the_engine_and_is_idempotent() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let rootp = tmp.path();
+    let dist = rootp.join("dist");
+    std::fs::create_dir_all(dist.join("assets")).expect("dist");
+    std::fs::write(dist.join("assets/app-abc123.js"), b"console.log(1)").expect("asset");
+    std::fs::write(dist.join("index.html"), b"<html></html>").expect("shell");
+    // The stamped build id (the A04 substrate): `dist/build-id`.
+    let build_id = "deadbeefdeadbeefdeadbeefdeadbeef";
+    std::fs::write(dist.join("build-id"), build_id).expect("stamp");
+
+    let target = format!("dir:{}", rootp.join("store").display());
+    let mut out: Vec<u8> = Vec::new();
+    let w: &mut (dyn std::io::Write + Send) = &mut out;
+    let code =
+        cmd_deploy(&target, rootp.to_str().expect("utf8"), false, false, w).expect("deploy runs");
+    assert_eq!(code, 0);
+    let log = String::from_utf8_lossy(&out).to_string();
+    assert!(log.contains("deploy ok"), "{log}");
+    assert!(
+        log.contains("2 upload(s)"),
+        "both files upload on the cold store: {log}"
+    );
+
+    // The pointer names the build (the atomic swap landed).
+    let pointer = std::fs::read_to_string(rootp.join("store/current")).expect("pointer");
+    assert_eq!(pointer.trim(), build_id);
+
+    // The idempotent re-run: the pointer already names this build — the
+    // engine's no-op contract (nothing uploads, the empty delta).
+    let mut out2: Vec<u8> = Vec::new();
+    let w2: &mut (dyn std::io::Write + Send) = &mut out2;
+    let code2 = cmd_deploy(&target, rootp.to_str().expect("utf8"), false, false, w2)
+        .expect("re-deploy runs");
+    assert_eq!(code2, 0);
+    let log2 = String::from_utf8_lossy(&out2).to_string();
+    assert!(
+        log2.contains("0 upload(s)"),
+        "the re-run uploads nothing: {log2}"
+    );
+}
+
+#[test]
+fn cmd_deploy_rollback_swaps_the_pointer_back() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let rootp = tmp.path();
+    let dist = rootp.join("dist");
+    std::fs::create_dir_all(&dist).expect("dist");
+    std::fs::write(dist.join("index.html"), b"<html></html>").expect("shell");
+    let first = "11111111111111111111111111111111";
+    let second = "22222222222222222222222222222222";
+    std::fs::write(dist.join("build-id"), second).expect("stamp");
+
+    let target = format!("dir:{}", rootp.join("store").display());
+    let mut out: Vec<u8> = Vec::new();
+    let w: &mut (dyn std::io::Write + Send) = &mut out;
+    cmd_deploy(&target, rootp.to_str().expect("utf8"), false, false, w).expect("first deploy");
+    // A second build: same dist content, a NEW id — the release copy lands,
+    // the pointer moves.
+    std::fs::write(dist.join("build-id"), first).expect("re-stamp");
+    let mut out2: Vec<u8> = Vec::new();
+    let w2: &mut (dyn std::io::Write + Send) = &mut out2;
+    cmd_deploy(&target, rootp.to_str().expect("utf8"), false, false, w2).expect("second deploy");
+    let pointer = std::fs::read_to_string(rootp.join("store/current")).expect("pointer");
+    assert_eq!(pointer.trim(), first);
+
+    // The one-write rollback: the pointer returns to the previous build.
+    let mut out3: Vec<u8> = Vec::new();
+    let w3: &mut (dyn std::io::Write + Send) = &mut out3;
+    let code =
+        cmd_deploy(&target, rootp.to_str().expect("utf8"), false, true, w3).expect("rollback runs");
+    assert_eq!(code, 0);
+    let pointer2 = std::fs::read_to_string(rootp.join("store/current")).expect("pointer");
+    assert_eq!(
+        pointer2.trim(),
+        second,
+        "the pointer names the previous build"
+    );
+}
+
+#[test]
+fn cmd_deploy_refuses_an_unstamped_dist() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let rootp = tmp.path();
+    std::fs::create_dir_all(rootp.join("dist")).expect("dist");
+    let target = format!("dir:{}", rootp.join("store").display());
+    let err = cmd_deploy(
+        &target,
+        rootp.to_str().expect("utf8"),
+        false,
+        false,
+        &mut Vec::new(),
+    )
+    .expect_err("an unstamped dist is refused");
+    assert!(
+        err.to_string().contains("DEP-BUILDID"),
+        "the refusal names the code: {err}"
+    );
+}
+
+#[test]
+fn cmd_deploy_refuses_object_store_targets_without_the_feature() {
+    // A build without `deploy-s3` (the dev default) refuses the s3 target
+    // loudly instead of deploying to nowhere.
+    let err = cmd_deploy("s3://bucket/prefix", ".", false, false, &mut Vec::new())
+        .expect_err("the s3 target refuses without the feature");
+    assert!(
+        err.to_string().contains("deploy-s3"),
+        "the refusal names the feature: {err}"
+    );
 }
