@@ -15,6 +15,10 @@ name = "oxide"
 path = "src/main.rs"
 
 [features]
+# V2-F11: the object-store deploy targets (`s3://`, `r2://`) ride the
+# adapters crate's `s3` feature — release builds enable it, dev builds
+# keep the binary lean (the `search` feature pattern).
+deploy-s3 = ["oxide-fw-adapters/s3"]
 # V2-F18: exposes the criterion bench harness for the perf-bisect engine
 # (the B09 pattern: plain `cargo test` never pays the criterion build).
 bench-util = []
