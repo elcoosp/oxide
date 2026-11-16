@@ -25,3 +25,8 @@ mod typegen;
 pub(crate) use typegen::*;
 mod emit;
 pub(crate) use emit::*;
+// V2-F02: the auto-islands scan (the interactivity call-site the build
+// runs when `framework.autoIslands` is on — scan → side-car → registry
+// merge; see `docs/deviations.md` for the queued dev-warn half).
+mod auto_islands;
+pub(crate) use auto_islands::*;
