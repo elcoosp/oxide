@@ -4163,7 +4163,7 @@ at HEAD with both recorded substitutions.
 **Deltas.**
 
 - The vendor groups apply to the BUILD client bundle only; the dev bundler path (`dev/client_bundle.rs`) still uses the automatic shape (the dev chunk-name contract is load-bearing for the ESM dev server's import graph; adopting the split there is a follow-up).
-- The BUILD-path mixed boot entry (the compiler planner's registry shape) is NOT wired into `generate_island_boot_entry` — the build still emits the single-adapter entry shape. The vendor split, the twins and the client's mixed registry are in place; wiring the mixed boot entry through the CLI is the remaining F01 half after this diff (recorded in the row).
+- The BUILD-path mixed boot entry (the compiler planner's registry shape) is NOT wired into `generate_island_boot_entry` — the build still emits the single-adapter entry shape. The vendor split, the twins and the client's mixed registry are in place; wiring the mixed boot entry through the CLI is the remaining F01 half after this diff (recorded in the row). *(CLOSED since — the build-path wiring landed 2026-11-16, see "V2-F01 build path" below.)*
 - `resolveForeign`'s new group 2 (the quote capture) shifted the attribute sides to groups 1/3 — internal, pinned.
 
 **Verification.** 21 new TS pins (5 react + 5 vue + 5 svelte + 6 solid) all red→green locally through the real framework SSRs (the scratch node_modules: the four frameworks installed no-save at the workspace root, `@oxide-fw/core` bridged to `packages/core/src` — machine-local, gitignored); 7→11 `foreign-islands` pins; 16 worker pins (5 island-render + 6 hmr-refresh + 5 replay) green; the 4 `islands_tdd` vendor pins green.
@@ -4179,3 +4179,83 @@ at HEAD with both recorded substitutions.
 5. **The boot gate**: `bootWithRouter`'s `__oxide_on_module_updated` skips the route replay for a URL marked refreshed-in-place — the same exclusion the `refresh` capability gets for React, now per-URL for the component frameworks (a replayed `update` would remount the route and destroy the state the framework refresh preserved).
 
 **Verification.** 6 worker pins (vue hmr/no-flag/ssr, solid hmr/no-flag/ssr) red→green through the real `@vue/compiler-sfc` + babel-preset-solid toolchain; 6 core TS pins (shim install, the runtime delegation, the throw guard, the no-reload fallback, the registry round-trip, the §3.8a bound) red→green; the boot gate wired (the `hmr-refresh` registry pins + the pre-existing boot suite keep the contract).
+
+## V2-F01 build path — the mixed boot entry through the planner + the build-time islands.json (`feat/f01-build-path-boot-entry`, 2026-11-16)
+
+**What lands.** The F01 row's remaining half:
+
+1. **The CLI generator is the planner's seam.** `crates/cli/src/boot_entry.rs`'s `generate_island_boot_entry` delegates to
+   `oxide_fw_compiler::islands::plan_island_boot(...).boot_entry_source(...)`; the legacy emission body is DELETED (superseded).
+   The planner's single-framework branch was reordered to the legacy byte order (`installBootRuntime()` after the §8.4 loading
+   map, before `window.__oxideRegisterAdapter`) so the single-framework build output is BYTE-IDENTICAL to the pre-wiring
+   generator — pinned by two byte-exact fixtures (`single_framework_boot_entry_is_byte_identical_to_the_legacy_emission`,
+   `the_legacy_emission_with_loading_and_pwa_is_byte_identical`, mechanically transcribed by `scripts/legacy_boot_fixture.py`)
+   and mirrored by the CLI seam pins (`build_boot_entry_delegates_to_the_compiler_planner` asserts the generator IS the planner's
+   emission for the same resolved set; `single_framework_build_entry_keeps_the_legacy_shape_through_the_seam`,
+   `mixed_registry_build_entry_is_the_registry_shape`).
+2. **The registry resolution is ONE definition site**: `boot_entry.rs::resolve_islands` (the inference order over the merged
+   registry, the best-effort first-line read). The dev path's `islands_json_source` moved into `boot_entry.rs` and its inline
+   copy in `dev/client_bundle.rs` deleted. The build path now writes `.oxide/islands.json` beside the boot entry
+   (`boot_entry.rs::write_islands_json`, one call-site line recorded as PHASE_SUBS 218) — the spec's item 2 obligation the
+   build path never carried (the dev path did).
+3. **The vendor-chunk invocation**: the mixed boot entry's lazy adapter imports (`() => import('@oxide-fw/<fw>')`) are what
+   pull the rolldown `advancedChunks` per-framework vendor chunks at build — the plan's `vendor_groups` derive from the same
+   merged registry (the twins' mapping, unchanged). The foreign island SSR resolution rides the worker `island:render` op +
+   the client's mixed registry at RUNTIME (prerendered foreign placeholders hydrate client-side — the recorded Degraded-on-edge
+   shape); the build-path prerender splice of foreign islands remains NOT built (it is not part of the F01 row's half).
+
+**Deltas.**
+- The `route_ctx`-style double resolution inside the build's `phase_plan` (the vendor block resolves inline; the boot entry
+  resolves through the helper) stays — both sides are pure and build-time-only; the recorded PHASE_SUBS 472 shape is untouched.
+  Queueing the vendor block's re-point at `resolve_islands` as micro-debt would cost another sub rewrite of the recorded block.
+- The planner's mixed branch keeps its own statement order (the registry `installBootRuntime({ adapters, islands })` before the
+  loading map) — the mixed shape has no byte-identity contract; the order pins (`the_loading_map_contract_survives_the_mixed_shape`) hold.
+
+**Verification.** 14 `islands_tdd` pins green (11 pre-existing + 3 new byte/order pins — red first: the pre-reorder planner failed
+both fixtures); 3 CLI pins (compile-verified; the cli test target is V8-linked and rides CI's nextest workspace job);
+`scripts/split_selfcheck.py --phases/--stages` green with the recorded subs (472 refreshed twice for the twins' cutoff residuals:
+the needless-borrow `&src` fix and the vendor_framework block; 218 added for the islands.json write).
+
+## V2-M2 perf tails — B03 hoists, B02 prerender wraps, A02 helper dedup, B04 resolution (`feat/hot-path-hoists`, `feat/prerender-raw-id-wraps`, 2026-11-16)
+
+**B03** (the row names each item):
+1. **Endpoint inputs** — the A01 split already carries the lazy shape (`cx.endpoint_params_json: Option` filled by
+   `get_or_insert_with` in the endpoint stage; the body rides `bytes::Bytes` whose clone is a refcount bump). The remaining
+   tail landed: `action_params` is built only when an action is eligible (`if action_name.is_some()` in the route stage,
+   recorded as a STAGE_RULES substitution) — the spec's "built for every request though only POST actions use it".
+2. **Metrics label** — the B01 table adoption already made the matched arm read `rc.pattern`; the `pattern_of` fallback is the
+   P-06 degenerate arm for a table-less tree (recorded as the intended fallback, not debt).
+3. **Nonce once** — the render stage's two recompute sites (`nonce_for(&req_owned.request_id)` at the streamed head and the L0
+   store) reuse `cx.request_nonce` (recorded as a STAGE_RULES substitution covering both occurrences). The spec's `OnceCell`
+   sketch was written against the pre-split monolith; the ctx-carried `request_nonce: String` field the route stage fills once
+   is the split-idiomatic equivalent, and the acceptance `rg "nonce_for" crates/cli/src/dispatch` shows ONE definition site.
+   Pin: `prerendered_nonce_is_stable_within_a_page` (a real build; one distinct nonce per prerendered page).
+4. **Metrics without a write lock** — `Metrics::register_routes` fills a frozen `OnceLock<HashMap<Arc<str>, RouteMetrics>>`
+   before the server starts (`start_server_inner_full` feeds every non-layout/middleware/error/loading entry's
+   `default_pattern_of` — the same spelling the dispatch table builds with); `observe` answers a registered label from the
+   frozen map with no lock, and `render` unions the frozen labels (sorted, zero-count histograms included) with the fallback
+   map's dynamic labels. The spec-named `observe_registered_route_takes_no_lock` pin holds the fallback's write lock in
+   another thread and observes through the frozen map — green in `oxide-fw-server` (V8-free).
+
+**B02** — the build-time prerender scans adopt the table's raw-id rule: the layout chain's and the error boundary's wrap checks
+prefix-match `e.id.0` (the RAW id) instead of the canonical id, exactly the `prefixes()` walk `RouteContextTable::context_for`
+uses (the matcher-oracle). The resolved divergence: a group's own index page — canonical id `routes/(g)` EQUALS the layout base
+`routes/(g)` — failed `starts_with("{base}/")` and missed its group layout/error boundary at prerender; the table found it. The
+scan answers are oracle-equal to the table by construction. The A01 Step-0 build digests change for exactly those group routes
+(the digest re-measure rides CI). Recorded as PHASE_SUBS 1133/1182.
+
+**A02** — the CLI's duplicate `parse_form_urlencoded` / `action_from_query` copies (serve/stream.rs) are DELETED; the two stage
+call sites (route.rs, action.rs) call `oxide_fw_dispatch::url::{action_from_query, parse_form_urlencoded}` (recorded as
+STAGE_RULES substitutions). The copies were byte-for-byte semantics-equal (visibility/doc-only diffs, verified by diff before
+deletion); the dispatch copies are the tested `pub` `#[must_use]` ones. This closes the deviation's "To unclose" item 1 — the
+closure itself flipped to the stage protocol when A01 phase 3 landed.
+
+**B04** — resolved by the A01 phase-3 split, not by the spec's `Arc<OxideRequest>` shape: the closure moves the request into the
+ctx ONCE (no per-request clone exists), `OxideRequest.headers` is already `Arc<Vec<(String, String)>>`, and the only remaining
+`req.clone()` in `crates/cli/src/dispatch` is prelude.rs's §13.5 proxy-forwarding branch — the spec's own stated exception. The
+spec's Arc sketch targeted the pre-split closure clone that no longer exists; recorded as superseded-by-ownership (no code change).
+
+**Verification.** `observe_registered_route_takes_no_lock` red→green in `oxide-fw-server`; `--stages`/`--phases`/full
+`split_selfcheck.py` green with the five new recorded substitutions; the touched-crate battery (compiler, bundler, server,
+dispatch, router, cache) check+tests green; the CLI compile-verifies via `cargo check -p oxide-fw-cli --all-targets` (V8-linked,
+rides CI) with the nonce-stability pin riding CI's nextest workspace job.
