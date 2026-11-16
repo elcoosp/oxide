@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use oxide_fw_assets::Result;
 use oxide_fw_assets::image_jobs::{ImageCas, ImageJobs};
+use oxide_fw_assets::{DirImageCas, Result};
 use oxide_fw_diagnostics::OxideError;
 
 /// A fake CAS store: a locked map the pins read back.
@@ -239,4 +239,54 @@ async fn a_job_panic_surfaces_as_ast_jobs() {
         .await
         .expect("the next job runs clean");
     assert_eq!(ok.as_ref(), b"after");
+}
+
+// -------------------------------------------------------------- V2-C09:
+// the serve path's disk CAS (`DirImageCas` — `.oxide/image-cas`).
+
+#[test]
+fn dir_cas_roundtrips_put_get_overwrite() {
+    // The store answers a put→get roundtrip, a miss is `None`, and an
+    // overwrite replaces the bytes — the restart-persistent layer the
+    // endpoint's engine reads first.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cas = DirImageCas::new(dir.path().join("image-cas"));
+    assert!(cas.get("k1").is_none(), "an empty store misses");
+    cas.put("k1", Arc::new(b"v1".to_vec()));
+    assert_eq!(
+        cas.get("k1").map(|a| a.as_ref().clone()),
+        Some(b"v1".to_vec())
+    );
+    cas.put("k1", Arc::new(b"v2".to_vec()));
+    assert_eq!(
+        cas.get("k1").map(|a| a.as_ref().clone()),
+        Some(b"v2".to_vec())
+    );
+    // The temp+rename write leaves no dot-temp litter behind.
+    let litter: Vec<_> = std::fs::read_dir(dir.path().join("image-cas"))
+        .expect("store dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
+        .collect();
+    assert!(litter.is_empty(), "no temp files left behind: {litter:?}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dir_cas_answers_before_the_job_runs() {
+    // The engine's CAS lookup-before-work: a pre-seeded store short-circuits
+    // the encode — the job closure never runs.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cas = DirImageCas::new(dir.path().join("image-cas"));
+    cas.put("seeded", Arc::new(b"stored".to_vec()));
+    let jobs = ImageJobs::new(cas);
+    let out = jobs
+        .run("seeded", false, || -> Result<Vec<u8>> {
+            Err(oxide_fw_assets::job_error(
+                "AST-IMG",
+                "the job must not run",
+            ))
+        })
+        .await
+        .expect("the CAS answers before the job");
+    assert_eq!(out.as_ref(), b"stored");
 }
