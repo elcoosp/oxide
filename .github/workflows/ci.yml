@@ -331,6 +331,33 @@ jobs:
             the_search_serve_wire_up_opens_the_built_index \
             the_dev_search_refresh_swaps_the_serve_side_index
 
+  # V2-F11 (feature `deploy-s3` → the adapters crate's `s3`): the
+  # object-store DeployStore pins are gated behind the feature
+  # (`#![cfg(feature = "s3")]` in `object_store_tdd.rs`), so the
+  # default-feature `rust` job never compiled them. This job enables the
+  # gate: the ten network-free pins (the `file://`/`mem://` backends) run
+  # here, the two `s3`-gated walkthrough examples compile, and the CLI's
+  # `deploy-s3` arm (the `s3://`/`r2://` target construction the release
+  # build ships) type-checks behind its feature.
+  deploy-s3-feature:
+    name: deploy-s3 feature pins (V2-F11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install nasm
+        run: sudo apt-get update && sudo apt-get install -y nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: The object-store DeployStore pins (network-free backends)
+        run: cargo test -p oxide-fw-adapters --features s3
+      - name: The s3-gated walkthrough examples compile
+        run: cargo check -p oxide-fw-adapters --features s3 --examples
+      - name: The CLI's deploy-s3 arm type-checks
+        run: cargo check -p oxide-fw-cli --features deploy-s3 --all-targets
+
   bench-gate:
     name: bench regression gate (>5% fails, §21)
     runs-on: macos-latest
@@ -532,6 +559,25 @@ jobs:
         # #[ignore] e2e — V8-capable host only, same convention.
         run: |
           cargo test -p oxide-fw-cli --lib brownout_sheds_low_and_reports_the_level -- --ignored --test-threads=1
+      - name: Run the image single-flight acceptance (V2-C09)
+        # §V2-C09's acceptance: 64 concurrent requests for ONE variant on a
+        # cold cache encode EXACTLY ONCE — every response is 200 with
+        # byte-identical bodies and the CLI adapter's `DirImageCas` holds
+        # exactly one entry (the encode counted at the store, not parsed
+        # from logs). The load driver is node's fetch at -c 64 (the job has
+        # Node 24; `oha` is not installed — the same concurrency shape,
+        # recorded in docs/deviations.md, C09). Reuses the CLI binary the
+        # skew step built. No `|| true`: a failed single-flight is red.
+        run: ./tests/image_acceptance.sh
+      - name: Run the delta-deploy acceptance (V2-F11)
+        # §V2-F11's acceptance: the second deploy after a one-line change
+        # uploads under 5% of the first deploy's bytes, an unchanged re-run
+        # uploads nothing, --rollback swaps `current` to the previous build
+        # id, and an unstamped dist refuses with DEP-BUILDID. Drives the
+        # REAL `oxide deploy` over the delta engine + the `DirStore` target
+        # (the CLI pins hold the unit halves). Reuses the CLI binary the
+        # skew step built. No `|| true`.
+        run: ./tests/deploy_acceptance.sh
 
   playwright:
     name: Playwright e2e (§22) — ${{ matrix.browser }} / ${{ matrix.os }}
