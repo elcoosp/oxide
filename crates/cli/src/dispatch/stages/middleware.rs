@@ -112,14 +112,14 @@ pub(crate) async fn stage_middleware(d: &DispatchDeps, cx: &mut RequestCtx) -> F
     match outcome {
         Err(e) => {
             metrics.observe(&label, started.elapsed(), e.status);
-            return Flow::Respond(oxide_fw_server::OxideResponse::json(
+            Flow::Respond(oxide_fw_server::OxideResponse::json(
                 e.status,
                 serde_json::json!({"error": {
                     "code": e.code,
                     "message": e.message,
                     "route": label,
                 }}),
-            ));
+            ))
         }
         // A middleware answered (short-circuit, or §8.5 redirect —
         // the substrate stops the walk on `{ short: true, status,
@@ -171,7 +171,7 @@ pub(crate) async fn stage_middleware(d: &DispatchDeps, cx: &mut RequestCtx) -> F
                     }
                 }
             }
-            return Flow::Respond(resp);
+            Flow::Respond(resp)
         }
         // §8.5: honour the rewrite by re-dispatching the request to
         // the new URL through the normal match → loader → render
