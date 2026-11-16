@@ -240,10 +240,37 @@ impl RolldownBundler {
             // `code_splitting: false` inlines dynamic imports so a CJS runtime
             // (react) is evaluated in place instead of landing in a chunk that
             // re-exports the `require` wrapper.
+            // §V2-F01: the per-framework vendor groups ride rolldown's
+            // advanced code-splitting mode. An SSR/config bundle keeps its
+            // one-file contract (`inline_dynamic_imports` → `Bool(false)`),
+            // a single-framework build keeps `None` (the default automatic
+            // shape, byte-identical), and a mixed-registry client bundle
+            // gets the `advancedChunks` groups (one vendor chunk per
+            // framework, loaded on the first island of that framework).
             code_splitting: if options.inline_dynamic_imports {
                 Some(rolldown_common::CodeSplittingMode::Bool(false))
-            } else {
+            } else if options.vendor_groups.is_empty() {
                 None
+            } else {
+                use rolldown_common::{
+                    CodeSplittingMode, ManualCodeSplittingOptions, MatchGroup, MatchGroupName,
+                    MatchGroupTest,
+                };
+                let groups = options
+                    .vendor_groups
+                    .iter()
+                    .map(|g| MatchGroup {
+                        name: MatchGroupName::Static(g.name.clone()),
+                        test: rolldown_utils::js_regex::HybridRegex::new(&g.test)
+                            .map(MatchGroupTest::Regex)
+                            .ok(),
+                        ..Default::default()
+                    })
+                    .collect();
+                Some(CodeSplittingMode::Advanced(ManualCodeSplittingOptions {
+                    groups: Some(groups),
+                    ..Default::default()
+                }))
             },
             ..Default::default()
         }
@@ -1755,6 +1782,10 @@ fn hash_bundle_options(options: &crate::BundleOptions) -> String {
     for (k, v) in &options.precompiled {
         k.to_string_lossy().hash(&mut h);
         v.hash(&mut h);
+    }
+    for g in &options.vendor_groups {
+        g.name.hash(&mut h);
+        g.test.hash(&mut h);
     }
     format!("{:016x}", h.finish())
 }
