@@ -102,6 +102,10 @@ pub(crate) struct DispatchOpts {
     /// `None` keeps the pre-F12 shapes (no enforcement stage); the
     /// brownout pins construct one.
     pub(crate) brownout: Option<std::sync::Arc<crate::serve::brownout::BrownoutWiring>>,
+    /// V2-F04: the experiments the pipeline pins run with (converted
+    /// engine shapes — the pins build them directly, no config parse).
+    /// Empty keeps the pre-F04 shapes.
+    pub(crate) experiments: Vec<oxide_fw_dispatch::experiments::Experiment>,
 }
 
 #[cfg(test)]
@@ -149,6 +153,9 @@ pub(crate) fn build_dispatch(
         flight_map: std::sync::Arc::new(dashmap::DashMap::new()),
         self_dispatch: std::sync::Arc::new(std::sync::OnceLock::new()),
         stream_counter: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        // V2-F04: the pins' experiments (empty default — the stage
+        // short-circuits, keys stay the pre-F04 baseline).
+        experiments: opts.experiments,
     })
 }
 
