@@ -48,7 +48,211 @@ def items_of(path, text=None):
         out.append((k, nm, NL.join(lines[s:e + 1])))
     return out
 
+# V2-A01 PHASE 2 substitutions recorded by scripts/build_phase_split.py: body
+# lines the phase move deliberately rewrote (everything else must be verbatim).
+# 37: phase_load's early cutoff returns None (the orchestrator maps it to exit 0).
+# 170: the `Bundler as _` trait import moved to the rb.bundle call sites.
+# 1047: server_manifest loses `mut` — the render-mode mutation runs in phase_emit.
+PHASE_SUBS = {
+    37: ('return Ok(0);', 'return Ok(None);'),
+    170: ('use oxide_fw_bundler::Bundler as _;', None),
+    1047: ('let mut server_manifest = read_json', 'let server_manifest = read_json'),
+    # V2-B08 integration (this diff): the four nonce .replace sites go through
+    # the chunk-safe NonceSplicer single-shot (build/splice_nonce.rs).
+    1297: ('html.replace(&nonce, l0_cache::NONCE_SENTINEL),',
+           'splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL),'),
+    1412: ('html.replace(&nonce, l0_cache::NONCE_SENTINEL),',
+           'splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL),'),
+    1572: ('html.replace(&nonce, l0_cache::NONCE_SENTINEL),',
+           'splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL),'),
+    1501: ('let fresh = saved.replace(&old_nonce, &nonce);',
+           'let fresh = splice_nonce(&saved, &old_nonce, &nonce);'),
+}
+
+def phases_check():
+    # A01 phase 2 proof: the concatenation of the named phase bodies under
+    # build/ equals the pre-split cmd_build body at HEAD — line-for-line,
+    # in order, modulo the +1 indent of the phase wrappers, rustfmt re-flow
+    # (norm() collapses whitespace), and the three recorded PHASE_SUBS lines.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import build_phase_split as gen
+    from build_phase_split import SPANS, REBINDS, borrow_rules
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    head = subprocess.run(['git', '-C', repo, 'show', 'HEAD:crates/cli/src/build/cmd.rs'],
+                          capture_output=True, text=True, check=True).stdout
+    hlines = head.split(NL)
+    owner = {}
+    for ph, (lo2, hi2) in SPANS.items():
+        for i in range(lo2, hi2 + 1):
+            owner[i] = ph
+    order = ['load', 'plan', 'bundle_client', 'bundle_server', 'prerender',
+             'seed_l0', 'typegen', 'emit']
+    orig = []
+    for ph in order:
+        lo2, hi2 = SPANS[ph]
+        chunk = []
+        for i in range(lo2, hi2 + 1):
+            t = hlines[i - 1]
+            if i in PHASE_SUBS:
+                was, now = PHASE_SUBS[i]
+                assert was in t, 'phase sub %d: expected %r in %r' % (i, was, t)
+                if now is None:
+                    continue
+                t = t.replace(was, now)
+            chunk.append(t)
+        chunk = gen.apply_rules(NL.join(chunk),
+                                gen.borrow_rules(ph)).split(NL)
+        orig.extend(norm(t) if t.strip() else '' for t in chunk)
+    src = os.path.join(repo, 'crates', 'cli', 'src', 'build')
+    order = ['load', 'plan', 'bundle_client', 'bundle_server', 'prerender',
+             'seed_l0', 'typegen', 'emit']
+    got = []
+    for ph in order:
+        fp = os.path.join(src, ph + '.rs')
+        plines = open(fp).read().split(NL)
+        if len(plines) > 700:
+            print('DIFF: %s exceeds the 700-line budget (%d)' % (ph + '.rs', len(plines)))
+            sys.exit(1)
+        first = next(i for i, t in enumerate(plines)
+                     if t.strip().startswith('// >>> phase-wrapper'))
+        last = max(i for i, t in enumerate(plines) if t.strip())
+        assert plines[last].strip() == '}', plines[last]
+        # header + signature block: everything before the first end-marker is
+        # wrapper, so start inside the wrapper state.
+        in_wrapper = True
+        for i, t in enumerate(plines):
+            s = t.strip()
+            if s.startswith('// >>> phase-wrapper'):
+                in_wrapper = True
+                continue
+            if s.startswith('// <<< phase-wrapper'):
+                in_wrapper = False
+                continue
+            if i >= last:             # the fn's closing brace + trailing newline
+                continue
+            if in_wrapper:
+                continue
+            got.append(norm(t) if s else '')
+    diffs = [(i, o, g) for i, (o, g) in enumerate(zip(orig, got)) if o != g]
+    if len(orig) != len(got):
+        print('DIFF: phase bodies carry %d normalized lines, HEAD body has %d'
+              % (len(got), len(orig)))
+        sys.exit(1)
+    if diffs:
+        for i, o, g in diffs[:8]:
+            print('DIFF @%d: HEAD=%r phases=%r' % (i, o[:120], g[:120]))
+        print('DIFFS (%d) total' % len(diffs))
+        sys.exit(1)
+    # the orchestrator must run the phases in the documented order
+    cmd = open(os.path.join(src, 'cmd.rs')).read()
+    calls = re.findall(r'phase_[a-z_0-9]+\(', cmd)
+    want_calls = (['phase_load('] + ['phase_%s(' % p for p in order[1:]] + [])
+    idx = [calls.index(w) for w in want_calls if w in calls]
+    if want_calls != calls[:len(want_calls)] or idx != sorted(idx):
+        print('DIFF: orchestrator phase order drifted: %s' % calls)
+        sys.exit(1)
+    print('# phase bodies checked: %d lines vs HEAD %d lines, files: %s'
+          % (len(got), len(orig), ', '.join(order)))
+    print('phase_selfcheck: zero diffs — the phase split is verbatim modulo '
+          'indent, rustfmt layout and the 3 recorded substitutions')
+
+def stages_check():
+    # A01 phase 3 proof: the concatenation of the ten stage bodies under
+    # dispatch/stages/ equals the pre-split request closure at HEAD — line-for-
+    # line, in order, modulo: the one-level dedent of the async-block spans,
+    # rustfmt re-flow (norm()), the recorded hoists/substitutions, the
+    # Flow::Respond return-wrapping (the generator's own transform, applied to
+    # the HEAD text here so the proof cannot drift) and the derived
+    # needless-borrow rewrites. The A04 wrapper + the test helper stay in
+    # entry.rs untouched.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import build_stage_split as gen
+    from build_stage_split import SPANS, ASYNC_SPANS, STAGE_ORDER
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    head = subprocess.run(
+        ['git', '-C', repo, 'show', 'HEAD:crates/cli/src/dispatch/entry.rs'],
+        capture_output=True, text=True, check=True).stdout
+    hlines = head.split(NL)
+    orig = []
+    for ph in STAGE_ORDER:
+        lo, hi = SPANS[ph]
+        chunk = gen.transform_span(hlines, lo, hi, flow_only=ph in gen.FLOW_STAGES)
+        if ph in ASYNC_SPANS:
+            chunk = [l[4:] if l.startswith('    ') else (l if l.strip() else '')
+                     for l in chunk]
+        chunk = gen.apply_rules(NL.join(chunk), gen.stage_borrow_rules(ph)).split(NL)
+        orig.extend(norm(t) if t.strip() else '' for t in chunk)
+    src = os.path.join(repo, 'crates', 'cli', 'src', 'dispatch', 'stages')
+    got = []
+    for ph in STAGE_ORDER:
+        fp = os.path.join(src, gen.STAGE_FILE.get(ph, ph) + '.rs')
+        plines = open(fp).read().split(NL)
+        if len(plines) > 700:
+            print('DIFF: %s exceeds the 700-line budget (%d)' % (ph, len(plines)))
+            sys.exit(1)
+        last = max(i for i, t2 in enumerate(plines) if t2.strip())
+        assert plines[last].strip() == '}', plines[last]
+        in_wrapper = True
+        for i, t2 in enumerate(plines):
+            s = t2.strip()
+            if s.startswith('// >>> stage-wrapper'):
+                in_wrapper = True
+                continue
+            if s.startswith('// <<< stage-wrapper'):
+                in_wrapper = False
+                continue
+            if i >= last:
+                continue
+            if in_wrapper:
+                continue
+            got.append(norm(t2) if s else '')
+    # rustfmt re-flows the emitted `Flow::Respond(` wraps, so the proof is the
+    # joined token stream per side (the phase-1 check's own rigor: order and
+    # every token must match; only layout is free).
+    # rustfmt may park a trailing comma at a line end with the closer on the
+    # next line, so the trailing-comma strip runs on the JOINED streams; and
+    # rustfmt collapses `|e| { single_expr }` to `|e| expr`, so the stage
+    # proof's token stream drops brace tokens (brace STRUCTURE is rustfmt's to
+    # lay out; token ORDER — identifiers, operators, literals — still must
+    # match exactly).
+    # rustfmt owns the separator layout: it parks trailing commas across
+    # lines, collapses `|e| { single_expr }` closures and turns match-arm
+    # blocks into expressions (adding the arm comma). The stage proof therefore
+    # strips braces AND commas from both token streams — the remaining tokens
+    # (identifiers, operators, literals) must still match in exact order.
+    sep = re.compile(r'[,{}]')
+    orig_join = sep.sub('', ''.join(orig))
+    got_join = sep.sub('', ''.join(got))
+    if orig_join != got_join:
+        # locate the first divergence for a readable diff
+        n = min(len(orig_join), len(got_join))
+        k = next((i for i in range(n) if orig_join[i] != got_join[i]), n)
+        print('DIFF: stage token stream diverges at %d (HEAD %d tokens, stages %d)'
+              % (k, len(orig_join), len(got_join)))
+        print('  HEAD  : %r' % orig_join[max(0, k - 60):k + 80])
+        print('  stages: %r' % got_join[max(0, k - 60):k + 80])
+        sys.exit(1)
+    # the closure must run the stage table through RequestCtx
+    entry = open(os.path.join(repo, 'crates', 'cli', 'src', 'dispatch', 'entry.rs')).read()
+    for marker in ['RequestCtx::new(req, deps.swappable.load())',
+                   'stages::run_stages(&deps, &mut cx)',
+                   'deps_for_publish.self_dispatch.set']:
+        if re.sub(r'\s+', '', marker) not in re.sub(r'\s+', '', entry):
+            print('DIFF: entry.rs lost the stage-runner marker: %s' % marker)
+            sys.exit(1)
+    print('# stage bodies checked: %d tokens vs HEAD %d tokens, files: %s'
+          % (len(got_join), len(orig_join), ', '.join(STAGE_ORDER)))
+    print('stages_selfcheck: zero diffs — the stage split is verbatim modulo '
+          'indent, rustfmt layout, the recorded substitutions and the derived '
+          'borrow rewrites')
+
 def main():
+    if '--phases' in sys.argv:
+        phases_check()
+        return
+    if '--stages' in sys.argv:
+        stages_check()
+        return
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     head = subprocess.run(['git', '-C', repo, 'show', 'HEAD:crates/cli/src/lib.rs'],
                           capture_output=True, text=True, check=True).stdout
