@@ -75,6 +75,16 @@ impl BundleEnv {
     }
 }
 
+/// One §V2-F01 vendor chunk group: the chunk `name` and the JS regex
+/// `test` (matched against module ids) that assigns a module to it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VendorGroup {
+    /// The chunk name (`vendor-react`, `vendor-vue`, ...).
+    pub name: String,
+    /// The JS regex source (`[\\/]node_modules[\\/]react[\\/]`).
+    pub test: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BundleOptions {
     pub env: BundleEnv,
@@ -142,6 +152,14 @@ pub struct BundleOptions {
     /// the CLI builds a closure over `LightningCssBackend` and hands it in.
     /// `None` writes CSS verbatim (minified by the in-house `minify` when
     /// `minify: true`).
+    /// §V2-F01: the per-framework vendor chunk groups (the rolldown
+    /// `advancedChunks` mapping). Empty for a single-framework build — the
+    /// chunk shape stays byte-identical (the F01 contract) — and populated
+    /// for a mixed-registry project from the compiler planner's
+    /// `IslandBootPlan::vendor_groups`. Applies to the client bundle only:
+    /// an SSR/config bundle's `inline_dynamic_imports` keeps its one-file
+    /// contract and the groups are ignored.
+    pub vendor_groups: Vec<VendorGroup>,
     pub css_transform: Option<CssTransformHook>,
     /// §4.2: when `false`, dynamic imports are inlined into the entry instead
     /// of split into separate chunks. A self-contained file is what a bare V8
