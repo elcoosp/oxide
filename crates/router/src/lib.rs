@@ -70,7 +70,9 @@ pub use typegen::declares_search_schema;
 
 /// V2-B01: precomputed per-route dispatch answers (`RouteContextTable`, D22).
 pub mod context;
+pub mod view;
 pub use context::{LayoutLoad, RouteContext, RouteContextTable, default_pattern_of};
+pub use view::MatchedView;
 
 /// V2-B09: synthetic route sets for benches + allocation-budget tests.
 /// Compiled only under `cfg(any(test, feature = "bench-util"))`.
