@@ -190,3 +190,76 @@ fn islands_json_is_the_sorted_tooling_payload() {
         r#"{"Counter":{"chunk":"src/islands/counter.tsx","framework":"react"},"Price":{"chunk":"src/islands/Price.vue","framework":"vue"}}"#
     );
 }
+
+// ------------------------------------------------------------ vendor groups
+// §V2-F01 item 2: the rolldown `advancedChunks` per-framework vendor split.
+// The groups come from the plan's adapter set; a SINGLE-framework plan stays
+// empty so existing builds keep their byte-identical chunk shape (the
+// F01 contract: existing apps and the conformance suite see no drift), and a
+// MIXED plan emits one group per framework — `react` additionally splits
+// `react-dom` (the spec names both as their own vendor chunks) — so each
+// vendor loads once, on the first island of that framework.
+
+#[test]
+fn a_mixed_plan_emits_the_per_framework_vendor_groups() {
+    let plan = plan_island_boot(
+        "react",
+        &islands(&[
+            ("Counter", "src/islands/counter.tsx", "react"),
+            ("Price", "src/islands/Price.vue", "vue"),
+        ]),
+    );
+    let groups = plan.vendor_groups();
+    let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["vendor-react", "vendor-react-dom", "vendor-vue"]
+    );
+    // The tests are JS regexes matching the module id inside node_modules —
+    // both slash layouts (the pnpm store's inner `node_modules/react/` and a
+    // plain npm install) and never a bare prefix like `react-dom` matching
+    // the `react` group.
+    for g in &groups {
+        assert!(g.test.contains("node_modules"), "{}", g.test);
+        assert!(
+            g.test.contains("[\\\\/]"),
+            "the test must match both slashes: {}",
+            g.test
+        );
+    }
+    let react = &groups[0];
+    assert_eq!(react.test, r"[\\/]node_modules[\\/]react[\\/]");
+    assert_eq!(groups[1].test, r"[\\/]node_modules[\\/]react-dom[\\/]");
+    // The vue group covers the `@vue/*` internals the runtime pulls in.
+    assert!(groups[2].test.contains("vue"));
+}
+
+#[test]
+fn a_single_framework_plan_emits_no_vendor_groups() {
+    let plan = plan_island_boot("react", &islands(&[("A", "src/a.tsx", "react")]));
+    assert!(plan.vendor_groups().is_empty());
+}
+
+#[test]
+fn the_solid_and_svelte_groups_carry_their_own_tests() {
+    let plan = plan_island_boot(
+        "solid",
+        &islands(&[("A", "src/a.tsx", "solid"), ("B", "src/b.svelte", "svelte")]),
+    );
+    let groups = plan.vendor_groups();
+    let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, vec!["vendor-solid-js", "vendor-svelte"]);
+}
+
+#[test]
+fn an_unknown_framework_contributes_no_group() {
+    // The inference's empty-string case (a bare pragma line) must not
+    // produce a nonsense vendor chunk.
+    let plan = plan_island_boot(
+        "react",
+        &islands(&[("A", "src/a.tsx", "react"), ("B", "src/b.tsx", "")]),
+    );
+    let groups = plan.vendor_groups();
+    let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, vec!["vendor-react", "vendor-react-dom"]);
+}
