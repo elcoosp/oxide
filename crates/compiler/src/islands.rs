@@ -75,6 +75,51 @@ pub fn plan_island_boot(
     }
 }
 
+/// One rolldown `advancedChunks` vendor group (§V2-F01 item 2): the
+/// per-framework vendor chunks so each framework's runtime loads once, on
+/// the first island of that framework. `test` is the JS regex (matched
+/// against module ids) that assigns a module to the chunk.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VendorGroup {
+    /// The chunk name (`vendor-react`, `vendor-vue`, ...).
+    pub name: String,
+    /// The JS regex source (`[\\/]node_modules[\\/]react[\\/]`) — both path
+    /// separators, and the trailing slash that keeps `react` from matching
+    /// `react-dom`.
+    pub test: String,
+}
+
+/// The vendor groups per framework (§V2-F01 item 2, the spec's five names:
+/// `react`, `react-dom`, `vue`, `svelte`, `solid-js`). React additionally
+/// splits `react-dom` — the spec names them as separate vendor chunks.
+fn vendor_groups_for_framework(fw: &str) -> Vec<VendorGroup> {
+    match fw {
+        "react" => vec![
+            VendorGroup {
+                name: "vendor-react".to_string(),
+                test: r"[\\/]node_modules[\\/]react[\\/]".to_string(),
+            },
+            VendorGroup {
+                name: "vendor-react-dom".to_string(),
+                test: r"[\\/]node_modules[\\/]react-dom[\\/]".to_string(),
+            },
+        ],
+        "vue" => vec![VendorGroup {
+            name: "vendor-vue".to_string(),
+            test: r"[\\/]node_modules[\\/](?:vue|@vue)[\\/]".to_string(),
+        }],
+        "svelte" => vec![VendorGroup {
+            name: "vendor-svelte".to_string(),
+            test: r"[\\/]node_modules[\\/]svelte[\\/]".to_string(),
+        }],
+        "solid" => vec![VendorGroup {
+            name: "vendor-solid-js".to_string(),
+            test: r"[\\/]node_modules[\\/]solid-js[\\/]".to_string(),
+        }],
+        _ => Vec::new(),
+    }
+}
+
 /// One tooling payload record (`.oxide/islands.json`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 struct IslandsJsonEntry<'a> {
@@ -103,6 +148,24 @@ impl IslandBootPlan {
             })
             .collect();
         serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// The rolldown `advancedChunks` vendor groups for this plan (§V2-F01
+    /// item 2): one group per framework present — `react` also splits
+    /// `react-dom`. A SINGLE-framework plan stays empty so existing builds
+    /// keep their byte-identical chunk shape (the F01 contract: existing
+    /// apps and the conformance suite see no drift); the groups apply only
+    /// to the client bundle of a mixed-registry project. An unknown
+    /// framework (the inference's empty-string case) contributes nothing.
+    #[must_use]
+    pub fn vendor_groups(&self) -> Vec<VendorGroup> {
+        if !self.mixed {
+            return Vec::new();
+        }
+        self.adapters
+            .keys()
+            .flat_map(|fw| vendor_groups_for_framework(fw))
+            .collect()
     }
 
     /// The generated `__boot__` entry source.
