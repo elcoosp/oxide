@@ -359,6 +359,7 @@ impl ImageEndpointBackend for NoopBackend {
 
 fn endpoint_with(patterns: Vec<RemoteImagePattern>) -> ImageEndpoint {
     ImageEndpoint {
+        jobs: None,
         backend: Arc::new(NoopBackend),
         asset_root: std::path::PathBuf::from("/tmp"),
         signing_secret: None,
