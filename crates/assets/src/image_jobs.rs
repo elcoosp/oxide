@@ -62,6 +62,47 @@ impl<T: ImageCas + ?Sized> ImageCas for Arc<T> {
     }
 }
 
+/// The disk-backed CAS the serve path uses: one file per output key under
+/// a root directory (`.oxide/image-cas`). The key is the blake3 hex
+/// digest the caller computes, so the filename needs no escaping — the
+/// traversal guard is the alphabet itself. `put` writes through a temp
+/// file + rename so a concurrent reader never sees a half-written image.
+pub struct DirImageCas {
+    root: std::path::PathBuf,
+}
+
+impl DirImageCas {
+    /// A store over `root` (created lazily on the first `put`).
+    #[must_use]
+    pub fn new(root: std::path::PathBuf) -> Self {
+        Self { root }
+    }
+
+    fn path_for(&self, key: &str) -> std::path::PathBuf {
+        self.root.join(key)
+    }
+}
+
+impl ImageCas for DirImageCas {
+    fn get(&self, key: &str) -> Option<Arc<Vec<u8>>> {
+        std::fs::read(self.path_for(key))
+            .ok()
+            .filter(|b| !b.is_empty())
+            .map(Arc::new)
+    }
+
+    fn put(&self, key: &str, bytes: Arc<Vec<u8>>) {
+        if std::fs::create_dir_all(&self.root).is_err() {
+            return;
+        }
+        let path = self.path_for(key);
+        let tmp = self.root.join(format!(".{key}.tmp"));
+        if std::fs::write(&tmp, bytes.as_ref()).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
 /// The shared outcome one encode's waiters all receive.
 type JobOutcome = Result<Arc<Vec<u8>>>;
 
