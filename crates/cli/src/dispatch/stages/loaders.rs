@@ -3,7 +3,7 @@
 //!
 //! stage_loaders — the §9.1/§9.2 loader phase (the sketch's
 //! `stage_loaders`): the V2-A06 parallel load graph over the layout chain
-//! + page (the sequential loop and the two-load pair it was adopted
+//! and page (the sequential loop and the two-load pair it was adopted
 //! from), streaming settles, session persistence and
 //! the data/deferred/meta threading into the render phase.
 //!
