@@ -1006,6 +1006,9 @@ pub(crate) async fn start_server_inner_full(
         stream_counter: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         streams: Some(std::sync::Arc::clone(&stream_wiring)),
         brownout: brownout_wiring.as_ref().map(std::sync::Arc::clone),
+        // V2-F04: the configured experiments, converted to the engine's
+        // shapes at boot (the field-by-field wiring mapping).
+        experiments: crate::dispatch::stages::experiments_of_config(&cfg.experiments),
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
