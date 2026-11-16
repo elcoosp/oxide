@@ -2,10 +2,10 @@
 //!
 //! The closure became: build [`RequestCtx`], then run the stages in order —
 //! `stage_prelude -> stage_match -> stage_route -> stage_middleware ->
-//! stage_data_route -> stage_action -> stage_l0_lookup -> stage_loaders ->
-//! stage_endpoint -> stage_render`. The first nine short-circuit through
-//! [`oxide_fw_dispatch::Flow`]; the last (the sketch's `stage_render` +
-//! `stage_finish` pair) produces the final response.
+//! stage_experiments -> stage_data_route -> stage_action -> stage_l0_lookup
+//! -> stage_loaders -> stage_endpoint -> stage_render`. The first ten
+//! short-circuit through [`oxide_fw_dispatch::Flow`]; the last (the sketch's
+//! `stage_render` + `stage_finish` pair) produces the final response.
 
 use crate::*;
 
@@ -17,6 +17,8 @@ mod route;
 pub(crate) use route::*;
 mod middleware;
 pub(crate) use middleware::*;
+mod experiments;
+pub(crate) use experiments::*;
 mod data_route;
 pub(crate) use data_route::*;
 mod action;
@@ -48,6 +50,13 @@ pub(crate) async fn run_stages(
         return r;
     }
     if let oxide_fw_dispatch::flow::Flow::Respond(r) = stage_middleware(d, cx).await {
+        return r;
+    }
+    // V2-F04: the §15.4 evaluation between the middleware chain and the
+    // L0 lookup (the spec's stage placement): the vary dimension lands
+    // before the key is consumed, the locals land before the loaders and
+    // the data route read them.
+    if let oxide_fw_dispatch::flow::Flow::Respond(r) = stage_experiments(d, cx).await {
         return r;
     }
     if let oxide_fw_dispatch::flow::Flow::Respond(r) = stage_data_route(d, cx).await {
