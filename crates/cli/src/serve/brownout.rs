@@ -395,8 +395,10 @@ mod tests {
     /// A wiring handle for the pins (no pool: the queue/in-flight signals
     /// read zero; the loop-lag and RSS signals are exercised directly).
     fn brownout_for_test() -> Arc<BrownoutWiring> {
-        let mut cfg = BrownoutConfig::default();
-        cfg.enabled = true;
+        let cfg = BrownoutConfig {
+            enabled: true,
+            ..BrownoutConfig::default()
+        };
         Arc::new(
             BrownoutWiring::from_config(&cfg, None, Arc::new(Metrics::new()))
                 .expect("enabled: true wires"),
