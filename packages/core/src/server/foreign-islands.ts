@@ -8,7 +8,13 @@
 // output (the client reads `data-ox-hydrated`, and a stale pending
 // flag would mislead tooling).
 
-const RE = /<ox-island([^>]*)data-ox-pending='1'([^>]*)><\/ox-island>/g
+// The pending flag matches BOTH quote styles: the render crate's own
+// element emits single-quoted attributes, while the adapters' `<Island>`
+// twins (§V2-F01) emit the framework SSR's native double quotes (React 19,
+// Vue 3, Svelte 5 and Solid SSR all render `attr="value"`). The captured
+// attribute sides carry the original quote style through the splice
+// unchanged.
+const RE = /<ox-island([^>]*)data-ox-pending=(['"])1\2([^>]*)><\/ox-island>/g
 
 export type ForeignRender = (fw: string, name: string, propsB64: string) => Promise<string>
 
@@ -51,16 +57,21 @@ export function resolveForeign(
         RE.lastIndex = 0
         while ((m = RE.exec(s))) {
           parts.push(s.slice(last, m.index))
-          const attrs = m[1] + m[2]
-          const get = (k: string) => new RegExp(k + "='([^']*)'").exec(attrs)?.[1] ?? ''
+          // Group 2 is the pending attr's quote (the new capture); the
+          // attribute sides are groups 1 and 3.
+          const attrs = m[1] + m[3]
+          const get = (k: string) => new RegExp(k + "=([\"'])([^\"']*)\\1").exec(attrs)?.[2] ?? ''
           const html = await render(get('data-ox-fw'), get('data-ox-island'), get('data-ox-props'))
           // The pending flag sat BETWEEN the two captured sides — the
           // match consumed it, so the splice collapses the seam it left
           // behind (the before-side's trailing space against the
           // after-side's leading space) into the single separator the
           // resolved island carries. A pending flag that rode inside a
-          // captured side is stripped too.
-          const resolved = `${m[1].trimEnd()} ${m[2].trimStart()}`.replace(/\s*data-ox-pending='1'\s*/, ' ')
+          // captured side is stripped too (either quote style).
+          const resolved = `${m[1].trimEnd()} ${m[3].trimStart()}`.replace(
+            /\s*data-ox-pending=(['"])1\1\s*/,
+            ' ',
+          )
           parts.push('<ox-island' + resolved + '>' + html + '</ox-island>')
           last = m.index + m[0].length
         }
