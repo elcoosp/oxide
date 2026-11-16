@@ -3794,3 +3794,80 @@ page-level declaration falls back to `normal`.
 `oha -c 500` load test (an ops script — its number is CI-measured), and the F10
 previous-generation early shrink (the brownout consults
 `oxide_pool_queue_wait_p99_us` against the F10 expiry task).
+
+**A01 phase 1 (the MAP re-derivation and the mover's mechanical extensions).** The
+spec-embedded MAP targeted the 7,696-line tree's 85 named items; today's
+`crates/cli/src/lib.rs` is 19,308 lines with 285 top-level items, so
+`scripts/split_cli_MAP.py` re-derives the MAP: the spec MAP verbatim (two names the
+F-passes retired from the tree — `is_secret_key`, `log_request` — dropped, recorded here
+as the stale-MAP delta), extended with rule buckets for every new family (the same
+`<family>/<concern>` naming the embedded MAP uses; 37 modules total) plus
+anchor-nearest placement for helpers, and the 17 `impl` blocks moved span-keyed next to
+their structs (the spec's note (c) hand-move, done mechanically). The MAP covers every
+named movable item (223) and every impl — `missing: [] duplicates: [] unmapped: []` in
+plan mode; the 45 items that stay in lib.rs are the crate-root surface itself (the 22
+`mod` declarations, 13 `use` items, 5 type aliases, 2 statics, 2 consts, 1
+`macro_rules!`). Mover extensions the current tree forced (all mechanical,
+all recorded): (1) `pub use X::*;` instead of the spec's `pub(crate) use X::*;` — a glob
+re-export caps at each item's own visibility, so per-item visibility is preserved
+exactly (`main.rs`'s `oxide_fw_cli::Cli`/`run`/`apply_startup_env` stay pub; the
+`pub(crate)` spelling would have broken the bin crate), with the `pub(crate) use`
+spelling for modules holding nothing pub (a `pub use` glob over only-private items warns
+`unused_imports` under `-D warnings`); (2) attribute-block continuation tracking in
+`split_items.py` so a wrapped `#[command(...)]` attr block moves WITH its struct (the
+spec indexer dropped indented attr continuation lines); (3) field-level `pub(crate)`
+bumps where a moved struct's private field is constructed/read cross-module
+(`HmrModuleGraph.importers/entries/accepting`, `PrerenderedShells.urls`,
+`PrerenderTarget.rel/url_path/params/locale`, `DispatchOpts`'s 19 fields,
+`PrerenderedShells::collect`) — E0616/E0451/E0624 are the spec's own "expected compile
+fixes (all mechanical)" bucket, and each bump is a pure visibility change the selfcheck
+normalizes; (4) `pub(crate) use outln;` after the macro definition — `serve/mod.rs` is
+textually before the macro, so `serve/start.rs` could not see it under the macro's
+textual scope; the re-export makes it path-importable so the `use crate::*;` globs reach
+every module; (5) three modules whose items reference nothing from the crate root
+(`build/secret.rs`, `observability.rs`, `emit/assets.rs`) dropped the unused
+`use crate::*;` preamble (the only alternative is a new `#[allow]`, which the zero-
+suppression rule forbids). `split_selfcheck.py` normalizes the visibility bumps and
+rustfmt's re-layout (whitespace removal + trailing-comma-before-closer; the `pub(crate)`
+prefix re-wraps signatures past the line width and re-adds trailing commas) and proves
+all 240 moved items token-identical to `git show HEAD:crates/cli/src/lib.rs` — zero
+diffs. The digest proof rides the new `cli-split-digest` CI job: it builds each of the
+four smoke apps at the pre-split base commit AND at HEAD and diffs the four
+`scripts/dist-digest.sh` values — the sandbox cannot build the V8-linked CLI, so the
+literal four-digest baseline is measured by CI's base step (the spec's Step 0 numbers)
+rather than pinned by hand here.
+
+**M2 drift cleanup (the post-phase-1 hygiene pass).** The seven clippy findings the
+phase-1 delivery inherited (the `-p oxide-fw-cli` gate was red at pristine HEAD) are
+fixed, and the gate is now GREEN (`cargo clippy -p oxide-fw-cli --all-targets --no-deps
+-- -D warnings` exits 0): (1) the dead `StartedServer.live` field is deleted — zero
+readers anywhere, the F05 hub reaches the dispatch through `DispatchOpts.live` and the
+pins construct their own `LiveState`; (2) the e2e-seam `StartedServer.brownout` field
+keeps its lib-side read via `cmd_serve`'s startup diagnostic (the F12 doc's ops posture —
+the governor's level rides the ops endpoints as `x-oxide-brownout`), matching the
+established `started.generations` read pattern in the SIGHUP promote path; (3) the
+`type_complexity` tuple in `build_dispatch_swappable` is factored into the
+`RoutedGenerationHandles` alias; (4) the `redundant_closure` in the `DispatchOpts`
+construction is `.map(std::sync::Arc::clone)`; (5) `brownout_for_test` builds
+`BrownoutConfig` with struct-update syntax; (6) `dechunk` is a `while let` loop; (7) the
+unused `futures::StreamExt` import in the resume-tee pin is gone. **The
+`is_secret_key` redaction gap** (SPEC-24/§20): `log_request` guards the request log, but
+`OxideRequest`'s derived `Debug` and `OxideResponse`'s manual `.field("headers", …)`
+serialized RAW headers — any `{:?}` of a request carrying `cookie`/`authorization`, or of
+a response carrying `set-cookie` (session tokens), leaked the value into logs, panics and
+diagnostics (the redaction_tdd pin's failure message demonstrated it). Both Debug impls
+now render through the shared `RedactedHeaders` wrapper (the same `is_secret_key` class;
+the stable `field_with`-closure API is feature-gated `debug_closure_helpers`, hence the
+wrapper type); 3 pins in `crates/server/tests/redaction_tdd.rs` (red-first, run locally —
+the server crate is V8-free). **F09 CI enablement:** the `search`-feature pins never
+compiled under the default-feature `rust` job (`#![cfg(feature = "search")]`); the new
+additive `search-feature` CI job runs the V8-free server endpoint pins (9, verified green
+locally with the feature) plus the two CLI pins by name (the serve wire-up + the
+dev-refresh swap; V8-linked, CI-executed). **E03 codemod un-ignore:** verified already
+satisfied in the tree — the only `#[ignore]` in the migrate tests is the deliberate
+`regen_goldens` golden-regen utility (`migrate_tdd.rs` runs 24 un-ignored pins, the CLI
+§19-B tests are un-ignored); no codemod test is ignored, nothing to un-ignore. The
+phase-1 selfcheck now carries an explicit `EXEMPT` list for the four items this pass
+deliberately edited (`StartedServer`, `build_dispatch_swappable`,
+`start_server_inner_full`, `cmd_serve`) — presence and single-copy still asserted for
+them, byte-equality-to-HEAD waived, the other 236 moved items still verbatim.
