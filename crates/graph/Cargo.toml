@@ -23,7 +23,6 @@ zstd = { workspace = true }
 redb = { workspace = true }
 rayon = { workspace = true }
 dashmap = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 
 [dev-dependencies]
