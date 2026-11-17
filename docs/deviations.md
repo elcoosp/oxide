@@ -4956,3 +4956,86 @@ the `why`/cache/pool fields remain the honest-empty ones.
   being a required method: the trait's only in-tree implementor overrides
   it, and the default keeps a pre-search implementor (a third-party
   embed) honest rather than broken.
+
+## The dev cost feed and the dev-plane attach land — the cost endpoint's records flow through a file the dev loop rewrites, and `oxide dev`/`oxide serve` finally answer `/__oxide/open` + `/__oxide/cost` (`feat/dev-cost-file-source` + `feat/dev-plane-cli-attach`, 2026-11-17)
+
+**What lands.**
+
+The §V2-F17 endpoint had a wire contract (`GET /__oxide/cost?src=`, the
+`CostSource` seam), a build-side producer (`cost::source_costs`) and two
+adapters (`SnapshotCostSource`, `ProfiledCostSource`) — but no dev-side
+feed and no CLI attach: the endpoint answered nothing in the real dev
+loop because the boot fed neither an `EditorOpener` nor a `CostSource`
+(the recorded "remaining CLI half", plus the recorded "the cost feed
+needs the dev-side snapshot design" gap). Two milestones close it.
+
+**M1 — the records-file seam + the dev-side feed (`feat/dev-cost-file-source`).**
+`crates/bundler/src/cost.rs`: `SourceCost` gains `Deserialize` and the
+records file has one writer and one reader — `write_source_costs`
+(pretty JSON, the `source_costs` order riding through, a trailing
+newline, the parent dir created; two writes over the same records are
+byte-equal, the build's determinism property riding the file) and
+`read_source_costs` (`NotFound` on a missing file, `InvalidData` on an
+unparsable one — the dev loop stays up either way). `crates/server/src/cost_endpoint.rs`:
+`FileCostsSource` — the dev-side `CostSource` over the persisted file
+(the `client.costs.json` spelling beside the client manifest). The dev
+boot cannot hold the build's `BundleOutput` across rebuilds, so the boot
+attaches once and a rebuild's rewrite is picked up by the NEXT query.
+The staleness check is the cargo/make `(mtime, length)` stat PAIR — an
+mtime-only check proved flaky where the timestamp tick is coarser than a
+fast rewrite (two writes landing in one tick served the stale cache in
+the red-first pin; the length half catches those, and a rewrite that
+moves neither half carries identical content anyway). Honesty rules:
+a hit maps the row one-to-one into `bytes_only` (a `null` chunk is the
+honest empty string), a missing file is the no-build shape (misses, no
+log noise), an unreadable file warns once per stat move naming the path,
+a vanished file warns and clears (stale rows never outlive the file that
+carried them). 5 bundler pins + 6 server pins (red-first: E0432 over
+`write_source_costs`/`read_source_costs` and `FileCostsSource`), the
+`cost_source_file` criterion group (the steady-state hit = one stat
+pair + the cached lookup, at the 64/4096 record shapes), and the
+file-backed section in the `cost_endpoint` walkthrough example.
+
+**M2 — the dev-plane attach (`feat/dev-plane-cli-attach`).**
+`crates/cli/src/build/bundle_client.rs`: the build phase persists the
+records beside the client manifest after the gates pass (inside the
+`!skip_client` guard — a fingerprint-match skip leaves the previous
+file, the bundle is byte-identical so its records are). A write failure
+warns; the build continues (the file is dev-plane telemetry, the
+endpoint answers its documented 404s without it).
+`crates/cli/src/dev/client_bundle.rs`: the dev bundle path writes the
+same file after a FULL scan — a partial (`changed`) scan's output
+carries the rebuilt modules, not the whole module map, and writing it
+would clobber the full-build records with a partial table, so the last
+full build's file stays until the next full scan.
+`crates/cli/src/serve/start.rs`: the pipeline literal attaches both
+endpoints beside the inspector under the same `with_inspector` gate —
+`OpenEditorEndpoint::new(root, CommandOpener)` (the production opener;
+the confinement and the coded `DEV-OPEN-001/002` refusals are the
+endpoint module's) and `CostEndpoint::new(FileCostsSource::from_path(dist/client/client.costs.json))`.
+Production never attaches either (the gate is the dev plane's), so the
+default pipeline stays byte-identical.
+
+**Deltas recorded.**
+
+- The feed is a FILE, not an in-memory snapshot: the dev loop rebuilds
+  in-process (`bundle_incremental`) and the serve boot has no handle on
+  the bundler's incremental worker state — the persisted records file is
+  the seam both sides already share (the same posture as the
+  `client.manifest.json` contract), and the stat-pair check keeps the
+  endpoint's answer current without a re-attach.
+- Partial-scan rebuilds do not rewrite the records file: the
+  `bundle_incremental` output for a `changed` scan is the rebuilt
+  modules, not the whole map. The endpoint answers the last full build's
+  records until the next full scan (an HMR edit followed by a
+  save-everything passes a full scan and corrects the table).
+- The dev-plane endpoints attach under `with_inspector` (the boot's
+  dev-plane gate, the same flag the inspector and the dev token ride) —
+  there is no separate config key; a serve without the inspector is
+  production-shaped by definition.
+- The inspector's live + generation rows (`with_live`/`with_generations`
+  at the boot) remain the recorded CLI tail: the `LiveState` is built
+  after the pipeline literal today and the boot-frozen tag snapshot
+  would render an always-empty table — the honest attach needs the hub
+  sampled per render (a `CliInspector` field) or the literal hoisted,
+  which is a boot-order refactor this session kept out of the milestone.
