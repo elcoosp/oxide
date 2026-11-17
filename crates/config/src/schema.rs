@@ -546,7 +546,7 @@ fn deploy_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "description": "V2-F10/F11: the deploy machinery's knobs. Inert at the wiring until the F10 CLI adoption lands (booting the serving pools from dist/ + the F11 releases/ layout, the promote-on-reload, the 30 s expiry task, the F12 brownout trigger); the engine-side default stays the plumbing default and this section is its config face. A window literal that does not parse, a zero window or a zero generation count fails the load (CFG-DEPLOY).",
+        "description": "V2-F10/F11: the deploy machinery's knobs. Wired: the serving pools boot from dist/ per generation (the F10 CLI adoption) and `oxide deploy` reads both knobs over the delta/objstore engines (F11); the engine-side default stays the plumbing default and this section is its config face. A window literal that does not parse, a zero window or a zero generation count fails the load (CFG-DEPLOY).",
         "properties": {
             "skewWindow": {
                 "type": "string",
@@ -570,7 +570,7 @@ fn offline_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "description": "V2-F14: the offline-first knobs. Inert at the wiring until the F14 CLI adoption lands (the PWA worker's precache emitting from the client manifest, the client outbox boot); the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).",
+        "description": "V2-F14: the offline-first knobs. Wired: the CLI emission gate writes dist/sw.js from the produced client manifest and the boot module answers the worker's activate fan-out with a queue flush; the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).",
         "properties": {
             "enabled": {
                 "type": "boolean",
