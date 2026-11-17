@@ -228,17 +228,16 @@ pub struct OxideConfig {
     /// V2-F10 (Appendix V2.L): the `deploy` section — the skew-window
     /// and generation-count knobs (`deploy.skewWindow`, the spec's
     /// `'15m'` default; `deploy.generations`, the F11 `releases/`
-    /// retention count, default 3). Inert at the wiring until the F10
-    /// CLI adoption lands (booting the serving pools from `dist/` +
-    /// F11's `releases/` layout, the promote-on-reload, the 30 s expiry
-    /// task, the F12 brownout trigger) — the engine-side default
-    /// (`DEFAULT_SKEW_WINDOW`, `crates/adapters`) stays the plumbing
-    /// default and this typed key is its config face (the RFN-002
-    /// pattern). A window literal that does not parse, a zero window
-    /// (the previous generation would expire before a single request
-    /// crosses the deploy) or a zero generation count fails the load
-    /// (`CFG-DEPLOY`; the raw-`Value` validation pass runs before the
-    /// typed parse).
+    /// retention count, default 3). Wired: the serving pools boot from
+    /// `dist/` per generation (the F10 CLI adoption) and `oxide deploy`
+    /// reads both knobs over the landed delta/objstore engines (F11) —
+    /// the engine-side default (`DEFAULT_SKEW_WINDOW`, `crates/adapters`)
+    /// stays the plumbing default and this typed key is its config face
+    /// (the RFN-002 pattern). A window literal that does not parse, a
+    /// zero window (the previous generation would expire before a single
+    /// request crosses the deploy) or a zero generation count fails the
+    /// load (`CFG-DEPLOY`; the raw-`Value` validation pass runs before
+    /// the typed parse).
     #[serde(default)]
     pub deploy: DeployConfig,
     /// V2-F14 (Appendix V2.L): the `offline` section — the PWA worker's
@@ -248,12 +247,12 @@ pub struct OxideConfig {
     /// service worker and boots no outbox); the outbox knob defaults ON
     /// inside an enabled section (the spec's example shape) — the
     /// server-side stage the outbox's retries hit is
-    /// `oxide_fw_dispatch::idem::stage_idempotency`. Inert at the
-    /// wiring until the F14 CLI adoption lands (the precache emitting
-    /// from the manifest, the client outbox boot) — the RFN-002
-    /// pattern. A bad `precache` spelling or a wrong-typed knob fails
-    /// the load (`CFG-OFFLINE`; the raw-`Value` validation pass runs
-    /// before the typed parse).
+    /// `oxide_fw_dispatch::idem::stage_idempotency`. Wired: the F14
+    /// CLI emission gate writes `dist/sw.js` from the client manifest
+    /// and the boot module answers the worker's activate fan-out (the
+    /// RFN-002 pattern). A bad `precache` spelling or a wrong-typed knob
+    /// fails the load (`CFG-OFFLINE`; the raw-`Value` validation pass
+    /// runs before the typed parse).
     #[serde(default)]
     pub offline: OfflineConfig,
     /// V2-C11 (§V2-C11): the `check` section — the typecheck backend
@@ -453,12 +452,14 @@ pub struct LlmsConfig {
 /// recorder's face. The spec's union shape:
 /// `false | 'errors' | 'all' | { sample, onError }`.
 ///
-/// Inert at the wiring until the CLI's record/replay adoption lands (the
-/// deferred A01-phase-3 half): the substrate's `RecordPolicy` is the
-/// decision, this typed key is its config input — the same RFN-002
-/// pattern the `search` key used. Bad spellings, an out-of-range
-/// `sample` and wrong-typed knobs fail the load (`CFG-REC`; the
-/// raw-`Value` validation pass runs before the typed parse).
+/// Wired: the CLI's record/replay adoption landed — the worker installs
+/// the policy at boot (`globalThis.__oxide_replay`, the record module)
+/// and `oxide replay <id>` / the MCP `replay.run` tool replay it; the
+/// substrate's `RecordPolicy` is the decision, this typed key is its
+/// config input — the same RFN-002 pattern the `search` key used. Bad
+/// spellings, an out-of-range `sample` and wrong-typed knobs fail the
+/// load (`CFG-REC`; the raw-`Value` validation pass runs before the
+/// typed parse).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RecordConfig {
     /// `record: false` (the key absent is the same default): nothing
@@ -1000,9 +1001,10 @@ pub struct FrameworkConfig {
     /// interactive — an explicit `islands` registration always wins, and
     /// a pure classification is the only skip. Default `false` (the
     /// spec's own default: "a wrong inference silently breaks
-    /// interactivity, so the default is to defer"). Inert at the wiring
-    /// until the CLI adoption lands (the RFN-002 pattern the
-    /// `search`/`deploy` keys used).
+    /// interactivity, so the default is to defer"). Wired: the CLI build
+    /// scan landed (`crates/cli/src/build/auto_islands.rs`) and the dev
+    /// server reads the same scan read-only for the pure-`on*`-props
+    /// dev warn (the F02 dev-warn half).
     #[serde(default)]
     pub auto_islands: bool,
 }
