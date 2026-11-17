@@ -20,6 +20,7 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use oxide_fw_server::{
     ComponentCost, CostEndpoint, CostSource, OxideRequest, OxideResponse, Pipeline,
+    SnapshotCostSource,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -211,4 +212,72 @@ async fn pipeline_refuses_a_wrong_or_missing_token_with_403() {
         )
         .await;
     assert_eq!(wrong.status, 403);
+}
+
+// ------------------------------------------------------------------
+// §V2-F17 adapter half: the snapshot-backed cost source
+// ------------------------------------------------------------------
+//
+// The endpoint doc records "the build-side adapter is the caller's" —
+// the adapter IS the mapping from the build's snapshot records into the
+// seam. The production shape the dev boot feeds: the bundler's
+// `source_costs` records mapped one-to-one (`bytes_only` — the render
+// and cache halves belong to the profiler and the tier map, absent for
+// the bytes-only adapters), plus the empty snapshot the tests inject.
+
+/// Hits answer from the build's records; anything the build did not
+/// produce is the documented miss (the endpoint's 404) — including on
+/// the empty snapshot the no-build shapes feed.
+#[test]
+fn snapshot_source_answers_hits_and_documented_misses() {
+    let source = SnapshotCostSource::from_pairs([
+        (
+            "src/hero.tsx".to_string(),
+            ComponentCost {
+                bytes: 4812,
+                gzip: 1901,
+                chunk: "chunk-abc.js".into(),
+                render_ms_p50: Some(2.5),
+                cache: Some("L0".into()),
+            },
+        ),
+        (
+            "src/counter.svelte".to_string(),
+            ComponentCost::bytes_only(921, 430, "chunk-def.js"),
+        ),
+    ]);
+    assert_eq!(
+        source.cost("src/hero.tsx"),
+        Some(ComponentCost {
+            bytes: 4812,
+            gzip: 1901,
+            chunk: "chunk-abc.js".into(),
+            render_ms_p50: Some(2.5),
+            cache: Some("L0".into()),
+        })
+    );
+    assert_eq!(source.cost("src/ghost.tsx"), None);
+    assert_eq!(SnapshotCostSource::default().cost("src/hero.tsx"), None);
+}
+
+/// The bytes-only constructor is the spec's Svelte/Solid shape: the
+/// render and cache halves stay `None` — the overlay renders the
+/// "render time unavailable" note off the null `renderMsP50`.
+#[test]
+fn bytes_only_record_carries_null_render_and_cache() {
+    let rec = ComponentCost::bytes_only(921, 430, "chunk-def.js");
+    assert_eq!(rec.bytes, 921);
+    assert_eq!(rec.gzip, 430);
+    assert_eq!(rec.chunk, "chunk-def.js");
+    assert_eq!(rec.render_ms_p50, None);
+    assert_eq!(rec.cache, None);
+}
+
+/// The adapter carries the endpoint's seam: the dev boot attaches it as
+/// `Arc<dyn CostSource>` (the object-safety the `CostEndpoint::new`
+/// signature demands).
+#[test]
+fn snapshot_source_impls_the_cost_source_seam() {
+    let source: Arc<dyn CostSource> = Arc::new(SnapshotCostSource::default());
+    assert_eq!(source.cost("src/hero.tsx"), None);
 }
