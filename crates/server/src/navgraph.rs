@@ -313,10 +313,18 @@ impl NavGraph {
         {
             std::fs::create_dir_all(parent)?;
         }
+        // Serialize BEFORE the tmp file exists: a serialization failure
+        // must not rename an EMPTY tmp over the previous snapshot (the
+        // learned edges would vanish silently — the synthetic-tsconfig
+        // precedent). The error rides the function's `io::Result`; the
+        // flusher logs it and the previous snapshot survives.
+        let serialized = serde_json::to_string(&body).map_err(|e| {
+            std::io::Error::other(format!("navgraph snapshot serialization failed: {e}"))
+        })?;
         let tmp = path.with_extension("json.tmp");
         {
             let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(serde_json::to_string(&body).unwrap_or_default().as_bytes())?;
+            f.write_all(serialized.as_bytes())?;
             f.sync_all().ok();
         }
         std::fs::rename(&tmp, path)
