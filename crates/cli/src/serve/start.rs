@@ -733,15 +733,31 @@ pub(crate) async fn start_server_inner_full(
         } else {
             None
         },
-        // V2-E08/F17 (server half): the two dev-plane endpoints stay
-        // UNATTENDED at the CLI boot for now — `None` is the documented
-        // default (the endpoint absent, production byte-identical), the
-        // pipeline literal must still name the fields the endpoints'
-        // session added. The attach (an `EditorOpener` and the build's
-        // cost snapshot fed beside `with_inspector`) is the recorded
-        // remaining CLI half.
-        open_editor: None,
-        cost_endpoint: None,
+        // V2-E08/F17 (the dev-plane attach): the two endpoints ride the
+        // inspector's dev posture — `with_inspector` gates both, production
+        // never attaches them and stays byte-identical. The open endpoint
+        // spawns through the production `CommandOpener` (the confinement
+        // and the coded refusals are the endpoint module's). The cost
+        // endpoint reads the build's PERSISTED records file
+        // (`client.costs.json`, written by the build phase and the dev
+        // bundle path) through the stat-pair-checked `FileCostsSource` —
+        // the no-build shape answers the documented 404s until the first
+        // rebuild lands, a rebuild's rewrite is picked up by the next
+        // query with no re-attach.
+        open_editor: with_inspector.then(|| {
+            std::sync::Arc::new(oxide_fw_server::OpenEditorEndpoint::new(
+                rootp.clone(),
+                std::sync::Arc::new(oxide_fw_server::CommandOpener),
+            ))
+        }),
+        cost_endpoint: with_inspector.then(|| {
+            std::sync::Arc::new(oxide_fw_server::CostEndpoint::new(std::sync::Arc::new(
+                oxide_fw_server::FileCostsSource::from_path(
+                    rootp.join("dist").join("client").join("client.costs.json"),
+                ),
+            )
+                as std::sync::Arc<dyn oxide_fw_server::CostSource>))
+        }),
         page_renderer: None,
         // SPEC-14: the HMR hub's broadcast sender, dev only.
         hmr: hmr.as_ref().map(|h| h.sender()),
