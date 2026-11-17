@@ -75,6 +75,19 @@ fn bench_subscribe_remove(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_tag_snapshot(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tag_snapshot");
+    // The inspector pays one snapshot per `/__oxide` render: the cost
+    // scales with the registered tag keys, not the connection count.
+    for (n, w) in [(256usize, 16usize), (1024, 16)] {
+        let h = hub(n, w);
+        group.bench_with_input(BenchmarkId::from_parameter(n), &h, |b, h| {
+            b.iter(|| black_box(h.tag_snapshot()));
+        });
+    }
+    group.finish();
+}
+
 fn bench_sse_frame(c: &mut Criterion) {
     let mut group = c.benchmark_group("sse_frame");
     // Typical frame shapes: the keepalive ping, one ODF snapshot line
@@ -98,6 +111,7 @@ criterion_group!(
     benches,
     bench_affected,
     bench_subscribe_remove,
+    bench_tag_snapshot,
     bench_sse_frame
 );
 criterion_main!(benches);
