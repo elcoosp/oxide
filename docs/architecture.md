@@ -42,6 +42,21 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 
 ## What changed
 
+- The v0.2 Release Wave (2026-11-16): **R01** the §22 conformance set is
+  29 assertions × 4 adapters and verified green from a clean checkout
+  (`pnpm install` + a `packages/core` build — which surfaced and fixed two
+  committed `@oxide-fw/core` build-blockers: the `tsdown.config.mjs`
+  missing comma after the `search` entry and `boot.ts` importing
+  `MixedIslandRegistry` from `odf-decode` instead of `islands`); **R03**
+  `benchmarks/report.md` gained the G2 target-status table (10× match
+  measured 19.4×, 0 dhat blocks on the static path) and the `bench-gate`
+  CI job now runs the criterion microbench gate
+  (`criterion_summary.py` + `criterion_compare.py` vs
+  `after-wave-b.json`); **R05** `docs/security-review-v0.2.md` drafts the
+  threat model + control table for live / stream / rust-fn / search /
+  replay / image / deploy with the honest gap list; **R06**
+  `docs/release-v0.2-prep.md` verifies the tag-triggered workflows and
+  prepares the changelog draft + the exact version-bump commands.
 - §V2-F01 client halves (2026-11-16): the adapter `<Island>` twins (vue/svelte/solid src + the React `framework` prop), the worker `island:render` op (`crates/jshost/worker/oxide-worker.mjs`, the `__oxide_island_renderers` registry), and the rolldown `advancedChunks` per-framework vendor split (`oxide_fw_compiler::islands::vendor_groups` → `BundleOptions::vendor_groups` → `CodeSplittingMode::Advanced`).
 - §V2-E01 Vue/Solid refresh wiring (2026-11-16): the compile-step HMR emission (the `hmr` payload flag), the `__oxide_solid_refresh` runtime shim + the in-place refresh registry (`packages/core/src/client/hot.ts`), and the boot replay gate (`packages/core/src/client/boot.ts`). since 2026-10-12
 
@@ -598,7 +613,9 @@ build's route scan owns the component graph:
 
 - `cargo test --workspace` — Rust crates
 - `node --test packages/*/test/*.test.ts` — TS adapter + runtime packages
-- `node --test conformance/test/*.test.ts` — 24 assertions × 4 adapters
+- `node --test conformance/test/*.test.ts` — 29 assertions × 4 adapters
+  (`pnpm -C conformance test`; the four v0.2 drafts cover E02/F01/E04/F09,
+  C09 + F11 ride the jshost-e2e acceptance scripts)
 - `pnpm --filter @oxide/playwright test` — real-browser E2E over
   `oxide start` (requires `pnpm --filter @oxide/playwright install-browsers`
   once, then a built `examples/smoke-app-react`)
