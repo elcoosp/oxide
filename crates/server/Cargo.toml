@@ -108,3 +108,11 @@ required-features = ["bench-util"]
 name = "status_sidecars"
 harness = false
 required-features = ["bench-util"]
+
+# The search gate bench (R05: the §13.4 query-length cap refusal + the L1
+# hit) — needs the endpoint compiled in (the `search` feature) AND the
+# criterion harness (`bench-util`).
+[[bench]]
+name = "search"
+harness = false
+required-features = ["bench-util", "search"]
