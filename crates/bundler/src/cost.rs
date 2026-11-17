@@ -42,15 +42,61 @@ use std::path::Path;
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::debug_span;
 
 use crate::{BundleOutput, Module};
 
+/// Persist the cost records beside the client manifest (the dev-side feed
+/// the cost endpoint's boot adapter re-reads): pretty JSON, one array of
+/// the `{ source, bytes, gzip, chunk }` rows in the given order — the
+/// [`source_costs`] sorted order rides through — plus a trailing newline.
+/// The parent directory is created when missing (a fresh `dist/` never
+/// turns the feed into a caller foot-gun); two writes over the same
+/// records are byte-equal, the build's determinism property riding the
+/// file (`client.costs.json` is byte-stable across identical builds).
+///
+/// # Errors
+///
+/// The parent-directory create or the file write failing surfaces as the
+/// `std::io::Error` the caller reports (the build and dev-bundle paths
+/// warn and continue — the endpoint answers its documented 404s without
+/// the file).
+pub fn write_source_costs(records: &[SourceCost], path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(records)
+        .map_err(|e| std::io::Error::other(format!("cost records serialize failed: {e}")))?;
+    std::fs::write(path, format!("{json}\n"))
+}
+
+/// Read a cost-records file back (the boot adapter's load): the rows in
+/// file order. The shape is exactly what [`write_source_costs`] wrote —
+/// the same rows the `?src=` query and the `data-ox-src` stamp spell.
+///
+/// # Errors
+///
+/// A missing file is `NotFound`; an unparsable file is `InvalidData`
+/// carrying the serde message — the dev-side adapter answers the
+/// endpoint's documented 404s on both and retries on the next mtime move
+/// instead of crashing the dev loop.
+pub fn read_source_costs(path: &Path) -> std::io::Result<Vec<SourceCost>> {
+    let raw = std::fs::read_to_string(path)?;
+    serde_json::from_str(&raw).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("cost records parse failed: {e}"),
+        )
+    })
+}
+
 /// One client module's build-side cost record — the `{ bytes, gzip,
 /// chunk }` triple the cost endpoint serves under the module's
 /// root-relative `source` key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceCost {
     /// The module's root-relative path with forward slashes (the
     /// endpoint's `?src=` spelling; a path outside `root` rides as
@@ -101,10 +147,9 @@ fn gzip_len(source: &str) -> u64 {
     if encoder.write_all(source.as_bytes()).is_err() {
         return 0;
     }
-    encoder
-        .finish()
-        .map(|compressed| u64::try_from(compressed.len()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+    encoder.finish().map_or(0, |compressed| {
+        u64::try_from(compressed.len()).unwrap_or(u64::MAX)
+    })
 }
 
 /// The root-relative spelling with forward slashes (the `?src=`
