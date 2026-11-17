@@ -25,7 +25,7 @@
 //! the source (skipping strings, templates, comments), then splices the
 //! specifier strings from the back to keep byte offsets stable.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -172,6 +172,15 @@ pub struct EsmDevState {
     /// and which `/src/*` files need a Node tooling-pool compile (Vue SFC,
     /// Svelte, Solid tsx) instead of the native Oxc lowering.
     pub framework: String,
+    /// The §V2-F02 dev-warn half: the boot-time island manifest (the
+    /// auto-islands scan, read-only — `crate::build::dev_island_manifest`)
+    /// the served modules' `on*`-props usage surface crosses. `None` with
+    /// the gate off: no auto classification exists, nothing warns.
+    pub islands: Option<Arc<oxide_fw_compiler::IslandManifest>>,
+    /// The warned keys (`usage_file:component:line`), so a module the
+    /// browser re-serves on every navigation warns exactly once per dev
+    /// session.
+    pub warned_pure_on_props: Arc<std::sync::Mutex<BTreeSet<String>>>,
 }
 
 /// What [`handle_esm_request`] decided for a `/src/*` request.
@@ -264,6 +273,9 @@ pub async fn serve_pool_compiled_module(
             return fail(format!("source not found: src/{rel_path}"));
         }
     };
+    // The F02 dev warn rides the pool-compiled transform too (the Solid
+    // `.tsx` arm is JSX; the SFC sources' surface is empty and no-ops).
+    warn_pure_on_props(state, &format!("src/{rel_path}"), &src);
     let Some(pool) = pool else {
         return fail("tooling pool unavailable — cannot compile SFC/Solid client module".into());
     };
@@ -925,6 +937,40 @@ fn is_server_specifier(spec: &str) -> bool {
 /// [`EsmAction::PoolModule`] — the caller (the dispatch closure, which is
 /// async) then awaits [`serve_pool_compiled_module`]. Every other match is
 /// [`EsmAction::Ready`] and can be served synchronously as before.
+/// The F02 dev-warn code (`docs/errors.toml`; the generated errors page).
+pub(crate) const ISL_PURE_ON_PROPS: &str = "AST-ISL-002";
+
+/// The §V2-F02 dev warn: cross one served module's `on*`-props usage
+/// surface (the current source — a fresh edit is caught on the next
+/// serve) with the boot manifest's pure classifications, and log every
+/// mismatch once per dev session (the dedup key is the usage site). The
+/// gate-off state (`islands: None`) is a no-op; a non-JSX module's
+/// surface is empty and warns nothing.
+pub(crate) fn warn_pure_on_props(state: &EsmDevState, rel_key: &str, source: &str) {
+    let Some(manifest) = state.islands.as_deref() else {
+        return;
+    };
+    for warn in oxide_fw_compiler::pure_on_props_in_file(rel_key, source, manifest) {
+        let key = format!("{}:{}:{}", warn.usage_file, warn.component, warn.line);
+        let fresh = state
+            .warned_pure_on_props
+            .lock()
+            .map(|mut warned| warned.insert(key))
+            .unwrap_or(false);
+        if fresh {
+            tracing::warn!(
+                code = ISL_PURE_ON_PROPS,
+                component = %warn.component,
+                defining_file = %warn.defining_file,
+                usage_file = %warn.usage_file,
+                line = warn.line,
+                props = ?warn.props,
+                "the pure-classified component receives `on*` props — the auto-islands scan skips it, so these handlers only run when the importing component hydrates"
+            );
+        }
+    }
+}
+
 pub fn handle_esm_request(state: &EsmDevState, req: &OxideRequest) -> Option<EsmAction> {
     let path = path_of(&req.url);
     if let Some(rest) = path.strip_prefix("/src/") {
@@ -1002,6 +1048,10 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
                 .with_header("content-type", "text/plain; charset=utf-8");
         }
     };
+    // The F02 dev warn rides the transform: the served source is the
+    // props surface (the manifest key is the root-relative spelling the
+    // scan set names).
+    warn_pure_on_props(state, &format!("src/{rel_path}"), &src);
     let lang = lang_for(rel_path);
     let path_for_compiler = format!("src/{rel_path}");
 
@@ -1444,7 +1494,69 @@ mod integration_tests {
             jsx_import_source: None,
             rewrite_map: Arc::new(map),
             framework: "react".to_string(),
+            islands: None,
+            warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
         }
+    }
+
+    /// A gate-on state: the manifest classifies a pure `Button` under
+    /// `src/islands/button.tsx` (the pin's mismatch target).
+    fn warned_state(tmp: &Path) -> EsmDevState {
+        let mut s = state(tmp);
+        let files: BTreeMap<String, (oxide_fw_compiler::Framework, String)> = [(
+            "src/islands/button.tsx".to_string(),
+            (
+                oxide_fw_compiler::Framework::React,
+                "export default function Button(props: { children?: unknown }) {\n  return <button>{props.children}</button>;\n}\n".to_string(),
+            ),
+        )]
+        .into_iter()
+        .collect();
+        s.islands = Some(Arc::new(oxide_fw_compiler::IslandManifest::build(&files)));
+        s
+    }
+
+    /// The F02 dev warn: a page equipping the pure `button.tsx` with
+    /// event props warns once — the second serve of the same site is the
+    /// dedup set's no-op.
+    #[test]
+    fn pure_on_props_warn_fires_once_per_site() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = warned_state(tmp.path());
+        let page = "import Button from '../islands/button';\nexport default function Page() {\n  return <Button onClick={() => {}} onInput={() => {}}>go</Button>;\n}\n";
+        warn_pure_on_props(&s, "src/pages/page.tsx", page);
+        assert_eq!(
+            s.warned_pure_on_props.lock().unwrap().len(),
+            1,
+            "the mismatch site warned once"
+        );
+        warn_pure_on_props(&s, "src/pages/page.tsx", page);
+        assert_eq!(
+            s.warned_pure_on_props.lock().unwrap().len(),
+            1,
+            "the re-serve is the dedup's no-op"
+        );
+    }
+
+    /// The gate-off state carries no manifest — nothing warns (the dev
+    /// warn only reads the auto-islands classification).
+    #[test]
+    fn gate_off_state_never_warns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = state(tmp.path());
+        let page = "import Button from '../islands/button';\nexport default function Page() {\n  return <Button onClick={() => {}}>go</Button>;\n}\n";
+        warn_pure_on_props(&s, "src/pages/page.tsx", page);
+        assert!(s.warned_pure_on_props.lock().unwrap().is_empty());
+    }
+
+    /// A module with no JSX surface (a plain TS module, an SFC's script)
+    /// warns nothing even under the gate.
+    #[test]
+    fn non_jsx_source_never_warns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = warned_state(tmp.path());
+        warn_pure_on_props(&s, "src/lib/util.ts", "export const n = 1;\n");
+        assert!(s.warned_pure_on_props.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1783,18 +1895,24 @@ mod integration_tests {
             jsx_import_source: None,
             rewrite_map: Arc::new(map.clone()),
             framework: "vue".to_string(),
+            islands: None,
+            warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
         };
         let solid_state = EsmDevState {
             root: tmp.path().to_path_buf(),
             jsx_import_source: Some("@solidjs/web".to_string()),
             rewrite_map: Arc::new(map.clone()),
             framework: "solid".to_string(),
+            islands: None,
+            warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
         };
         let react_state = EsmDevState {
             root: tmp.path().to_path_buf(),
             jsx_import_source: None,
             rewrite_map: Arc::new(map),
             framework: "react".to_string(),
+            islands: None,
+            warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
         };
         assert!(needs_pool_compile(&vue_state, "routes/index/page.vue"));
         assert!(needs_pool_compile(&vue_state, "routes/index/page.svelte"));
