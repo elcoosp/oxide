@@ -65,6 +65,76 @@ pub trait CostSource: Send + Sync {
     fn cost(&self, src: &str) -> Option<ComponentCost>;
 }
 
+impl ComponentCost {
+    /// The bytes-only record — the spec's Svelte/Solid shape ("Svelte and
+    /// Solid show bytes only, and the overlay says so"): the render
+    /// (`renderMsP50`) and cache halves stay `None`, the overlay renders
+    /// its "render time unavailable" note off the null. The shape the
+    /// bundler's `source_costs` triple (`bytes`, `gzip`, `chunk` — the
+    /// build-side engine carries no render or cache data) maps into.
+    #[must_use]
+    pub fn bytes_only(bytes: u64, gzip: u64, chunk: impl Into<String>) -> Self {
+        Self {
+            bytes,
+            gzip,
+            chunk: chunk.into(),
+            render_ms_p50: None,
+            cache: None,
+        }
+    }
+}
+
+/// The snapshot-backed production adapter: the build's cost records held
+/// in memory, keyed by the root-relative source spelling the `?src=`
+/// query and the `data-ox-src` stamp share. The dev boot feeds it from
+/// the bundler's `source_costs` snapshot (mapped through
+/// [`ComponentCost::bytes_only`] — the render and cache halves belong to
+/// the profiler and the tier map, which ride a different adapter), and
+/// the endpoint answers hits from it; anything the build did not
+/// produce is the documented 404, never a fabricated record.
+#[derive(Debug, Clone, Default)]
+pub struct SnapshotCostSource {
+    records: std::collections::BTreeMap<String, ComponentCost>,
+}
+
+impl SnapshotCostSource {
+    /// A snapshot over the given records (keyed by the `?src=` spelling).
+    #[must_use]
+    pub fn new(records: std::collections::BTreeMap<String, ComponentCost>) -> Self {
+        Self { records }
+    }
+
+    /// A snapshot from `(source, record)` pairs — the bundler's
+    /// `Vec<SourceCost>` shape maps one-to-one:
+    /// `(sc.source, ComponentCost::bytes_only(sc.bytes, sc.gzip,
+    /// sc.chunk))`.
+    #[must_use]
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (String, ComponentCost)>) -> Self {
+        Self {
+            records: pairs.into_iter().collect(),
+        }
+    }
+
+    /// The number of records the snapshot carries.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Whether the snapshot carries no records (the no-build shape —
+    /// every query misses, the endpoint's 404 all the way down).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+}
+
+impl CostSource for SnapshotCostSource {
+    fn cost(&self, src: &str) -> Option<ComponentCost> {
+        self.records.get(src).cloned()
+    }
+}
+
 /// The endpoint state: the injected source. The dev boot attaches one via
 /// [`crate::Pipeline::with_cost_endpoint`].
 pub struct CostEndpoint {
