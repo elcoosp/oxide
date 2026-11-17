@@ -30,7 +30,7 @@ fn loads_empty_component() {
     let plugin = WasmPlugin::load(b"(component)", manifest(vec![Hook::Transform]), None)
         .expect("empty component loads");
     assert_eq!(plugin.manifest().name, "test-plugin");
-    assert!(plugin.available_hooks().is_empty());
+    assert_eq!(plugin.available_hooks(), [] as [Hook; 0]);
 }
 
 #[test]
@@ -100,7 +100,8 @@ fn call_unexported_hook_errors_with_plg_wasm() {
 fn hook_export_name_is_stable() {
     assert_eq!(hook_export_name(&Hook::Transform), "transform");
     assert_eq!(hook_export_name(&Hook::Load), "load");
-    assert_eq!(hook_export_name(&Hook::ResolveId), "resolve_id");
+    // kebab-case: the component model refuses underscore extern names
+    assert_eq!(hook_export_name(&Hook::ResolveId), "resolve-id");
     assert_eq!(hook_export_name(&Hook::Config), "config");
     assert_eq!(hook_export_name(&Hook::ConfigResolved), "config_resolved");
     assert_eq!(hook_export_name(&Hook::ConfigureServer), "configure_server");
@@ -152,7 +153,7 @@ fn real_component_honours_declared_hook_subset() {
     // component has a `transform` export.
     let plugin =
         WasmPlugin::load(ADD_ONE_WAT.as_bytes(), manifest(vec![Hook::Load]), None).unwrap();
-    assert!(plugin.available_hooks().is_empty());
+    assert_eq!(plugin.available_hooks(), [] as [Hook; 0]);
 }
 
 #[test]
