@@ -304,3 +304,70 @@ async fn a_swapped_index_never_serves_stale_l1_hits() {
         "the swap repartitioned the L1: the new corpus answers"
     );
 }
+
+// ------------------------------------------------- the query-length cap (R05)
+
+// The spec's security table (§13.4, `/_oxide/search`): "query length cap
+// (200)" — the R05 review recorded the cap as not-a-named-constant, the
+// only guard being the rate limit. These pins are written FIRST (red: the
+// constant and the refusal did not exist).
+
+/// A `q` past the 200-byte cap is the documented 400, with a plain-text
+/// body that names the cap (the UI's error line reads it directly).
+#[tokio::test]
+async fn an_over_cap_query_is_a_400() {
+    let p = pipeline_with();
+    let big = "r".repeat(oxide_fw_server::search_endpoint::MAX_QUERY_LENGTH + 1);
+    let url = format!("/_oxide/search?q={big}");
+    let req = get_with(&url, &[]);
+    let resp = p.serve_request(req, &refused_dispatch()).await;
+    assert_eq!(resp.status, 400, "an over-cap `q` is a 400");
+    let body = String::from_utf8_lossy(&resp.body).into_owned();
+    assert!(body.contains("200"), "the refusal names the cap: {body}");
+}
+
+/// The boundary is inclusive: exactly 200 bytes queries, one more refuses.
+#[tokio::test]
+async fn the_cap_boundary_is_inclusive() {
+    let p = pipeline_with();
+    let at_cap = "q=".to_string() + &"u".repeat(oxide_fw_server::search_endpoint::MAX_QUERY_LENGTH);
+    let ok = p
+        .serve_request(
+            get_with(&format!("/_oxide/search?{at_cap}"), &[]),
+            &refused_dispatch(),
+        )
+        .await;
+    assert_eq!(ok.status, 200, "exactly at the cap still queries");
+
+    let over =
+        "q=".to_string() + &"u".repeat(oxide_fw_server::search_endpoint::MAX_QUERY_LENGTH + 1);
+    let refused = p
+        .serve_request(
+            get_with(&format!("/_oxide/search?{over}"), &[]),
+            &refused_dispatch(),
+        )
+        .await;
+    assert_eq!(refused.status, 400, "one byte past the cap refuses");
+}
+
+/// The refusal fires BEFORE the engine: an over-cap `q` answers 400 with
+/// the cap-naming body (not an engine error shape) even though no such
+/// term could ever match — the cap bounds the L1 cache key material and
+/// the engine parse, not the result set.
+#[tokio::test]
+async fn an_over_cap_query_never_reaches_the_engine() {
+    let p = pipeline_with();
+    let big = format!("q={}", "z".repeat(5000));
+    let resp = p
+        .serve_request(
+            get_with(&format!("/_oxide/search?{big}"), &[]),
+            &refused_dispatch(),
+        )
+        .await;
+    assert_eq!(resp.status, 400);
+    let body = String::from_utf8_lossy(&resp.body).into_owned();
+    assert!(
+        body.contains("too long") && body.contains("200-byte cap"),
+        "the refusal is the cap's own body, not an engine failure: {body}"
+    );
+}
