@@ -22,7 +22,7 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use oxide_fw_server::{
     ComponentCost, CostEndpoint, CostSource, OxideRequest, OxideResponse, Pipeline,
-    SnapshotCostSource,
+    ProfiledCostSource, SnapshotCostSource,
 };
 
 /// Two records: one fully measured (React-shaped), one bytes-only
@@ -149,6 +149,37 @@ fn main() {
         resp.status,
         String::from_utf8_lossy(&resp.body)
     );
+
+    // 7. The profiler + tier-map adapter (the record's remaining halves):
+    //    the build's snapshot decorated with the render profiler's p50 and
+    //    the pipeline's tier map — the bytes-only record gains the two
+    //    halves, the fully-measured record keeps its own, and a source the
+    //    build never produced stays the documented 404.
+    println!("\nprofiled adapter (snapshot + profiler p50 + tier map):");
+    let base = SnapshotCostSource::from_pairs([
+        (
+            "src/hero.tsx".to_string(),
+            ComponentCost::bytes_only(4812, 1901, "chunk-abc.js"),
+        ),
+        (
+            "src/counter.svelte".to_string(),
+            ComponentCost::bytes_only(921, 430, "chunk-def.js"),
+        ),
+    ]);
+    let profiled = ProfiledCostSource::from_maps(
+        Arc::new(base) as Arc<dyn CostSource>,
+        [("src/counter.svelte".to_string(), 1.25)],
+        [("src/counter.svelte".to_string(), "L0".to_string())],
+    );
+    let ep = CostEndpoint::new(Arc::new(profiled) as Arc<dyn CostSource>);
+    for src in ["src/counter.svelte", "src/hero.tsx", "src/ghost.tsx"] {
+        let resp = ep.serve("GET", &format!("src={src}"));
+        println!(
+            "  {src}: {} {}",
+            resp.status,
+            String::from_utf8_lossy(&resp.body)
+        );
+    }
 
     println!("\npipeline:");
     let mut p = Pipeline::default().with_cost_endpoint(Arc::new(ep));
