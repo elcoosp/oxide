@@ -166,6 +166,56 @@ fn cli_page_is_deterministic() {
     assert_eq!(a, b, "the cli page must render identical bytes");
 }
 
+// ---------------------------------------------------------------------------
+// endpoints.md — the V2-J endpoint-map fold (the E10 tail)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn endpoints_page_embeds_every_endpoint_row() {
+    use oxide_fw_server::endpoints::{ENDPOINT_MAP, EndpointPlane};
+    let page = docs_gen::generators()
+        .iter()
+        .find(|g| g.path() == "endpoints.md")
+        .expect("the endpoints generator is registered")
+        .render()
+        .expect("endpoints page renders");
+    for row in ENDPOINT_MAP {
+        assert!(
+            page.contains(&format!("| `{}` |", row.path)),
+            "endpoints.md has no row for `{}`",
+            row.path
+        );
+    }
+    // The plane rule is structural: data/dev ride the `/__` families,
+    // ops rides `/_oxide` — the page states it and every row follows it.
+    assert!(
+        page.contains("`/__oxide/*` is the **data plane**"),
+        "the page states the plane rule"
+    );
+    for row in ENDPOINT_MAP {
+        let ok = match row.plane {
+            EndpointPlane::Data | EndpointPlane::Dev => {
+                row.path.starts_with("/__data") || row.path.starts_with("/__oxide")
+            }
+            EndpointPlane::Ops => row.path.starts_with("/_oxide"),
+        };
+        assert!(ok, "{} does not sit on its plane's URL family", row.path);
+    }
+}
+
+#[test]
+fn endpoints_page_is_deterministic() {
+    let render = || {
+        docs_gen::generators()
+            .iter()
+            .find(|g| g.path() == "endpoints.md")
+            .expect("the endpoints generator is registered")
+            .render()
+            .expect("endpoints page renders")
+    };
+    assert_eq!(render(), render(), "identical bytes on every render");
+}
+
 #[test]
 fn cli_page_covers_every_top_level_command() {
     use clap::CommandFactory as _;
