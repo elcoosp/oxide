@@ -386,6 +386,20 @@ jobs:
         run: ./benchmarks/gate.sh /tmp/bench.txt benchmarks/report.md
       - name: Prose ranges match the table
         run: ./benchmarks/check-prose.sh
+      - name: Criterion microbench gate (V2-B09 → R03, the V8-free crates)
+        # The R03 gate-wiring step deferred in docs/deviations.md ("V2 Wave B
+        # foundations", item 4): re-measure the committed router/cache
+        # criterion ids and fail on a >10% median regression vs the
+        # re-baselined `after-wave-b.json`. The threshold is 10, not the
+        # default 5: criterion medians on a shared runner carry more noise
+        # than the deterministic run.sh columns, and the gate's proven
+        # catch (a deliberate 2× slowdown) is two orders past it. Ids added
+        # after Wave B (idem, migrate, pwa, …) are reported as missing and
+        # never gate until their own baseline lands.
+        run: |
+          cargo bench -p oxide-fw-router -p oxide-fw-cache --features bench-util
+          python3 benchmarks/criterion_summary.py /tmp/criterion-fresh.json
+          python3 benchmarks/criterion_compare.py benchmarks/after-wave-b.json /tmp/criterion-fresh.json 10
 
   redis:
     name: Redis L2 wire tests (§11.2)
