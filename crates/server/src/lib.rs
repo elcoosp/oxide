@@ -21,6 +21,11 @@ pub mod live;
 pub mod loader;
 pub mod metrics;
 pub mod navgraph;
+// V2-E08 item 1: the open-in-editor dev-plane endpoint (the §V2.J map's
+// row next to the inspector — the launch is a seam, the confinement is
+// total).
+pub mod cost_endpoint;
+pub mod open_editor;
 pub mod page_renderer;
 // V2-F09: the built-in search endpoint behind the `search` feature (the
 // spec's default-off posture — plain dev builds never compile tantivy).
@@ -78,6 +83,18 @@ pub use navgraph::{
     NAV_ENDPOINT_PATH, NAV_FROM_HEADER, NAV_TO_HEADER, NavEdge, NavGraph, NavGraphSettings,
     nav_observation, nav_response_from_query, sanitize_edge_route,
 };
+
+// V2-E08 item 1 (server half): the open-in-editor dev-plane endpoint —
+// the seam (`EditorOpener`/`EditorCommand`), the production launcher and
+// the coded refusals the §V2.J row names.
+pub use open_editor::{
+    CommandOpener, DEV_OPEN_001, DEV_OPEN_002, EditorCommand, EditorOpener,
+    OPEN_EDITOR_ENDPOINT_PATH, OpenEditorEndpoint, resolve_editor,
+};
+
+// V2-F17 (server half): the component-cost dev-plane endpoint — the
+// `CostSource` seam and the spec's wire record the overlay consumes.
+pub use cost_endpoint::{COST_ENDPOINT_PATH, ComponentCost, CostEndpoint, CostSource};
 
 // V2-F09: the search endpoint's attached state (`search` feature) — the
 // read-only engine plus its L1. `SEARCH_ENDPOINT_PATH` itself lives in
@@ -2232,6 +2249,22 @@ pub struct Pipeline {
     /// Optional inspector provider (§13.4). When `Some`, `/__oxide` and
     /// `/__oxide/state` return the inspector snapshot. Never set in production.
     pub inspector: Option<Arc<dyn InspectorSnapshot>>,
+    /// V2-E08 item 1 (server half): the open-in-editor dev-plane endpoint.
+    /// When `Some`, `GET /__oxide/open?file=&line=` (dev-token guarded,
+    /// D41) launches the project's editor on the requested file — the
+    /// §V2.J map's row next to the inspector. `None` (the default) leaves
+    /// the endpoint absent: the request falls through to the normal
+    /// dispatch and production is byte-identical. Attached via
+    /// [`Pipeline::with_editor_opener`].
+    pub open_editor: Option<Arc<open_editor::OpenEditorEndpoint>>,
+    /// V2-F17 (server half): the component-cost dev-plane endpoint. When
+    /// `Some`, `GET /__oxide/cost?src=` (dev-token guarded, D41) answers
+    /// the spec's `{ bytes, gzip, chunk, renderMsP50, cache }` record over
+    /// the injected [`CostSource`]. `None` (the default) leaves the
+    /// endpoint absent: the request falls through to the normal dispatch
+    /// and production is byte-identical. Attached via
+    /// [`Pipeline::with_cost_endpoint`].
+    pub cost_endpoint: Option<Arc<cost_endpoint::CostEndpoint>>,
     /// SPEC-14 / §13.3: the dev HMR message source. `Some` only in dev; the
     /// `/_oxide/hmr` WebSocket subscribes to it. `oxide-fw-server` does not
     /// depend on `oxide-fw-dev`, so this is a broadcast of pre-serialized JSON
@@ -2883,6 +2916,8 @@ impl Default for Pipeline {
             metrics_auth_token: None,
             metrics: None,
             inspector: None,
+            open_editor: None,
+            cost_endpoint: None,
             hmr: None,
             hmr_build_id: String::new(),
             page_renderer: None,
@@ -4137,6 +4172,26 @@ impl Pipeline {
         self
     }
 
+    /// V2-E08 item 1 (server half): attach the open-in-editor dev-plane
+    /// endpoint. When `Some`, `GET /__oxide/open?file=&line=` (dev-token
+    /// guarded, D41) launches the editor on the confined file; when `None`
+    /// (the default) the endpoint does not exist and the request falls
+    /// through to the normal dispatch. Chainable.
+    pub fn with_editor_opener(mut self, ep: Arc<open_editor::OpenEditorEndpoint>) -> Self {
+        self.open_editor = Some(ep);
+        self
+    }
+
+    /// V2-F17 (server half): attach the component-cost dev-plane endpoint.
+    /// When `Some`, `GET /__oxide/cost?src=` (dev-token guarded, D41)
+    /// answers the cost record over the injected source; when `None` (the
+    /// default) the endpoint does not exist and the request falls through
+    /// to the normal dispatch. Chainable.
+    pub fn with_cost_endpoint(mut self, ep: Arc<cost_endpoint::CostEndpoint>) -> Self {
+        self.cost_endpoint = Some(ep);
+        self
+    }
+
     /// Attach a page renderer (§7). When set, `serve_request` dispatches page
     /// renders to it. When `None` (default), the pipeline preserves the
     /// legacy neutral-IR behavior. Chainable.
@@ -4581,6 +4636,46 @@ impl Pipeline {
                 }
                 return NativePrefix::Raw(OxideResponse::json(200, insp.state_json()));
             }
+        }
+
+        // (3a.2.1) open-in-editor (V2-E08 item 1, server half) — dev
+        // plane, dev-token guarded (D41) exactly like the inspector above.
+        // Only when attached: the default pipeline leaves the endpoint
+        // absent (the request falls through, production byte-identical).
+        if path == open_editor::OPEN_EDITOR_ENDPOINT_PATH
+            && let Some(ep) = &self.open_editor
+        {
+            // SEC-09: gate on the dev session token when one is set — the
+            // endpoint spawns a process, so the guard runs before anything
+            // else (even the method check) is decided.
+            if let Some(want) = &self.dev_token
+                && !dev_token_ok(req, want)
+            {
+                return NativePrefix::Raw(
+                    OxideResponse::new(403, "open requires the dev token")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+            let query = req.url.split_once('?').map_or("", |(_, q)| q);
+            return NativePrefix::Raw(ep.serve(&req.method, query));
+        }
+
+        // (3a.2.2) component cost (V2-F17, server half) — dev plane,
+        // dev-token guarded (D41) like the open endpoint above; the two
+        // share the §V2.J map row. Only when attached.
+        if path == cost_endpoint::COST_ENDPOINT_PATH
+            && let Some(ep) = &self.cost_endpoint
+        {
+            if let Some(want) = &self.dev_token
+                && !dev_token_ok(req, want)
+            {
+                return NativePrefix::Raw(
+                    OxideResponse::new(403, "cost requires the dev token")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+            let query = req.url.split_once('?').map_or("", |(_, q)| q);
+            return NativePrefix::Raw(ep.serve(&req.method, query));
         }
 
         // (3a.1.6) learned prefetch (V2-F13). Two halves, gated on the
