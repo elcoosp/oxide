@@ -18,6 +18,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cost;
 pub mod head;
 mod minify;
 pub mod pwa;
@@ -27,6 +28,7 @@ pub mod sourcemap_compose;
 pub mod sri;
 pub mod svg_react;
 
+pub use cost::{SourceCost, source_costs};
 pub use resolve::normalize;
 
 use blake3::Hasher;
