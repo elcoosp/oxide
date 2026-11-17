@@ -142,6 +142,13 @@ name = "interactivity"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F02: the dev-warn props-surface bench (the per-module usage+import
+# scan and the pure-classified cross-reference), behind the same opt-in.
+[[bench]]
+name = "props_surface"
+harness = false
+required-features = ["bench-util"]
+
 # V2-C02: the native-Solid walkthrough example. The module it imports
 # (`oxide_fw_compiler::solid`) is gated behind `native-solid`, so without
 # the explicit target + required-features the auto-discovered example
