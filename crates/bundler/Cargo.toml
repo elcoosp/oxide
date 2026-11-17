@@ -26,6 +26,10 @@ oxide-fw-config = { workspace = true }
 # enters the graph.
 oxc_sourcemap = "9.0.0"
 oxc_resolver = { workspace = true }
+# V2-F17 (the cost engine): the spec's gzip estimation method — the RFC
+# 1952 stream length over each module's source — is a REAL stream, not a
+# ratio guess; flate2 is the workspace's own gzip crate (§12.1).
+flate2 = { workspace = true }
 rolldown = { workspace = true }
 rolldown_common = { workspace = true }
 rolldown_utils = { workspace = true }
@@ -88,6 +92,14 @@ required-features = ["bench-util"]
 # to the bundling itself.
 [[bench]]
 name = "pwa"
+harness = false
+required-features = ["bench-util"]
+
+# V2-F17: the build-side cost engine runs once per build — the per-module
+# fold (bytes + the real gzip stream + the chunk lookup) must stay noise
+# next to the bundling itself.
+[[bench]]
+name = "cost"
 harness = false
 required-features = ["bench-util"]
 
