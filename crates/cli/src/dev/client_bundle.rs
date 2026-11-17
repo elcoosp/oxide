@@ -116,6 +116,9 @@ pub(crate) async fn build_client_bundle(
     );
     let dist = rootp.join("dist");
     let client_out = dist.join("client");
+    // The cost-records path is captured BEFORE `client_out` moves into the
+    // bundle options below (the V2-F17 dev feed writes there post-build).
+    let costs_path = client_out.join("client.costs.json");
 
     // Entries: pages + endpoints + loading boundaries (mirrors cmd_build).
     let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
@@ -288,6 +291,21 @@ pub(crate) async fn build_client_bundle(
                 "dev: client bundle rebuilt ({} chunks)",
                 outcome.chunks.len()
             );
+            // V2-F17 (the dev feed): the same records file the build phase
+            // writes — the serve boot's cost endpoint re-reads it per stat
+            // move, so a dev rebuild's costs answer without re-attaching.
+            // Full scans only: a partial (`changed`) scan's output carries
+            // the rebuilt modules, not the whole module map, and writing it
+            // would clobber the full-build records with a partial table —
+            // the last full build's file stays until the next full scan. A
+            // write failure warns; the dev loop stays up and the endpoint
+            // answers its documented 404s without the file.
+            if changed.is_none() {
+                let records = oxide_fw_bundler::cost::source_costs(&outcome, rootp);
+                if let Err(e) = oxide_fw_bundler::cost::write_source_costs(&records, &costs_path) {
+                    outln!(w, "warn: could not write client cost records: {e}");
+                }
+            }
             Ok(())
         }
         Err(e) => {
