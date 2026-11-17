@@ -98,7 +98,15 @@ pub(crate) async fn stage_endpoint(d: &DispatchDeps, cx: &mut RequestCtx) -> Flo
                     let counter = stream_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let id =
                         oxide_fw_server::stream_store::stream_id(&req_owned.request_id, counter);
-                    let buf = sw.store.begin(id.clone());
+                    // §13.4: the buffer mints BOUND to the ORIGINAL
+                    // request's session identity (the wiring's one
+                    // `CookieBindingSource` over this request's cookie
+                    // header) — the reattach arm demands the same
+                    // identity back and answers the same `410` an
+                    // unknown id gets on a mismatch.
+                    let buf = sw
+                        .store
+                        .begin_bound(id.clone(), sw.binding_of(&req_owned.headers));
                     resp = resp.with_header(oxide_fw_server::stream_store::STREAM_HEADER, id);
                     resp.stream = Some(oxide_fw_server::stream_store::tee_stream(
                         &sw.store, &buf, inner,
