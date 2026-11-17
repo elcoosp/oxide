@@ -25,10 +25,9 @@ moka = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 tracing = { workspace = true }
 ring = { workspace = true }
-futures = { workspace = true }
+futures = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -50,7 +49,7 @@ required-features = ["bench-util"]
 
 [features]
 redis = ["dep:redis"]
-s3 = ["dep:object_store"]
+s3 = ["dep:object_store", "dep:futures"]
 # V2-B09: exposes the bench fixtures helper (`benches support module`).
 bench-util = []
 
