@@ -32,6 +32,15 @@
 //! - [`tee_stream`]: the body wrapper the wiring installs — every chunk the
 //!   consumer sees is appended to the buffer, the natural end (or a
 //!   producer error) marks it done.
+//! - [`SessionBinding`] / [`SessionBindingSource`] / [`CookieBindingSource`]:
+//!   the §13.4 session binding (`bind id to the original request's session
+//!   cookie hash; mismatch gives 410`) — the reattach identity check the R05
+//!   review recorded as the deployment-facing gap, now wired:
+//!   [`StreamStore::begin_bound`] mints the binding from the ORIGINAL
+//!   request's cookie, [`StreamStore::get_bound`] demands the same identity
+//!   back and answers [`Reattach::Gone`] on a mismatch (the same `410` an
+//!   unknown id gets), and the injected source keeps both sides hashing
+//!   identically.
 //!
 //! One deliberate spec deviation (recorded in `docs/deviations.md`): the
 //! spec's `StreamBuf` pseudocode waits on a `tokio::sync::Notify` with
@@ -52,6 +61,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::StreamExt;
+use ring::rand::SecureRandom;
 use tokio::sync::watch;
 
 use crate::OxideResponse;
@@ -73,6 +83,134 @@ pub const RESUMABLE_VALUE: &str = "1";
 /// wiring step 2: "A completed buffer with `n == len` returns `200`, empty
 /// body, `x-oxide-stream-complete: 1`").
 pub const COMPLETE_HEADER: &str = "x-oxide-stream-complete";
+
+// ------------------------------------------------- the session binding (R05)
+
+// The spec's security table (§13.4, `/__oxide/stream/:id`): "bind id to the
+// original request's session cookie hash; mismatch gives 410". The stream id
+// is a 256-bit digest disclosed only in the creating response's head, but a
+// disclosed id still reattaches from any client that learns it — a
+// multi-user deployment that treats stream bytes as per-session secret needs
+// the reattach bound to the identity that created the stream. The R05
+// review (`docs/security-review-v0.2.md`) recorded the missing binding as
+// the deployment-facing gap; this section is the seam.
+
+/// The opaque session identity a reattach must present (§13.4: the
+/// "session cookie hash"). The digest never leaves the server — it is
+/// stored beside the buffer and compared at reattach — so the cookie value
+/// and its hash are equally non-disclosed; the hash exists so a leaked
+/// store dump cannot be replayed as a session.
+///
+/// Comparison is constant-time (the crate's SEC-04 helper), `Debug`
+/// redacts, and there is deliberately no `PartialEq`: every identity
+/// check goes through [`SessionBinding::matches`], so no spelling of
+/// equality can bypass the constant-time path.
+#[derive(Clone)]
+pub struct SessionBinding([u8; 32]);
+
+impl SessionBinding {
+    /// The explicit constructor: a 32-byte digest another source computed
+    /// (the pins use it for fixed identities; a deployment that derives
+    /// session identities elsewhere implements [`SessionBindingSource`]
+    /// over it).
+    #[must_use]
+    pub fn from_digest(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+
+    /// The digest bytes (the persisted form, if a store ever outlives the
+    /// process — the in-memory store does not).
+    #[must_use]
+    pub fn as_digest(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Constant-time identity check (§16.6's SEC-04 rule — the same
+    /// primitive the signed-cookie and image-signature compares use).
+    #[must_use]
+    pub fn matches(&self, other: &Self) -> bool {
+        crate::constant_time_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for SessionBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the digest — it IS the reattach credential.
+        f.debug_tuple("SessionBinding")
+            .field(&"<redacted>")
+            .finish()
+    }
+}
+
+/// Where a request's session identity comes from (the object-safe seam the
+/// wiring injects once at boot; both the tee site and the reattach arm call
+/// the SAME instance, so the two sides of one stream hash identically).
+///
+/// `None` means "this request presented no session identity" — a stream
+/// minted without a binding accepts any reattach (today's semantics); a
+/// stream minted WITH one refuses every identity-less reattach.
+pub trait SessionBindingSource: Send + Sync {
+    /// The request's session binding, or `None` when the request carries
+    /// no session identity at all.
+    fn binding(&self, headers: &[(String, String)]) -> Option<SessionBinding>;
+}
+
+/// The default source: blake3 keyed with a per-boot random key over the
+/// request's named cookie value (§13.4's "session cookie hash"). The key
+/// lives only in this instance — two constructed sources never agree
+/// (pinned), so a binding minted by one serve process never validates
+/// against another's, and an offline brute-force against a leaked digest
+/// must also guess the boot key.
+pub struct CookieBindingSource {
+    cookie_name: String,
+    key: [u8; 32],
+}
+
+impl CookieBindingSource {
+    /// A source over `cookie_name` with a fresh random key. The RNG is the
+    /// session codec's (`ring::rand::SystemRandom`); a failure is boot-
+    /// blocking — the caller decides, loudly, whether to serve.
+    ///
+    /// # Errors
+    /// `SEC-SESSION` when the system RNG is unavailable — the same code
+    /// the session codec's key material carries.
+    pub fn new(cookie_name: impl Into<String>) -> crate::Result<Self> {
+        let mut key = [0u8; 32];
+        ring::rand::SystemRandom::new()
+            .fill(&mut key)
+            .map_err(|_| crate::err("SEC-SESSION", "system RNG unavailable"))?;
+        Ok(Self {
+            cookie_name: cookie_name.into(),
+            key,
+        })
+    }
+}
+
+impl SessionBindingSource for CookieBindingSource {
+    fn binding(&self, headers: &[(String, String)]) -> Option<SessionBinding> {
+        let value = cookie_value(headers, &self.cookie_name)?;
+        let mut hasher = blake3::Hasher::new_keyed(&self.key);
+        hasher.update(value.as_bytes());
+        let digest = hasher.finalize();
+        Some(SessionBinding::from_digest(digest.into()))
+    }
+}
+
+/// The named cookie's value out of the raw `cookie:` header(s) (RFC 6265
+/// cookie-pair list; names are case-sensitive, the header name is not).
+/// Multiple `cookie:` headers are all scanned — the first pair with the
+/// name wins.
+fn cookie_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+        .find_map(|(_, v)| {
+            v.split(';').find_map(|pair| {
+                let (n, val) = pair.split_once('=')?;
+                (n.trim() == name).then_some(val.trim())
+            })
+        })
+}
 
 // ------------------------------------------------------------------ the buffer
 
@@ -104,6 +242,10 @@ pub struct StreamBuf {
     _progress_rx: watch::Receiver<Progress>,
     /// When the buffer was created — the TTL anchor for `get`/`sweep`.
     born: Instant,
+    /// The session identity that minted the stream (§13.4's binding) —
+    /// `None` for the unbound (`begin`) path, whose reattach stays
+    /// identity-free.
+    binding: Option<SessionBinding>,
 }
 
 impl StreamBuf {
@@ -136,6 +278,13 @@ impl StreamBuf {
     #[must_use]
     pub fn subscribe_progress(&self) -> watch::Receiver<Progress> {
         self.progress.subscribe()
+    }
+
+    /// Whether the stream requires the minting session's identity back at
+    /// reattach (§13.4's binding) — `false` for the plain-`begin` path.
+    #[must_use]
+    pub fn is_session_bound(&self) -> bool {
+        self.binding.is_some()
     }
 }
 
@@ -191,7 +340,22 @@ impl StreamStore {
     /// Register a new stream under `id` and return its buffer (§V2-F07
     /// `begin`). The wiring generates the id with [`stream_id`].
     pub fn begin(&self, id: String) -> Arc<StreamBuf> {
-        let (progress, _progress_rx) = watch::channel(Progress {
+        self.begin_bound(id, None)
+    }
+
+    /// [`StreamStore::begin`] with the §13.4 session binding: the tee site
+    /// passes the ORIGINAL request's session identity (the wiring's
+    /// [`SessionBindingSource`] over the minting request's headers), and
+    /// every reattach must present the same one (the store maps a mismatch
+    /// to [`Reattach::Gone`] — the same `410` an unknown id gets, so a
+    /// refusal never confirms the id exists). `None` is the unbound path
+    /// (identity-free reattach, today's semantics).
+    ///
+    /// # Panics
+    /// Only on a poisoned order mutex (an in-flight append panicking
+    /// through the same lock) — the pre-existing store convention.
+    pub fn begin_bound(&self, id: String, binding: Option<SessionBinding>) -> Arc<StreamBuf> {
+        let (progress, progress_rx) = watch::channel(Progress {
             len: 0,
             done: false,
         });
@@ -202,8 +366,9 @@ impl StreamStore {
             done: AtomicBool::new(false),
             overflow: AtomicBool::new(false),
             progress,
-            _progress_rx,
+            _progress_rx: progress_rx,
             born: Instant::now(),
+            binding,
         });
         self.map.insert(id.clone(), Arc::clone(&buf));
         self.order
@@ -265,6 +430,43 @@ impl StreamStore {
         match self.map.get(id) {
             Some(b) if !b.overflowed() && b.born.elapsed() <= self.ttl => {
                 Reattach::Ok(Arc::clone(b.value()))
+            }
+            _ => Reattach::Gone,
+        }
+    }
+
+    /// [`StreamStore::get`] with the §13.4 session check: a buffer minted
+    /// WITH a binding answers `Gone` unless the reattach presents the same
+    /// identity (`presented` is the reattach request's own session
+    /// binding, hashed by the SAME source instance the tee site used). A
+    /// mismatch (foreign or missing cookie) is the same `Gone` an unknown
+    /// id gets — the endpoint cannot tell them apart, so a refused
+    /// reattach never confirms the id exists — and the refusal logs one
+    /// loud warn (the cookie value and the digest never appear; the
+    /// mismatch warn is the operator's only signal that identities are
+    /// being probed).
+    #[must_use]
+    pub fn get_bound(&self, id: &str, presented: Option<&SessionBinding>) -> Reattach {
+        match self.map.get(id) {
+            Some(b) if !b.overflowed() && b.born.elapsed() <= self.ttl => {
+                match (&b.value().binding, presented) {
+                    (Some(bound), Some(p)) if !bound.matches(p) => {
+                        tracing::warn!(
+                            stream = %id,
+                            "stream reattach refused: session binding mismatch"
+                        );
+                        Reattach::Gone
+                    }
+                    (Some(_), None) => {
+                        tracing::warn!(
+                            stream = %id,
+                            "stream reattach refused: the bound stream's session cookie was absent"
+                        );
+                        Reattach::Gone
+                    }
+                    // An unbound buffer, or the presented identity matched.
+                    _ => Reattach::Ok(Arc::clone(b.value())),
+                }
             }
             _ => Reattach::Gone,
         }
