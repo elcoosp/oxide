@@ -256,7 +256,12 @@ pub(crate) async fn stage_prelude(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow
             );
         }
         let offset = oxide_fw_server::stream_store::parse_range_offset(&req.headers);
-        let reattach = sw.store.get(id);
+        // §13.4: the reattach presents ITS OWN session identity (the same
+        // wiring source hashes this request's cookie); the store maps a
+        // mismatch — foreign or missing cookie — to the same `Gone` an
+        // unknown id gets, so the 410 never confirms the id exists.
+        let presented = sw.binding_of(&req.headers);
+        let reattach = sw.store.get_bound(id, presented.as_ref());
         return Flow::Respond(match reattach {
             oxide_fw_server::stream_store::Reattach::Ok(buf) => {
                 oxide_fw_server::stream_store::stream_resume_response(&buf, offset.unwrap_or(0))
