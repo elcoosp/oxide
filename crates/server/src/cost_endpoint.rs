@@ -135,6 +135,87 @@ impl CostSource for SnapshotCostSource {
     }
 }
 
+/// The profiler + tier-map adapter — the layered production `CostSource`
+/// the §V2-F17 record's remaining halves ride: the build's snapshot
+/// source (the [`SnapshotCostSource`] shape, its records bytes-only)
+/// decorated with the render profiler's per-source p50 (`renderMsP50`)
+/// and the pipeline's cache-tier map (`cache`), each keyed by the same
+/// root-relative `?src=` spelling.
+///
+/// Layering rules (the decorator decorates, it never contradicts or
+/// fabricates):
+/// - the base record is authoritative — a half the snapshot already
+///   carries is left exactly as the build wrote it;
+/// - a base miss stays a miss — a path only the profiler measured is the
+///   endpoint's documented 404, never a synthesized record;
+/// - empty maps leave the base's records byte-identical (the bytes-only
+///   shape).
+#[derive(Clone)]
+pub struct ProfiledCostSource {
+    base: Arc<dyn CostSource>,
+    render_p50: std::collections::BTreeMap<String, f64>,
+    tiers: std::collections::BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for ProfiledCostSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The base is an object-safe trait object (no `Debug` supertrait —
+        // the injected fakes and adapters carry no debug contract); the
+        // maps are the adapter's own state and print in full.
+        f.debug_struct("ProfiledCostSource")
+            .field("base", &"<dyn CostSource>")
+            .field("render_p50", &self.render_p50)
+            .field("tiers", &self.tiers)
+            .finish()
+    }
+}
+
+impl ProfiledCostSource {
+    /// Decorate `base` with the profiler's per-source p50 map and the
+    /// pipeline's cache-tier map.
+    #[must_use]
+    pub fn new(
+        base: Arc<dyn CostSource>,
+        render_p50: std::collections::BTreeMap<String, f64>,
+        tiers: std::collections::BTreeMap<String, String>,
+    ) -> Self {
+        Self {
+            base,
+            render_p50,
+            tiers,
+        }
+    }
+
+    /// The boot shape: `(source, p50)` and `(source, tier)` iterator
+    /// pairs — the profiler ledger's and the tier recorder's own rows —
+    /// collected into the maps.
+    #[must_use]
+    pub fn from_maps(
+        base: Arc<dyn CostSource>,
+        render_p50: impl IntoIterator<Item = (String, f64)>,
+        tiers: impl IntoIterator<Item = (String, String)>,
+    ) -> Self {
+        Self {
+            base,
+            render_p50: render_p50.into_iter().collect(),
+            tiers: tiers.into_iter().collect(),
+        }
+    }
+}
+
+impl CostSource for ProfiledCostSource {
+    fn cost(&self, src: &str) -> Option<ComponentCost> {
+        let mut record = self.base.cost(src)?;
+        if record.render_ms_p50.is_none() {
+            record.render_ms_p50 = self.render_p50.get(src).copied();
+        }
+        if record.cache.is_none() {
+            record.cache = self.tiers.get(src).cloned();
+        }
+        Some(record)
+    }
+}
+
 /// The endpoint state: the injected source. The dev boot attaches one via
 /// [`crate::Pipeline::with_cost_endpoint`].
 pub struct CostEndpoint {
