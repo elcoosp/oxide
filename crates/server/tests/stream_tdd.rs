@@ -407,3 +407,174 @@ async fn concurrent_append_and_read_reassembles_the_full_stream() {
         .collect();
     assert_eq!(got, want, "byte-exact reassembly across the live tail");
 }
+
+// ------------------------------------------------- the session binding (R05)
+
+// The spec's security table (§13.4, `/__oxide/stream/:id`): "bind id to the
+// original request's session cookie hash; mismatch gives 410". The R05
+// review (`docs/security-review-v0.2.md`) recorded the unimplemented half
+// as the deployment-facing gap. These pins are written FIRST (red: they
+// failed on unresolved-symbol errors before the seam existed).
+//
+// The store comparison is the V8-free half; the CLI wiring (the tee site
+// hashing the ORIGINAL request's cookie, the reattach arm hashing the
+// presented one) rides the V8-linked `oxide-fw-cli` compile gate per the
+// recorded convention.
+
+use oxide_fw_server::stream_store::{CookieBindingSource, SessionBinding, SessionBindingSource};
+
+/// Two fixed digests the comparison pins bind through
+/// (`from_digest` is the explicit constructor for foreign sources).
+fn digest_a() -> SessionBinding {
+    let mut d = [0u8; 32];
+    d[0] = 0xA0;
+    SessionBinding::from_digest(d)
+}
+
+fn digest_b() -> SessionBinding {
+    let mut d = [0u8; 32];
+    d[0] = 0xB0;
+    SessionBinding::from_digest(d)
+}
+
+/// A bound stream answers a reattach that presents the SAME session
+/// identity with `Ok`, and a foreign one with `Gone` (the spec's `410`).
+#[test]
+fn a_bound_stream_refuses_a_foreign_session() {
+    let store = Arc::new(StreamStore::new(Duration::from_secs(60), 1 << 20, 1 << 30));
+    let buf = store.begin_bound("s1".into(), Some(digest_a()));
+    assert!(buf.is_session_bound(), "the buffer carries its binding");
+
+    let own = store.get_bound("s1", Some(&digest_a()));
+    assert!(
+        matches!(own, Reattach::Ok(_)),
+        "the creating session's reattach is Ok"
+    );
+
+    let foreign = store.get_bound("s1", Some(&digest_b()));
+    assert!(
+        matches!(foreign, Reattach::Gone),
+        "a foreign session is Gone — the same 410 an unknown id gets"
+    );
+}
+
+/// A session-bound stream refuses a reattach that presents NO cookie at
+/// all: the binding is `Some` on the buffer and `None` on the request.
+#[test]
+fn a_session_bound_stream_refuses_a_cookieless_reattach() {
+    let store = Arc::new(StreamStore::new(Duration::from_secs(60), 1 << 20, 1 << 30));
+    store.begin_bound("s1".into(), Some(digest_a()));
+    let bare = store.get_bound("s1", None);
+    assert!(
+        matches!(bare, Reattach::Gone),
+        "a bound stream demands the session identity back"
+    );
+}
+
+/// An unbound buffer (today's `begin`) keeps the unbound semantics for
+/// every caller shape — the compat arm the no-session deployments ride.
+#[test]
+fn an_unbound_stream_keeps_the_any_caller_semantics() {
+    let store = Arc::new(StreamStore::new(Duration::from_secs(60), 1 << 20, 1 << 30));
+    let buf = store.begin("s1".into());
+    assert!(!buf.is_session_bound(), "plain begin binds nothing");
+    assert!(
+        matches!(store.get_bound("s1", None), Reattach::Ok(_)),
+        "no binding required when none was minted"
+    );
+    assert!(
+        matches!(store.get_bound("s1", Some(&digest_b())), Reattach::Ok(_)),
+        "a presented cookie cannot be checked against nothing"
+    );
+}
+
+/// The mismatch is indistinguishable from an unknown id: both answer
+/// `Reattach::Gone`, which the endpoint maps to the SAME empty `410`
+/// (the anti-probing property — a refusal must not confirm the id exists).
+#[test]
+fn the_mismatch_is_indistinguishable_from_an_unknown_id() {
+    let store = Arc::new(StreamStore::new(Duration::from_secs(60), 1 << 20, 1 << 30));
+    store.begin_bound("s1".into(), Some(digest_a()));
+    let mismatch = store.get_bound("s1", Some(&digest_b()));
+    let unknown = store.get_bound("never-minted", Some(&digest_a()));
+    match (mismatch, unknown) {
+        (Reattach::Gone, Reattach::Gone) => {}
+        _ => panic!("both refusals must be Gone"),
+    }
+    let gone = stream_gone_response();
+    assert_eq!(gone.status, 410);
+    assert!(gone.body.is_empty(), "the 410 body stays empty");
+}
+
+/// The default source hashes the NAMED cookie out of the raw `cookie:`
+/// header(s): present → `Some`, absent or headerless → `None`, and the
+/// same presented value binds identically within one source.
+#[test]
+fn the_cookie_binding_source_hashes_the_named_cookie() {
+    let src = CookieBindingSource::new("oxide_session").expect("boot rng");
+    let headers = vec![(
+        "cookie".to_string(),
+        "a=1; oxide_session=SESSION-TOKEN; b=2".to_string(),
+    )];
+    let bound = src.binding(&headers).expect("the named cookie binds");
+    let again = src.binding(&headers).expect("deterministic");
+    assert!(bound.matches(&again), "one source, one binding per value");
+
+    let other = vec![("cookie".to_string(), "oxide_session=OTHER".to_string())];
+    let different = src.binding(&other).expect("a different value binds");
+    assert!(
+        !bound.matches(&different),
+        "a different cookie value binds differently"
+    );
+
+    let no_cookie = vec![("cookie".to_string(), "a=1".to_string())];
+    assert!(
+        src.binding(&no_cookie).is_none(),
+        "no named cookie, no binding"
+    );
+    assert!(src.binding(&[]).is_none(), "no cookie header, no binding");
+}
+
+/// Two sources over the same cookie name never agree: the hash is keyed
+/// per construction (a per-boot key), so a binding minted by one serve
+/// never validates against another's.
+#[test]
+fn two_sources_with_different_keys_never_agree() {
+    let first = CookieBindingSource::new("oxide_session").expect("boot rng");
+    let second = CookieBindingSource::new("oxide_session").expect("boot rng");
+    let headers = vec![("cookie".to_string(), "oxide_session=T".to_string())];
+    let a = first.binding(&headers).expect("first binds");
+    let b = second.binding(&headers).expect("second binds");
+    assert!(
+        !a.matches(&b),
+        "per-boot keyed hashing: cross-boot bindings never match"
+    );
+}
+
+/// The binding never discloses the cookie: the Debug spelling redacts,
+/// and the digest is not the raw cookie bytes.
+#[test]
+fn the_binding_never_carries_the_cookie_value() {
+    let src = CookieBindingSource::new("oxide_session").expect("boot rng");
+    let headers = vec![(
+        "cookie".to_string(),
+        "oxide_session=SECRET-SESSION-VALUE".to_string(),
+    )];
+    let bound = src.binding(&headers).expect("binds");
+    let rendered = format!("{bound:?}");
+    assert!(
+        !rendered.contains("SECRET"),
+        "the redacted Debug must not leak the cookie: {rendered}"
+    );
+}
+
+/// `get` (the unbound lookup) and `begin` keep their exact prior
+/// semantics — the additive seam does not move today's shapes.
+#[test]
+fn the_unbound_lookup_apis_keep_their_shapes() {
+    let store = Arc::new(StreamStore::new(Duration::from_secs(60), 1 << 20, 1 << 30));
+    let buf = store.begin("s1".into());
+    store.append(&buf, Bytes::from_static(b"payload"));
+    assert!(matches!(store.get("s1"), Reattach::Ok(_)));
+    assert!(matches!(store.get("absent"), Reattach::Gone));
+}
