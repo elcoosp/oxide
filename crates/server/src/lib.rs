@@ -93,9 +93,11 @@ pub use open_editor::{
 };
 
 // V2-F17 (server half): the component-cost dev-plane endpoint — the
-// `CostSource` seam and the spec's wire record the overlay consumes.
+// `CostSource` seam and the spec's wire record the overlay consumes,
+// plus the profiler + tier-map adapter the record's remaining halves ride.
 pub use cost_endpoint::{
-    COST_ENDPOINT_PATH, ComponentCost, CostEndpoint, CostSource, SnapshotCostSource,
+    COST_ENDPOINT_PATH, ComponentCost, CostEndpoint, CostSource, ProfiledCostSource,
+    SnapshotCostSource,
 };
 
 // V2-F09: the search endpoint's attached state (`search` feature) — the
@@ -2025,6 +2027,16 @@ pub trait InspectorSnapshot: Send + Sync + std::fmt::Debug {
                 .replace('<', "&lt;")
                 .replace('>', "&gt;")
         )
+    }
+
+    /// Human-friendly HTML for `GET /__oxide?q=<query>` (§V2-E08 item 2 —
+    /// the module-graph search): the implementor filters its module-graph
+    /// table by the query and renders the matches. The default delegates
+    /// to [`InspectorSnapshot::render_html`] — an implementor without a
+    /// searchable module graph serves the same page for any query, and a
+    /// pre-search implementor keeps compiling unchanged.
+    fn render_html_search(&self, _query: &str) -> String {
+        self.render_html()
     }
 }
 
@@ -4631,8 +4643,28 @@ impl Pipeline {
                     );
                 }
                 if path == "/__oxide" {
+                    // §V2-E08 item 2: a `?q=` query drives the module-graph
+                    // search — percent-decoded like the cost endpoint's
+                    // `src` value, a blank or foreign query keeping the
+                    // unfiltered render (the pre-search byte shape).
+                    let q = req
+                        .url
+                        .split_once('?')
+                        .map(|(_, qs)| qs)
+                        .and_then(|qs| {
+                            qs.split('&').find_map(|pair| {
+                                pair.split_once('=')
+                                    .filter(|(k, _)| *k == "q")
+                                    .map(|(_, v)| percent_decode_query(v))
+                            })
+                        })
+                        .filter(|v| !v.trim().is_empty());
+                    let html = match q {
+                        Some(q) => insp.render_html_search(&q),
+                        None => insp.render_html(),
+                    };
                     return NativePrefix::Raw(
-                        OxideResponse::new(200, insp.render_html())
+                        OxideResponse::new(200, html)
                             .with_header("content-type", "text/html; charset=utf-8"),
                     );
                 }
