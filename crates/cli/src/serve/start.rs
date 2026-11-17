@@ -373,6 +373,13 @@ pub(crate) async fn start_server_inner_full(
             jsx_import_source: jsx_import_source_for(&esm_framework),
             rewrite_map: std::sync::Arc::new(rewrite_map),
             framework: esm_framework,
+            // The F02 dev warn: the boot-time island manifest (read-only,
+            // `None` with the auto-islands gate off) and its per-session
+            // warned-site dedup.
+            islands: crate::build::dev_island_manifest(&rootp, &cfg).map(std::sync::Arc::new),
+            warned_pure_on_props: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::BTreeSet::new(),
+            )),
         }))
     } else {
         None
