@@ -13,8 +13,55 @@ use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod compat;
 mod wasm;
+pub use compat::{HOOKS, SupportLevel, compat, compat_markdown_table};
 pub use wasm::{WasmPlugin, hook_export_name};
+
+/// The object-safe host-side hook surface (§15.1: one hook model for all
+/// three kinds). A loaded plugin host — the WASM component today — implements
+/// it, so a pipeline can program against `dyn HookHost` and compose every
+/// bridge-supported hook without knowing which kind answered. `Send` because
+/// a build carries hosts across threads (the CLI wraps them in a `Mutex`).
+///
+/// The call semantics are the JS bridge's, so both kinds slot into the same
+/// chain: a `None` from [`HookHost::call_load`] or
+/// [`HookHost::call_resolve_id`] declines (the next plugin — or the default —
+/// wins), an `Err` fails the module, and a hook the host cannot invoke
+/// errors with a `PLG-*` diagnostic naming the hook.
+pub trait HookHost: Send {
+    /// The hooks this host can actually invoke (the manifest ∩ the exports
+    /// whose ABI shape the host speaks).
+    fn available_hooks(&self) -> &[Hook];
+
+    /// The declared hooks this host cannot invoke — the compatibility
+    /// runner's `unsupportedHooks`.
+    fn missing_hooks(&self) -> Vec<Hook>;
+
+    /// §15.2 `transform(code) → code` (the WASM bridge passes the source; the
+    /// id rides the closure's own capture at the call site).
+    ///
+    /// # Errors
+    ///
+    /// A `PLG-*` diagnostic when the host cannot invoke the hook (not
+    /// exported in a callable shape, resolution failure, trap).
+    fn call_transform(&mut self, code: &str) -> Result<String>;
+
+    /// §15.2 `load(specifier) → code | null`; `None` declines to the disk.
+    ///
+    /// # Errors
+    ///
+    /// A `PLG-*` diagnostic when the host cannot invoke the hook.
+    fn call_load(&mut self, specifier: &str) -> Result<Option<String>>;
+
+    /// §15.2 `resolveId(specifier, from) → id | null`; `None` declines to the
+    /// default resolver.
+    ///
+    /// # Errors
+    ///
+    /// A `PLG-*` diagnostic when the host cannot invoke the hook.
+    fn call_resolve_id(&mut self, specifier: &str, from: &str) -> Result<Option<String>>;
+}
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -58,13 +105,15 @@ pub enum Hook {
 
 impl Hook {
     /// The subset the JS bridge supports (§15.2 "limited configureServer" etc.).
+    #[must_use]
     pub fn supported_in_bridge(&self) -> bool {
         !matches!(self, Hook::ConfigureServer | Hook::CacheHandler)
     }
 }
 
-/// camelCase wire name of a hook (§15.2 table) for error messages.
-fn hook_label(h: Hook) -> &'static str {
+/// camelCase wire name of a hook (§15.2 table) for error messages and the
+/// generated compatibility table.
+pub(crate) fn hook_label(h: Hook) -> &'static str {
     match h {
         Hook::Config => "config",
         Hook::ConfigResolved => "configResolved",
@@ -150,6 +199,7 @@ impl PluginRegistry {
     /// Ordered hook chain: pre plugins, native, post — stable within a group.
     /// Only plugins that declare `hook` participate (§15.1: one hook model and
     /// ordering for all three kinds).
+    #[must_use]
     pub fn chain(&self, hook: Hook) -> Vec<&PluginDescriptor> {
         let mut pre = Vec::new();
         let mut none = Vec::new();
@@ -164,6 +214,7 @@ impl PluginRegistry {
         pre.into_iter().chain(none).chain(post).collect()
     }
 
+    #[must_use]
     pub fn has_errors(&self) -> bool {
         !self.load_errors.is_empty()
     }
@@ -186,8 +237,9 @@ pub enum BridgeMsg {
     },
 }
 
-/// WASM plugin host stub (§15.1 kind 2): validates a WIT interface descriptor and
-/// capability grants; actual execution behind the wasmtime backend (docs/deviations.md).
+/// WASM plugin manifest (§15.1 kind 2): the component's identity, WIT world,
+/// capability grants and declared hooks, validated by [`WasmPluginManifest::validate`]
+/// before the host in `wasm.rs` compiles and instantiates the component.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WasmPluginManifest {
     pub name: String,
@@ -203,7 +255,14 @@ impl WasmPluginManifest {
     /// sandbox grant set {fs, network, env, clock} (`PLG-CAP`), at least one hook,
     /// and hooks within the bridge-supported subset — WASM plugins run the same
     /// bridge as JS plugins (`PLG-HOOK`, §15.2/§15.3 compatibility table).
+    ///
+    /// # Errors
+    ///
+    /// `PLG-WIT` (no `wit_world`), `PLG-CAP` (a capability outside the
+    /// sandbox grant set), `PLG-HOOKS` (no hooks) and `PLG-HOOK`
+    /// (a bridge-unsupported hook).
     pub fn validate(&self) -> Result<()> {
+        const SANDBOX_CAPS: [&str; 4] = ["fs", "network", "env", "clock"];
         if self.wit_world.trim().is_empty() {
             return Err(err(
                 "PLG-WIT",
@@ -213,7 +272,6 @@ impl WasmPluginManifest {
                 ),
             ));
         }
-        const SANDBOX_CAPS: [&str; 4] = ["fs", "network", "env", "clock"];
         for cap in &self.capabilities {
             if !SANDBOX_CAPS.contains(&cap.as_str()) {
                 return Err(err(
