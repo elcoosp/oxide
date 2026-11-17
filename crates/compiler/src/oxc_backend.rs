@@ -655,7 +655,14 @@ pub fn lower_to_js_with_refresh(
     path: &str,
     jsx_import_source: Option<&str>,
 ) -> Result<(String, Option<oxc_sourcemap::OwnedSourceMap>)> {
-    let (lowered, srcmap) = lower_to_js(code, lang, path, jsx_import_source)?;
+    // §V2-F17: the DOM→source mapping rides the dev lowering BEFORE the
+    // JSX pass, so the stamp is an attribute on the element (the runtime's
+    // own JSX transform carries it into the props call) and the span
+    // surgery keeps every line count (the sourcemap below stays valid).
+    // Production lowering (`lower_to_js`) never runs the pass.
+    let stamped =
+        crate::data_src::inject_data_ox_src(code, lang, path)?.unwrap_or_else(|| code.to_string());
+    let (lowered, srcmap) = lower_to_js(&stamped, lang, path, jsx_import_source)?;
     if !matches!(lang, "tsx" | "jsx") {
         return Ok((lowered, srcmap));
     }
@@ -746,7 +753,7 @@ impl OxcTransformer {
     }
 }
 
-fn source_type_for(lang: &str) -> SourceType {
+pub(crate) fn source_type_for(lang: &str) -> SourceType {
     match lang {
         "tsx" => SourceType::tsx(),
         "ts" => SourceType::ts(),
