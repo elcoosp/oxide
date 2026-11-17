@@ -4861,3 +4861,98 @@ synthetic-tsconfig warn is the modeled shape).
 - The wire shapes stay snake_case like the rest of the §13.4
   `InspectorState` record (no TS consumer reads it; the raw JSON view is
   the contract).
+
+## The E08 inspector's module-graph search and the F17 profiler + tier-map adapter land — the inspector can search the harvest, the cost record gains its remaining halves (`feat/inspector-module-search` + `feat/profiler-cost-adapters`, 2026-11-17)
+
+**What lands (M1, the §V2-E08 inspector row's module-graph search).**
+The row's item 2 names "module graph search and `why`"; the §13.4 model
+carried the `module_graph` field (module → importers, the harvest's
+reverse-deps shape) but nothing populated it, the HTML never rendered it,
+and no search existed. Four coordinated pieces:
+
+- `crates/dev/src/lib.rs`: `search_module_graph(graph, query)` — the
+  deterministic search: a case-insensitive substring over the module path
+  OR any importer path, input order preserved (the harvest feeds a sorted
+  `BTreeMap` walk; the search never re-sorts, so the caller's order is
+  the render's order), a blank query is every row, a miss is an empty
+  vec. A matched row carries its importer edges inline — that IS the
+  `why` answer (who pulls the matched module in), one lookup, no second
+  table.
+- `RouteTableInspector::with_module_graph` — the wire-up builder the
+  caller maps the harvest's records through, one-to-one, sorted order
+  carried. `state()` now populates `InspectorState.module_graph` (the
+  field the schema carried since §13.4 — the wire shape is unchanged).
+- The HTML: `render_inspector_html_with_query(state, query)` — the
+  Modules table (module + importers, escaped cells) between Routes and
+  Live, the heading keeping the total, a `k of n` note with the
+  ESCAPED query echo when a non-blank `q` filters the rows, and the
+  search form (`GET /__oxide?q=…`, a plain HTML form — no external
+  assets, keyboard-operable) rendered ONLY when a graph is wired: a
+  search over nothing would be a fabrication. `render_inspector_html`
+  delegates query-less; the pre-search byte shape is unchanged apart
+  from the new section.
+- The server arm: `GET /__oxide?q=<query>` extracts `q`
+  (`percent_decode_query`, the cost endpoint's `src=` spelling), a blank
+  or foreign query keeping the unfiltered render (the pre-search byte
+  shape), and passes it through the new `InspectorSnapshot::render_html_search`
+  — default delegates to `render_html`, so a pre-search implementor
+  keeps compiling AND keeps answering `?q=` with the same page (the
+  documented degrade, not a stub). The CLI's `CliInspector` overrides it
+  with the dev crate's filtered renderer, and the serve boot feeds the
+  module graph from the boot-time harvest (`build_hmr_graph`'s importers
+  map) beside the route table.
+
+14 dev pins + 5 server pins (red-first: E0432/E0425/E0599 over
+`search_module_graph`/`with_module_graph`/`render_inspector_html_with_query`
+and `render_html_search`), the `module_search`/`inspector_html_search`
+criterion groups (≈89 µs at 1024 modules for the search — the
+case-insensitive scan over module + importer paths; ≈36/140 µs for the
+filtered render at 256/1024) and the `module_search` walkthrough example.
+
+**What lands (M2, the F17 profiler + tier-map adapter).**
+`crates/server/src/cost_endpoint.rs`: `ProfiledCostSource` — the layered
+production `CostSource` the record's remaining halves ride: the build's
+snapshot source decorated with the render profiler's per-source p50
+(`renderMsP50`) and the pipeline's cache-tier map (`cache`), each keyed
+by the same `?src=` spelling (`from_maps` takes the ledger's
+`(source, p50)` / `(source, tier)` rows). Layering rules: the base
+record is authoritative (a half the snapshot already carries is never
+overwritten — the decorator decorates, it does not contradict the
+build), a base miss stays the documented 404 (a path only the profiler
+measured never fabricates a record), and empty maps leave the bytes-only
+shape byte-identical. 8 TDD pins (red-first: E0432 over
+`ProfiledCostSource`), the `cost_source_profiled` criterion group
+(≈101 ns at 64 records — the base lookup plus the two map probes, the
+decorator's overhead the snapshot group's delta) and the profiled section
+in the `cost_endpoint` walkthrough example.
+
+**Micro-debt (this diff, additive).**
+`WaterfallRecorder::persist_to` (`crates/dev/src/lib.rs`) — the doc
+promised "a write failure logs to stderr" while the code discarded every
+failure (`let _ = std::fs::write`): the failure now warns through
+`tracing` naming the path (the dev loop is a tracing pipeline — the
+notify-fallback warn's own recorded rule), because a silently stale
+side-car makes the MCP reader trust waterfalls the write never
+delivered. The stale `RouteTableInspector` doc ("other inspector fields
+(module graph …) stay empty") corrected — the module graph is wired now,
+the `why`/cache/pool fields remain the honest-empty ones.
+
+**Deltas recorded.**
+
+- The inspector's module graph is BOOT-FROZEN: the serve boot harvests
+  once (`build_hmr_graph`) and the per-tick rebuild stays the dev loop's
+  (`cmd_dev`). The same posture the F02 islands scan took — the
+  inspector answers from the boot graph until the wiring carries per-tick
+  snapshots (the live/generation wire-up is recorded with the same
+  posture).
+- The search is case-insensitive ASCII (`to_ascii_lowercase`), like the
+  classifier's `on`-prefix rule — a non-ASCII path casing differs only
+  in a locale-specific fold no consumer needs.
+- The `?q=` search is server-rendered (the form submits, the arm
+  filters) rather than client-side JS over the state JSON: one matcher
+  (the Rust function), no parity surface, no external assets on the
+  inspector page.
+- The `render_html_search` default delegates to `render_html` instead of
+  being a required method: the trait's only in-tree implementor overrides
+  it, and the default keeps a pre-search implementor (a third-party
+  embed) honest rather than broken.
