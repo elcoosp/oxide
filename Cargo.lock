@@ -6414,7 +6414,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
  "zstd",
@@ -6607,7 +6606,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "zstd",
 ]
@@ -6648,7 +6646,6 @@ dependencies = [
  "proptest",
  "serde_json",
  "sha2",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -6677,10 +6674,8 @@ dependencies = [
  "memchr",
  "oxide-fw-config",
  "oxide-fw-diagnostics",
- "oxide-fw-odf",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
 ]
