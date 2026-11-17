@@ -212,8 +212,24 @@ fn migrate_tag_table_v1_to_v2(index: &Database) -> Result<()> {
         let mut old = txn.open_table(TAG_TABLE).map_err(dberr)?;
         let mut pairs: Vec<(String, Vec<String>)> = Vec::new();
         for row in old.iter().map_err(dberr)?.flatten() {
-            let list: Vec<String> = serde_json::from_slice(row.1.value()).unwrap_or_default();
-            pairs.push((String::from_utf8_lossy(row.0.value()).into_owned(), list));
+            let tag = String::from_utf8_lossy(row.0.value()).into_owned();
+            // A corrupt v1 row migrates as an EMPTY list (the house
+            // convention: the empty-set behavior is unchanged and
+            // self-healing) — but the invalidation gap must be VISIBLE,
+            // not silent.
+            let list: Vec<String> = match serde_json::from_slice(row.1.value()) {
+                Ok(list) => list,
+                Err(e) => {
+                    tracing::warn!(
+                        code = "CACHE-CODEC",
+                        tag = %tag,
+                        error = %e,
+                        "a v1 tag row did not parse as a JSON key list; migrating it as empty"
+                    );
+                    Vec::new()
+                }
+            };
+            pairs.push((tag, list));
         }
         let mut mm = txn.open_multimap_table(TAG_KEYS).map_err(dberr)?;
         for (tag, keys) in &pairs {
