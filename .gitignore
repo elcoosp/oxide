@@ -80,3 +80,7 @@ __pycache__/
 node_modules/
 download/
 upload/
+
+# The ship delivery files (per-session, never committed)
+/ship.toml
+/.github/pr-body.md
