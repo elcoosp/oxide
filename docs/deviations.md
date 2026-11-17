@@ -4687,3 +4687,88 @@ V8-linked crate rides CI per the convention.
   mid-row "Remaining" sentence is retired; the row's stale `packages/oxide`
   spelling for the TT sinks is corrected to `packages/core` (where
   `client/tt.ts` actually landed).
+
+## The F17 mapping + measurement halves land — the overlay's DOM→source stamp and the cost endpoint's data producer (`feat/data-ox-src-injection` + `feat/source-cost-engine`, 2026-11-17)
+
+**What lands (M1, the §V2-F17 DOM→source mapping, JSX-framework half).**
+`crates/compiler/src/data_src.rs`: `inject_data_ox_src(code, lang, path)` —
+in dev, the first element each top-level component renders carries
+`data-ox-src="path:line"`. The rule set: a component is a top-level item the
+React-Refresh rule already recognizes (function/class declarations and their
+`export`-wrapped and default-export forms, arrow/function/class expressions
+bound to a variable) filtered by the uppercase-first name rule the islands
+classifier uses — an anonymous default export IS a component (the route
+module's root), lowercase top-level helpers are not. The first element is the
+first `JSXElement` lexically inside the component's first JSX-bearing
+`return` (fragments transparent, conditional returns skip the arms that
+render nothing, wrappers descended: await, TS casts, conditional/logical
+arms, call/new arguments, array/object literals, callback bodies); elements
+not in return position are never stamped. The line is the 1-based line of
+the component's declaration; the path part is the caller's transform `path`
+(root-relative, the `?src=` spelling). The edit is span surgery on the
+ORIGINAL text (the `inject_react_refresh` emit pattern): only the attribute
+bytes are inserted, every other byte — and every line count, so the dev
+sourcemap stays valid — is preserved. Idempotent: an element already
+carrying the attribute is skipped (the dev pipeline re-serves modules). The
+no-vouch direction: a non-`tsx`/`jsx` language, an unparseable source or a
+module with no component is returned unchanged. Wire-up:
+`lower_to_js_with_refresh` (the dev lowering entry the ESM dev server serves
+modules through — `crates/cli/src/esm_dev.rs`'s existing call site) runs the
+stamp BEFORE the JSX lowering, so the runtime's own JSX pass carries the
+attribute into the props call; production `lower_to_js` never runs it. 16
+integration TDD pins (red-first) + 3 module pins + the `data_src` criterion
+group + the walkthrough example.
+
+**What lands (M2, the build-side producer).** `crates/bundler/src/cost.rs`:
+`source_costs(output, root)` — the per-source `{ bytes, gzip, chunk }`
+records the landed `/__oxide/cost` endpoint's `CostSource` seam serves. The
+spec's measurement method implemented verbatim: `bytes` is the module's
+carried source length, `gzip` is the REAL RFC 1952 gzip-stream length over
+the same bytes (flate2, the workspace's own gzip crate — not a ratio guess),
+`chunk` is the file of the FIRST chunk listing the module (`None` when no
+chunk claims it). The `source` key is the root-relative spelling with
+forward slashes — the same spelling the `data-ox-src` stamp carries and the
+`?src=` query takes, so the overlay's fetch needs no re-spelling; a module
+outside `root` rides as given. Assets and server-only modules are excluded
+(the overlay attributes CLIENT sources). Sorted by the source key — two
+builds over the same output produce byte-equal tables. 12 TDD pins
+(red-first) + the `cost` criterion group + the walkthrough example. The
+`renderMsP50`/`cache` fields are NOT computed here — they belong to the
+render profiler and the cache tier map, the adapters that feed the endpoint
+alongside this engine.
+
+**Deltas.**
+- The component rule is the uppercase-first NAME rule, not merely the
+  refresh rule: React Refresh registers every top-level function, but the
+  stamp puts overlay handles on rendered DOM — a lowercase helper's rows
+  would misattribute to whatever real component lists it. The anonymous
+  default export (no name to filter) still stamps.
+- An arrow's implicit-return expression is searched directly
+  (`ArrowFunctionBody::Expression`); a block arrow walks like a function.
+  A class component renders from its method/property bodies in declaration
+  order (the `render` method in React; Solid/Svelte class forms).
+- The parser's `preserve_parens` default (true) is load-bearing: a
+  parenthesized return argument is descended (`ParenthesizedExpression`
+  arm). The pass matches the source text the parser saw, not a codegen
+  round trip — the double-parse cost the alternative would pay per served
+  module is avoided AND the byte-preservation property holds.
+- The stamp rides `lower_to_js_with_refresh` unconditionally for tsx/jsx
+  (the function IS the dev lowering entry — the refresh injection's
+  existing posture), not behind a separate flag: the dev server's call
+  site needed zero edits and the V8-linked crate stays on CI.
+- `gzip` measures the module's carried (post-walk) source, not the minified
+  chunk text: the record labels the basis honestly and the overlay compares
+  sources against sources; the endpoint's `chunk` field carries the
+  wire-level truth.
+- The Vue/Svelte injection halves ride their compile hooks (the tooling
+  pool's `@vue/compiler-sfc` / `svelte/compiler` steps), not the JSX path —
+  recorded remaining, with the overlay UI.
+
+**Micro-debt (this diff, additive).** `crates/server/src/navgraph.rs`'s
+`NavGraph::persist` serialized the snapshot into the tmp file with
+`serde_json::to_string(&body).unwrap_or_default()`: a serialization failure
+wrote an EMPTY tmp and the atomic rename then promoted it over the previous
+snapshot — the learned nav edges would vanish silently. The serialization
+now runs BEFORE the tmp file exists and the error rides the function's
+`io::Result` (the synthetic-tsconfig precedent; the flusher task already
+logs a failed persist and keeps serving the previous snapshot).
