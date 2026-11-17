@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub mod cjs_exports;
+pub mod data_src;
 pub mod framework;
 pub mod generate_params;
 pub mod interactivity;
@@ -61,6 +62,7 @@ mod oxc_backend;
 pub mod precompile_engine;
 
 pub use cjs_exports::extract_cjs_export_names;
+pub use data_src::{DATA_OX_SRC_ATTR, inject_data_ox_src};
 pub use framework::{
     Framework, FrameworkCompiler, FrameworkInput, FrameworkOutput, ReactInline, SolidInline,
     ToolingDispatcher, compiler_for,
