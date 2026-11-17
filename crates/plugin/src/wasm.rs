@@ -13,14 +13,16 @@
 //!
 //! interface hooks {
 //!   transform: func(input: string) -> string;
-//!   load: func(specifier: string) -> string;
+//!   load: func(specifier: string) -> option<string>;
+//!   resolve-id: func(specifier: string, from: string) -> option<string>;
 //! }
 //! ```
 //!
 //! Every hook is optional: a component that omits a function is treated as a
 //! no-op for that hook. Unknown exports are ignored.
 
-use crate::{Hook, Result, WasmPluginManifest, err};
+use crate::{Hook, HookHost, Result, WasmPluginManifest, err};
+use oxide_fw_diagnostics::OxideError;
 use std::path::Path;
 use std::time::Duration;
 use wasmtime::component::{Component, Linker};
@@ -40,6 +42,12 @@ pub struct WasmPlugin {
 impl WasmPlugin {
     /// Compile and instantiate a component from `bytes`, after validating its
     /// manifest. `plugin_path` is used only for diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// `PLG-WIT`/`PLG-CAP`/`PLG-HOOKS`/`PLG-HOOK` from
+    /// [`WasmPluginManifest::validate`]; `PLG-WASM` for an engine, compile,
+    /// ticker-spawn or instantiate failure.
     pub fn load(
         bytes: &[u8],
         manifest: WasmPluginManifest,
@@ -57,9 +65,7 @@ impl WasmPlugin {
             .map_err(|e| err("PLG-WASM", format!("wasmtime engine init failed: {e}")))?;
 
         let component = Component::new(&engine, bytes).map_err(|e| {
-            let where_ = plugin_path
-                .map(|p| format!(" `{}`", p.display()))
-                .unwrap_or_default();
+            let where_ = plugin_path.map_or_else(String::new, |p| format!(" `{}`", p.display()));
             err(
                 "PLG-WASM",
                 format!("failed to compile component{where_}: {e}"),
@@ -104,7 +110,9 @@ impl WasmPlugin {
 
         // Probe which declared hooks the component actually exports, tolerating
         // the small set of ABI shapes we know how to call: `(string) -> string`,
-        // `() -> string`, `(s32) -> s32`, `() -> s32`.
+        // `() -> string`, `(s32) -> s32`, `() -> s32`,
+        // `(string) -> option<string>` (`load`) and
+        // `(string, string) -> option<string>` (`resolve_id`).
         let mut available = Vec::new();
         for hook in &manifest.hooks {
             let name = hook_export_name(hook);
@@ -124,27 +132,27 @@ impl WasmPlugin {
     }
 
     /// The plugin's validated manifest.
+    #[must_use]
     pub fn manifest(&self) -> &WasmPluginManifest {
         &self.manifest
     }
 
     /// Hook names the component actually exports (intersected with the manifest).
+    #[must_use]
     pub fn available_hooks(&self) -> &[Hook] {
         &self.available
     }
 
     /// Call a hook that takes a single string and returns a single string
     /// (`transform`, `load`). Returns `PLG-WASM` if the hook isn't exported.
+    ///
+    /// # Errors
+    ///
+    /// `PLG-WASM` when the hook is not exported, the typed-func resolution
+    /// fails, or the call traps.
     pub fn call_string_hook(&mut self, hook: &Hook, input: &str) -> Result<String> {
         if !self.available.contains(hook) {
-            return Err(err(
-                "PLG-WASM",
-                format!(
-                    "plugin `{}` does not export hook `{}`",
-                    self.manifest.name,
-                    hook_export_name(hook)
-                ),
-            ));
+            return Err(self.unexported_hook_error(*hook));
         }
         let name = hook_export_name(hook).to_string();
         let func = self
@@ -162,38 +170,121 @@ impl WasmPlugin {
         Ok(out)
     }
 
+    /// Call a hook that takes one string and returns an optional one — the
+    /// SPEC-15.2 `load` shape: `Some(code)` overrides the disk read (virtual
+    /// modules), `None` declines and the caller reads from disk.
+    ///
+    /// # Errors
+    ///
+    /// `PLG-WASM` when the hook is not exported in a callable shape, the
+    /// typed-func resolution fails, or the call traps.
+    pub fn call_load_hook(&mut self, specifier: &str) -> Result<Option<String>> {
+        if !self.available.contains(&Hook::Load) {
+            return Err(self.unexported_hook_error(Hook::Load));
+        }
+        let func = self
+            .instance
+            .get_typed_func::<(String,), (Option<String>,)>(&mut self.store, "load")
+            .map_err(|e| {
+                err(
+                    "PLG-WASM",
+                    format!("hook `load` is not (string) -> option<string>: {e}"),
+                )
+            })?;
+        func.call(&mut self.store, (specifier.to_string(),))
+            .map(|(out,)| out)
+            .map_err(|e| err("PLG-WASM", format!("call `load` trapped: {e}")))
+    }
+
+    /// Call a hook that takes two strings and returns an optional one — the
+    /// SPEC-15.2 `resolveId` shape: `Some(id)` overrides disk resolution,
+    /// `None` passes to the bundler's default resolver (the JS bridge's
+    /// `{id: null}` pass-through).
+    ///
+    /// # Errors
+    ///
+    /// `PLG-WASM` when the hook is not exported in a callable shape, the
+    /// typed-func resolution fails, or the call traps.
+    pub fn call_resolve_hook(&mut self, specifier: &str, from: &str) -> Result<Option<String>> {
+        if !self.available.contains(&Hook::ResolveId) {
+            return Err(self.unexported_hook_error(Hook::ResolveId));
+        }
+        let func = self
+            .instance
+            .get_typed_func::<(String, String), (Option<String>,)>(
+                &mut self.store,
+                hook_export_name(&Hook::ResolveId),
+            )
+            .map_err(|e| {
+                err(
+                    "PLG-WASM",
+                    format!("hook `resolve-id` is not (string, string) -> option<string>: {e}"),
+                )
+            })?;
+        func.call(&mut self.store, (specifier.to_string(), from.to_string()))
+            .map(|(out,)| out)
+            .map_err(|e| err("PLG-WASM", format!("call `resolve-id` trapped: {e}")))
+    }
+
+    /// The declared hooks the component does not export in a shape the host
+    /// can call — the compatibility runner's `unsupportedHooks` list.
+    #[must_use]
+    pub fn missing_hooks(&self) -> Vec<Hook> {
+        self.manifest
+            .hooks
+            .iter()
+            .copied()
+            .filter(|h| !self.available.contains(h))
+            .collect()
+    }
+
+    /// The `PLG-WASM` error for a declared hook the component does not export
+    /// in a callable shape (the message the load-time pins hold).
+    #[must_use]
+    fn unexported_hook_error(&self, hook: Hook) -> OxideError {
+        err(
+            "PLG-WASM",
+            format!(
+                "plugin `{}` does not export hook `{}`",
+                self.manifest.name,
+                hook_export_name(&hook)
+            ),
+        )
+    }
+
     /// Engine handle (for callers that want to bump the epoch / pool).
+    #[must_use]
     pub fn engine(&self) -> &Engine {
         &self.engine
     }
 
     /// The compiled component (so it can be re-instantiated cheaply).
+    #[must_use]
     pub fn component(&self) -> &Component {
         &self.component
     }
 
     /// Raw store accessor for callers/tests that need custom typed calls.
+    #[must_use]
     pub fn store(&mut self) -> &mut Store<StoreLimits> {
         &mut self.store
     }
 
     /// Raw instance accessor for callers/tests that need custom typed calls.
+    #[must_use]
     pub fn instance(&self) -> &wasmtime::component::Instance {
         &self.instance
     }
 
     /// Call a `(s32) -> s32` hook. Handy for numeric plugin ABI shapes and for
     /// tests that exercise the execution path without the string canonical ABI.
+    /// # Errors
+    ///
+    /// `PLG-WASM` when the hook is not exported, the export is not the
+    /// `(s32) -> s32` shape, or the call traps.
     pub fn call_s32_hook(&mut self, hook: &Hook, input: i32) -> Result<i32> {
         if !self.available.contains(hook) {
-            return Err(err(
-                "PLG-WASM",
-                format!(
-                    "plugin `{}` does not export hook `{}`",
-                    self.manifest.name,
-                    hook_export_name(hook)
-                ),
-            ));
+            return Err(self.unexported_hook_error(*hook));
         }
         let name = hook_export_name(hook).to_string();
         let func = self
@@ -214,6 +305,10 @@ enum HookSig {
     NoArgString,
     S32,
     NoArgS32,
+    /// `(string) -> option<string>` — the SPEC-15.2 `load` shape.
+    StringArgOpt,
+    /// `(string, string) -> option<string>` — the SPEC-15.2 `resolveId` shape.
+    StringPairOpt,
 }
 
 /// Probe the component's typed-function signature for a hook export.
@@ -246,18 +341,33 @@ fn probe_hook_signature(
     {
         return Some(HookSig::NoArgS32);
     }
+    if instance
+        .get_typed_func::<(String,), (Option<String>,)>(&mut *store, name)
+        .is_ok()
+    {
+        return Some(HookSig::StringArgOpt);
+    }
+    if instance
+        .get_typed_func::<(String, String), (Option<String>,)>(&mut *store, name)
+        .is_ok()
+    {
+        return Some(HookSig::StringPairOpt);
+    }
     None
 }
 
 /// Exported name of a hook in the component-model world. Matches the WIT
-/// interface: `resolve_id` for the JS-bridge `ResolveId` hook.
+/// interface, whose identifiers are kebab-case: `resolve-id` for the
+/// JS-bridge `ResolveId` hook (the underscore spelling is not a valid
+/// component extern name — the component model refuses it at encode time).
+#[must_use]
 pub fn hook_export_name(hook: &Hook) -> &'static str {
     match hook {
         Hook::Config => "config",
         Hook::ConfigResolved => "config_resolved",
         Hook::Transform => "transform",
         Hook::Load => "load",
-        Hook::ResolveId => "resolve_id",
+        Hook::ResolveId => "resolve-id",
         Hook::BuildStart => "build_start",
         Hook::BuildEnd => "build_end",
         Hook::RenderChunk => "render_chunk",
@@ -272,5 +382,30 @@ pub fn hook_export_name(hook: &Hook) -> &'static str {
         Hook::ConfigureServer => "configure_server",
         Hook::Typegen => "typegen",
         Hook::Diagnostics => "diagnostics",
+    }
+}
+
+/// `HookHost` for the WASM component: every call path goes through the
+/// inherent methods (which own the availability check and the `PLG-WASM`
+/// error context), so the object-safe surface adds no second dispatch.
+impl HookHost for WasmPlugin {
+    fn available_hooks(&self) -> &[Hook] {
+        WasmPlugin::available_hooks(self)
+    }
+
+    fn missing_hooks(&self) -> Vec<Hook> {
+        WasmPlugin::missing_hooks(self)
+    }
+
+    fn call_transform(&mut self, code: &str) -> Result<String> {
+        self.call_string_hook(&Hook::Transform, code)
+    }
+
+    fn call_load(&mut self, specifier: &str) -> Result<Option<String>> {
+        self.call_load_hook(specifier)
+    }
+
+    fn call_resolve_id(&mut self, specifier: &str, from: &str) -> Result<Option<String>> {
+        self.call_resolve_hook(specifier, from)
     }
 }
