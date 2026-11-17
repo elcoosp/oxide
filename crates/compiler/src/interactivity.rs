@@ -459,7 +459,13 @@ fn scan_svelte_markup(source: &str, scripts: &[(usize, usize)], hits: &mut Vec<R
             slot.fill(b' ');
         }
     }
-    let text = std::str::from_utf8(&buf).unwrap_or_default();
+    // The blanking keeps UTF-8 valid by construction (the ranges are
+    // `str::find` boundaries), so the fallback never fires today — but if
+    // it ever could, scanning the ORIGINAL text over-flags from script
+    // bodies (the conservative arm) instead of scanning an empty string,
+    // which would silently miss every template hit: the kill-criterion
+    // direction. The loud-but-impossible case degrades safe, not silent.
+    let text = std::str::from_utf8(&buf).unwrap_or(source);
 
     for (needle, kind) in [("on:", "svelte-on-directive"), ("bind:", "svelte-bind")] {
         let mut cursor = 0usize;
@@ -747,14 +753,10 @@ pub fn hydrates(explicit_registration: bool, entry: Option<&Interactivity>) -> b
     explicit_registration || entry.is_none_or(Interactivity::is_interactive)
 }
 
-/// Resolve one relative specifier against `from_file`'s directory and
-/// the scanned set. Returns the matching manifest KEY (the canonical
-/// root-relative path) when the specifier names a same-project file.
-fn resolve_relative<'a>(
-    from_file: &str,
-    spec: &str,
-    files: &'a BTreeMap<String, (Framework, String)>,
-) -> Option<&'a str> {
+/// The path walk both resolvers share: `from_file`'s directory plus the
+/// specifier's components, `..` popping, `.`/empty skipped. `None` when
+/// the walk escapes the project (no base, or `..` out of the root).
+pub(crate) fn relative_join(from_file: &str, spec: &str) -> Option<String> {
     if !spec.starts_with('.') {
         return None;
     }
@@ -772,9 +774,15 @@ fn resolve_relative<'a>(
             other => parts.push(other),
         }
     }
-    let joined = parts.join("/");
-    let candidates = [
-        joined.clone(),
+    Some(parts.join("/"))
+}
+
+/// The joined-path spellings a same-project specifier may land on, in
+/// order: the path itself (it may already carry an extension) plus the
+/// extension and `index` spellings the bundler resolves.
+pub(crate) fn specifier_candidates(joined: &str) -> Vec<String> {
+    [
+        joined.to_string(),
         format!("{joined}.tsx"),
         format!("{joined}.ts"),
         format!("{joined}.jsx"),
@@ -786,7 +794,21 @@ fn resolve_relative<'a>(
         format!("{joined}/index.ts"),
         format!("{joined}/index.jsx"),
         format!("{joined}/index.js"),
-    ];
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// Resolve one relative specifier against `from_file`'s directory and
+/// the scanned set. Returns the matching manifest KEY (the canonical
+/// root-relative path) when the specifier names a same-project file.
+fn resolve_relative<'a>(
+    from_file: &str,
+    spec: &str,
+    files: &'a BTreeMap<String, (Framework, String)>,
+) -> Option<&'a str> {
+    let joined = relative_join(from_file, spec)?;
+    let candidates = specifier_candidates(&joined);
     candidates
         .iter()
         .find_map(|candidate| files.get_key_value(candidate).map(|(key, _)| key.as_str()))
