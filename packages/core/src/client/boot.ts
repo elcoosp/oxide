@@ -8,11 +8,11 @@
 // where `window` and `document` do not exist. Everything touching the DOM
 // is behind a runtime guard; the module has no top-level side effects.
 
-import { hydrateIslands, type IslandsOptions } from './islands.ts'
+import { hydrateIslands, type IslandsOptions, type MixedIslandRegistry } from './islands.ts'
 import { createRouter } from './router.ts'
 import { prefetchAdvertised, startLearnedPrefetch } from './prefetch.ts'
 import { connectLive } from './live.ts'
-import { type MixedIslandRegistry, decodeOdf } from './odf-decode.ts'
+import { decodeOdf } from './odf-decode.ts'
 import { fromBase64 } from '../bytes.ts'
 import { loadScripts } from './scripts.ts'
 import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from './route-manifest.ts'
