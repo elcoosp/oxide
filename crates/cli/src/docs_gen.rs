@@ -71,12 +71,18 @@ pub trait ReferenceGenerator: Sync {
 static CAPABILITIES_PAGE: CapabilitiesPage = CapabilitiesPage;
 static CLI_PAGE: CliPage = CliPage;
 static CONFIG_PAGE: ConfigPage = ConfigPage;
+static ENDPOINTS_PAGE: EndpointsPage = EndpointsPage;
 static ERRORS_PAGE: ErrorsPage = ErrorsPage;
 
 /// The registry slice itself, so `generators` hands out a true
 /// `&'static` (a body-literal array would be a temporary).
-static GENERATORS: &[&dyn ReferenceGenerator] =
-    &[&CAPABILITIES_PAGE, &CLI_PAGE, &CONFIG_PAGE, &ERRORS_PAGE];
+static GENERATORS: &[&dyn ReferenceGenerator] = &[
+    &CAPABILITIES_PAGE,
+    &CLI_PAGE,
+    &CONFIG_PAGE,
+    &ENDPOINTS_PAGE,
+    &ERRORS_PAGE,
+];
 
 /// The registry, in write order (alphabetical by page path, so the
 /// command's output and the directory listing agree).
@@ -650,6 +656,41 @@ impl ReferenceGenerator for ErrorsPage {
                 );
             }
         }
+        Ok(out)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// endpoints.md
+// ---------------------------------------------------------------------------
+
+/// The §V2.J endpoint map page (the E11 generator's fifth page): a fold
+/// of [`oxide_fw_server::endpoint_markdown_table`] plus the plane rule
+/// the map's rows embody — the server crate's map is the single source of
+/// truth; the page is a consumer, never a second opinion (the
+/// capability-matrix rule, applied to endpoints). A new HTTP surface that
+/// joins [`oxide_fw_server::ENDPOINT_MAP`] without regenerating this page
+/// is a red `--check`.
+pub struct EndpointsPage;
+
+impl ReferenceGenerator for EndpointsPage {
+    fn path(&self) -> &'static str {
+        "endpoints.md"
+    }
+
+    fn render(&self) -> Result<String> {
+        let mut out = String::from(BANNER);
+        let _ = writeln!(out, "# Endpoint map\n");
+        let _ = writeln!(
+            out,
+            "Every HTTP surface the framework serves (Appendix V2.J), generated \
+             from the `oxide_fw_server::ENDPOINT_MAP` data the server crate ships. \
+             The plane rule is structural: `/__oxide/*` is the **data plane** (the \
+             build-header check guards it, A04), `/_oxide/*` is the **ops plane**, \
+             and the dev-only surfaces are dev-token guarded (D41)."
+        );
+        out.push_str("\n## Endpoints\n\n");
+        out.push_str(&oxide_fw_server::endpoint_markdown_table());
         Ok(out)
     }
 }
