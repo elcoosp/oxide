@@ -206,17 +206,16 @@ impl NativeRegistry {
 
     /// The compiled-in backend push list (§V2-C02–C05): each backend rides its
     /// own feature (default builds stay lean; the release recipe turns them
-    /// on) and pushes itself here. With no feature on the body compiles to
-    /// nothing — the parameter is then never dereferenced mutably, which
-    /// `-D warnings` (via `unused_variables`) reports, so `#[allow]` guards
-    /// the default-feature build only.
-    #[allow(unused_variables)]
+    /// on) and pushes itself here. With no feature on, the body compiles to
+    /// the compensating dead-use below — the parameter stays used for the
+    /// `warnings = "deny"` bar without an allow escape hatch.
     fn register_compiled_in(reg: &mut NativeRegistry) {
         // The all-off build compiles every arm away and never dereferences
-        // the push list: a use that itself compiles away keeps `reg` used
-        // for the `warnings = "deny"` bar without an allow escape hatch
-        // (this rustc lints an unused `&mut` parameter under
-        // `unused_variables`).
+        // the push list: this use keeps `reg` used for the `warnings =
+        // "deny"` bar (rustc lints an unused `&mut` parameter under
+        // `unused_variables`). It made the unused-variables allow this fn
+        // carried redundant — the dead-use IS the escape; removed in the
+        // micro-debt pass.
         #[cfg(not(any(
             feature = "native-solid",
             feature = "native-vue",
@@ -418,10 +417,10 @@ mod tests {
         // `cfg!` compiles the count under any feature combination without a
         // `mut` (the bare `let mut` broke the default-feature test build with
         // `-D unused-mut` — none of the `#[cfg]` arms compiled in then).
-        let expected = cfg!(feature = "native-solid") as usize
-            + cfg!(feature = "native-vue") as usize
-            + cfg!(feature = "native-svelte") as usize
-            + cfg!(feature = "native-react-compiler") as usize;
+        let expected = usize::from(cfg!(feature = "native-solid"))
+            + usize::from(cfg!(feature = "native-vue"))
+            + usize::from(cfg!(feature = "native-svelte"))
+            + usize::from(cfg!(feature = "native-react-compiler"));
         assert_eq!(reg.len(), expected, "the registry is the compiled-in set");
         assert_eq!(reg.report().len(), expected);
         assert_eq!(reg.is_empty(), expected == 0);
