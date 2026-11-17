@@ -216,6 +216,164 @@ impl CostSource for ProfiledCostSource {
     }
 }
 
+/// The dev-side feed: the build's PERSISTED records file (the bundler's
+/// `write_source_costs` rows — the `{ source, bytes, gzip, chunk }`
+/// `client.costs.json` beside the client manifest), stat-checked per
+/// query. The dev boot cannot hold the build's `BundleOutput` across
+/// rebuilds, so it attaches this source once and a rebuild's rewrite of
+/// the file is picked up by the NEXT query — the endpoint serves the
+/// current build's costs without a re-attach. The staleness check is the
+/// cargo/make `(mtime, length)` stat pair: an mtime-only check is flaky
+/// where the timestamp tick is coarser than a fast rewrite, and a
+/// rewrite that moves neither half carries identical content anyway
+/// (the cached records ARE the file's records until the next move).
+///
+/// Honesty rules (the endpoint's contract, unmodified):
+///
+/// - a hit maps the row one-to-one into [`ComponentCost::bytes_only`] —
+///   a `null` chunk is the honest empty string (no chunk claims the
+///   module), and the render/cache halves stay `None` (they belong to
+///   the profiler and the tier-map adapters);
+/// - a missing file is the no-build shape — the documented miss, every
+///   query `None`, no log noise (the endpoint's 404 all the way down);
+/// - an unreadable or unparsable file warns once per mtime move (the
+///   path and the parse failure named) and answers misses until the
+///   file is fixed — the dev loop stays up, never a fabricated record;
+/// - a vanished file (previously good) warns and clears — stale rows
+///   never outlive the file that carried them.
+///
+/// The steady-state hit is one `stat` plus the cached lookup (the
+/// `cost_source_file` bench group measures the per-query shape).
+pub struct FileCostsSource {
+    path: std::path::PathBuf,
+    cache: std::sync::Mutex<Option<FileCostsCache>>,
+}
+
+/// The cached load: the file's `(mtime, length)` stat pair at the parse
+/// (the cargo/make staleness pair — see `cost`) and the mapped records.
+#[derive(Debug)]
+struct FileCostsCache {
+    stat: (std::time::SystemTime, u64),
+    records: std::collections::BTreeMap<String, ComponentCost>,
+}
+
+/// One file row — the bundler's `write_source_costs` shape (the strict
+/// contract: `source`/`bytes`/`gzip` required, the chunk nullable).
+#[derive(serde::Deserialize)]
+struct CostRecordJson {
+    source: String,
+    bytes: u64,
+    gzip: u64,
+    chunk: Option<String>,
+}
+
+impl std::fmt::Debug for FileCostsSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The cache is the adapter's internal state (a mutex over the
+        // last load); the path is the identity the boot attaches.
+        f.debug_struct("FileCostsSource")
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FileCostsSource {
+    /// A source over the records file at `path` (the boot attaches the
+    /// `client.costs.json` spelling beside the client manifest; the file
+    /// may not exist yet — the first rebuild creates it).
+    #[must_use]
+    pub fn from_path(path: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            cache: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+impl CostSource for FileCostsSource {
+    fn cost(&self, src: &str) -> Option<ComponentCost> {
+        let mut guard = self.cache.lock().expect("costs-file cache mutex poisoned");
+        // The staleness check is the cargo/make stat PAIR — mtime AND
+        // length. An mtime-only check is flaky on filesystems whose
+        // timestamp tick is coarser than a fast rewrite (two writes can
+        // land in one tick); the length half catches those, and a
+        // rewrite that moves NEITHER (a same-length write inside one
+        // tick) carries identical content anyway — the cached records
+        // ARE the file's records until the next mtime move.
+        let stat = std::fs::metadata(&self.path)
+            .ok()
+            .and_then(|m| m.modified().ok().map(|t| (t, m.len())));
+        if let (Some(cache), Some(s)) = (guard.as_ref(), &stat)
+            && cache.stat == *s
+        {
+            return cache.records.get(src).cloned();
+        }
+        match stat {
+            // The no-build shape (or the file vanished): the documented
+            // miss. A previously-good cache is cleared so stale rows
+            // never outlive the file that carried them.
+            None => {
+                if guard.is_some() {
+                    tracing::warn!(
+                        path = %self.path.display(),
+                        "costs file vanished; the cost endpoint answers misses until the next build"
+                    );
+                }
+                *guard = None;
+                None
+            }
+            Some(s) => {
+                // The stat pair is captured BEFORE the read: a rewrite
+                // racing the load moves the pair again, so the next
+                // query reloads instead of serving a half-read file.
+                match load_cost_records(&self.path) {
+                    Ok(records) => {
+                        *guard = Some(FileCostsCache { stat: s, records });
+                        guard.as_ref().and_then(|c| c.records.get(src)).cloned()
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %self.path.display(),
+                            error = %e,
+                            "costs file unreadable; the cost endpoint answers misses until the file is fixed"
+                        );
+                        *guard = Some(FileCostsCache {
+                            stat: s,
+                            records: std::collections::BTreeMap::new(),
+                        });
+                        None
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Read and map the records file: the caller captured the `(mtime,
+/// length)` stat pair BEFORE this read (the race rule — a rewrite racing
+/// the load moves the pair again, so the next query reloads); the strict
+/// row shape maps one-to-one into the bytes-only records.
+fn load_cost_records(
+    path: &std::path::Path,
+) -> std::io::Result<std::collections::BTreeMap<String, ComponentCost>> {
+    let raw = std::fs::read_to_string(path)?;
+    let rows: Vec<CostRecordJson> = serde_json::from_str(&raw).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("cost records parse failed: {e}"),
+        )
+    })?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.source,
+                ComponentCost::bytes_only(row.bytes, row.gzip, row.chunk.unwrap_or_default()),
+            )
+        })
+        .collect())
+}
+
 /// The endpoint state: the injected source. The dev boot attaches one via
 /// [`crate::Pipeline::with_cost_endpoint`].
 pub struct CostEndpoint {
@@ -245,8 +403,7 @@ impl CostEndpoint {
         let src = query
             .split('&')
             .find_map(|kv| kv.strip_prefix("src="))
-            .map(percent_decode)
-            .unwrap_or_default();
+            .map_or_else(String::new, percent_decode);
         if src.is_empty() {
             return error_response(
                 400,
