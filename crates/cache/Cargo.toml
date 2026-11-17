@@ -15,7 +15,6 @@ redis = { workspace = true, optional = true }
 object_store = { workspace = true, optional = true }
 async-trait = { workspace = true }
 oxide-fw-diagnostics = { workspace = true }
-oxide-fw-odf = { workspace = true }
 blake3 = { workspace = true }
 base64 = { workspace = true }
 redb = { workspace = true }
