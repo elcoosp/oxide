@@ -272,6 +272,22 @@ def stages_check():
                     "        if !matched.as_ref().is_some_and(|m| m.is_live_route()) {",
                 ]),
             ),
+            # R05 stream-session binding (this diff), recorded substitution:
+            # the reattach arm presents ITS OWN session identity to the
+            # bound lookup — a foreign or missing cookie is the same `Gone`
+            # an unknown id gets (the endpoint cannot tell the refusals
+            # apart).
+            (
+                re.compile(r"let reattach = sw\.store\.get\(id\);"),
+                NL.join([
+                    "// §13.4: the reattach presents ITS OWN session identity (the same",
+                    "// wiring source hashes this request's cookie); the store maps a",
+                    "// mismatch — foreign or missing cookie — to the same `Gone` an",
+                    "// unknown id gets, so the 410 never confirms the id exists.",
+                    "let presented = sw.binding_of(&req.headers);",
+                    "let reattach = sw.store.get_bound(id, presented.as_ref());",
+                ]),
+            ),
         ],
         # V2-B01/B02 adoption (this diff), recorded substitution: stage_match
         # matches through the unified `MatchedView` seam (both trees' hot
@@ -613,6 +629,27 @@ def stages_check():
                     "// §V2-A02: the ONE definition site is the dispatch crate's url",
                     "// module (the CLI's duplicate copy is deleted with this diff).",
                     "let entries = oxide_fw_dispatch::url::parse_form_urlencoded(&req_owned.body);",
+                ]),
+            ),
+        ],
+        # R05 stream-session binding (this diff), recorded substitution: the
+        # tee site mints the buffer BOUND to the ORIGINAL request's session
+        # identity — `StreamStore::begin_bound` over the wiring's one
+        # `CookieBindingSource` (`StreamWiring::binding_of`, the delegated
+        # seam) instead of the unbound `begin`.
+        'endpoint': [
+            (
+                re.compile(r"let buf = sw\.store\.begin\(id\.clone\(\)\);"),
+                NL.join([
+                    "// §13.4: the buffer mints BOUND to the ORIGINAL",
+                    "// request's session identity (the wiring's one",
+                    "// `CookieBindingSource` over this request's cookie",
+                    "// header) — the reattach arm demands the same",
+                    "// identity back and answers the same `410` an",
+                    "// unknown id gets on a mismatch.",
+                    "let buf = sw",
+                    "    .store",
+                    "    .begin_bound(id.clone(), sw.binding_of(&req_owned.headers));",
                 ]),
             ),
         ],
