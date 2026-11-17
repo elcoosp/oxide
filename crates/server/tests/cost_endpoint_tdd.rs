@@ -19,8 +19,8 @@ use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
 use oxide_fw_server::{
-    ComponentCost, CostEndpoint, CostSource, OxideRequest, OxideResponse, Pipeline,
-    SnapshotCostSource,
+    ComponentCost, CostEndpoint, CostSource, FileCostsSource, OxideRequest, OxideResponse,
+    Pipeline, SnapshotCostSource,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -280,4 +280,170 @@ fn bytes_only_record_carries_null_render_and_cache() {
 fn snapshot_source_impls_the_cost_source_seam() {
     let source: Arc<dyn CostSource> = Arc::new(SnapshotCostSource::default());
     assert_eq!(source.cost("src/hero.tsx"), None);
+}
+
+// ------------------------------------------------------------------
+// §V2-F17 adapter half: the file-backed cost source (the dev-side feed)
+// ------------------------------------------------------------------
+//
+// The dev boot cannot hold the build's `BundleOutput` across rebuilds —
+// the feed it attaches is the build's PERSISTED records file
+// (`client.costs.json`, the bundler's `write_source_costs` rows), and
+// `FileCostsSource` re-reads it when the file's (mtime, length) stat
+// pair moves, so a dev rebuild's costs answer without re-attaching. The honesty
+// rules ride the seam: a missing, unreadable or unparsable file answers
+// the documented miss (the endpoint's 404), never a fabricated record.
+
+use std::path::Path;
+
+/// Write a records file in the bundler's `write_source_costs` row shape
+/// (the `{ source, bytes, gzip, chunk }` array the file contract pins).
+fn write_records_file(path: &Path, rows: &serde_json::Value) {
+    std::fs::write(
+        path,
+        serde_json::to_string_pretty(&rows).expect("rows json"),
+    )
+    .expect("records file write");
+}
+
+/// The two-row fixture: a chunked record and the orphan shape
+/// (`chunk: null` — no chunk claims the module).
+fn records_fixture() -> serde_json::Value {
+    serde_json::json!([
+        { "source": "src/hero.tsx", "bytes": 4812, "gzip": 1901, "chunk": "chunk-abc.js" },
+        { "source": "src/orphan.tsx", "bytes": 921, "gzip": 430, "chunk": null }
+    ])
+}
+
+#[test]
+fn file_source_answers_hits_from_the_records_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    write_records_file(&path, &records_fixture());
+    let source = FileCostsSource::from_path(&path);
+    assert_eq!(
+        source.cost("src/hero.tsx"),
+        Some(ComponentCost::bytes_only(4812, 1901, "chunk-abc.js")),
+        "the row maps one-to-one into the bytes-only record"
+    );
+    // The orphan shape: a null chunk is the honest empty on the served
+    // record (the overlay displays "no chunk"), never a fabricated name.
+    assert_eq!(
+        source.cost("src/orphan.tsx"),
+        Some(ComponentCost::bytes_only(921, 430, ""))
+    );
+    assert_eq!(source.cost("src/ghost.tsx"), None, "the documented miss");
+}
+
+#[test]
+fn file_source_misses_when_the_file_is_missing() {
+    // A project with no build yet: the boot attaches anyway (the file may
+    // appear on the first rebuild) and every query answers the documented
+    // miss until the records land.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    let source = FileCostsSource::from_path(&path);
+    assert_eq!(source.cost("src/hero.tsx"), None);
+}
+
+#[test]
+fn file_source_misses_on_garbage_without_panicking() {
+    // A truncated or hand-edited file is a miss, not a crash — the dev
+    // loop stays up and the endpoint stays honest (the reload failure is
+    // logged, the next mtime move retries).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    std::fs::write(&path, "truncated{").expect("garbage write");
+    let source = FileCostsSource::from_path(&path);
+    assert_eq!(source.cost("src/hero.tsx"), None);
+}
+
+#[test]
+fn file_source_reloads_after_the_file_changes() {
+    // The dev loop's contract: a rebuild rewrites the records file, the
+    // NEXT query serves the new costs without re-attaching the endpoint.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    write_records_file(
+        &path,
+        &serde_json::json!([{ "source": "src/hero.tsx", "bytes": 100, "gzip": 50, "chunk": "a.js" }]),
+    );
+    let source = FileCostsSource::from_path(&path);
+    assert_eq!(
+        source.cost("src/hero.tsx"),
+        Some(ComponentCost::bytes_only(100, 50, "a.js")),
+        "the first load answers the v1 records"
+    );
+    write_records_file(
+        &path,
+        &serde_json::json!([{ "source": "src/hero.tsx", "bytes": 222, "gzip": 111, "chunk": "b.js" }]),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(25));
+    assert_eq!(
+        source.cost("src/hero.tsx"),
+        Some(ComponentCost::bytes_only(222, 111, "b.js")),
+        "the mtime move reloads the file (no re-attach)"
+    );
+}
+
+#[test]
+fn file_source_serves_identical_records_when_the_file_moves_neither_half() {
+    // The stat-pair rule's other half: a rewrite that moves NEITHER the
+    // mtime nor the length (a same-length write inside one timestamp
+    // tick) carries identical content anyway — the answer is the same
+    // records either way, no flake either way.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    write_records_file(
+        &path,
+        &serde_json::json!([{ "source": "src/hero.tsx", "bytes": 100, "gzip": 50, "chunk": "a.js" }]),
+    );
+    let source = FileCostsSource::from_path(&path);
+    assert_eq!(
+        source.cost("src/hero.tsx"),
+        Some(ComponentCost::bytes_only(100, 50, "a.js"))
+    );
+    write_records_file(
+        &path,
+        &serde_json::json!([{ "source": "src/hero.tsx", "bytes": 100, "gzip": 50, "chunk": "a.js" }]),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(25));
+    assert_eq!(
+        source.cost("src/hero.tsx"),
+        Some(ComponentCost::bytes_only(100, 50, "a.js")),
+        "the same content serves the same records"
+    );
+}
+
+#[test]
+fn file_source_impls_the_cost_source_seam() {
+    // The dev boot attaches it as `Arc<dyn CostSource>` (the object
+    // safety `CostEndpoint::new` demands).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    write_records_file(&path, &records_fixture());
+    let source: Arc<dyn CostSource> = Arc::new(FileCostsSource::from_path(&path));
+    assert_eq!(
+        source.cost("src/hero.tsx"),
+        Some(ComponentCost::bytes_only(4812, 1901, "chunk-abc.js"))
+    );
+}
+
+#[test]
+fn endpoint_over_file_source_answers_the_wire_contracts() {
+    // The full wire shape: a hit is the 200 camelCase JSON, an unknown
+    // path is the documented 404 — over the file-backed adapter the boot
+    // attaches.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    write_records_file(&path, &records_fixture());
+    let ep = CostEndpoint::new(Arc::new(FileCostsSource::from_path(&path)) as Arc<dyn CostSource>);
+    let hit = ep.serve("GET", "src=src/hero.tsx");
+    assert_eq!(hit.status, 200);
+    let body: serde_json::Value = serde_json::from_slice(&hit.body).expect("json");
+    assert_eq!(body["bytes"], 4812);
+    assert_eq!(body["chunk"], "chunk-abc.js");
+    assert!(body["renderMsP50"].is_null(), "{body}");
+    let miss = ep.serve("GET", "src=src/ghost.tsx");
+    assert_eq!(miss.status, 404);
 }
