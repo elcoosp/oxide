@@ -269,5 +269,59 @@ These two rows are **re-baselined by this milestone** (same policy as the
 implement the V2-B09 gate: exit 1 when any shared benchmark regresses
 >5% vs the committed baseline. Proven once on this milestone: a
 deliberately 2×-slowed `match/1000/static` fails the gate (exit 1,
-REGRESSION line) and was reverted. The CI wiring is a follow-up (see
-`docs/deviations.md`, Wave B entry).
+REGRESSION line) and was reverted. **Wired into CI 2026-11-16 (the R03
+step deferred in `docs/deviations.md`, Wave B entry):** the `bench-gate`
+job runs, after the smoke-table gate:
+
+```bash
+cargo bench -p oxide-fw-router -p oxide-fw-cache --features bench-util
+python3 benchmarks/criterion_summary.py /tmp/criterion-fresh.json
+python3 benchmarks/criterion_compare.py benchmarks/after-wave-b.json /tmp/criterion-fresh.json 10
+```
+
+The CI threshold is **10**, not the default 5: criterion medians on a
+shared runner carry more noise than the deterministic `run.sh` columns,
+while the gate's proven catch (a deliberate 2× slowdown) is twenty times
+past it. Ids added after Wave B (`idem`, `migrate`, `pwa`, `sri`,
+`font_subsetter`, `workspace_links`, …) are reported as missing and
+never gate until their own baseline JSON lands.
+
+### Criterion additions after Wave B (recorded in-session, not re-measured here)
+
+The bench groups below landed after the 2026-11-08 Wave B table and were
+measured **on their own milestone sandboxes** (Linux x64, 2 vCPU, dev
+`profile`, `--features bench-util`) — the numbers are session records
+carried into this report, not fresh measurements; the CI criterion gate
+above is what turns them into regression-checked data as baselines land.
+
+| group | crate | recorded numbers (session) |
+| --- | --- | --- |
+| `idem` | dispatch | miss_first_submit ≈ 694 ns, hit_replay ≈ 263 ns, passthrough ≈ 233 ns |
+| `record` / `replay` / `replay_runner` | dispatch | landed with the F15 substrate (10+8+10 pins; groups green under `cargo test --benches`) |
+| `migrate` | compiler | plan/sveltekit_routes/8 ≈ 77 µs, /32 ≈ 195 µs |
+| `pwa` | bundler | pwa_plan/routes/8 ≈ 360 ns, /32 ≈ 1.10 µs |
+| `sri` / `integrity` / `head` | bundler | `sri_digest/{4096,65536}`, `integrity_map/10` (the E04 group) |
+| `workspace_links` | dev | discovery ≈ 99 µs (8 packages), ≈ 153 µs (16) |
+| `experiments` | dispatch | the F04 group (V8-free, pinned green) |
+| `search` | search | the F09 engine group |
+| `live` / `governor` / `stream` / `navgraph` | server | the F05/F12/F07 substrate groups (V8-free) |
+
+### G2 target status (spec V2.2.3 — the release-gate numbers)
+
+| V2.2.3 target | status | evidence + the CI command that produces it |
+| --- | --- | --- |
+| Route match at 1,000 routes p99 ≥ 10× faster, zero allocs on the static path | **✅ measured: 19.4×** (5,255.7 → 271.4 ns, −94.8%) and **0 heap blocks** (dhat) on a static hit, a borrowed-param hit and a miss | the Wave B table above; `cargo bench -p oxide-fw-router --features bench-util --bench match`; `cargo test -p oxide-fw-router --test alloc_match` |
+| Per-request O(routes) scans in dispatch: 0 | **✅ test-pinned** | the candidate index is built at boot; the dispatch match sites ride the unified `MatchedView` seam (2026-11-16); `cargo test -p oxide-fw-router --test index_oracle` |
+| L0 hit, ≤ 12 heap allocs per request (dhat) | **◐ partial** | the V8-free route-match path allocates **0** blocks (row 1); the L0-hit budget lives in the V8-linked `oxide-fw-cli` and has no committed dhat harness yet — the remaining R03 gap, CI-side: `cargo bench -p oxide-fw-cli --bench <l0-alloc>` once the harness lands |
+| Cache tag insert with 10k keys under a tag: O(1) amortized | **✅ measured** | `tag_insert_scales` passes in 60 ms release-mode at 20,000 keys (budget 250 ms); `cargo test -p oxide-fw-cache --release tag_insert_scales` |
+| Cold build 500 modules ≥ 3× faster with native compilers | **⏳ CI-pending** (V8-linked; not runnable in this sandbox) | native: `just release-build` (`cargo build --release -p oxide-fw-cli --features native-solid,native-vue,native-svelte,native-react-compiler`); Node pool: `./benchmarks/run.sh` (the table above is the Node-pool side, captured + gated by the `bench-gate` job); the 3× comparison is re-measured at release on one host |
+| Warm build unchanged (22–41 ms) | **✅ recorded: 30–31 ms** | the `warm(ms)` column above (deterministic-ish, not gated); `./benchmarks/run.sh` |
+| Live loader fan-out, one revalidation → second tab, < 200 ms | **⏳ CI-pending** (bench target landed; not run here) | `cargo bench -p oxide-fw-server --features bench-util --bench live` + the SSE e2e in the Playwright job; the hub internals are V8-free, the end-to-end number needs the running server |
+| Skew window: old tab succeeds for `deploy.skewWindow` after a deploy | **✅ CI-executed** | `./tests/skew.sh` (the jshost-e2e job, ci.yml) |
+
+**Release-time rule (R03).** The competitor comparison (Next.js, Nuxt,
+SvelteKit, SolidStart, Vite) is re-measured at release with then-current
+versions on one pinned host — never carried over from older reports. The
+`bench-gate` job is what captures the V8-linked table on every PR; the
+native-compiler 3× number and the 200 ms fan-out number are captured at
+tag time and written into this report's next revision.
