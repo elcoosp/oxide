@@ -35,7 +35,12 @@ pub use loader::{LoaderOutput, LoaderRunInput, LoaderRunner};
 // V2-F07: the resumable-streams substrate (the types at the crate root;
 // the pure helpers — `read_from`, `stream_id`, `parse_range_offset`, the
 // response builders, `tee_stream` — live in the `stream_store` module).
-pub use stream_store::{Reattach as StreamReattach, StreamBuf, StreamStore};
+// The R05 session-binding seam rides along: the §13.4 binding types and the
+// injected source the tee/reattach sites share.
+pub use stream_store::{
+    CookieBindingSource, Reattach as StreamReattach, SessionBinding, SessionBindingSource,
+    StreamBuf, StreamStore,
+};
 // V2-F05: the live-loaders substrate — spec names at the crate root
 // (`Hub`/`Runner` live in the `live` module; the crate surface keeps the
 // spec's `LiveHub`/`LiveRunner` spellings).
@@ -1827,7 +1832,10 @@ fn cookie_mac(key: &[u8], name: &str, value: &str) -> String {
     h.finalize().to_hex()[..24].to_string()
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// The SEC-04 constant-time byte compare (every secret equality check in
+/// the crate routes through this one helper — the signed-cookie MACs, the
+/// SEC-08 image signature, and the R05 stream session binding).
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
