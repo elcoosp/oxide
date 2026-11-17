@@ -4772,3 +4772,92 @@ snapshot — the learned nav edges would vanish silently. The serialization
 now runs BEFORE the tmp file exists and the error rides the function's
 `io::Result` (the synthetic-tsconfig precedent; the flusher task already
 logs a failed persist and keeps serving the previous snapshot).
+
+## The E08 inspector's live + generation surfaces and the F17 adapter half land — the inspector shows the live hub and the build generations, the cost endpoint gets its production adapter (`feat/inspector-live-generations` + `feat/cost-source-snapshot`, 2026-11-17)
+
+**What lands (M1, the §V2-E08 inspector row's two missing surfaces).**
+The row lists "live subscribers (F05), generations (F10)" among the
+`/__oxide` surfaces; the §13.4 model carried neither — the schema stayed
+honest, the surfaces stayed empty. Three coordinated pieces:
+
+- `crates/server/src/live.rs`: `Hub::tag_snapshot()` — per-key live counts
+  over both tag indexes (exact tags + the wildcard-prefix keys, the F05
+  step-4 index), sorted by key for a stable render, dead entries skipped,
+  rows never fabricated (an empty hub snapshots empty). The record is
+  `LiveTagCount { tag, wildcard, subscribers }`; a connection holding
+  several tags contributes to each of its rows — per-tag counts, not a
+  partition (the global count stays on `count()`).
+- `crates/dispatch/src/build.rs`: `GenerationSet::snapshot(now)` — the
+  inspector's generations rows (`GenerationInfo { id, role,
+  window_ms_remaining }`): the current generation always, the demoted
+  previous only while its window is open — an expired previous answers 409
+  (the `accepts` verdict), so it leaves the rows. The same `now` arithmetic
+  `accepts` applies, so the row and the verdict can never disagree; the
+  remaining window is `checked_sub`-carried (a skewed caller clock
+  saturates to the full window instead of panicking).
+- `crates/dev/src/lib.rs`: the schema the CLI maps into —
+  `LiveRow`/`GenerationRow` rows, `InspectorState.live`/`.generations`
+  (`#[serde(default)]` — a pre-E08 payload still parses),
+  `RouteTableInspector::with_live`/`with_generations` builders (the
+  wire-up point the serve wiring constructs), and the two HTML tables in
+  `render_inspector_html` (counts in the headings, escaped cells, the em
+  dash for the current generation's absent window). The producers return
+  their own plain records and the mapping is the caller's — the same
+  layering as the cost endpoint's seam: server and dispatch do not depend
+  on the dev crate, the CLI adapter is a field-by-field one-liner pair
+  that rides CI's nextest job (the recorded V8-link convention; the serve
+  wiring constructs `RouteTableInspector` at `crates/cli/src/serve/start.rs:707`).
+
+7 TDD pins (red-first: E0432/E0422/E0560/E0599), the `tag_snapshot`
+criterion group (≈5.2 µs at 256 / 19.4 µs at 1024 connections), the
+`generation_snapshot` group (≈62/122 ns at 1/2 rows), the dev
+`inspector` bench (`inspector_state/256` ≈ 20 µs, `inspector_html/256`
+≈ 102 µs — the per-dev-console-view cost, not per request) and the
+`inspector` walkthrough example. No new error codes — the read-only
+snapshot APIs cannot fail (the nav-pattern rule).
+
+**What lands (M2, the F17 adapter half).** `crates/server/src/cost_endpoint.rs`:
+`SnapshotCostSource` — the snapshot-backed production `CostSource` the
+endpoint doc recorded as "the caller's": the build's cost records held in
+memory keyed by the root-relative spelling the `?src=` query and the
+`data-ox-src` stamp share (`from_pairs` takes the bundler's
+`Vec<SourceCost>` shape one-to-one), plus `ComponentCost::bytes_only` —
+the spec's Svelte/Solid shape ("Svelte and Solid show bytes only, and the
+overlay says so"), the constructor the bundler triple maps through with
+the render and cache halves `None`. Hits answer from the build's records;
+anything the build did not produce is the documented 404, never a
+fabricated record. 3 TDD pins (red-first) + the `cost_source_snapshot`
+criterion group (≈54 ns at 64 records, 87 ns at 4096 — the BTreeMap
+lookup the endpoint pays per query) + the adapter section in the
+`cost_endpoint` walkthrough example. The render-time (`renderMsP50`) and
+cache-tier halves still belong to the profiler and the tier map — this
+adapter closes the records-flow gap the two landed F17 halves left; the
+CLI feed one-liner rides CI with the serve wiring.
+
+**Micro-debt (additive).** The dead workspace dependencies removed —
+`oxide-fw-odf` + `thiserror` out of `crates/render`, `thiserror` out of
+`crates/graph`, `crates/odf` and `crates/cache` (zero inheritors, the
+`cargo::unused_dependencies` advisories silenced); cache's `futures` moved
+under the `s3` feature that uses it (`s3 = ["dep:object_store",
+"dep:futures"]`) and render's `tokio` to `[dev-dependencies]` (both were
+flagged unused for their lib targets). The bundler's silent hook writes
+made loud (`crates/bundler/src/rolldown_backend.rs`): a renderChunk hook's
+output that fails to write now warns naming the file (both the dev and the
+build path — the hook's output is the build's product; the old
+`let _ = fs::write` reported success while shipping the un-hooked source),
+and the synthetic-tsconfig directory create names its own failure instead
+of surfacing later as an unrelated write failure (the file's own
+synthetic-tsconfig warn is the modeled shape).
+
+**Deltas.**
+- The snapshot drops dead index rows instead of rendering zeros: the
+  `Guard::drop` sweep already removes a dropped subscriber's entries, so a
+  zero row can only be a stale `Weak` — the honest table is the empty one.
+- `GenerationSet::snapshot` takes `now` as a parameter (the `accepts`
+  signature) — deterministic at a given instant, testable without sleeps.
+- The inspector's HTML renders the two new tables with count headings
+  even when empty (the routes/waterfalls tables' existing shape — the
+  schema stays visible; no fabricated rows inside).
+- The wire shapes stay snake_case like the rest of the §13.4
+  `InspectorState` record (no TS consumer reads it; the raw JSON view is
+  the contract).
