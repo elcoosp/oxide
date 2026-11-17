@@ -17,7 +17,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use bytes::Bytes;
 use futures::StreamExt;
-use oxide_fw_server::live::{live_response, live_stream, same_origin, sse_frame};
+use oxide_fw_server::live::{LiveTagCount, live_response, live_stream, same_origin, sse_frame};
 use oxide_fw_server::{Guard, LiveHub, LiveRunner, Rerun, Sub, SubscribeError};
 
 const LOOPBACK: IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
@@ -940,4 +940,73 @@ mod wiring {
             .find_map(|l| l.strip_prefix("data: "))
             .expect("a data line in the frame")
     }
+}
+
+// -------------------------------------------------------------------
+// §V2-E08 inspector surface: the live-subscriber tag snapshot
+// -------------------------------------------------------------------
+//
+// The inspector's live table reads the hub's tag indexes: one row per
+// registered key (exact tag or wildcard prefix), the number of LIVE
+// connections under it, sorted for a stable render. Read-only — the
+// snapshot never mutates the indexes.
+
+/// Two exact tags and one wildcard pool, with one subscriber dropped
+/// mid-pin: the rows count only the alive connections, sort by tag, and
+/// mark the wildcard-prefix keys.
+#[test]
+fn tag_snapshot_rows_are_sorted_and_count_alive_only() {
+    let hub = LiveHub::new(8, 4);
+    let s1 = sub("routes/blog/[slug]", &["posts", "featured"], None);
+    let _g1 = hub.subscribe(s1).expect("fits");
+    let s2 = sub("routes/blog/[slug]", &["comments:*"], None);
+    let _g2 = hub.subscribe(s2).expect("fits");
+    let s3 = sub("routes/blog/[slug]", &["posts"], None);
+    let g3 = hub.subscribe(s3).expect("fits");
+    drop(g3); // one of the two `posts` subscribers leaves
+
+    let rows = hub.tag_snapshot();
+    assert_eq!(
+        rows,
+        vec![
+            LiveTagCount {
+                tag: "comments:".to_string(),
+                wildcard: true,
+                subscribers: 1,
+            },
+            LiveTagCount {
+                tag: "featured".to_string(),
+                wildcard: false,
+                subscribers: 1,
+            },
+            LiveTagCount {
+                tag: "posts".to_string(),
+                wildcard: false,
+                subscribers: 1,
+            },
+        ]
+    );
+}
+
+/// An empty hub snapshots to no rows — the inspector renders the empty
+/// table, it never fabricates one.
+#[test]
+fn tag_snapshot_empty_hub_is_empty() {
+    let hub = LiveHub::new(4, 4);
+    assert!(hub.tag_snapshot().is_empty());
+}
+
+/// A retag moves the subscriber between rows (the rerun worker's
+/// `retag` is what the snapshot must follow).
+#[test]
+fn tag_snapshot_follows_a_retag() {
+    let hub = LiveHub::new(4, 4);
+    let s = sub("routes/blog/[slug]", &["posts"], None);
+    let g = hub.subscribe(s).expect("fits");
+    hub.retag(g.sub(), ["comments:42".to_string()].into_iter().collect());
+    let rows = hub.tag_snapshot();
+    assert_eq!(rows.len(), 1, "the old tag row is gone: {rows:?}");
+    assert_eq!(rows[0].tag, "comments:42");
+    assert!(!rows[0].wildcard);
+    assert_eq!(rows[0].subscribers, 1);
 }
