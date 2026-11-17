@@ -13,6 +13,10 @@ pub use page_renderer::EndpointDispatchArgs;
 pub use page_renderer::MiddlewareDispatchArgs;
 
 pub mod governor;
+// V2-E10: the §V2.J endpoint map as data (the docs generator's fold
+// source — the map is the single source of truth; the page is a consumer).
+pub mod endpoints;
+pub use endpoints::{ENDPOINT_MAP, EndpointPlane, EndpointRow, endpoint_markdown_table};
 pub mod live;
 pub mod loader;
 pub mod metrics;
