@@ -4439,3 +4439,116 @@ the F02 dev-warn half (the V8-linked dev transform pipeline). The CLI
 stream arms are compile-verified only (`cargo check -p oxide-fw-cli
 --all-targets`); their runtime pins ride CI's nextest job, per the
 recorded convention.
+
+## The F02 dev-warn half + the E10 endpoints page land — the props surface, the pure-classified mismatch warn, the endpoint-map data and its generated reference page (this diff, 2026-11-17)
+
+**M1 — the F02 dev warn** (`feat/f02-pure-onprops-dev-warn`): the
+spec row's last thin half — "the dev-time warn when a pure-classified
+component receives `on*` props — it needs the dev transform pipeline's
+per-component props surface, a separate adoption from the build scan" —
+landed:
+
+- The engine (`crates/compiler/src/props_surface.rs`, the
+  `oxide_fw_compiler::props_surface` seam): `scan_on_props` reports every
+  JSX component element (uppercase-first identifier or member base)
+  carrying `on*` attributes — the classifier's own 2-char
+  `on`-prefix rule mirrored verbatim, so the two surfaces can never
+  disagree about what `on*` means — with the props sorted, the 1-based
+  line and the trimmed source line (the classifier's `enrich` shape).
+  `scan_component_imports` maps the local bindings (default, named,
+  aliased, namespace) onto their specifiers. One Oxc parse collects both
+  (the dev pipeline pays it once per served module).
+- The cross-reference: `pure_on_props_in_file` (per served module — the
+  usage scan reads the CURRENT source, so a fresh edit is caught on the
+  next serve) and `pure_on_props_warnings` (whole-project, the dev-boot
+  shape) warn ONLY on a positive pure classification. A defining file the
+  manifest classifies interactive (including a fixpoint-promoted one),
+  does not know (the `hydrates` missing-data rule, mirrored), or that is
+  the usage file itself (carrying the `on*` attribute makes the file
+  interactive by its own scan — a same-file pure definition is a
+  contradiction) never warns. Package specifiers carry no same-project
+  evidence (the fixpoint's relative-only rule, shared via the extracted
+  `relative_join`/`specifier_candidates` helpers in `interactivity.rs`).
+- The dev wire (`crates/cli/src/build/auto_islands.rs` +
+  `crates/cli/src/esm_dev.rs`): `dev_island_manifest` scans the SAME
+  `scan_set` the build runs (one rule, two consumers — the extraction is
+  `scanned_sources`), read-only: no side-car write, no registry merge.
+  The manifest rides `EsmDevState.islands`; both ESM serve arms
+  (`serve_source_file` and the pool-compiled path) check the served
+  module and log `AST-ISL-002` once per usage site per dev session
+  (the dedup key is `usage_file:component:line`). The gate-off state is
+  a no-op; the serve path (`serve/start.rs`) populates the same state.
+
+**Deltas (recorded, the honest limits):** the surface is JSX-shaped —
+the `.vue`/`.svelte` pool arms' sources carry no JSX and warn nothing
+(their templates' event syntax is already direct-detection evidence in
+the classifier); the warn matches `on` + anything (the classifier's
+spec-verbatim rule) rather than the event-prop convention, so a stray
+`only` prop can warn — the message names every prop, visible not silent;
+spreads claim nothing (`{...rest}` is not a named prop); the
+classification is the dev boot's (a mid-session change to a defining
+file refreshes on the next boot — the usage side is live, the
+classification side is frozen); the adoption rides the native ESM dev
+pipeline (`dev.esm`), not the bundler dev path (a different transform
+seam); JSX resolution is specifier-level (the module the specifier
+names), not symbol-level (no bundler resolution in the engine).
+
+**M2 — the E10 endpoints page** (`feat/endpoints-reference-page`): the
+E11 generator's remaining thin half — `endpoints.md` (the V2.J table) —
+landed: `crates/server/src/endpoints.rs` (the `ENDPOINT_MAP` data — 12
+rows verbatim — plus `endpoint_markdown_table()`, the deterministic
+GFM fold; the plane rule held row by row in the tests: data/dev ride the
+`/__` families, ops rides `/_oxide`) and the `EndpointsPage` generator
+in `crates/cli/src/docs_gen.rs` (registered in the alphabetical
+registry; the page folds the server crate's map — the capability-matrix
+rule: the map is the single source of truth, the page never restates a
+cell). The committed `docs/reference/endpoints.md` regenerates via
+`oxide docs generate`; the `docs-check` CI job holds it.
+
+**Registry re-sort (micro-debt with a red gate):**
+`docs/errors.toml` carried six out-of-order pairs (hand-inserted rows
+grouped visually — `AST-ISL-001` before `AST-IDX`, `AST-JOBS` before
+`AST-IMG-REQ`, `DEP-ROOT` before `DEP-ROLLBACK`, `DEV-TLS` before
+`DEV-RFN-001`, `FN-TIMEOUT` before `FN-THREW`, `RFN-TYPES` before
+`RFN-002`), which made `registry_parses_and_is_wellformed`'s
+sorted-by-code contract RED at pristine HEAD. The file is re-sorted
+lexicographically (247 entries; the page's rows move with it — the page
+renders file order). `AST-ISL-002` rides the sort (the F02 warn's code,
+raised at `crates/cli/src/esm_dev.rs`).
+
+**Docs drift fixed:** the stale "Inert at the wiring" claims in the
+config crate — `deploy` (F10's serving-pool CLI adoption + F11's deploy
+command landed), `offline` (the F14 wire-through landed), `record` (the
+CLI record/replay adoption landed) and `framework.autoIslands` (the
+build scan landed) — in `crates/config/src/lib.rs` and
+`crates/config/src/schema.rs` (the generated config.md and the committed
+schema JSON follow them);
+`docs/architecture.md`'s object-store bullet still carrying "the
+`oxide deploy` CLI command remains the F11 tail" (closed by its sibling
+bullet), the E01 what-changed bullet's stray "since 2026-10-12" fragment,
+and the compiler row + what-changed bullets for this diff;
+README.md's "Twenty Rust crates" listing 20 names (22 exist —
+`macros` and `rustfn` were missing; the CLI command list gained
+`deploy`, `replay`, `fmt`, `gc`, `bisect`); the badge re-measured.
+
+**Micro-debt:** the workspace's last `#[allow]` —
+`#[allow(unused_variables)]` on `register_compiled_in`
+(`crates/compiler/src/native/mod.rs`) — removed: the compensating
+`#[cfg(not(any(native-*)))] let _ = reg;` dead-use already keeps the
+parameter used in the all-off build, so the attribute was redundant
+weight on the no-allow policy; the grep gate over `crates/` is now
+EMPTY. `scan_svelte_markup`'s `unwrap_or_default()` on the blanked
+markup buffer (`crates/compiler/src/interactivity.rs`) now falls back to
+the ORIGINAL text — an impossible-in-practice UTF-8 failure degraded to
+an EMPTY scan (every template hit silently missed: the kill-criterion
+direction); the fallback over-flags instead (the conservative arm).
+
+**Deliberately not done here (still honest gaps):** the bundler dev
+path's props-surface adoption (a different transform seam — the ESM
+pipeline is the one the queued note names), symbol-level import
+resolution in the warn (specifier-level is the engine's scope), and the
+E05-dependent `plugin-compat.md` page + the docs-site Oxide app (the
+other E10/E11 tails). The CLI pins (the 3 esm-dev warn pins + the 2
+dev-manifest pins + the 2 endpoints-page pins) are compile-verified
+locally (`cargo check -p oxide-fw-cli --all-targets`); their runtime
+rides CI's nextest workspace job, per the recorded convention.
