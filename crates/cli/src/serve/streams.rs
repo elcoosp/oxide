@@ -22,7 +22,9 @@ use std::time::Duration;
 
 use oxide_fw_config::StreamConfig;
 use oxide_fw_server::RateLimiter;
-use oxide_fw_server::stream_store::StreamStore;
+use oxide_fw_server::stream_store::{
+    CookieBindingSource, SessionBinding, SessionBindingSource, StreamStore,
+};
 
 /// The per-IP reattach rate limit (§V2-F07 wiring step 3: "per-IP
 /// reattach rate limit"). The reattach replays buffered bytes — cheap,
@@ -56,6 +58,12 @@ pub struct StreamWiring {
     /// owns; a dedicated instance, so reattach pressure never shares a
     /// bucket with the search/OG endpoints).
     pub limiter: Arc<RateLimiter>,
+    /// The §13.4 session binding source — ONE boot-owned instance both
+    /// sides of the contract call (the tee site hashes the ORIGINAL
+    /// request's `oxide_session` cookie into the buffer's binding; the
+    /// reattach arm hashes the presented one). The key is per-boot random,
+    /// so bindings never validate across restarts.
+    pub binding: Arc<CookieBindingSource>,
 }
 
 impl StreamWiring {
@@ -66,6 +74,11 @@ impl StreamWiring {
     /// the per-stream bound is raised to the per-stream bound so the
     /// accounting cannot thrash (load validation `DSP-112` already
     /// refuses that shape on a real serve).
+    ///
+    /// # Panics
+    /// The binding source needs the boot RNG; a system-RNG failure panics
+    /// with context instead of silently serving reattachable streams
+    /// without the §13.4 binding (the R05 gap this wiring closes).
     #[must_use]
     pub fn from_config(cfg: &StreamConfig) -> Self {
         let max_each = oxide_fw_config::parse_size(&cfg.resume.max_bytes_each)
@@ -80,7 +93,21 @@ impl StreamWiring {
                 max_total,
             )),
             limiter: Arc::new(RateLimiter::default()),
+            binding: Arc::new(
+                CookieBindingSource::new(crate::serve::session::SESSION_COOKIE_NAME).expect(
+                    "the boot RNG is unavailable; refusing to serve unbound resumable streams",
+                ),
+            ),
         }
+    }
+
+    /// The request's session binding, delegated to the boot's one source
+    /// (the stages call this — the trait stays an implementation detail of
+    /// the wiring, and the tee/reattach sites cannot pick up a different
+    /// instance).
+    #[must_use]
+    pub fn binding_of(&self, headers: &[(String, String)]) -> Option<SessionBinding> {
+        self.binding.binding(headers)
     }
 }
 
