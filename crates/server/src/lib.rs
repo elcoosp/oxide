@@ -54,9 +54,9 @@ pub use stream_store::{
 // (`Hub`/`Runner` live in the `live` module; the crate surface keeps the
 // spec's `LiveHub`/`LiveRunner` spellings).
 pub use live::{
-    CAPACITY_RETRY_AFTER_SECS, DATA_EVENT, Guard, PING_EVENT, Rerun, STALE_EVENT, Sub,
-    SubscribeError, delta_payload, live_capacity_response, live_response, live_stream, same_origin,
-    sse_frame,
+    CAPACITY_RETRY_AFTER_SECS, DATA_EVENT, Guard, LiveTagCount, PING_EVENT, Rerun, STALE_EVENT,
+    Sub, SubscribeError, delta_payload, live_capacity_response, live_response, live_stream,
+    same_origin, sse_frame,
 };
 pub use live::{Hub as LiveHub, Runner as LiveRunner};
 pub use page_renderer::{
@@ -94,7 +94,9 @@ pub use open_editor::{
 
 // V2-F17 (server half): the component-cost dev-plane endpoint — the
 // `CostSource` seam and the spec's wire record the overlay consumes.
-pub use cost_endpoint::{COST_ENDPOINT_PATH, ComponentCost, CostEndpoint, CostSource};
+pub use cost_endpoint::{
+    COST_ENDPOINT_PATH, ComponentCost, CostEndpoint, CostSource, SnapshotCostSource,
+};
 
 // V2-F09: the search endpoint's attached state (`search` feature) — the
 // read-only engine plus its L1. `SEARCH_ENDPOINT_PATH` itself lives in
