@@ -19,6 +19,13 @@ rust_count() {
   echo $((bare + tokio))
 }
 
+# The pass-count line, reporter-shaped: node 24's piped reporter prints the
+# spec-reporter `ℹ pass N` summary (no TAP `# pass`), so the grep accepts
+# BOTH shapes — the count is field 3 either way.
+pass_line() {
+  grep -E '(^# pass|ℹ pass)' | tail -1 | awk '{print $3}'
+}
+
 # TypeScript: run the suites and sum the pass counts. Slow (~15 s), so the
 # badge call caches per invocation; the gate calls it once.
 ts_counts() {
@@ -26,12 +33,12 @@ ts_counts() {
   for d in packages/react packages/vue packages/svelte packages/solid \
            packages/core packages/create-oxide; do
     local n
-    n=$(pnpm -C "$d" test 2>/dev/null | grep -E '^# pass' | tail -1 | awk '{print $3}')
+    n=$(pnpm -C "$d" test 2>/dev/null | pass_line)
     total=$((total + ${n:-0}))
   done
   if [ -d conformance/node_modules ]; then
     local c
-    c=$(cd conformance && node --test 'test/*.test.ts' 2>/dev/null | grep -E '^# pass' | tail -1 | awk '{print $3}')
+    c=$(cd conformance && node --test 'test/*.test.ts' 2>/dev/null | pass_line)
     total=$((total + ${c:-0}))
   fi
   files=$(ls packages/*/test/*.test.ts conformance/test/*.test.ts 2>/dev/null | wc -l | tr -d ' ')
