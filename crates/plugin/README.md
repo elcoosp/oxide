@@ -19,7 +19,7 @@ The plugin system is deliberately small. There are 19 hooks, each with a well-de
 
 ## What it provides
 
-- **`Hook`** — the enum (19 variants: Config, ConfigResolved, BuildStart, ResolveId, Load, Transform, RenderChunk, GenerateBundle, BuildEnd, TransformHtml, HandleHotUpdate, ConfigureServer, Routes, Adapter, ServerMiddleware, RenderHead, CacheHandler, Typegen, Diagnostics)
+- **`Hook`** — the enum (19 variants: `Config`, `ConfigResolved`, `BuildStart`, `ResolveId`, `Load`, `Transform`, `RenderChunk`, `GenerateBundle`, `BuildEnd`, `TransformHtml`, `HandleHotUpdate`, `ConfigureServer`, `Routes`, `Adapter`, `ServerMiddleware`, `RenderHead`, `CacheHandler`, `Typegen`, `Diagnostics`)
 - **`WasmPlugin`** — load a `.wasm` component against a `WasmPluginManifest`
 - **`call_string_hook`** — call a hook and get the transformed source back
 - **`available_hooks`** — which of the 19 the loaded component declares
