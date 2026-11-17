@@ -12,8 +12,8 @@
 use std::hint::black_box;
 use std::sync::Arc;
 
-use criterion::{Criterion, criterion_group, criterion_main};
-use oxide_fw_server::{ComponentCost, CostEndpoint, CostSource};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use oxide_fw_server::{ComponentCost, CostEndpoint, CostSource, SnapshotCostSource};
 
 /// A two-record source (the fixture shape — the real adapter reads the
 /// bundler's module map).
@@ -54,5 +54,34 @@ fn bench_serve(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_serve);
+fn bench_snapshot_source(c: &mut Criterion) {
+    // The adapter the dev boot feeds: the bundler's snapshot records in
+    // memory — the lookup the endpoint pays per query, at the realistic
+    // (one module per source) and scaled site shapes.
+    let mut group = c.benchmark_group("cost_source_snapshot");
+    for n in [64usize, 4096] {
+        let records: std::collections::BTreeMap<String, ComponentCost> = (0..n)
+            .map(|i| {
+                (
+                    format!("src/c{i}.tsx"),
+                    ComponentCost::bytes_only(
+                        1024 + u64::try_from(i).unwrap_or(0),
+                        400,
+                        "chunk-abc.js",
+                    ),
+                )
+            })
+            .collect();
+        let source = SnapshotCostSource::new(records);
+        group.bench_with_input(BenchmarkId::from_parameter(n), &source, |b, s| {
+            b.iter(|| {
+                black_box(s.cost(black_box("src/c7.tsx")));
+                black_box(s.cost(black_box("src/ghost.tsx")));
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_serve, bench_snapshot_source);
 criterion_main!(benches);
