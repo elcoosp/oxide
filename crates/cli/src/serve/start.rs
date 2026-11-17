@@ -703,17 +703,45 @@ pub(crate) async fn start_server_inner_full(
         inspector: if with_inspector {
             // §20: with a recorder wired, the inspector's waterfall table
             // reflects the live per-request timings instead of staying empty.
+            // §V2-E08 item 2: the boot-time importers-graph harvest feeds the
+            // module-graph search — one `(module, importers)` row per module,
+            // the `BTreeMap` walk's sorted order. Boot-frozen: the per-tick
+            // rebuild is the dev loop's (cmd_dev), the same posture the F02
+            // islands scan took (recorded in docs/deviations.md).
+            let module_graph = crate::dev::build_hmr_graph(&rootp, &rootp.join(&cfg.routes.dir))
+                .importers
+                .into_iter()
+                .map(|(module, importers)| {
+                    (
+                        module.to_string_lossy().into_owned(),
+                        importers
+                            .iter()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>();
             let rt = match waterfall_recorder.clone() {
                 Some(rec) => oxide_fw_dev::RouteTableInspector::from_router_table_with_recorder(
                     tree.table(),
                     rec,
                 ),
                 None => oxide_fw_dev::RouteTableInspector::from_router_table(tree.table()),
-            };
+            }
+            .with_module_graph(module_graph);
             Some(std::sync::Arc::new(CliInspector { state: rt.state() }))
         } else {
             None
         },
+        // V2-E08/F17 (server half): the two dev-plane endpoints stay
+        // UNATTENDED at the CLI boot for now — `None` is the documented
+        // default (the endpoint absent, production byte-identical), the
+        // pipeline literal must still name the fields the endpoints'
+        // session added. The attach (an `EditorOpener` and the build's
+        // cost snapshot fed beside `with_inspector`) is the recorded
+        // remaining CLI half.
+        open_editor: None,
+        cost_endpoint: None,
         page_renderer: None,
         // SPEC-14: the HMR hub's broadcast sender, dev only.
         hmr: hmr.as_ref().map(|h| h.sender()),
