@@ -7,7 +7,7 @@
     <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
     <a href="https://crates.io/crates/oxide-fw-cli"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
     <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
-    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-2542%20Rust%20%7C%20760%2F760%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-2571%20Rust%20%7C%20760%2F760%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
   </p>
   <p>
     <a href="#install">Install</a> ·
@@ -85,7 +85,7 @@ Cached, redirected, rewritten and static answers **never enter a JavaScript runt
 | `MiddlewareDispatcher` | outer→inner; short-circuit, rewrite, or contribute `locals` |
 | `ActionDispatcher`     | form POST routed to a named action                          |
 
-Twenty Rust crates: `server` (hyper, static, compression, TLS), `render` (streaming SSR, HTML injection), `router` (tree, matcher, typegen), `cache` (three tiers), `odf` (wire format), `compiler` (Oxc passes), `bundler` (rolldown), `jshost` (V8 + Node), `graph` (incremental), `plugin` (Wasm), `adapters` (deploy), `cli`, `dispatch` (V8-free request orchestration), plus `assets`, `config`, `dev`, `diagnostics`, `schema`, `search` (the built-in tantivy engine, feature `search`), `core-wasm`.
+Twenty-two Rust crates: `server` (hyper, static, compression, TLS), `render` (streaming SSR, HTML injection), `router` (tree, matcher, typegen), `cache` (three tiers), `odf` (wire format), `compiler` (Oxc passes), `bundler` (rolldown), `jshost` (V8 + Node), `graph` (incremental), `plugin` (Wasm), `adapters` (deploy), `cli`, `dispatch` (V8-free request orchestration), plus `assets`, `config`, `dev`, `diagnostics`, `schema`, `search` (the built-in tantivy engine, feature `search`), `core-wasm`, `macros` (the `#[server_fn]` proc macros), `rustfn` (the native server-functions host).
 
 ## Framework adapters
 
@@ -129,8 +129,8 @@ One binary. Grouped by intent:
 
 - **Dev loop** — `oxide dev` `oxide build` `oxide start` `oxide preview`
 - **Inspect** — `oxide routes` `oxide analyze` `oxide why` `oxide doctor` `oxide check` `oxide config` `oxide render`
-- **Author** — `oxide generate` `oxide add` `oxide migrate` `oxide schema` `oxide docs`
-- **Operate** — `oxide secrets` `oxide cache` `oxide audit` `oxide test` `oxide mcp` `oxide perf` `oxide verify`
+- **Author** — `oxide generate` `oxide add` `oxide migrate` `oxide schema` `oxide docs` `oxide fmt`
+- **Operate** — `oxide secrets` `oxide cache` `oxide audit` `oxide test` `oxide mcp` `oxide perf` `oxide verify` `oxide deploy` `oxide replay` `oxide gc` `oxide bisect`
 
 ```
 oxide doctor          # 7 env checks: node, cargo, config, routes, cache, secrets, cookie keys
