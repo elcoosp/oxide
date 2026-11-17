@@ -23,7 +23,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 | `graph` | Demand-driven incremental engine, early cutoff (§5.1), tracked inputs (§5.2), CAS (blake3+redb+zstd, §5.4), cancellation (§5.6), RemoteCache trait | §5, D6 |
 | `config` | Typed config, layering (defaults→preset→file→mode→env→CLI), env files, `PUBLIC_` split, static extraction with V8 fallback flag, typo diagnostics, `live` transport knobs + DSP-111 (§V2-F05), `experiments` + DSP-110 (§V2-F04), `stream.resume` bounds + DSP-112 (§V2-F07), `brownout` thresholds + DSP-113 (§V2-F12), `interactionReplay` + DSP-114 (§V2-F03), `search` key + the §18 refusal arm (§V2-F09), `prefetch` + DSP-115 (§V2-F13), `deploy` + CFG-DEPLOY (V2-F10), `record` + CFG-REC (V2-F15), `offline` + CFG-OFFLINE (V2-F14) | §14, D14, V2-F03, V2-F04, V2-F05, V2-F07, V2-F09, V2-F12, V2-F13, V2-F14 |
 | `cache` | L0/L1/L2 tiers, weighted LRU memory tier, redb disk tier, tags, TTL/SWR/stale-if-error, single-flight, build seeding, HTTP conditional semantics, canonical `build_id_of_dist` (A04) | §11, V2-A04 |
-| `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection, why-dynamic reason engine (`infer_reasons`, §V2-F16); the V2-F02 auto-islands inference substrate (`interactivity`: the spec-verbatim `scan_interactivity` per-framework detection, the `{ file: { interactive, reasons } }` manifest (`IslandManifest`, the `.oxide/island-manifest.json` side-car contract, `AST-ISL-001`), the transitive same-project import fixpoint and the `hydrates` decision — explicit wins, pure is the only skip); the V2-E03 migrate planner substrate (`migrate`: the spec-verbatim `MigrationPlan` data model, the object-safe `MigrationPlanner` seam with the SvelteKit/Next/Nuxt/Vite planners, `detect_framework`, `apply_plan` — the collision pre-check, the renames, the span-surgery import rewrites) | §6.2–6.4, §9, V2-F16, V2-F02, V2-E03 |
+| `compiler` | Transform passes behind `Transformer` (D4): import scan, `'use cache'` (§9.3), server-fn stubs (§9.4), forbidden-import guard (§6.4), HMR injection, why-dynamic reason engine (`infer_reasons`, §V2-F16); the V2-F02 auto-islands inference substrate (`interactivity`: the spec-verbatim `scan_interactivity` per-framework detection, the `{ file: { interactive, reasons } }` manifest (`IslandManifest`, the `.oxide/island-manifest.json` side-car contract, `AST-ISL-001`), the transitive same-project import fixpoint and the `hydrates` decision — explicit wins, pure is the only skip); the V2-F02 dev-warn props surface (`props_surface`: `scan_on_props` — the one Oxc parse collecting the `on*`-props usage sites and the import bindings under the classifier's own 2-char rule — `scan_component_imports`, `pure_on_props_in_file`/`pure_on_props_warnings` warning only on a positive pure classification); the V2-E03 migrate planner substrate (`migrate`: the spec-verbatim `MigrationPlan` data model, the object-safe `MigrationPlanner` seam with the SvelteKit/Next/Nuxt/Vite planners, `detect_framework`, `apply_plan` — the collision pre-check, the renames, the span-surgery import rewrites) | §6.2–6.4, §9, V2-F16, V2-F02, V2-E03 |
 | `bundler` | `Bundler` trait (D3) + functional ESM bundler: resolution with `exports` conditions, route-based splitting, shared-chunk heuristic, content hashing, client/server manifests; the V2-E04 SRI pass (`sri_digest`/`integrity_map` — the chunk path digests the bytes in hand, the rolldown path reads the persisted files back) recording `client.manifest.json`'s `integrity: { file: value }`; the strict re-digest walk (`verify_integrity_map`) and the adapter-level head producer (`head::HeadProducer`/`ManifestHeadProducer`, the manifest→modulepreload/stylesheet projection); the V2-F14 PWA worker emitter (`pwa`: the object-safe `ShellSource` seam over the prerendered route shells, the pure `plan_precache` fold over the typed `sw:`/`offline:` keys — the build-id-versioned cache name, the deduped byte-sorted precache list per the `offline.precache` breadth's own docs, the resolved offline fallback — the deterministic `sw_source` render and the `emit_pwa` writes (`dist/sw.js` + the registration snippet `dist/pwa-register.js`, `pwa_register_source`)) | §6.4, §16.6, V2-E04, V2-F14 |
 | `jshost` | `JsHost`/`Pool` traits (§4.2), NodeHost with real child workers speaking the op protocol (§4.5), ScriptedHost, V8Host (deno_core, full dispatch + `compile_module`) | §4, D2 |
 | `plugin` | Hook model, pre/post ordering, JS bridge messages, WASM plugin manifest validation, module manifests | §15 |
@@ -42,6 +42,17 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 
 ## What changed
 
+- The F02 dev-warn half + the E10 endpoints page (2026-11-17): the
+  props-surface seam (`props_surface` in the compiler crate — the
+  `on*`-props usage sites and the import bindings one Oxc parse
+  collects; the pure-classified cross-reference warns only on a positive
+  pure classification) wired into the ESM dev pipeline (the boot
+  manifest from `dev_island_manifest`'s read-only scan of the build's
+  own scan set; the served module checked at both serve arms, logged
+  `AST-ISL-002` once per site per session); the endpoint-map data
+  (`oxide_fw_server::ENDPOINT_MAP`, the §V2.J rows verbatim, the plane
+  rule held row by row) and its generated `endpoints.md` reference page
+  (the E11 generator's fifth page).
 - The v0.2 Release Wave (2026-11-16): **R01** the §22 conformance set is
   29 assertions × 4 adapters and verified green from a clean checkout
   (`pnpm install` + a `packages/core` build — which surfaced and fixed two
@@ -58,7 +69,7 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   `docs/release-v0.2-prep.md` verifies the tag-triggered workflows and
   prepares the changelog draft + the exact version-bump commands.
 - §V2-F01 client halves (2026-11-16): the adapter `<Island>` twins (vue/svelte/solid src + the React `framework` prop), the worker `island:render` op (`crates/jshost/worker/oxide-worker.mjs`, the `__oxide_island_renderers` registry), and the rolldown `advancedChunks` per-framework vendor split (`oxide_fw_compiler::islands::vendor_groups` → `BundleOptions::vendor_groups` → `CodeSplittingMode::Advanced`).
-- §V2-E01 Vue/Solid refresh wiring (2026-11-16): the compile-step HMR emission (the `hmr` payload flag), the `__oxide_solid_refresh` runtime shim + the in-place refresh registry (`packages/core/src/client/hot.ts`), and the boot replay gate (`packages/core/src/client/boot.ts`). since 2026-10-12
+- §V2-E01 Vue/Solid refresh wiring (2026-11-16): the compile-step HMR emission (the `hmr` payload flag), the `__oxide_solid_refresh` runtime shim + the in-place refresh registry (`packages/core/src/client/hot.ts`), and the boot replay gate (`packages/core/src/client/boot.ts`).
 
 - **`bundler` + `packages/core` + `cli`**: the V2-F14 wire-through
   (`feat/pwa-boot-wire`). The CLI build's `emit_pwa_worker` drives the
@@ -120,8 +131,9 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   helpers (the `dir:` target delegates — byte-identical messages, the 15
   parent pins hold). The `DEP-URL` registry row, 10 TDD pins, the
   `object_store` criterion group and the `object_store_deploy`
-  walkthrough example ride along. The `oxide deploy` (V2-F11: the delta-deploy engine + the `dir:`/object-store targets behind `deploy-s3`) CLI command remains
-  the F11 tail — see `docs/deviations.md`.
+  walkthrough example ride along. The `oxide deploy` CLI command is LANDED (the
+  sibling delta-deploy bullet's CLOSED record drives it — see
+  `docs/deviations.md`).
 
 - **`render`**: the B08 phase-2 streaming nonce splicer
   (`feat/object-store-deploy-target`, V2-B08) — `crates/render/src/splice.rs`:
