@@ -1197,15 +1197,27 @@ impl std::fmt::Debug for WaterfallRecorder {
 impl WaterfallRecorder {
     /// SPEC-19.3 / §19-D: persist the current snapshot to `path` as JSON so
     /// a separate process (the MCP server) can read the waterfalls of the
-    /// running dev server. Best-effort — a write failure logs to stderr but
-    /// never fails the request that called it.
+    /// running dev server. Best-effort — never fails the request that
+    /// called it, but a failure is LOUD: it warns through `tracing` naming
+    /// the path (the dev loop is a tracing pipeline — an unstructured
+    /// stderr line would bypass every subscriber/JSON sink, and a silently
+    /// stale side-car file makes the MCP reader trust waterfalls the write
+    /// never delivered).
     pub fn persist_to(&self, path: &std::path::Path) {
         let rows = self.snapshot();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_vec_pretty(&rows) {
-            let _ = std::fs::write(path, json);
+        let write = || -> std::io::Result<()> {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, serde_json::to_vec_pretty(&rows)?)?;
+            Ok(())
+        };
+        if let Err(e) = write() {
+            tracing::warn!(
+                error = %e,
+                path = %path.display(),
+                "waterfall side-car write failed; the MCP reader sees stale data"
+            );
         }
     }
 }
@@ -1232,13 +1244,18 @@ pub struct DevOptions {
 // §13.4 Inspector — route-table provider
 // ---------------------------------------------------------------------------
 
-/// A snapshot source that supplies the route table. Other inspector fields
-/// (module graph, cache, pool, waterfalls) stay empty until those subsystems
-/// are wired into the dev server — the schema makes that explicit rather than
-/// synthesizing placeholder data.
+/// A snapshot source that supplies the route table. The other subsystem
+/// fields the §13.4 model carries (`why`, cache entries, pool state) stay
+/// empty until those subsystems are wired into the dev server — the
+/// schema makes that explicit rather than synthesizing placeholder data.
 #[derive(Debug, Clone, Default)]
 pub struct RouteTableInspector {
     pub routes: Vec<RouteRow>,
+    /// §V2-E08: the module-graph rows (§V2-E08 item 2) the caller mapped
+    /// from the harvest's reverse-deps records (module → importers). Empty
+    /// renders an empty modules table — and hides the search form, since a
+    /// search over nothing would be a fabrication.
+    pub module_graph: Vec<(String, Vec<String>)>,
     /// §20: the shared per-request timings recorder. `None` renders an empty
     /// waterfall table.
     pub waterfalls: Option<WaterfallRecorder>,
@@ -1255,6 +1272,7 @@ pub struct RouteTableInspector {
 impl RouteTableInspector {
     /// Build from a router `table()` result:
     /// `Vec<(pattern, mode, tags)>` (§8.3 typegen output).
+    #[must_use]
     pub fn from_router_table(table: Vec<(String, String, Vec<String>)>) -> Self {
         let routes = table
             .into_iter()
@@ -1271,6 +1289,7 @@ impl RouteTableInspector {
             .collect();
         Self {
             routes,
+            module_graph: Vec::new(),
             waterfalls: None,
             live: Vec::new(),
             generations: Vec::new(),
@@ -1280,6 +1299,7 @@ impl RouteTableInspector {
     /// Like [`Self::from_router_table`] but wired to a shared
     /// [`WaterfallRecorder`], so the inspector's waterfall table reflects the
     /// live per-request timings the dispatch records (§20).
+    #[must_use]
     pub fn from_router_table_with_recorder(
         table: Vec<(String, String, Vec<String>)>,
         recorder: WaterfallRecorder,
@@ -1305,18 +1325,34 @@ impl RouteTableInspector {
         self
     }
 
-    /// Produce the inspector state. Module-graph / cache / pool fields stay
-    /// empty until those subsystems feed them; the waterfall is populated
-    /// from the shared recorder (§20) and the live/generation rows from
-    /// the wired snapshots (§V2-E08).
+    /// Wire the module-graph rows (§V2-E08 item 2): the caller maps the
+    /// harvest's reverse-deps records into the schema shape — one
+    /// `(module, importers)` row per module, in the harvest's sorted
+    /// order (the CLI's `BTreeMap` walk; the search and the render
+    /// preserve it, so the page is deterministic).
+    ///
+    /// Each row IS the `why` answer (§V2-E08 item 2 pairs the graph with
+    /// `why`): a module and the importers that pull it in, no second
+    /// lookup needed.
+    #[must_use]
+    pub fn with_module_graph(mut self, module_graph: Vec<(String, Vec<String>)>) -> Self {
+        self.module_graph = module_graph;
+        self
+    }
+
+    /// Produce the inspector state. Cache / pool fields stay empty until
+    /// those subsystems feed them; the waterfall is populated from the
+    /// shared recorder (§20), and the module-graph, live and generation
+    /// rows from the wired snapshots (§V2-E08).
+    #[must_use]
     pub fn state(&self) -> InspectorState {
         InspectorState {
             routes: self.routes.clone(),
+            module_graph: self.module_graph.clone(),
             waterfalls: self
                 .waterfalls
                 .as_ref()
-                .map(|r| r.snapshot())
-                .unwrap_or_default(),
+                .map_or_else(Vec::new, |r| r.snapshot()),
             live: self.live.clone(),
             generations: self.generations.clone(),
             ..Default::default()
@@ -1326,8 +1362,71 @@ impl RouteTableInspector {
 
 /// HTML rendering for `/__oxide` (self-contained, no external assets). A
 /// route-table view over the state's route list; the raw JSON is available at
-/// `/__oxide/state`.
+/// `/__oxide/state`. The unfiltered render — see
+/// [`render_inspector_html_with_query`] for the `?q=` module-graph search
+/// shape the server arm serves.
+#[must_use]
 pub fn render_inspector_html(state: &InspectorState) -> String {
+    render_inspector_html_with_query(state, None)
+}
+
+/// The §V2-E08 item 2 modules section builder: the `<h2>` heading (the
+/// total), the `k of n` note with the escaped query echo when a non-blank
+/// query filters the rows, the search form (only when a graph is wired —
+/// a search over nothing would be a fabrication), and the matched rows
+/// (module + its importer edges, escaped — the row IS the `why` answer).
+fn render_modules_section(state: &InspectorState, query: Option<&str>) -> String {
+    use std::fmt::Write as _;
+    let total = state.module_graph.len();
+    let searching = query.is_some_and(|q| !q.trim().is_empty());
+    let matched = if searching {
+        search_module_graph(&state.module_graph, query.unwrap_or(""))
+    } else {
+        state.module_graph.iter().collect::<Vec<_>>()
+    };
+    let mut module_rows = String::new();
+    for (module, importers) in &matched {
+        let _ = write!(
+            module_rows,
+            "<tr><td><code>{}</code></td><td>{}</td></tr>",
+            html_escape(module),
+            html_escape(&importers.join(", ")),
+        );
+    }
+    let note = if searching {
+        format!(
+            "<p class=\"note\">showing {} of {} modules for \"{}\"</p>",
+            matched.len(),
+            total,
+            html_escape(query.unwrap_or("").trim()),
+        )
+    } else {
+        String::new()
+    };
+    let search_form = if total == 0 {
+        String::new()
+    } else {
+        "<form action=\"/__oxide\" method=\"get\">\
+         <input type=\"search\" name=\"q\" aria-label=\"search modules\" \
+         placeholder=\"search modules (module or importer path)\"></form>"
+            .to_string()
+    };
+    format!(
+        "<h2>Modules ({total})</h2>{note}{search_form}\
+         <table><thead><tr><th>module</th><th>importers</th></tr></thead>\
+         <tbody>{module_rows}</tbody></table>"
+    )
+}
+
+/// The `/__oxide` HTML with the §V2-E08 module-graph search applied: a
+/// `Some(q)` naming a non-blank query renders only the rows
+/// [`search_module_graph`] matches plus a `k of n` note (the query echoed
+/// back, escaped); `None` (or a blank query — an empty form submit)
+/// renders every wired row with no note. The heading keeps the total
+/// either way; the search form only renders when a graph is wired (a
+/// search over nothing would be a fabrication).
+#[must_use]
+pub fn render_inspector_html_with_query(state: &InspectorState, query: Option<&str>) -> String {
     let mut rows = String::new();
     for r in &state.routes {
         rows.push_str(&format!(
@@ -1360,6 +1459,10 @@ pub fn render_inspector_html(state: &InspectorState) -> String {
             total,
         ));
     }
+    // §V2-E08 item 2: the module-graph table (the search surface) builds
+    // in [`render_modules_section`] — the heading, the `k of n` note, the
+    // search form and the matched rows.
+    let modules = render_modules_section(state, query);
     // §V2-E08: the live-subscriber table (F05 tag indexes) and the
     // generations table (F10). Empty until the callers wire the snapshot
     // rows — the render stays honest, no fabricated rows.
@@ -1396,12 +1499,16 @@ pub fn render_inspector_html(state: &InspectorState) -> String {
          code{{background:#151515;padding:2px 6px;border-radius:4px}}\
          .bar{{display:inline-block;height:10px;background:#7cb7ff;margin-right:2px;border-radius:2px;vertical-align:middle}}\
          a{{color:#7cb7ff}}\
+         .note{{color:#888;margin:8px 0}}\
+         form{{margin:8px 0}}\
+         input{{background:#151515;color:#e6e6e6;border:1px solid #333;border-radius:4px;padding:6px 10px;font:inherit;max-width:420px}}\
          </style></head>\
          <body>\
          <h1>Oxide Inspector</h1>\
          <p>Raw JSON: <a href=\"/__oxide/state\">/__oxide/state</a></p>\
          <h2>Routes ({})</h2>\
          <table><thead><tr><th>pattern</th><th>mode</th><th>dynamic reason</th><th>cache policy</th></tr></thead><tbody>{}</tbody></table>\
+         {}\
          <h2>Live ({})</h2>\
          <table><thead><tr><th>tag</th><th>kind</th><th>subscribers</th></tr></thead><tbody>{}</tbody></table>\
          <h2>Generations ({})</h2>\
@@ -1411,6 +1518,7 @@ pub fn render_inspector_html(state: &InspectorState) -> String {
          </body></html>",
         state.routes.len(),
         rows,
+        modules,
         state.live.len(),
         live_rows,
         state.generations.len(),
@@ -1425,6 +1533,37 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// The §V2-E08 module-graph search (§V2-E08 item 2 — "module graph search
+/// and `why`"): the rows whose module path OR any importer path contains
+/// `query` as a case-insensitive substring, in the input order (the
+/// harvest feeds a sorted `BTreeMap` walk; the search never re-sorts, so
+/// the caller's order is the render's order).
+///
+/// A blank (empty or whitespace) query is every row — the caller decides
+/// whether that is "no search" or "match all"; the HTML render treats it
+/// as no search. A miss is an empty vec, never a fabricated row. The
+/// matched row carries its importer edges inline, which IS the `why`
+/// answer (who pulls the matched module in).
+#[must_use]
+pub fn search_module_graph<'a>(
+    module_graph: &'a [(String, Vec<String>)],
+    query: &str,
+) -> Vec<&'a (String, Vec<String>)> {
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return module_graph.iter().collect();
+    }
+    module_graph
+        .iter()
+        .filter(|(module, importers)| {
+            module.to_ascii_lowercase().contains(&needle)
+                || importers
+                    .iter()
+                    .any(|i| i.to_ascii_lowercase().contains(&needle))
+        })
+        .collect()
 }
 
 /// V2-E01: the HMR boundary planner — the spec-verbatim breadth-first
