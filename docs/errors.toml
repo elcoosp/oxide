@@ -59,22 +59,26 @@ fix = "Pass a `values` entry for every placeholder in the message template"
 message = "MessageFormat: a placeholder value has the wrong type"
 fix = "Pass the value type the template expects (string, number or date)"
 
-[AST-ISL-001]
-message = "the island manifest side-car is not the expected `{ file: { interactive, reasons } }` JSON map: {e}"
-fix = "Rebuild (the build rewrites `.oxide/island-manifest.json`), or delete the stale side-car when the auto-islands gate is off"
-
 [AST-IDX]
 message = "index serialization failed: {e}"
 
 [AST-IMG]
 message = "failed to decode source image: {e}"
 
+[AST-IMG-REQ]
+message = "`url` query parameter is empty"
+
+[AST-ISL-001]
+message = "the island manifest side-car is not the expected `{ file: { interactive, reasons } }` JSON map: {e}"
+fix = "Rebuild (the build rewrites `.oxide/island-manifest.json`), or delete the stale side-car when the auto-islands gate is off"
+
+[AST-ISL-002]
+message = "the pure-classified component `{component}` (`{defining_file}`) receives `on*` props ({props}) at `{usage_file}:{line}`"
+fix = "Register it as an explicit island, drop the handler props, or wire the events inside the component itself — the auto-islands scan skips pure files, so these handlers only run when the importing component hydrates"
+
 [AST-JOBS]
 message = "the image encoder panicked: {join}"
 fix = "inspect the encoder diagnostic; the next request retries the encode"
-
-[AST-IMG-REQ]
-message = "`url` query parameter is empty"
 
 [AST-LIV-001]
 message = "a route opts into `live: true` but target `{}` does not support live loaders (§18 capability matrix)"
@@ -338,13 +342,13 @@ fix = "Re-run the deploy - a fresh deploy rewrites the ledger; inspect the store
 [DEP-POINTER]
 message = "the deploy pointer (current) is corrupt: {detail}"
 
-[DEP-ROOT]
-message = "dist root {} is not a directory"
-fix = "Pass the build's dist directory (the `oxide build` output)"
-
 [DEP-ROLLBACK]
 message = "cannot roll back: no previous build id is recorded"
 fix = "Deploy first: every deploy records the pointer's previous value"
+
+[DEP-ROOT]
+message = "dist root {} is not a directory"
+fix = "Pass the build's dist directory (the `oxide build` output)"
 
 [DEP-URL]
 message = "`{}` is not a deploy target URL: {}"
@@ -368,9 +372,6 @@ message = "create watcher: {e}"
 [DEV-QR]
 message = "QR generation failed: {e}"
 
-[DEV-TLS]
-message = "certificate params failed: {e}"
-
 [DEV-RFN-001]
 message = "the native fn crate {name} failed to build (cargo build --lib): {tail}"
 fix = "the compile error above is the fix; a successful build must produce the cdylib the [lib] crate-type declares"
@@ -378,6 +379,9 @@ fix = "the compile error above is the fix; a successful build must produce the c
 [DEV-RFN-002]
 message = "the rebuilt library's types payload does not parse (the §9.4 id bindings cannot be re-derived): {e}"
 fix = "rebuild with the `export_table!` macro's `oxide_fn_types_json` side export; the loop refuses rather than swap with guessed ids"
+
+[DEV-TLS]
+message = "certificate params failed: {e}"
 
 [DEV-WS-001]
 message = "workspace discovery failed for {path}: {err_msg}"
@@ -442,12 +446,12 @@ fix = "Inspect the server logs; the dispatch failed inside the host"
 message = "no server function with that id is registered in this build"
 fix = "Rebuild, or check the id the client posts to `/_oxide/fn/<id>`"
 
+[FN-THREW]
+message = "the server function threw; the envelope carries the function's own error message"
+
 [FN-TIMEOUT]
 message = "the native function `{name}` exceeded its {secs}s budget"
 fix = "Raise the call budget or make the function faster; long work belongs in a background job"
-
-[FN-THREW]
-message = "the server function threw; the envelope carries the function's own error message"
 
 [GRAPH-ARTIFACT]
 message = "rkyv serialize: {e}"
@@ -687,6 +691,10 @@ spec_only = true
 message = "native function library speaks ABI {saw}, the host speaks ABI {want}; rebuild the user crate with the matching oxide-rustfn version"
 fix = "Rebuild the user crate with the matching `oxide-rustfn` version"
 
+[RFN-002]
+message = "`*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08)"
+fix = "Use Binary or Docker, or remove the Rust functions"
+
 [RFN-003]
 message = "native function library failed to load: {e}"
 fix = "Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type = [\"cdylib\"]` shape)"
@@ -702,10 +710,6 @@ fix = "Inspect the server log for the panic backtrace; panics are a bug in the f
 [RFN-TYPES]
 message = "the native function types payload did not parse: {e}"
 fix = "Rebuild the user crate with the matching `oxide-rustfn` version"
-
-[RFN-002]
-message = "`*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08)"
-fix = "Use Binary or Docker, or remove the Rust functions"
 
 [RND-INJECT]
 message = "html injection failed: {e}"
