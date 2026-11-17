@@ -13,7 +13,6 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 oxide-fw-diagnostics = { workspace = true }
-oxide-fw-cache = { workspace = true }
 oxide-fw-router = { workspace = true }
 oxide-fw-render = { workspace = true }
 oxide-fw-config = { workspace = true }
@@ -69,6 +68,22 @@ search = ["dep:oxide-fw-search"]
 # criterion bench in the workspace.
 [[bench]]
 name = "navgraph"
+harness = false
+required-features = ["bench-util"]
+
+# V2-E08: criterion bench for the open-in-editor endpoint (the resolver
+# chain, the confinement and the full serve shapes), behind the
+# `bench-util` opt-in like every other criterion bench in the workspace.
+[[bench]]
+name = "open_editor"
+harness = false
+required-features = ["bench-util"]
+
+# V2-F17: criterion bench for the component-cost endpoint (the hit and the
+# two refusal shapes the overlay's hover rides), behind the `bench-util`
+# opt-in like every other criterion bench in the workspace.
+[[bench]]
+name = "cost_endpoint"
 harness = false
 required-features = ["bench-util"]
 
