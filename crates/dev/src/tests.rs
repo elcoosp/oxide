@@ -725,3 +725,104 @@ fn hmr_wire_v1_rejects_the_retired_wire() {
         assert!(HmrMessage::from_json(legacy).is_none());
     }
 }
+
+/// §V2-E08 inspector surface: the live-subscriber and generation rows ride
+/// the state schema, and pre-E08 payloads (without the keys) still
+/// deserialize — the `#[serde(default)]` back-compat rule.
+#[test]
+fn inspector_state_carries_live_and_generation_rows() {
+    let state = InspectorState {
+        live: vec![LiveRow {
+            tag: "comments:".to_string(),
+            wildcard: true,
+            subscribers: 3,
+        }],
+        generations: vec![
+            GenerationRow {
+                id: "gen-b".to_string(),
+                role: "current".to_string(),
+                window_ms_remaining: None,
+            },
+            GenerationRow {
+                id: "gen-a".to_string(),
+                role: "previous".to_string(),
+                window_ms_remaining: Some(30_000),
+            },
+        ],
+        ..Default::default()
+    };
+    let json = serde_json::to_string(&state).unwrap();
+    assert!(json.contains("\"subscribers\":3"), "{json}");
+    assert!(json.contains("\"window_ms_remaining\""), "{json}");
+    let back: InspectorState = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.live, state.live);
+    assert_eq!(back.generations, state.generations);
+    // A pre-E08 payload (the original fields, no live/generations keys)
+    // still parses — the new fields default, nothing else changed.
+    let legacy: InspectorState = serde_json::from_str(
+        "{\"module_graph\":[],\"why\":{},\"routes\":[],\"cache\":[],\"waterfalls\":[],\"pool\":{\"workers\":0,\"in_flight\":0,\"recycles\":0}}",
+    )
+    .unwrap();
+    assert!(legacy.live.is_empty() && legacy.generations.is_empty());
+}
+
+/// The builders wire the snapshot rows onto the route-table inspector and
+/// `state()` carries them through; the no-source default stays empty (the
+/// schema stays honest — no fabricated rows).
+#[test]
+fn route_table_inspector_wires_live_and_generation_rows() {
+    let inspector = RouteTableInspector::from_router_table(vec![(
+        "/".to_string(),
+        "static".to_string(),
+        vec![],
+    )])
+    .with_live(vec![LiveRow {
+        tag: "comments:".to_string(),
+        wildcard: true,
+        subscribers: 2,
+    }])
+    .with_generations(vec![GenerationRow {
+        id: "gen-1".to_string(),
+        role: "current".to_string(),
+        window_ms_remaining: None,
+    }]);
+    let state = inspector.state();
+    assert_eq!(state.live.len(), 1);
+    assert_eq!(state.generations.len(), 1);
+    assert!(
+        RouteTableInspector::from_router_table(Vec::new())
+            .state()
+            .live
+            .is_empty()
+    );
+    assert!(
+        RouteTableInspector::from_router_table(Vec::new())
+            .state()
+            .generations
+            .is_empty()
+    );
+}
+
+/// The html renders the two §V2-E08 tables with counts and escaped cells.
+#[test]
+fn inspector_renders_live_and_generation_tables() {
+    let state = InspectorState {
+        live: vec![LiveRow {
+            tag: "<b>".to_string(),
+            wildcard: false,
+            subscribers: 2,
+        }],
+        generations: vec![GenerationRow {
+            id: "gen-1".to_string(),
+            role: "current".to_string(),
+            window_ms_remaining: None,
+        }],
+        ..Default::default()
+    };
+    let html = render_inspector_html(&state);
+    assert!(html.contains("Live (1)"), "{html}");
+    assert!(html.contains("Generations (1)"), "{html}");
+    assert!(html.contains("&lt;b&gt;"), "tag escaped: {html}");
+    assert!(html.contains("gen-1"), "{html}");
+    assert!(html.contains("current"), "{html}");
+}
