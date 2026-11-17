@@ -640,31 +640,10 @@ pub fn transform_server_fn_stubs(
         let open = i + 5;
         // Optional schema first argument: verify the arg list eventually contains
         // `async` after a top-level comma (schema-first shape §9.4).
-        if !is_word_opt(code, toks.get(open + 1), "async") {
-            let mut depth = 1i32;
-            let mut m = open + 1;
-            let mut found = false;
-            while m < toks.len() {
-                match toks[m].kind {
-                    Tok::Punct('(' | '{' | '[') => depth += 1,
-                    Tok::Punct(')' | '}' | ']') => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    Tok::Punct(',') if depth == 1 => {
-                        found = is_word_opt(code, toks.get(m + 1), "async");
-                        break;
-                    }
-                    _ => {}
-                }
-                m += 1;
-            }
-            if !found {
-                i += 1;
-                continue;
-            }
+        if !is_word_opt(code, toks.get(open + 1), "async") && !arg_list_has_async(code, &toks, open)
+        {
+            i += 1;
+            continue;
         }
         let close = skip_balanced(&toks, open, '(', ')') - 1;
         let mut end = toks[close].end;
@@ -700,7 +679,50 @@ pub fn transform_server_fn_stubs(
         i = close + 1;
     }
 
+    let stub_ids: Vec<String> = stubs.iter().map(|f| f.id.clone()).collect();
+    let out = assemble_server_fn_output(code, &edits, &ssr_lines, &stub_ids, &client_stub_ids);
+    Ok((out, stubs))
+}
+
+/// Whether the argument list opened at `open` contains `async` after a
+/// top-level comma (the schema-first `serverFn(schema, async ...)` shape,
+/// §9.4). Tracks bracket depth so a comma inside a schema literal does not
+/// count as the separator.
+fn arg_list_has_async(code: &str, toks: &[lexer::Token], open: usize) -> bool {
+    use lexer::Tok;
+    let mut depth = 1i32;
+    let mut m = open + 1;
+    while m < toks.len() {
+        match toks[m].kind {
+            Tok::Punct('(' | '{' | '[') => depth += 1,
+            Tok::Punct(')' | '}' | ']') => {
+                depth -= 1;
+                if depth == 0 {
+                    return false;
+                }
+            }
+            Tok::Punct(',') if depth == 1 => {
+                return is_word_opt(code, toks.get(m + 1), "async");
+            }
+            _ => {}
+        }
+        m += 1;
+    }
+    false
+}
+
+/// Assemble the transformed module: apply the collected stub edits from the
+/// end of the file backwards, then append the environment-specific tail —
+/// the `__oxide_call_fn` import on the client, the id registry on the server.
+fn assemble_server_fn_output(
+    code: &str,
+    edits: &[(usize, usize, String)],
+    ssr_lines: &[String],
+    stub_ids: &[String],
+    client_stub_ids: &[String],
+) -> String {
     let mut out = code.to_string();
+    let mut edits = edits.to_vec();
     edits.sort_by_key(|&(s, _, _)| std::cmp::Reverse(s));
     for (s, e, t) in edits {
         out.replace_range(s..e, &t);
@@ -725,16 +747,21 @@ pub fn transform_server_fn_stubs(
         if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }
-        for line in &ssr_lines {
+        for line in ssr_lines {
             out.push_str(line);
             out.push('\n');
         }
-        let ids: Vec<String> = stubs.iter().map(|f| format!("\"{}\"", f.id)).collect();
         out.push_str("export const __oxide_fn_ids = [");
-        out.push_str(&ids.join(", "));
+        out.push_str(
+            &stub_ids
+                .iter()
+                .map(|id| format!("\"{id}\""))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
         out.push_str("];\n");
     }
-    Ok((out, stubs))
+    out
 }
 
 /// The §V2-F08 `.server.rs` import stub: the same wire shapes the

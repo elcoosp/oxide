@@ -140,59 +140,11 @@ impl RolldownBundler {
         };
 
         // tsconfig_paths: Rolldown only accepts `TsConfig::Manual(PathBuf)` — a path
-        // to an actual tsconfig.json on disk. If the pipeline supplied paths but no
-        // tsconfig file exists, we materialise one in `out_dir` (cleaned up by the
-        // caller if desired). This preserves aliasing semantics end-to-end.
+        // to an actual tsconfig.json on disk (see `resolve_tsconfig`).
         let tsconfig = if options.tsconfig_paths.is_empty() {
             None
         } else {
-            let candidate = self.root.join("tsconfig.json");
-            if candidate.is_file() {
-                Some(TsConfig::Manual(candidate))
-            } else {
-                // Synthesise a tsconfig.json carrying the `paths` map. It must live
-                // beside the project root so `baseUrl: "."` resolves the alias
-                // patterns against the actual source tree (not `out_dir`).
-                let synthetic = self.root.join(".oxide-tsconfig.json");
-                let compiler_options = serde_json::json!({
-                    "baseUrl": ".",
-                    "paths": options.tsconfig_paths,
-                });
-                let body = serde_json::json!({
-                    "compilerOptions": compiler_options,
-                });
-                if let Some(parent) = synthetic.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                // The serialized bytes come first: a serialize failure must
-                // not hand Rolldown an EMPTY synthetic tsconfig — the old
-                // `unwrap_or_default()` wrote one silently, and the alias
-                // map would resolve nothing while the build behaved as if
-                // the `paths` key never existed. Both failures are loud
-                // now; `None` degrades to no tsconfig instead of a corrupt
-                // one.
-                match serde_json::to_vec_pretty(&body) {
-                    Ok(bytes) => {
-                        if std::fs::write(&synthetic, bytes).is_ok() {
-                            Some(TsConfig::Manual(synthetic))
-                        } else {
-                            tracing::warn!(
-                                "oxide: the synthetic .oxide-tsconfig.json write failed; \
-                                 tsconfig paths are inert for this build"
-                            );
-                            None
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "oxide: the synthetic .oxide-tsconfig.json serialize failed; \
-                             tsconfig paths are inert for this build"
-                        );
-                        None
-                    }
-                }
-            }
+            self.resolve_tsconfig(&options.tsconfig_paths)
         };
 
         // §6.3: when the adapter declares a non-default JSX runtime (Solid
@@ -247,33 +199,99 @@ impl RolldownBundler {
             // shape, byte-identical), and a mixed-registry client bundle
             // gets the `advancedChunks` groups (one vendor chunk per
             // framework, loaded on the first island of that framework).
-            code_splitting: if options.inline_dynamic_imports {
-                Some(rolldown_common::CodeSplittingMode::Bool(false))
-            } else if options.vendor_groups.is_empty() {
-                None
-            } else {
-                use rolldown_common::{
-                    CodeSplittingMode, ManualCodeSplittingOptions, MatchGroup, MatchGroupName,
-                    MatchGroupTest,
-                };
-                let groups = options
-                    .vendor_groups
-                    .iter()
-                    .map(|g| MatchGroup {
-                        name: MatchGroupName::Static(g.name.clone()),
-                        test: rolldown_utils::js_regex::HybridRegex::new(&g.test)
-                            .map(MatchGroupTest::Regex)
-                            .ok(),
-                        ..Default::default()
-                    })
-                    .collect();
-                Some(CodeSplittingMode::Advanced(ManualCodeSplittingOptions {
-                    groups: Some(groups),
-                    ..Default::default()
-                }))
-            },
+            code_splitting: Self::code_splitting_mode(options),
             ..Default::default()
         }
+    }
+
+    /// Resolve the `tsconfig` Rolldown option for a build that supplied alias
+    /// `paths`. Rolldown only accepts `TsConfig::Manual(PathBuf)` — a path to
+    /// an actual tsconfig.json on disk. If the project root has one it is
+    /// used; otherwise a synthetic `.oxide-tsconfig.json` is materialised
+    /// beside the root so `baseUrl: "."` resolves the alias patterns against
+    /// the actual source tree. This preserves aliasing semantics end-to-end.
+    fn resolve_tsconfig(&self, tsconfig_paths: &BTreeMap<String, Vec<String>>) -> Option<TsConfig> {
+        let candidate = self.root.join("tsconfig.json");
+        if candidate.is_file() {
+            return Some(TsConfig::Manual(candidate));
+        }
+        // Synthesise a tsconfig.json carrying the `paths` map. It must live
+        // beside the project root so `baseUrl: "."` resolves the alias
+        // patterns against the actual source tree (not `out_dir`).
+        let synthetic = self.root.join(".oxide-tsconfig.json");
+        let compiler_options = serde_json::json!({
+            "baseUrl": ".",
+            "paths": tsconfig_paths,
+        });
+        let body = serde_json::json!({
+            "compilerOptions": compiler_options,
+        });
+        if let Some(parent) = synthetic.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // The serialized bytes come first: a serialize failure must
+        // not hand Rolldown an EMPTY synthetic tsconfig — the old
+        // `unwrap_or_default()` wrote one silently, and the alias
+        // map would resolve nothing while the build behaved as if
+        // the `paths` key never existed. Both failures are loud
+        // now; `None` degrades to no tsconfig instead of a corrupt
+        // one.
+        match serde_json::to_vec_pretty(&body) {
+            Ok(bytes) => {
+                if std::fs::write(&synthetic, bytes).is_ok() {
+                    Some(TsConfig::Manual(synthetic))
+                } else {
+                    tracing::warn!(
+                        "oxide: the synthetic .oxide-tsconfig.json write failed; \
+                         tsconfig paths are inert for this build"
+                    );
+                    None
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "oxide: the synthetic .oxide-tsconfig.json serialize failed; \
+                     tsconfig paths are inert for this build"
+                );
+                None
+            }
+        }
+    }
+
+    /// §4.2 / §V2-F01: pick the code-splitting shape for this bundle.
+    /// A config/SSR bundle for a bare V8 host must be one file —
+    /// `code_splitting: false` inlines dynamic imports so a CJS runtime
+    /// (react) is evaluated in place instead of landing in a chunk that
+    /// re-exports the `require` wrapper. The per-framework vendor groups
+    /// ride rolldown's advanced code-splitting mode; a single-framework
+    /// build keeps `None` (the default automatic shape, byte-identical).
+    fn code_splitting_mode(options: &BundleOptions) -> Option<rolldown_common::CodeSplittingMode> {
+        if options.inline_dynamic_imports {
+            return Some(rolldown_common::CodeSplittingMode::Bool(false));
+        }
+        if options.vendor_groups.is_empty() {
+            return None;
+        }
+        use rolldown_common::{
+            CodeSplittingMode, ManualCodeSplittingOptions, MatchGroup, MatchGroupName,
+            MatchGroupTest,
+        };
+        let groups = options
+            .vendor_groups
+            .iter()
+            .map(|g| MatchGroup {
+                name: MatchGroupName::Static(g.name.clone()),
+                test: rolldown_utils::js_regex::HybridRegex::new(&g.test)
+                    .map(MatchGroupTest::Regex)
+                    .ok(),
+                ..Default::default()
+            })
+            .collect();
+        Some(CodeSplittingMode::Advanced(ManualCodeSplittingOptions {
+            groups: Some(groups),
+            ..Default::default()
+        }))
     }
 }
 
