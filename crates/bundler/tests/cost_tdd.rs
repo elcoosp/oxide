@@ -27,7 +27,7 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use oxide_fw_bundler::cost::{SourceCost, source_costs};
+use oxide_fw_bundler::cost::{SourceCost, read_source_costs, source_costs, write_source_costs};
 use oxide_fw_bundler::{BundleOutput, Chunk, ChunkKind, Module};
 
 /// A fake module with the fake's source — the bundle output's module
@@ -254,14 +254,14 @@ fn records_are_sorted_and_deterministic() {
     assert_eq!(first, second, "two calls, byte-equal records");
     let keys: Vec<&str> = first.iter().map(|c| c.source.as_str()).collect();
     let mut sorted = keys.clone();
-    sorted.sort();
+    sorted.sort_unstable();
     assert_eq!(keys, sorted, "sorted by the source key");
 }
 
 #[test]
 fn empty_output_costs_nothing() {
     let costs = source_costs(&BundleOutput::default(), root());
-    assert!(costs.is_empty());
+    assert!(costs.is_empty(), "an empty output costs nothing");
 }
 
 // ---------------- the record's wire shape ----------------
@@ -281,5 +281,92 @@ fn record_serializes_camel_case_for_the_cli_json_surface() {
     assert!(
         map.keys().all(|k| !k.contains('_')),
         "no snake_case keys: {map:?}"
+    );
+}
+
+// ---------------- the records-file seam (the dev-side feed) ----------------
+//
+// The dev boot cannot hold the build's `BundleOutput` in memory across
+// rebuilds — the feed the cost endpoint's dev attach rides is the build's
+// records PERSISTED beside the client manifest (`client.costs.json`), and
+// the dev-side adapter re-reads the file when its mtime moves. The seam is
+// the file: `write_source_costs` (the build and dev-bundle paths call it
+// after a successful bundle) and `read_source_costs` (the boot's adapter),
+// both over the same `{ source, bytes, gzip, chunk }` rows the wire
+// contract serves.
+
+/// A hand-built record — the file rows are the record, not a bundle
+/// output, so the round-trip pins construct them directly.
+fn record(source: &str, bytes: u64, gzip: u64, chunk: Option<&str>) -> SourceCost {
+    SourceCost {
+        source: source.to_string(),
+        bytes,
+        gzip,
+        chunk: chunk.map(str::to_string),
+    }
+}
+
+#[test]
+fn records_file_roundtrips_the_records() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    let records = vec![
+        record("src/hero.tsx", 4812, 1901, Some("entry.index-abc123.js")),
+        // The orphan shape: no chunk claims the module, the record still
+        // costs bytes (`chunk: null` on the wire, `None` on read-back).
+        record("src/orphan.tsx", 921, 430, None),
+    ];
+    write_source_costs(&records, &path).expect("write");
+    let read_back = read_source_costs(&path).expect("read");
+    assert_eq!(read_back, records, "the file round-trips the rows");
+}
+
+#[test]
+fn records_file_write_is_deterministic() {
+    // Two writes over the same records are byte-equal (the build's
+    // determinism property rides the file: two builds over the same
+    // output produce byte-equal `client.costs.json` files).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    let records = vec![
+        record("src/hero.tsx", 4812, 1901, Some("entry.index-abc123.js")),
+        record("src/counter.svelte", 921, 430, None),
+    ];
+    write_source_costs(&records, &path).expect("first write");
+    let first = std::fs::read(&path).expect("read first");
+    write_source_costs(&records, &path).expect("second write");
+    let second = std::fs::read(&path).expect("read second");
+    assert_eq!(first, second, "two writes, byte-equal file");
+}
+
+#[test]
+fn records_file_write_creates_the_parent_dir() {
+    // The dist/client dir exists at the call sites; the write still owns
+    // the parent creation so a fresh dist never turns the feed into a
+    // caller foot-gun.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("dist/client/client.costs.json");
+    write_source_costs(&[record("src/hero.tsx", 10, 5, None)], &path).expect("write");
+    assert!(path.is_file(), "the file exists under the created parent");
+}
+
+#[test]
+fn records_file_read_missing_is_an_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    let err = read_source_costs(&path).expect_err("a missing file is an error");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+}
+
+#[test]
+fn records_file_read_garbage_is_invalid_data() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("client.costs.json");
+    std::fs::write(&path, "not json at all").expect("write garbage");
+    let err = read_source_costs(&path).expect_err("garbage is an error");
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::InvalidData,
+        "the parse failure surfaces as InvalidData: {err}"
     );
 }
