@@ -13,7 +13,9 @@ use std::hint::black_box;
 use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use oxide_fw_server::{ComponentCost, CostEndpoint, CostSource, SnapshotCostSource};
+use oxide_fw_server::{
+    ComponentCost, CostEndpoint, CostSource, ProfiledCostSource, SnapshotCostSource,
+};
 
 /// A two-record source (the fixture shape — the real adapter reads the
 /// bundler's module map).
@@ -83,5 +85,49 @@ fn bench_snapshot_source(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_serve, bench_snapshot_source);
+fn bench_profiled_source(c: &mut Criterion) {
+    // The profiler + tier-map adapter (the record's remaining halves):
+    // the decorated hit pays the base lookup plus the two map probes —
+    // the per-query cost over the same realistic and scaled shapes, the
+    // same hit/miss pair the snapshot group measures (the decorator's
+    // overhead is the delta).
+    let mut group = c.benchmark_group("cost_source_profiled");
+    for n in [64usize, 4096] {
+        let records: std::collections::BTreeMap<String, ComponentCost> = (0..n)
+            .map(|i| {
+                (
+                    format!("src/c{i}.tsx"),
+                    ComponentCost::bytes_only(
+                        1024 + u64::try_from(i).unwrap_or(0),
+                        400,
+                        "chunk-abc.js",
+                    ),
+                )
+            })
+            .collect();
+        let source = ProfiledCostSource::from_maps(
+            Arc::new(SnapshotCostSource::new(records)) as Arc<dyn CostSource>,
+            (0..n)
+                .filter(|i| i % 4 == 0)
+                .map(|i| (format!("src/c{i}.tsx"), 1.5)),
+            (0..n)
+                .filter(|i| i % 2 == 0)
+                .map(|i| (format!("src/c{i}.tsx"), "L0".to_string())),
+        );
+        group.bench_with_input(BenchmarkId::from_parameter(n), &source, |b, s| {
+            b.iter(|| {
+                black_box(s.cost(black_box("src/c7.tsx")));
+                black_box(s.cost(black_box("src/ghost.tsx")));
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_serve,
+    bench_snapshot_source,
+    bench_profiled_source
+);
 criterion_main!(benches);
