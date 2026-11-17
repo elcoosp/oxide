@@ -39,6 +39,14 @@ pub const DEFAULT_RESULT_LIMIT: usize = 10;
 /// corpus (the `/_oxide/nav` endpoint caps the same way).
 pub const MAX_RESULT_LIMIT: usize = 100;
 
+/// The §13.4 query-length cap — the spec's "query length cap (200)",
+/// enforced over the raw `q` BYTES before the L1 cache and the engine ever
+/// see the text (the cap bounds the cache-key material and the engine
+/// parse, not the result set). The R05 review recorded the cap as the
+/// search surface's one missing `DoS` control; the rate limit and the result
+/// cap were the live guards until it landed.
+pub const MAX_QUERY_LENGTH: usize = 200;
+
 /// The endpoint's attached state: the read-only engine plus its L1. The
 /// cache key covers the filters too — `?tag=` narrows the same text
 /// query, and a tag answer must never be served to an unfiltered one —
@@ -137,6 +145,19 @@ pub fn search_response(ep: &SearchEndpoint, query: &str) -> OxideResponse {
         return search_error_response(
             400,
             "missing or empty `q`: the search endpoint is `GET /_oxide/search?q=<text>`",
+        );
+    }
+    // The §13.4 cap (bytes, over the raw query text): a refusal BEFORE the
+    // L1 cache and the engine — an oversized `q` can never become cache-key
+    // material or an engine parse. The plain-text body names the cap so the
+    // search UI's error line can quote it verbatim.
+    if parsed.text.len() > MAX_QUERY_LENGTH {
+        return search_error_response(
+            400,
+            &format!(
+                "`q` too long: {} bytes exceeds the {MAX_QUERY_LENGTH}-byte cap",
+                parsed.text.len()
+            ),
         );
     }
     match ep.run(&parsed) {
