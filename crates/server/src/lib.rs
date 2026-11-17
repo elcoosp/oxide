@@ -96,8 +96,8 @@ pub use open_editor::{
 // `CostSource` seam and the spec's wire record the overlay consumes,
 // plus the profiler + tier-map adapter the record's remaining halves ride.
 pub use cost_endpoint::{
-    COST_ENDPOINT_PATH, ComponentCost, CostEndpoint, CostSource, ProfiledCostSource,
-    SnapshotCostSource,
+    COST_ENDPOINT_PATH, ComponentCost, CostEndpoint, CostSource, FileCostsSource,
+    ProfiledCostSource, SnapshotCostSource,
 };
 
 // V2-F09: the search endpoint's attached state (`search` feature) — the
