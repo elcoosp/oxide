@@ -42,6 +42,23 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 
 ## What changed
 
+- The E08 inspector's live + generation surfaces (2026-11-17): the
+  §V2-E08 inspector row's "live subscribers (F05), generations (F10)"
+  surfaces land — `Hub::tag_snapshot()` in the server crate (per-key live
+  counts over the tag indexes, sorted, dead entries skipped), `GenerationSet::snapshot(now)`
+  in the dispatch crate (current always, the windowed previous only — the
+  `accepts` verdict's own arithmetic), and the dev crate's schema +
+  rendering (`InspectorState.live`/`.generations` with `#[serde(default)]`
+  back-compat, `RouteTableInspector::with_live`/`with_generations`, the
+  two HTML tables). The producers map into the schema at the CLI serve
+  wiring; nothing is fabricated when a source is absent.
+- The F17 adapter half (2026-11-17): `SnapshotCostSource` +
+  `ComponentCost::bytes_only` in the server crate — the snapshot-backed
+  production `CostSource` the cost endpoint recorded as "the caller's",
+  closing the records-flow gap between the bundler's `source_costs`
+  producer and the `/__oxide/cost` wire; the render/cache halves stay
+  `None` (the bytes-only spec shape) until the profiler and tier map
+  adapters land.
 - The F17 mapping + measurement halves (2026-11-17): the compiler stamps
   the first element each top-level component renders with
   `data-ox-src="path:line"` in dev (`data_src`, wired into
