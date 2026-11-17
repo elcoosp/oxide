@@ -9,6 +9,8 @@
 
 use std::time::{Duration, Instant};
 
+use std::hint::black_box;
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxide_fw_dispatch::build::{
     GenerationSet, advertise_build, is_data_plane_path, stage_build_check,
@@ -60,10 +62,27 @@ fn bench_advertise_build(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_generation_snapshot(c: &mut Criterion) {
+    let mut group = c.benchmark_group("generation_snapshot");
+    // The inspector pays one snapshot per `/__oxide` render: the fresh
+    // set (one row) and the post-promote set (two rows, one windowed).
+    group.bench_function("current_only", |b| {
+        let gens = GenerationSet::new("deadbeef0000000f".into(), Duration::from_secs(60));
+        b.iter(|| black_box(gens.snapshot(black_box(Instant::now()))));
+    });
+    group.bench_function("promoted", |b| {
+        let mut gens = GenerationSet::new("deadbeef0000000e".into(), Duration::from_secs(60));
+        gens.promote("deadbeef0000000f".into(), Instant::now());
+        b.iter(|| black_box(gens.snapshot(black_box(Instant::now()))));
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_data_plane_classification,
     bench_stage_build_check,
-    bench_advertise_build
+    bench_advertise_build,
+    bench_generation_snapshot
 );
 criterion_main!(benches);
