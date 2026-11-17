@@ -4313,3 +4313,57 @@ SSRs; the run table prints 29 rows). C09 and F11 are server/CLI surfaces — the
 acceptance scripts above. E01's in-place registry lives behind `createHotContext` (not a per-adapter import) — its
 recorded core/worker suites remain its behavior pins. Suite-level typecheck: the additions carry zero `tsc` findings in
 `conformance/suite.ts` under the conformance tsconfig.
+
+## The v0.2 Release Wave — records (2026-11-16)
+
+**The two committed `@oxide-fw/core` build-blockers (fixed, not suppressed).** A clean-checkout verification of R01
+(`pnpm install --frozen-lockfile` + `pnpm -C packages/core build`) failed at pristine HEAD twice: `tsdown.config.mjs`'s
+`"search": "./src/client/searchEngine.ts"` entry carried no trailing comma (the file does not parse — every fresh core
+build, the publish flow's `pnpm -r build` and the conformance gate died on it; the prior sessions' green runs rode a
+dist built before the entry landed), and `boot.ts` imported `type MixedIslandRegistry` from `./odf-decode.ts` where the
+type has never lived (it is `islands.ts` line 241) — rolldown's tsgo dts pass refused with `MISSING_EXPORT`. The fixes
+are the one-character comma and the corrected type import (no cycle: `boot.ts` already imports `islands.ts`; islands
+imports only `odf-decode`/`replay`). Neither had a test to fail — the red was the build itself; the honest pin is the
+fresh-checkout recipe now recorded in the R01 row.
+
+**R03 — the criterion gate's threshold is 10, not the default 5.** The Wave B deviations entry deferred the gate
+wiring as "the R03 step"; this wave wires it into the `bench-gate` job (after the smoke-table gate and the prose
+check): `cargo bench -p oxide-fw-router -p oxide-fw-cache --features bench-util` → `criterion_summary.py` →
+`criterion_compare.py benchmarks/after-wave-b.json /tmp/criterion-fresh.json 10`. The threshold delta is deliberate:
+criterion medians on a shared macOS runner carry more noise than the deterministic `run.sh` columns, and the gate's
+proven catch (a deliberate 2× slowdown) is twenty times past 10%. Post-Wave-B bench groups (`idem`, `migrate`, `pwa`,
+`sri`, `workspace_links`, …) are reported as missing and never gate until their own baseline JSON lands —
+`after-wave-b.json` covers the Wave B ids only, and the report's criterion section now carries their session-recorded
+numbers with that provenance stated. The G2 targets that cannot run in this sandbox (the 3× native cold build, the
+<200 ms fan-out, the CLI-side ≤12-alloc L0-hit dhat harness) are marked CI-pending in `benchmarks/report.md`'s G2
+table with their exact capture commands — deferral of EXECUTION only, per the standing rule.
+
+**R05 — the review lives at `docs/security-review-v0.2.md`.** The spec's R05 names `docs/security/v0.2-review.md`;
+the flat `docs/` placement is the recorded delta (the repo has no `docs/security/` directory and every other review
+artifact — the scorecard, the release audit — sits flat in `docs/`). The review's five gaps are recorded, not
+silenced: the stream↔session-cookie-hash binding, the `odf_patch`/`rustfn_shim`/`stream_range` fuzz targets, the
+search query-length constant, the scaffold gitignore verification, and the prototype-pollution fuzz target. The
+`__proto__`/`constructor` rejection itself IS implemented (`packages/core/src/client/odf-decode.ts` — keys rejected
+anywhere in a patch, segments rejected in paths) and pinned; the fuzz target is the remaining hardening, not the
+control.
+
+**R06 — the two version-cadence drift facts.** The crates + root `package.json` move together (the
+`chore(release): v0.17.0` commit touched `Cargo.toml`, `Cargo.lock`, `package.json` and nothing else); the seven
+publishable npm packages move in their own lockstep (0.6.x). Consequences recorded in `docs/release-v0.2-prep.md`:
+`scripts/bump-version.sh`'s "every surface at the same version" precondition refuses while the cadences differ (use
+the manual commands, or reset the script in a separate chore), and `packages/tailwind` at 0.6.0 vs its siblings at
+0.6.1 means `publish-npm.yml`'s version gate cannot pass for ANY input until tailwind is aligned. The spec's
+`contractMinor: 1` field (V2.2.5) exists nowhere in `packages/*/src` at HEAD — land it in the release PR or record
+its deferral before tagging; it is additive-optional and does not block binary compatibility.
+
+**R04 — the conformance count drift.** `docs/architecture.md`'s testing section still said "24 assertions × 4
+adapters"; it now says 29 with the C09/F11 acceptance-script routing (the E01 in-place-registry note included). The
+README badge was re-measured from a clean install with every package dist built: **2531 Rust** (the static count,
+verified against `count-tests.sh`) is unchanged — the wave adds no tests — but the TS half moved **754/757 → 760/760**:
+the prior measurement predates this session's full-suite runs, and this session ran every client suite from a fresh
+`pnpm install` (react 90/90, vue 67/67, svelte 67/67, solid 63/63, create-oxide 19/19, core 422/422,
+conformance 32/32 — 760 pass of 760, zero failures; the three vue/svelte reds seen before the adapter dists were
+built are the export-map pins asserting `dist/`, gitignored on a fresh checkout and built by CI before the suites).
+Known script drift recorded: `count-tests.sh --badge`'s TS half greps the TAP `# pass` summary, which node 24's piped
+reporter does not emit (it prints the spec-reporter `ℹ pass` shape) — the badge's TS value was measured by summing
+the suite summaries directly, and the script's TS arm needs a reporter-shaped grep to work again.
