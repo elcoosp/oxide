@@ -15,11 +15,21 @@ oxide-fw-diagnostics = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
-wit-parser = { workspace = true }
-wasmtime-wasi = { workspace = true }
 wasmtime = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+# The plugin-compat matrix benches (the adapters `doc_table` pattern: plain
+# `cargo test` never pays the criterion build).
+[features]
+bench-util = []
+
+[[bench]]
+name = "compat"
+harness = false
+required-features = ["bench-util"]
