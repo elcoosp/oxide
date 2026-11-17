@@ -16,7 +16,9 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use oxide_fw_server::stream_store::{StreamStore, read_from, stream_id};
+use oxide_fw_server::stream_store::{
+    CookieBindingSource, SessionBindingSource, StreamStore, read_from, stream_id,
+};
 
 /// A store with generous limits (bench shapes do not want eviction or
 /// overflow interference) and a buffer holding `n` 1 KB chunks.
@@ -90,11 +92,38 @@ fn bench_stream_id(c: &mut Criterion) {
     group.finish();
 }
 
+/// The R05 session binding's reattach-path cost: the keyed hash over the
+/// presented cookie (once per reattach, before the lookup) and the bound
+/// lookup itself (the map hit plus the constant-time compare).
+fn bench_stream_binding(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stream_binding");
+    let src = CookieBindingSource::new("oxide_session").expect("boot rng");
+    let headers = vec![(
+        "cookie".to_string(),
+        "a=1; oxide_session=bench-token; b=2".to_string(),
+    )];
+    let binding = src.binding(&headers).expect("the named cookie binds");
+    let store = Arc::new(StreamStore::new(
+        Duration::from_secs(3600),
+        1 << 30,
+        1 << 40,
+    ));
+    store.begin_bound("bench".into(), Some(binding.clone()));
+    group.bench_function("hash", |b| {
+        b.iter(|| black_box(src.binding(black_box(&headers))));
+    });
+    group.bench_function("get_bound_hit", |b| {
+        b.iter(|| black_box(store.get_bound(black_box("bench"), black_box(Some(&binding)))));
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_append,
     bench_read_from,
     bench_store_get,
-    bench_stream_id
+    bench_stream_id,
+    bench_stream_binding
 );
 criterion_main!(benches);
