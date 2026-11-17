@@ -1012,6 +1012,15 @@ pub struct InspectorState {
     pub why: BTreeMap<String, WhyReport>,
     pub routes: Vec<RouteRow>,
     pub cache: Vec<CacheRow>,
+    /// §V2-E08: the live-subscriber rows (F05 tag indexes). Empty until
+    /// the live hub feeds them — the schema stays honest, no fabricated
+    /// rows.
+    #[serde(default)]
+    pub live: Vec<LiveRow>,
+    /// §V2-E08: the generation rows (F10). Empty until the build
+    /// substrate feeds them.
+    #[serde(default)]
+    pub generations: Vec<GenerationRow>,
     pub waterfalls: Vec<RequestTimingsRow>,
     pub pool: PoolRow,
 }
@@ -1037,6 +1046,47 @@ pub struct CacheRow {
     pub layer: String,
     pub tags: Vec<String>,
     pub age_ms: u64,
+}
+
+/// Live-subscriber row (§V2-E08 inspector, F05): a tag index key and the
+/// live connections under it — the shape `oxide_fw_server`'s
+/// `LiveTagCount` snapshot maps into (the dev crate carries the schema,
+/// not the hub; the mapping is the caller's).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveRow {
+    /// The tag index key. Exact tags appear as registered; a wildcard
+    /// subscription (`comments:*`) appears as its stored prefix
+    /// (`comments:`) with [`Self::wildcard`] set.
+    #[serde(default)]
+    pub tag: String,
+    /// The row came from the wildcard-prefix index, not the exact-tag
+    /// index.
+    #[serde(default)]
+    pub wildcard: bool,
+    /// Live (non-dropped) connections registered under the key. A
+    /// connection holding several tags contributes to each of its rows —
+    /// per-tag counts, not a partition.
+    #[serde(default)]
+    pub subscribers: u64,
+}
+
+/// Generation row (§V2-E08 inspector, F10): a build id the process will
+/// answer data-plane requests for, its role, and — for the demoted
+/// previous — the remaining acceptance window. The shape
+/// `oxide_fw_dispatch`'s `GenerationInfo` snapshot maps into; an expired
+/// previous answers 409 and has already left the rows.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenerationRow {
+    /// The build id (the `x-oxide-build` header's value).
+    #[serde(default)]
+    pub id: String,
+    /// `"current"` or `"previous"`.
+    #[serde(default)]
+    pub role: String,
+    /// Milliseconds left in the previous generation's acceptance window;
+    /// `None` for the current generation (no window of its own).
+    #[serde(default)]
+    pub window_ms_remaining: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1192,6 +1242,14 @@ pub struct RouteTableInspector {
     /// §20: the shared per-request timings recorder. `None` renders an empty
     /// waterfall table.
     pub waterfalls: Option<WaterfallRecorder>,
+    /// §V2-E08: the live-subscriber rows (F05) the caller mapped from the
+    /// hub's `tag_snapshot` (the dev crate carries the schema, not the
+    /// hub). Empty renders an empty live table.
+    pub live: Vec<LiveRow>,
+    /// §V2-E08: the generation rows (F10) the caller mapped from the
+    /// build substrate's `GenerationSet::snapshot`. Empty renders an
+    /// empty generations table.
+    pub generations: Vec<GenerationRow>,
 }
 
 impl RouteTableInspector {
@@ -1214,6 +1272,8 @@ impl RouteTableInspector {
         Self {
             routes,
             waterfalls: None,
+            live: Vec::new(),
+            generations: Vec::new(),
         }
     }
 
@@ -1229,9 +1289,26 @@ impl RouteTableInspector {
         me
     }
 
+    /// Wire the live-subscriber rows (§V2-E08): the caller maps the F05
+    /// hub's `tag_snapshot` records into the schema rows.
+    #[must_use]
+    pub fn with_live(mut self, live: Vec<LiveRow>) -> Self {
+        self.live = live;
+        self
+    }
+
+    /// Wire the generation rows (§V2-E08): the caller maps the F10 build
+    /// substrate's `GenerationSet::snapshot` records into the schema rows.
+    #[must_use]
+    pub fn with_generations(mut self, generations: Vec<GenerationRow>) -> Self {
+        self.generations = generations;
+        self
+    }
+
     /// Produce the inspector state. Module-graph / cache / pool fields stay
     /// empty until those subsystems feed them; the waterfall is populated
-    /// from the shared recorder (§20).
+    /// from the shared recorder (§20) and the live/generation rows from
+    /// the wired snapshots (§V2-E08).
     pub fn state(&self) -> InspectorState {
         InspectorState {
             routes: self.routes.clone(),
@@ -1240,6 +1317,8 @@ impl RouteTableInspector {
                 .as_ref()
                 .map(|r| r.snapshot())
                 .unwrap_or_default(),
+            live: self.live.clone(),
+            generations: self.generations.clone(),
             ..Default::default()
         }
     }
@@ -1281,6 +1360,30 @@ pub fn render_inspector_html(state: &InspectorState) -> String {
             total,
         ));
     }
+    // §V2-E08: the live-subscriber table (F05 tag indexes) and the
+    // generations table (F10). Empty until the callers wire the snapshot
+    // rows — the render stays honest, no fabricated rows.
+    let mut live_rows = String::new();
+    for r in &state.live {
+        live_rows.push_str(&format!(
+            "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
+            html_escape(&r.tag),
+            if r.wildcard { "wildcard" } else { "exact" },
+            r.subscribers,
+        ));
+    }
+    let mut gen_rows = String::new();
+    for r in &state.generations {
+        let window = r
+            .window_ms_remaining
+            .map_or("\u{2014}".to_string(), |ms| format!("{ms}ms"));
+        gen_rows.push_str(&format!(
+            "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
+            html_escape(&r.id),
+            html_escape(&r.role),
+            window,
+        ));
+    }
     format!(
         "<!doctype html><html><head><title>Oxide Inspector</title>\
          <style>\
@@ -1299,11 +1402,19 @@ pub fn render_inspector_html(state: &InspectorState) -> String {
          <p>Raw JSON: <a href=\"/__oxide/state\">/__oxide/state</a></p>\
          <h2>Routes ({})</h2>\
          <table><thead><tr><th>pattern</th><th>mode</th><th>dynamic reason</th><th>cache policy</th></tr></thead><tbody>{}</tbody></table>\
+         <h2>Live ({})</h2>\
+         <table><thead><tr><th>tag</th><th>kind</th><th>subscribers</th></tr></thead><tbody>{}</tbody></table>\
+         <h2>Generations ({})</h2>\
+         <table><thead><tr><th>build</th><th>role</th><th>window left</th></tr></thead><tbody>{}</tbody></table>\
          <h2>Waterfalls ({})</h2>\
          <table id=\"wf\"><thead><tr><th>request</th><th>stages</th><th>total</th></tr></thead><tbody>{}</tbody></table>\
          </body></html>",
         state.routes.len(),
         rows,
+        state.live.len(),
+        live_rows,
+        state.generations.len(),
+        gen_rows,
         state.waterfalls.len(),
         wf_rows
     )
