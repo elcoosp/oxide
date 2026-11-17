@@ -89,6 +89,15 @@ name = "server_lib"
 harness = false
 required-features = ["bench-util"]
 
+# V2-E08: criterion bench for the inspector render path — the state build
+# and the self-contained HTML render the dev server pays on every
+# `/__oxide` / `/__oxide/state` view, with the live (F05) and generation
+# (F10) tables riding the same state at 64/256 routes.
+[[bench]]
+name = "inspector"
+harness = false
+required-features = ["bench-util"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
