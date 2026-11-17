@@ -308,12 +308,7 @@ impl StreamStore {
             let victim = order
                 .iter()
                 .find(|id| {
-                    id.as_str() != protect
-                        && self
-                            .map
-                            .get(id.as_str())
-                            .map(|b| b.is_done())
-                            .unwrap_or(false)
+                    id.as_str() != protect && self.map.get(id.as_str()).is_some_and(|b| b.is_done())
                 })
                 .or_else(|| order.iter().find(|id| id.as_str() != protect));
             match victim {

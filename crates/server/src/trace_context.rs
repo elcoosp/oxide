@@ -34,6 +34,7 @@ impl TraceContext {
     /// Parse a `traceparent` header value. Returns `None` when the value is
     /// malformed or a reserved component. The format is:
     /// `00-<32 hex trace id>-<16 hex span id>-<2 hex flags>`.
+    #[must_use]
     pub fn parse_traceparent(value: &str) -> Option<Self> {
         let parts: Vec<&str> = value.trim().split('-').collect();
         if parts.len() != 4 {
@@ -53,9 +54,7 @@ impl TraceContext {
         if flags.len() != 2 || !is_hex(flags) {
             return None;
         }
-        let sampled = u8::from_str_radix(flags, 16)
-            .map(|f| f & 0x01 != 0)
-            .unwrap_or(false);
+        let sampled = u8::from_str_radix(flags, 16).is_ok_and(|f| f & 0x01 != 0);
         Some(TraceContext {
             trace_id: trace_id.to_string(),
             parent_id: parent_id.to_string(),
@@ -66,11 +65,12 @@ impl TraceContext {
 
     /// Extract a context from a header map. `tracestate`, if present, is
     /// carried through verbatim. Both keys are case-insensitive per HTTP.
+    #[must_use]
     pub fn from_headers(headers: &BTreeMap<String, String>) -> Option<Self> {
         let mut found: Option<Self> = None;
         for (k, v) in headers {
             if k.to_ascii_lowercase().as_str() == "traceparent" {
-                found = Self::parse_traceparent(v)
+                found = Self::parse_traceparent(v);
             }
         }
         if let Some(mut tc) = found {
@@ -87,6 +87,7 @@ impl TraceContext {
 
     /// Emit a `traceparent` value using `self.trace_id` and the provided
     /// `span_id` (which the caller generates per outgoing request).
+    #[must_use]
     pub fn to_traceparent(&self, span_id: &str) -> Option<String> {
         if span_id.len() != 16 || !is_hex(span_id) {
             return None;

@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// Neutral page-render input (spec §7 RenderInput, stripped of the
+/// Neutral page-render input (spec §7 `RenderInput`, stripped of the
 /// framework-specific parts). Fields map to the JS-side `RenderInput` in
 /// `packages/core/src/types.ts`; the CLI shim converts this to whatever
 /// shape the underlying host expects.

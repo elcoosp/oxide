@@ -203,6 +203,7 @@ impl OxideRequest {
 }
 
 /// SPEC-24 / §20: a header key that must never reach a log line.
+#[must_use]
 pub fn is_secret_key(k: &str) -> bool {
     let k = k.to_ascii_lowercase();
     matches!(
@@ -323,6 +324,7 @@ impl OxideResponse {
     /// Construct a streaming response. `to_hyper_response` drives the body
     /// from `stream` and does NOT set `content-length` (the transport uses
     /// chunked transfer encoding). Errors from `stream` abort the response.
+    #[must_use]
     pub fn stream(status: u16, stream: BodyStream) -> Self {
         Self {
             status,
@@ -339,6 +341,7 @@ impl OxideResponse {
     pub fn html(status: u16, body: impl Into<String>) -> Self {
         Self::new(status, body.into()).with_header("content-type", "text/html; charset=utf-8")
     }
+    #[must_use]
     pub fn json(status: u16, body: serde_json::Value) -> Self {
         Self::new(status, serde_json::to_string(&body).unwrap())
             .with_header("content-type", "application/json")
@@ -503,8 +506,7 @@ impl StaticAssets {
                             .as_ref()
                             .and_then(|m| m.modified().ok())
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
+                            .map_or(0, |d| d.as_secs());
                         let mut precompressed = BTreeMap::new();
                         for (ext, enc) in [("zst", "zstd"), ("br", "br"), ("gz", "gzip")] {
                             let mut sibling = disk.clone().into_os_string();
@@ -619,7 +621,7 @@ impl StaticAssets {
         // Serve fresh bytes every time; the `no-cache` header prevents the
         // browser from caching them long enough for this to matter.
         if !is_dev_pre && let Some(inm) = req.header("if-none-match") {
-            let matches = inm.split(',').map(|c| c.trim()).any(|cand| {
+            let matches = inm.split(',').map(str::trim).any(|cand| {
                 let cand = cand.strip_prefix("W/").unwrap_or(cand);
                 cand == "*" || cand.trim_matches('"') == etag_raw
             });
@@ -635,11 +637,15 @@ impl StaticAssets {
 
         let is_get = req.method.eq_ignore_ascii_case("GET");
         let range = if is_get {
-            req.header("range").map(|s| s.to_string())
+            req.header("range").map(std::string::ToString::to_string)
         } else {
             None
         };
-        let available: Vec<&str> = entry.precompressed.keys().map(|k| k.as_str()).collect();
+        let available: Vec<&str> = entry
+            .precompressed
+            .keys()
+            .map(std::string::String::as_str)
+            .collect();
         let negotiated = if is_get {
             negotiate_encoding(req.header("accept-encoding").unwrap_or(""), &available)
         } else {
@@ -721,8 +727,10 @@ pub fn asset_cache_ttl() -> std::time::Duration {
     std::env::var("OXIDE_ASSET_CACHE_TTL_SECS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
-        .map(std::time::Duration::from_secs)
-        .unwrap_or_else(|| std::time::Duration::from_secs(300))
+        .map_or_else(
+            || std::time::Duration::from_secs(300),
+            std::time::Duration::from_secs,
+        )
 }
 
 fn asset_body_cache() -> &'static moka::sync::Cache<std::path::PathBuf, Bytes> {
@@ -759,9 +767,7 @@ fn cached_asset_body(path: &std::path::Path) -> Option<Bytes> {
     // large video/streamed asset read on a miss would evict every hot JS/CSS
     // chunk. Big files are read per request but never occupy cache space.
     const MAX_CACHED_ASSET_BYTES: u64 = 8 * 1024 * 1024;
-    let cacheable = std::fs::metadata(path)
-        .map(|m| m.len() <= MAX_CACHED_ASSET_BYTES)
-        .unwrap_or(false);
+    let cacheable = std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_CACHED_ASSET_BYTES);
     let cache = asset_body_cache();
     if let Some(b) = cache.get(path) {
         return Some(b);
@@ -842,8 +848,7 @@ fn walk_assets_filtered(
             .as_ref()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         let mut precompressed = BTreeMap::new();
         for (ext, enc) in [("zst", "zstd"), ("br", "br"), ("gz", "gzip")] {
             let mut sibling = path.clone().into_os_string();
@@ -976,6 +981,7 @@ fn is_compressible(content_type: &str) -> bool {
         || ct.ends_with("+xml")
 }
 
+#[must_use]
 pub fn negotiate_encoding(accept_encoding: &str, available: &[&str]) -> Option<String> {
     let mut entries: Vec<(String, f64)> = Vec::new();
     for part in accept_encoding.split(',') {
@@ -1202,6 +1208,7 @@ pub fn compress_body(encoding: &str, body: &[u8], level: i32) -> Result<Bytes> {
 /// The CSP header is appended only when a nonce is given (strict mode, via
 /// [`csp_header`]); pass `None` for `off`/`hash` modes and append the hash policy
 /// separately.
+#[must_use]
 pub fn security_headers(tls: bool, csp_nonce: Option<&str>) -> Vec<(String, String)> {
     let mut h: Vec<(String, String)> = [
         ("X-Content-Type-Options", "nosniff"),
@@ -1248,6 +1255,7 @@ fn alt_svc_for(port: u16) -> &'static str {
 
 /// Strict CSP with nonce + strict-dynamic (§17.1); hash mode for static pages.
 /// `off` (and any unknown mode) yields an empty string — the header is absent.
+#[must_use]
 pub fn csp_header(mode: &str, nonce: &str) -> String {
     match mode {
         // P1 (readiness) CSP defaults:
@@ -1470,7 +1478,7 @@ pub fn csp_report_response(
 }
 
 /// CSRF checks (§17.1): POST-only actions/server-fns; Origin/Sec-Fetch-Site verification;
-/// SameSite cookies; optional double-submit token.
+/// `SameSite` cookies; optional double-submit token.
 ///
 /// Safe methods (`GET`/`HEAD`/`OPTIONS`) and `mode: "off"` always pass. In `origin`
 /// mode: `Sec-Fetch-Site: same-origin|none` passes; an explicit `cross-site` signal
@@ -1527,6 +1535,7 @@ fn csrf_reject(req: &OxideRequest, mode: &str) -> std::result::Result<(), Box<Di
     )))
 }
 
+#[must_use]
 pub fn cookie_value<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
     for pair in cookie_header.split(';') {
         let pair = pair.trim();
@@ -1541,7 +1550,7 @@ pub fn cookie_value<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
 
 /// Authority (host[:port]) of an `Origin` header value.
 fn origin_authority(origin: &str) -> String {
-    let rest = origin.split_once("://").map(|(_, r)| r).unwrap_or(origin);
+    let rest = origin.split_once("://").map_or(origin, |(_, r)| r);
     let rest = rest.split('/').next().unwrap_or(rest);
     host_authority(rest)
 }
@@ -1577,6 +1586,7 @@ fn strip_port(h: &str) -> &str {
 /// Literal IPs in the blocked ranges fail; hostnames `localhost` (any case),
 /// `*.local` and `metadata.google.internal` fail. DNS re-resolution after redirects is
 /// the caller's responsibility (the fetch op re-checks the resolved address).
+#[must_use]
 pub fn ssrf_allowed(host: &str, allow_list: &[String]) -> bool {
     let host = strip_port(host.trim());
     if allow_list
@@ -1626,7 +1636,8 @@ fn is_blocked_ip(ip: &std::net::IpAddr) -> bool {
 }
 
 /// SEC-05: parse a CIDR (`10.0.0.0/8`, `127.0.0.1/32`, `::1/128`) into
-/// (network, prefix_len). A bare IP (no `/`) is treated as a /32 or /128.
+/// (network, `prefix_len`). A bare IP (no `/`) is treated as a /32 or /128.
+#[must_use]
 pub fn parse_cidr(s: &str) -> Option<(std::net::IpAddr, u8)> {
     let (ip_s, len_s) = match s.split_once('/') {
         Some((a, b)) => (a, Some(b)),
@@ -1641,6 +1652,7 @@ pub fn parse_cidr(s: &str) -> Option<(std::net::IpAddr, u8)> {
     (len <= max).then_some((ip, len))
 }
 
+#[must_use]
 pub fn ip_in_cidr(ip: std::net::IpAddr, net: std::net::IpAddr, len: u8) -> bool {
     match (ip, net) {
         (std::net::IpAddr::V4(a), std::net::IpAddr::V4(n)) => {
@@ -1662,6 +1674,7 @@ pub fn ip_in_cidr(ip: std::net::IpAddr, net: std::net::IpAddr, len: u8) -> bool 
 }
 
 /// SEC-05: is `peer` inside any of the `trusted_proxies` CIDRs?
+#[must_use]
 pub fn peer_is_trusted(peer: std::net::IpAddr, trusted: &[String]) -> bool {
     trusted
         .iter()
@@ -1673,6 +1686,7 @@ pub fn peer_is_trusted(peer: std::net::IpAddr, trusted: &[String]) -> bool {
 /// here, the common single-proxy case), `X-Forwarded-Proto`, and
 /// `X-Forwarded-Host` honoured; an untrusted peer has them **ignored**
 /// entirely (the header values are never trusted from an arbitrary client).
+#[must_use]
 pub fn effective_client<'a>(
     peer: std::net::IpAddr,
     trusted: &[String],
@@ -1682,7 +1696,7 @@ pub fn effective_client<'a>(
     real_host: Option<&'a str>,
 ) -> (Option<&'a str>, Option<&'a str>, Option<&'a str>) {
     if peer_is_trusted(peer, trusted) {
-        let ip = xff.and_then(|v| v.split(',').next()).map(|s| s.trim());
+        let ip = xff.and_then(|v| v.split(',').next()).map(str::trim);
         (ip, xf_proto, xf_host.or(real_host))
     } else {
         (None, None, real_host)
@@ -1691,6 +1705,7 @@ pub fn effective_client<'a>(
 
 /// SEC-09: mint a dev session token — 16 bytes from the OS CSPRNG, hex. The
 /// CLI prints it in the dev banner; the pipeline requires it for `/__oxide`.
+#[must_use]
 pub fn dev_token() -> String {
     use ring::rand::SecureRandom as _;
     let rng = ring::rand::SystemRandom::new();
@@ -1698,8 +1713,8 @@ pub fn dev_token() -> String {
     if rng.fill(&mut bytes).is_ok() {
         let mut s = String::with_capacity(32);
         for b in bytes {
-            s.push(char::from_digit((b >> 4) as u32, 16).unwrap());
-            s.push(char::from_digit((b & 0xf) as u32, 16).unwrap());
+            s.push(char::from_digit(u32::from(b >> 4), 16).unwrap());
+            s.push(char::from_digit(u32::from(b & 0xf), 16).unwrap());
         }
         return s;
     }
@@ -1708,8 +1723,7 @@ pub fn dev_token() -> String {
         "{:016x}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0)
+            .map_or(0, |d| d.as_nanos() as u64)
     )
 }
 
@@ -1719,8 +1733,10 @@ pub fn dev_token() -> String {
 fn dev_token_ok(req: &OxideRequest, want: &str) -> bool {
     let from_header = req.header("x-oxide-fw-dev-token");
     let from_query = req.url.split_once('?').map(|(_, q)| q).and_then(|q| {
-        q.split('&')
-            .find_map(|kv| kv.strip_prefix("token=").map(|v| v.to_string()))
+        q.split('&').find_map(|kv| {
+            kv.strip_prefix("token=")
+                .map(std::string::ToString::to_string)
+        })
     });
     let given = from_header.map(str::to_string).or(from_query);
     match given {
@@ -1737,6 +1753,7 @@ fn dev_token_ok(req: &OxideRequest, want: &str) -> bool {
 /// accepts `localhost`, the loopback literals, and the bind IP itself. A
 /// request for any other Host (a DNS-rebinding attempt against a dev server)
 /// is rejected.
+#[must_use]
 pub fn dev_host_allowed(host_header: &str, bind_ip: std::net::IpAddr) -> bool {
     let host = host_authority(host_header);
     if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
@@ -1784,6 +1801,7 @@ pub fn ws_origin_ok(
 /// Host validation (§17.1): Host allow-list + trusted-proxy + X-Forwarded-* handling.
 /// An empty allow-list allows everything; entries match exactly (any case, port
 /// stripped) or as leading-dot suffixes (`.example.com` matches `sub.example.com`).
+#[must_use]
 pub fn host_allowed(host_header: &str, allow_list: &[String]) -> bool {
     if allow_list.is_empty() {
         return true;
@@ -1829,12 +1847,14 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// session read/write-back work). Hidden so no downstream crate treats it as a
 /// stable surface before it is.
 #[doc(hidden)]
+#[must_use]
 pub fn sign_cookie(name: &str, value: &str, keys: &[&[u8]]) -> String {
     let key = keys.first().copied().unwrap_or(&[]);
     format!("{name}.{value}.{}", cookie_mac(key, name, value))
 }
 
 #[doc(hidden)]
+#[must_use]
 pub fn verify_cookie(signed: &str, keys: &[&[u8]]) -> Option<(String, String)> {
     let first = signed.find('.')?;
     let last = signed.rfind('.')?;
@@ -1860,7 +1880,7 @@ pub struct RateLimiter {
     pub buckets: dashmap_like::Buckets,
 }
 
-/// PERF-22: the bucket-key hash (SipHash under a process-random
+/// PERF-22: the bucket-key hash (`SipHash` under a process-random
 /// `RandomState`; see [`dashmap_like::Buckets`]).
 pub fn bucket_hash(key: &str) -> u64 {
     use std::hash::{BuildHasher, Hasher as _};
@@ -1875,7 +1895,7 @@ pub fn bucket_hash(key: &str) -> u64 {
 
 pub mod dashmap_like {
     /// PERF-22 (readiness): sharded concurrent map keyed by the 64-bit
-    /// SipHash of the bucket key (`RandomState` seeds are per-process random,
+    /// `SipHash` of the bucket key (`RandomState` seeds are per-process random,
     /// so an attacker cannot target a hash collision — and a collision would
     /// only OVER-limit two clients, never bypass the limit). Replaces the
     /// single `Mutex<BTreeMap<String, …>>` that allocated a `String` per
@@ -1890,6 +1910,7 @@ impl RateLimiter {
     ///
     /// Token bucket: capacity `max`, starts full, refills continuously at
     /// `max / window_secs` tokens per second (`window_secs` clamped to ≥ 1).
+    #[must_use]
     pub fn allow(&self, key: &str, max: u32, window_secs: u64) -> bool {
         // PERF-22: hash once — no String allocation per request, no global
         // lock (dashmap shards internally).
@@ -1907,10 +1928,10 @@ impl RateLimiter {
             self.buckets
                 .retain(|_, (_, last)| now.duration_since(*last).as_secs() < 3600);
         }
-        let rate = max as f64 / window_secs.max(1) as f64;
-        let mut bucket = self.buckets.entry(k).or_insert((max as f64, now));
+        let rate = f64::from(max) / window_secs.max(1) as f64;
+        let mut bucket = self.buckets.entry(k).or_insert((f64::from(max), now));
         let elapsed = now.duration_since(bucket.1).as_secs_f64();
-        bucket.0 = (bucket.0 + elapsed * rate).min(max as f64);
+        bucket.0 = (bucket.0 + elapsed * rate).min(f64::from(max));
         bucket.1 = now;
         if bucket.0 >= 1.0 {
             bucket.0 -= 1.0;
@@ -2191,7 +2212,7 @@ pub struct Pipeline {
     /// P1 hardening (readiness): bearer token required to read the metrics
     /// endpoint. The endpoint used to be public on the MAIN port, exposing
     /// per-route request rates and error counts to anyone. When `None`: open
-    /// in dev (OXIDE_DEV/OXIDE_DEV_MODE), 403 in production — set
+    /// in dev (`OXIDE_DEV/OXIDE_DEV_MODE`), 403 in production — set
     /// `OXIDE_METRICS_TOKEN` (env) or `security.metricsAuthToken` (config).
     pub metrics_auth_token: Option<String>,
     /// Optional metrics registry. When `Some`, `/metrics_path` renders it.
@@ -2302,6 +2323,7 @@ impl Drop for SocketRegistration {
 
 impl SocketService {
     /// Register a connection and return its drop guard.
+    #[must_use]
     pub fn register(
         &self,
         id: &str,
@@ -2325,6 +2347,7 @@ impl SocketService {
 
     /// Presence: every live socket id served by the same module, including
     /// `id` itself.
+    #[must_use]
     pub fn client_ids(&self, module_path: &str) -> Vec<String> {
         let Ok(reg) = self.registry.lock() else {
             return Vec::new();
@@ -2366,16 +2389,14 @@ impl std::fmt::Debug for SocketService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SocketService")
             .field("routes", &self.routes.len())
-            .field(
-                "connections",
-                &self.registry.lock().map(|r| r.len()).unwrap_or(0),
-            )
+            .field("connections", &self.registry.lock().map_or(0, |r| r.len()))
             .finish()
     }
 }
 
 /// Find the socket route for a URL path: exact match first, then a
 /// segment-count match where any `:param` / `*rest` segment matches.
+#[must_use]
 pub fn socket_route_for<'a>(
     routes: &'a std::collections::BTreeMap<String, std::path::PathBuf>,
     path: &str,
@@ -2471,6 +2492,7 @@ pub struct DispatchError {
 }
 
 impl DispatchError {
+    #[must_use]
     pub fn not_found(id: &str) -> Self {
         Self {
             status: 404,
@@ -2739,8 +2761,8 @@ pub fn og_tree_from_query(
     // ~100 ms of resvg CPU per request (an unauth'd CPU-exhaustion vector). A
     // 1 MP budget keeps worst-case ~40 ms and is ample for an OG card.
     const OG_MAX_AREA: u64 = 1_000_000;
-    if (width as u64) * (height as u64) > OG_MAX_AREA {
-        let capped_h = (OG_MAX_AREA / width.max(1) as u64).max(16) as u32;
+    if u64::from(width) * u64::from(height) > OG_MAX_AREA {
+        let capped_h = (OG_MAX_AREA / u64::from(width.max(1))).max(16) as u32;
         height = capped_h.min(height);
     }
     let Some(mut title) = title else {
@@ -2803,7 +2825,7 @@ fn percent_decode_query(s: &str) -> String {
 /// §16.3: handle `GET /_oxide/og?title=…`. Synchronous: the backend rasterizes
 /// in-process, no fetch. The response is a PNG with a public cache header.
 fn serve_og_endpoint(endpoint: &OgEndpoint, raw_url: &str) -> OxideResponse {
-    let query = raw_url.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let query = raw_url.split_once('?').map_or("", |(_, q)| q);
     let (tree, w, h) = match og_tree_from_query(query) {
         Ok(v) => v,
         Err(msg) => {
@@ -2911,7 +2933,7 @@ impl Default for SecuritySettings {
     }
 }
 
-/// The request path of an OxideRequest URL (absolute URLs stripped to origin-form,
+/// The request path of an `OxideRequest` URL (absolute URLs stripped to origin-form,
 /// query/fragment dropped).
 /// S-18: normalize a client-reported vitals `route` into a low-cardinality
 /// label. Only `[A-Za-z0-9_/\-.:]` survives (query removed, capped at 128);
@@ -2972,6 +2994,7 @@ fn path_has_extension(path: &str) -> bool {
 /// per request). Public because the framework dispatch injected by the CLI
 /// must stamp the same nonce on any script it adds to the response — a script
 /// tag without the nonce is blocked by `strict-dynamic` (§17.1).
+#[must_use]
 pub fn nonce_for(request_id: &str) -> String {
     blake3::hash(request_id.as_bytes()).to_hex()[..32].to_string()
 }
@@ -3247,7 +3270,7 @@ fn serve_image_endpoint(endpoint: Option<&ImageEndpoint>, raw_url: &str) -> Nati
 /// caller built the endpoint without the engine, the direct transform —
 /// the fn stays total), release the shed's in-flight slot, and compose the
 /// same response the legacy sync path composes: the immutable cache
-/// headers, the backend cache_key ETag, the LQIP pipe, and the bounded
+/// headers, the backend `cache_key` `ETag`, the LQIP pipe, and the bounded
 /// result-cache write.
 async fn serve_local_image(
     endpoint: &ImageEndpoint,
@@ -3354,13 +3377,13 @@ fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
                 width = Some(
                     v.parse::<u32>()
                         .map_err(|_| format!("`w` not an integer: {v:?}"))?,
-                )
+                );
             }
             "h" => {
                 height = Some(
                     v.parse::<u32>()
                         .map_err(|_| format!("`h` not an integer: {v:?}"))?,
-                )
+                );
             }
             "format" => {
                 format = Some(match v.to_ascii_lowercase().as_str() {
@@ -3402,6 +3425,7 @@ fn parse_image_query(query: &str) -> std::result::Result<ImageQuery, String> {
     })
 }
 
+#[must_use]
 pub fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -3432,6 +3456,7 @@ fn hex_nib(b: u8) -> Option<u8> {
 
 /// Recompute the signature `oxide_fw_assets::sign_image_url` would have
 /// produced for `signed_form`, and compare it to `sig`.
+#[must_use]
 pub fn verify_image_sig(signed_form: &str, secret: &str, sig: &str) -> bool {
     let mut h = blake3::Hasher::new();
     h.update(signed_form.as_bytes());
@@ -3611,6 +3636,7 @@ async fn fetch_remote_image(
 /// proxy path already depends on. Returns the body bytes.
 /// SEC-03: which of `addrs` are blocked? Returns the first blocked address,
 /// or `None` when every address passes. Pure, so it is unit-tested.
+#[must_use]
 pub fn first_blocked_addr(
     addrs: &[std::net::IpAddr],
     ssrf_allow_list: &[String],
@@ -3639,6 +3665,7 @@ pub fn first_blocked_addr(
 /// a host the app does not own — that is a credential leak. The allowlist is
 /// the cross-origin-safe set: content negotiation and identification, nothing
 /// that authenticates.
+#[must_use]
 pub fn ssrf_forwardable_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
     const ALLOW: &[&str] = &["accept", "content-type", "user-agent"];
     headers
@@ -3706,7 +3733,7 @@ pub async fn ssrf_safe_fetch(
     } else {
         current.path()
     };
-    let query = current.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let query = current.query().map_or_default(|q| format!("?{q}"));
     let connect_url = format!("{scheme}://{ip_lit}:{port}{path}{query}");
     let host_header = if (scheme == "http" && port == 80) || (scheme == "https" && port == 443) {
         host.clone()
@@ -3813,7 +3840,7 @@ async fn fetch_remote_checked(
         } else {
             current.path()
         };
-        let query = current.query().map(|q| format!("?{q}")).unwrap_or_default();
+        let query = current.query().map_or_default(|q| format!("?{q}"));
         let connect_url = format!("{scheme}://{ip_lit}:{port}{path}{query}");
         let host_header = if (scheme == "http" && port == 80) || (scheme == "https" && port == 443)
         {
@@ -3870,6 +3897,7 @@ async fn fetch_remote_checked(
 /// Match a remote host against `remotePatterns`. A pattern `host` matches
 /// the exact hostname (case-insensitive); `*.suffix` matches `x.suffix` and
 /// deeper. A pattern's `protocol` restricts the URL scheme.
+#[must_use]
 pub fn remote_pattern_allows(patterns: &[RemoteImagePattern], host: &str, scheme: &str) -> bool {
     let host = host.to_ascii_lowercase();
     patterns.iter().any(|p| {
@@ -4086,6 +4114,7 @@ impl Pipeline {
     }
 
     /// The attached metrics registry, if any.
+    #[must_use]
     pub fn metrics(&self) -> Option<&Arc<Metrics>> {
         self.metrics.as_ref()
     }
@@ -4135,6 +4164,7 @@ impl Pipeline {
 
     /// The attached page renderer, if any. Used by the inspector and by
     /// `serve_request` to decide the render path.
+    #[must_use]
     pub fn page_renderer(&self) -> Option<&Arc<dyn crate::PageRenderer>> {
         self.page_renderer.as_ref()
     }
@@ -4148,7 +4178,7 @@ impl Pipeline {
     /// async-fn arguments across *every* await point, so a `&dyn Fn` parameter
     /// (whose referent is not `Sync`) would make this future non-`Send` and
     /// unusable inside hyper connection tasks. Here `dispatch` is only *called*
-    /// synchronously — the returned `'static` BoxFuture is itself `Send` — and
+    /// synchronously — the returned `'static` `BoxFuture` is itself `Send` — and
     /// the await sees only `Send` values. Parameter types are unchanged.
     pub fn serve_request(
         &self,
@@ -4478,7 +4508,7 @@ impl Pipeline {
                 };
                 for it in items {
                     let name = it.get("name").and_then(|x| x.as_str()).unwrap_or("");
-                    let value = it.get("value").and_then(|x| x.as_f64());
+                    let value = it.get("value").and_then(serde_json::Value::as_f64);
                     let raw_route = it.get("route").and_then(|x| x.as_str()).unwrap_or("");
                     // S-18: the endpoint is public, so an attacker could
                     // mint a metrics key per unique `route`. Normalize to a
@@ -4655,9 +4685,8 @@ impl Pipeline {
         {
             let ready = self.render_ready.load(std::sync::atomic::Ordering::Relaxed);
             let brownout_level = self.brownout.as_ref().map(|g| g.level());
-            let brownout_refuses = brownout_level
-                .map(|l| crate::governor::ready_status(l) != 200)
-                .unwrap_or(false);
+            let brownout_refuses =
+                brownout_level.is_some_and(|l| crate::governor::ready_status(l) != 200);
             let mut r = if ready && !brownout_refuses {
                 OxideResponse::new(200, "ok")
             } else if brownout_refuses {
@@ -4942,8 +4971,7 @@ impl Pipeline {
                     .headers
                     .iter()
                     .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
-                    .map(|(_, v)| v.clone())
-                    .unwrap_or_default();
+                    .map_or_default(|(_, v)| v.clone());
                 if is_compressible(&ct_owned)
                     // PERF-06 (readiness): brotli in the dynamic negotiation
                     // set — `compress_body` and the streaming encoder both
@@ -4966,8 +4994,7 @@ impl Pipeline {
                     .headers
                     .iter()
                     .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
-                    .map(|(_, v)| v.clone())
-                    .unwrap_or_default();
+                    .map_or_default(|(_, v)| v.clone());
                 if is_compressible(&ct_owned)
                     && let Some(enc) = negotiate_encoding(ae, &["zstd", "br", "gzip"])
                 {
@@ -5066,8 +5093,8 @@ impl Pipeline {
         }
         if self.security.csrf.eq_ignore_ascii_case("token")
             && matches!(
-                method.map(|m| m.to_ascii_uppercase()).as_deref(),
-                Some("GET") | Some("HEAD")
+                method.map(str::to_ascii_uppercase).as_deref(),
+                Some("GET" | "HEAD")
             )
             && cookie_value(cookie_header.unwrap_or(""), "oxide_csrf").is_none()
         {
@@ -5079,8 +5106,8 @@ impl Pipeline {
                     .iter()
                     .flat_map(|b| {
                         [
-                            char::from_digit((b >> 4) as u32, 16).unwrap(),
-                            char::from_digit((b & 0xf) as u32, 16).unwrap(),
+                            char::from_digit(u32::from(b >> 4), 16).unwrap(),
+                            char::from_digit(u32::from(b & 0xf), 16).unwrap(),
                         ]
                     })
                     .collect();
@@ -5199,7 +5226,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Convert between hyper and Oxide request/response (streaming bodies preserved via BoxBody).
+/// Convert between hyper and Oxide request/response (streaming bodies preserved via `BoxBody`).
 pub fn to_hyper_response(resp: OxideResponse) -> HyperResponse<BoxBody<Bytes, std::io::Error>> {
     let has_len = resp
         .headers
@@ -5319,7 +5346,7 @@ pub async fn from_hyper_request(
     })
 }
 
-/// Server runner: binds (SO_REUSEPORT when supported), optional TLS (rustls),
+/// Server runner: binds (`SO_REUSEPORT` when supported), optional TLS (rustls),
 /// graceful shutdown with connection draining (§12.2), health endpoints.
 pub struct Server {
     pub addr: std::net::SocketAddr,
@@ -5334,7 +5361,10 @@ struct IpSlotGuard {
 }
 impl Drop for IpSlotGuard {
     fn drop(&mut self) {
-        let mut m = self.map.lock().unwrap_or_else(|p| p.into_inner());
+        let mut m = self
+            .map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(c) = m.get_mut(&self.ip) {
             *c -= 1;
             if *c == 0 {
@@ -5365,8 +5395,8 @@ pub fn next_request_id() -> String {
         let mut s = String::with_capacity(36);
         s.push_str("req-");
         for b in bytes {
-            s.push(char::from_digit((b >> 4) as u32, 16).unwrap());
-            s.push(char::from_digit((b & 0xf) as u32, 16).unwrap());
+            s.push(char::from_digit(u32::from(b >> 4), 16).unwrap());
+            s.push(char::from_digit(u32::from(b & 0xf), 16).unwrap());
         }
         return s;
     }
@@ -5516,7 +5546,7 @@ impl Server {
                     };
                     // P1 hardening: per-IP concurrency cap.
                     let ip_slot = {
-                        let mut map = per_ip.lock().unwrap_or_else(|p| p.into_inner());
+                        let mut map = per_ip.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         let count = map.entry(peer.ip()).or_insert(0);
                         if *count >= max_per_ip {
                             None
@@ -5550,12 +5580,12 @@ impl Server {
                                         .headers()
                                         .get(hyper::header::ORIGIN)
                                         .and_then(|v| v.to_str().ok())
-                                        .map(|s| s.to_string());
+                                        .map(std::string::ToString::to_string);
                                     let host_hdr = req
                                         .headers()
                                         .get(hyper::header::HOST)
                                         .and_then(|v| v.to_str().ok())
-                                        .map(|s| s.to_string());
+                                        .map(std::string::ToString::to_string);
                                     if let Some(bind_ip) = pipeline.dev_bind_ip {
                                         let host_ok = host_hdr
                                             .as_deref()
@@ -5594,8 +5624,7 @@ impl Server {
                                     .headers()
                                     .get(hyper::header::UPGRADE)
                                     .and_then(|v| v.to_str().ok())
-                                    .map(|v| v.eq_ignore_ascii_case("websocket"))
-                                    .unwrap_or(false);
+                                    .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
                                 if is_ws {
                                     let path = req.uri().path().to_string();
                                     if let Some(module) =
@@ -5609,12 +5638,12 @@ impl Server {
                                             .headers()
                                             .get(hyper::header::ORIGIN)
                                             .and_then(|v| v.to_str().ok())
-                                            .map(|s| s.to_string());
+                                            .map(std::string::ToString::to_string);
                                         let host_hdr = req
                                             .headers()
                                             .get(hyper::header::HOST)
                                             .and_then(|v| v.to_str().ok())
-                                            .map(|s| s.to_string());
+                                            .map(std::string::ToString::to_string);
                                         let origin_ok = crate::ws_origin_ok(
                                             origin.as_deref(),
                                             host_hdr.as_deref(),
@@ -5679,59 +5708,56 @@ impl Server {
                     // CONNECTION ends, not when the accept iteration ends.
                     let ip_guard = IpSlotGuard { ip: peer_ip_addr, map: per_ip_for_drop };
 
-                    match &tls_acceptor {
-                        Some(acceptor) => {
-                            // SEC-06: the handshake runs in a spawned task with
-                            // a timeout, so a stuck handshake does NOT block the
-                            // accept loop (the pre-fix code awaited it inline).
-                            let acceptor = acceptor.clone();
-                            let builder = builder.clone();
-                            // `Watcher` takes `self` in `watch` (a deliberate
-                            // footgun-guard); `graceful.watcher()` yields a fresh
-                            // owned, `Send` handle each call, so we mint one per
-                            // connection and move it into the task.
-                            let watcher = graceful.watcher();
-                            tokio::spawn(async move {
-                                // Hold the connection-limit slot + per-IP slot
-                                // for the life of the connection.
-                                let _slots = (permit, ip_guard);
-                                let tls_stream = match tokio::time::timeout(
-                                    ACCEPT_TIMEOUT,
-                                    acceptor.accept(stream),
-                                )
-                                .await
-                                {
-                                    Ok(Ok(s)) => s,
-                                    Ok(Err(e)) => {
-                                        tracing::debug!(error = %e, "TLS handshake failed");
-                                        return;
-                                    }
-                                    Err(_) => {
-                                        tracing::debug!("TLS handshake timed out");
-                                        return;
-                                    }
-                                };
-                                let conn = builder.serve_connection_with_upgrades(
-                                    hyper_util::rt::TokioIo::new(tls_stream),
-                                    service,
-                                );
-                                let guard = watcher.watch(conn.into_owned());
-                                let _ = guard.await;
-                            });
-                        }
-                        None => {
+                    if let Some(acceptor) = &tls_acceptor {
+                        // SEC-06: the handshake runs in a spawned task with
+                        // a timeout, so a stuck handshake does NOT block the
+                        // accept loop (the pre-fix code awaited it inline).
+                        let acceptor = acceptor.clone();
+                        let builder = builder.clone();
+                        // `Watcher` takes `self` in `watch` (a deliberate
+                        // footgun-guard); `graceful.watcher()` yields a fresh
+                        // owned, `Send` handle each call, so we mint one per
+                        // connection and move it into the task.
+                        let watcher = graceful.watcher();
+                        tokio::spawn(async move {
+                            // Hold the connection-limit slot + per-IP slot
+                            // for the life of the connection.
+                            let _slots = (permit, ip_guard);
+                            let tls_stream = match tokio::time::timeout(
+                                ACCEPT_TIMEOUT,
+                                acceptor.accept(stream),
+                            )
+                            .await
+                            {
+                                Ok(Ok(s)) => s,
+                                Ok(Err(e)) => {
+                                    tracing::debug!(error = %e, "TLS handshake failed");
+                                    return;
+                                }
+                                Err(_) => {
+                                    tracing::debug!("TLS handshake timed out");
+                                    return;
+                                }
+                            };
                             let conn = builder.serve_connection_with_upgrades(
-                                hyper_util::rt::TokioIo::new(stream),
+                                hyper_util::rt::TokioIo::new(tls_stream),
                                 service,
                             );
-                            let guard = graceful.watch(conn.into_owned());
-                            tokio::spawn(async move {
-                                // Hold the connection-limit slot + per-IP slot
-                                // for the life of the connection.
-                                let _slots = (permit, ip_guard);
-                                let _ = guard.await;
-                            });
-                        }
+                            let guard = watcher.watch(conn.into_owned());
+                            let _ = guard.await;
+                        });
+                    } else {
+                        let conn = builder.serve_connection_with_upgrades(
+                            hyper_util::rt::TokioIo::new(stream),
+                            service,
+                        );
+                        let guard = graceful.watch(conn.into_owned());
+                        tokio::spawn(async move {
+                            // Hold the connection-limit slot + per-IP slot
+                            // for the life of the connection.
+                            let _slots = (permit, ip_guard);
+                            let _ = guard.await;
+                        });
                     }
                 }
             }
@@ -5819,7 +5845,7 @@ fn ws_hmr_upgrade(
         let mut rx = hub.subscribe();
         // The first message tells the client it is connected.
         // §13.3: advertise the current build id so a stale tab can reload.
-        let hello = format!("{{\"type\":\"connected\",\"build_id\":\"{}\"}}", build_id,);
+        let hello = format!("{{\"type\":\"connected\",\"build_id\":\"{build_id}\"}}");
         let _ = wr
             .write_all(&crate::ws::encode(&crate::ws::Frame::Text(hello), false))
             .await;
@@ -5934,45 +5960,42 @@ fn ws_socket_upgrade(
             "headers": headers,
             "clients": service.client_ids(&mp),
         });
-        match dispatcher.run(&mp, "open", open_payload, &socket_id).await {
-            Ok(out) => {
-                for text in &out.sends {
-                    if wr
-                        .write_all(&crate::ws::encode(
-                            &crate::ws::Frame::Text(text.clone()),
-                            false,
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                for text in &out.broadcasts {
-                    service.broadcast(&mp, &socket_id, text);
-                }
-                for (id, text) in &out.targets {
-                    service.send_to(id, text);
-                }
-                if let Some((code, _)) = out.close {
-                    let _ = wr
-                        .write_all(&crate::ws::encode(
-                            &crate::ws::Frame::Close(Some(code)),
-                            false,
-                        ))
-                        .await;
+        if let Ok(out) = dispatcher.run(&mp, "open", open_payload, &socket_id).await {
+            for text in &out.sends {
+                if wr
+                    .write_all(&crate::ws::encode(
+                        &crate::ws::Frame::Text(text.clone()),
+                        false,
+                    ))
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }
-            Err(_) => {
+            for text in &out.broadcasts {
+                service.broadcast(&mp, &socket_id, text);
+            }
+            for (id, text) in &out.targets {
+                service.send_to(id, text);
+            }
+            if let Some((code, _)) = out.close {
                 let _ = wr
                     .write_all(&crate::ws::encode(
-                        &crate::ws::Frame::Close(Some(1011)),
+                        &crate::ws::Frame::Close(Some(code)),
                         false,
                     ))
                     .await;
                 return;
             }
+        } else {
+            let _ = wr
+                .write_all(&crate::ws::encode(
+                    &crate::ws::Frame::Close(Some(1011)),
+                    false,
+                ))
+                .await;
+            return;
         }
 
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
@@ -6318,12 +6341,9 @@ pub async fn serve_http3(
                                 for (k, v) in &resp.headers {
                                     builder = builder.header(k.as_str(), v.as_str());
                                 }
-                                let response = match builder.body(()) {
-                                    Ok(r) => r,
-                                    Err(_) => {
-                                        let _ = stream.finish().await;
-                                        continue;
-                                    }
+                                let response = if let Ok(r) = builder.body(()) { r } else {
+                                    let _ = stream.finish().await;
+                                    continue;
                                 };
                                 if stream.send_response(response).await.is_err() {
                                     continue;
@@ -6440,7 +6460,7 @@ mod sha1_shim {
     }
 }
 
-/// Minimal RFC6455 frame codec (§9.6 WebSockets: Rust owns upgrade, framing,
+/// Minimal RFC6455 frame codec (§9.6 `WebSockets`: Rust owns upgrade, framing,
 /// ping/pong and backpressure; JS handlers receive messages via ops).
 ///
 /// `decode` implements the **server-side** decoder: client frames MUST be masked
@@ -6494,6 +6514,7 @@ pub mod ws {
 
     /// Encode a client→server frame (masked, RFC6455 §5.3) when `mask` is true;
     /// server frames use `mask = false` (RFC6455 §5.1: servers must not mask).
+    #[must_use]
     pub fn encode(frame: &Frame, mask: bool) -> Vec<u8> {
         let (opcode, mut payload) = opcode_and_payload(frame);
         let mut out = vec![0x80 | opcode]; // FIN + opcode

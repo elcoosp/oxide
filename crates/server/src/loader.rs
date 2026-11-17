@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// Per-request input to a loader (spec §9.1 LoadEvent subset).
+/// Per-request input to a loader (spec §9.1 `LoadEvent` subset).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LoaderRunInput {
     /// Absolute filesystem path to the module exporting `load`.
@@ -131,6 +131,7 @@ pub struct LoaderOutput {
 
 impl LoaderOutput {
     /// Success with the given data and no side-effect headers.
+    #[must_use]
     pub fn ok(data: Value) -> Self {
         Self {
             status: 200,
@@ -140,6 +141,7 @@ impl LoaderOutput {
         }
     }
     /// Whether this output should short-circuit the render (non-200).
+    #[must_use]
     pub fn short_circuits(&self) -> bool {
         self.status < 200 || self.status >= 300
     }

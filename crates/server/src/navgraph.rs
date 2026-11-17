@@ -480,8 +480,7 @@ pub fn nav_response_from_query(graph: &NavGraph, query: &str) -> OxideResponse {
     let from_raw = query
         .split('&')
         .find_map(|kv| kv.strip_prefix("from="))
-        .map(crate::percent_decode)
-        .unwrap_or_default();
+        .map_or_default(crate::percent_decode);
     let from = sanitize_edge_route(&from_raw).unwrap_or_default();
     if from.is_empty() {
         return nav_error_response(

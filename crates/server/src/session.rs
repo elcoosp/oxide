@@ -120,15 +120,18 @@ pub struct Session {
 }
 
 impl Session {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// The whole session map, for handing to a loader as `locals.session`.
+    #[must_use]
     pub fn to_value(&self) -> Value {
         Value::Object(self.data.clone().into_iter().collect())
     }
 
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.data.get(key)
     }
@@ -163,9 +166,9 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 fn b64url_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
+        let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(B64[((n >> 18) & 63) as usize] as char);
         out.push(B64[((n >> 12) & 63) as usize] as char);
@@ -195,7 +198,7 @@ fn b64url_decode(s: &str) -> Result<Vec<u8>> {
         if v == 255 {
             return Err(err("SEC-SESSION", "session token has an invalid character"));
         }
-        acc = (acc << 6) | v as u32;
+        acc = (acc << 6) | u32::from(v);
         bits += 6;
         if bits >= 8 {
             bits -= 8;
