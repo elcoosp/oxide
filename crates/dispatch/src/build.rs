@@ -103,6 +103,57 @@ impl GenerationSet {
             _ => None,
         }
     }
+
+    /// The inspector's generations rows (§V2-E08, F10): the current
+    /// generation always; the demoted previous only while its window is
+    /// open — an expired previous answers 409 (the [`Self::accepts`]
+    /// verdict), so it leaves the rows. Deterministic at a given `now`
+    /// (the same arithmetic `accepts` applies); the inspector shows what
+    /// the process will serve, nothing else.
+    #[must_use]
+    pub fn snapshot(&self, now: Instant) -> Vec<GenerationInfo> {
+        let mut rows = vec![GenerationInfo {
+            id: self.current.clone(),
+            role: "current",
+            window_ms_remaining: None,
+        }];
+        if let Some((id, since)) = &self.previous {
+            let elapsed = now.duration_since(*since);
+            // The checked form carries the `elapsed <= window` guard — a
+            // `now` before the demotion instant (a skewed caller clock)
+            // saturates to the full window instead of panicking.
+            if let Some(remaining) = self.window.checked_sub(elapsed) {
+                rows.push(GenerationInfo {
+                    id: id.clone(),
+                    role: "previous",
+                    window_ms_remaining: Some(
+                        u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX),
+                    ),
+                });
+            }
+        }
+        rows
+    }
+}
+
+/// One row of the inspector's generations table (§V2-E08, F10): a build
+/// id this process will answer data-plane requests for, its role, and —
+/// for the demoted previous — the remaining acceptance window at the
+/// snapshot's `now`. The record [`GenerationSet::snapshot`] hands the
+/// dev crate's `GenerationRow` schema (the mapping is the caller's; the
+/// `InspectorSnapshot` shape lives in `oxide-fw-dev`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenerationInfo {
+    /// The build id (the `x-oxide-build` header's value).
+    pub id: String,
+    /// `"current"` or `"previous"` — the [`Gen`] roles spelled for the
+    /// table render.
+    pub role: &'static str,
+    /// Milliseconds left in the previous generation's acceptance window;
+    /// `None` for the current generation (no window of its own). The
+    /// same `now` arithmetic [`GenerationSet::accepts`] applies, so the
+    /// row and the verdict can never disagree.
+    pub window_ms_remaining: Option<u64>,
 }
 
 /// The data plane today (§V2-A04 + §V2-F05 + §V2-F07): `/__data`,
@@ -203,5 +254,51 @@ mod tests {
         let hs = vec![("X-Oxide-Build".to_string(), "v".to_string())];
         assert_eq!(crate::skew::header_value(&hs, "x-oxide-build"), Some("v"));
         assert_eq!(crate::skew::header_value(&hs, "x-other"), None);
+    }
+
+    /// §V2-E08 inspector surface: the generations rows — the current
+    /// generation always, the demoted previous only while its window is
+    /// open, with the exact remaining time the same `now` arithmetic
+    /// `accepts` applies. The inspector shows what the process will
+    /// serve, nothing else.
+    #[test]
+    fn generation_set_snapshot_lists_current_and_windowed_previous() {
+        let window = Duration::from_secs(60);
+        let mut g = GenerationSet::new("gen-a".into(), window);
+        let t0 = Instant::now();
+        assert_eq!(
+            g.snapshot(t0),
+            vec![GenerationInfo {
+                id: "gen-a".to_string(),
+                role: "current",
+                window_ms_remaining: None,
+            }]
+        );
+        g.promote("gen-b".into(), t0);
+        assert_eq!(
+            g.snapshot(t0 + Duration::from_secs(30)),
+            vec![
+                GenerationInfo {
+                    id: "gen-b".to_string(),
+                    role: "current",
+                    window_ms_remaining: None,
+                },
+                GenerationInfo {
+                    id: "gen-a".to_string(),
+                    role: "previous",
+                    window_ms_remaining: Some(30_000),
+                },
+            ]
+        );
+        // The expired previous no longer answers (the `accepts` verdict —
+        // a 409), so it leaves the rows.
+        assert_eq!(
+            g.snapshot(t0 + Duration::from_secs(61)),
+            vec![GenerationInfo {
+                id: "gen-b".to_string(),
+                role: "current",
+                window_ms_remaining: None,
+            }]
+        );
     }
 }
