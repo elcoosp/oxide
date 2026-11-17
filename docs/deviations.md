@@ -4599,3 +4599,91 @@ wraps only `Transform` today; the adoption composes the loaded component's
 `load`/`resolveId` into `BundleOptions.load_hook`/`resolve_hook` (the bundler
 consults both, `lib.rs:772`/`:852`) beside the JS bridge's hooks. V8-link
 cost rides CI per the recorded convention.
+
+## The E08 open-in-editor + F17 cost endpoints land — the §V2.J dev-plane rows go from advertised to answered (`feat/open-in-editor-endpoint` + `feat/cost-endpoint-seam`, 2026-11-17)
+
+**What lands (M1, E08 item 1's server half).** `crates/server/src/open_editor.rs`:
+`GET /__oxide/open?file=&line=` — the §V2.J map's dev-plane row the endpoint
+map and the committed page already advertised, answered at last. The module
+holds the editor chain (`resolve_editor`: `OXIDE_EDITOR`, then `EDITOR`, then
+the documented `code -g` default — resolved PER REQUEST so a dev session can
+export the variable late), the project-root confinement (`confine`:
+canonicalize the joined path, require it inside the canonical root AND an
+existing file; the response contract: non-GET `405` + `allow`, bad params
+`400`, a confinement refusal `422` with the coded `DEV-OPEN-001`, a spawn
+failure `500` with `DEV-OPEN-002`, a hit `200` JSON
+`{ ok, editor, file, line }` with the root-relative spelling), the
+`EditorOpener` seam (the production `CommandOpener` spawns detached with null
+stdio — the dev crate's `open_browser` shape; fakes record), and the
+`OpenEditorEndpoint` the pipeline arm consumes. The arm rides the native
+prefix right after the inspector's (`3a.2.1`), dev-token guarded (D41) with
+the same constant-time compare — the token guard runs before the method
+check, because the endpoint spawns a process. Attached via
+`Pipeline::with_editor_opener`; `None` (the default) leaves the endpoint
+absent and production byte-identical. 22 TDD pins (red-first) + 2 module
+pins + the `open_editor` criterion group + the walkthrough example; the
+`DEV-OPEN-001`/`DEV-OPEN-002` registry rows ride `docs/errors.toml` and the
+regenerated page.
+
+**What lands (M2, F17's server half).** `crates/server/src/cost_endpoint.rs`:
+`GET /__oxide/cost?src=<path>` — the second path of the SAME §V2.J row. The
+spec-verbatim `ComponentCost` record (`bytes`/`gzip`/`chunk`/
+`renderMsP50`/`cache`, camelCase on the wire; `renderMsP50` and `cache` null
+for the bytes-only adapters — the overlay's "render time unavailable" note
+reads the null), the injected `CostSource` seam (the endpoint is the wire
+contract; the build-side adapter feeding the bundler's module map and the
+render profiler is the caller's), the arm (`3a.2.2`, dev-token guarded) and
+`Pipeline::with_cost_endpoint`. 9 TDD pins (red-first) + the
+`cost_endpoint` criterion group + the walkthrough example. No new error
+codes — the endpoint has no coded failure shape (the nav pattern: plain-text
+statuses).
+
+**Deltas.**
+- The editor env value splits on WHITESPACE (glob-lite, no shell, no new
+  dep): a quoted editor path with spaces is not supported. The escape hatch
+  is the placeholder rule: `OXIDE_EDITOR='vim +{line} {file}'` substitutes
+  every `{file}`/`{line}` occurrence; a value naming NO placeholder gets the
+  target appended as one `path:line` argument (the VS Code `-g` convention
+  the default spelling needs).
+- Inside-root `..` spellings NORMALIZE (canonicalize-first) instead of being
+  banned by a textual `..` scan: `src/../src/a.rs` opens the same file as
+  `src/a.rs`; only ESCAPES refuse. The spec's "rejects `../`" pin holds on
+  the escape shapes.
+- The endpoint requires the target to EXIST and be a file (the overlay only
+  links served sources; the editor cannot open a not-yet-written path).
+- The `file` param is percent-decoded (the nav endpoint's parse shape), so
+  space-bearing source names work on every platform.
+- The `file`-param resolution runs from the REAL process env per request
+  (not a boot-time snapshot) — the recorded testability delta is the
+  resolver's `&dyn Fn(&str) -> Option<String>` parameter, which the pins and
+  the example drive with fakes.
+
+**Remaining halves (recorded, not stubbed).** E08: the overlay's
+source-mapped frames + "open in editor" button, the `/__oxide` inspector and
+the doctor additions. F17: the compiler's `data-ox-src` attribute injection
+(Oxc visitor on JSX; the Vue/Svelte compile hooks) and the overlay UI. Both
+endpoints' CLI attach is the recorded one-liner (`with_editor_opener` /
+`with_cost_endpoint` at the dev boot, beside `with_inspector`) — the
+V8-linked crate rides CI per the convention.
+
+**Micro-debt (this diff, additive).**
+- The dead `oxide-fw-cache` dependency in `crates/server/Cargo.toml` is
+  removed (zero inheritors — the crate's sources never name it; the manifest
+  advisory `cargo::unused_dependencies` printed on every build is
+  silenced).
+- The disk-tier migration loop's corrupt-v1-row fallback
+  (`crates/cache/src/tiers.rs`) is loud now: a row that does not parse as a
+  JSON key list warns `CACHE-CODEC` naming the tag and migrates as EMPTY —
+  the empty-set behavior unchanged and self-healing, but the invalidation
+  gap is visible instead of silent (the `CACHE-HTTP` tag-key precedent).
+- The spec's F09 row still claimed the F09 render-stage `STAGE_RULES`
+  substitution "pending — `split_selfcheck.py --stages` runs red until it
+  lands"; the selfchecks are GREEN at HEAD (verified from a full-history
+  clone this session — the shallow-clone 128 the row's claim probably
+  grew from), so the stale pending sentence is retired with the verified
+  fact recorded in its place.
+- `docs/spec-v0.2-draft.md`'s E04 row is flipped `partial` → `merged` (the
+  client TT half landed last session; the row still said partial) and its
+  mid-row "Remaining" sentence is retired; the row's stale `packages/oxide`
+  spelling for the TT sinks is corrected to `packages/core` (where
+  `client/tt.ts` actually landed).
