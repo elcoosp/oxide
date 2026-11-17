@@ -14,7 +14,8 @@ use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxide_fw_server::{
-    ComponentCost, CostEndpoint, CostSource, ProfiledCostSource, SnapshotCostSource,
+    ComponentCost, CostEndpoint, CostSource, FileCostsSource, ProfiledCostSource,
+    SnapshotCostSource,
 };
 
 /// A two-record source (the fixture shape — the real adapter reads the
@@ -124,10 +125,44 @@ fn bench_profiled_source(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_file_source(c: &mut Criterion) {
+    // The dev-side feed the boot attaches: the build's PERSISTED records
+    // file, mtime-checked per query — the stat the dev overlay's hover
+    // pays on every consult, plus the cached lookup (the reload only
+    // fires when the file's mtime moved, so the steady-state hit is the
+    // per-request shape). Scaled like the snapshot group: the realistic
+    // small site and a large module map.
+    let mut group = c.benchmark_group("cost_source_file");
+    for n in [64usize, 4096] {
+        let dir = tempfile::tempdir().expect("bench tempdir");
+        let path = dir.path().join("client.costs.json");
+        let rows: Vec<serde_json::Value> = (0..n)
+            .map(|i| {
+                serde_json::json!({
+                    "source": format!("src/c{i}.tsx"),
+                    "bytes": 1024_u64 + u64::try_from(i).unwrap_or(0),
+                    "gzip": 400_u64,
+                    "chunk": "chunk-abc.js",
+                })
+            })
+            .collect();
+        std::fs::write(&path, serde_json::to_string(&rows).expect("rows")).expect("records write");
+        let source = FileCostsSource::from_path(&path);
+        group.bench_with_input(BenchmarkId::from_parameter(n), &source, |b, s| {
+            b.iter(|| {
+                black_box(s.cost(black_box("src/c7.tsx")));
+                black_box(s.cost(black_box("src/ghost.tsx")));
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_serve,
     bench_snapshot_source,
-    bench_profiled_source
+    bench_profiled_source,
+    bench_file_source
 );
 criterion_main!(benches);
