@@ -25,11 +25,12 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `AST-I18N` | MessageFormat parse failed: {} | — |
 | `AST-I18N-ARG` | MessageFormat: a value is missing for a placeholder argument | Pass a `values` entry for every placeholder in the message template |
 | `AST-I18N-TYPE` | MessageFormat: a placeholder value has the wrong type | Pass the value type the template expects (string, number or date) |
-| `AST-ISL-001` | the island manifest side-car is not the expected `{ file: { interactive, reasons } }` JSON map: {e} | Rebuild (the build rewrites `.oxide/island-manifest.json`), or delete the stale side-car when the auto-islands gate is off |
 | `AST-IDX` | index serialization failed: {e} | — |
 | `AST-IMG` | failed to decode source image: {e} | — |
-| `AST-JOBS` | the image encoder panicked: {join} | inspect the encoder diagnostic; the next request retries the encode |
 | `AST-IMG-REQ` | `url` query parameter is empty | — |
+| `AST-ISL-001` | the island manifest side-car is not the expected `{ file: { interactive, reasons } }` JSON map: {e} | Rebuild (the build rewrites `.oxide/island-manifest.json`), or delete the stale side-car when the auto-islands gate is off |
+| `AST-ISL-002` | the pure-classified component `{component}` (`{defining_file}`) receives `on*` props ({props}) at `{usage_file}:{line}` | Register it as an explicit island, drop the handler props, or wire the events inside the component itself — the auto-islands scan skips pure files, so these handlers only run when the importing component hydrates |
+| `AST-JOBS` | the image encoder panicked: {join} | inspect the encoder diagnostic; the next request retries the encode |
 | `AST-LIV-001` | a route opts into `live: true` but target `{}` does not support live loaders (§18 capability matrix) | Use `live.transport: 'poll'` or change target |
 | `AST-OG` | usvg parse failed: {e} | — |
 | `AST-QUERY` | asset specifier must be a non-empty path optionally followed by `?query` | — |
@@ -105,8 +106,8 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DEP-IO` | deploy store operation failed on `{}`: {e} | — |
 | `DEP-MANIFEST` | the remote deploy manifest (manifest.json) is corrupt or from a future engine version: {e} | Re-run the deploy - a fresh deploy rewrites the ledger; inspect the store's manifest.json if this repeats |
 | `DEP-POINTER` | the deploy pointer (current) is corrupt: {detail} | — |
-| `DEP-ROOT` | dist root {} is not a directory | Pass the build's dist directory (the `oxide build` output) |
 | `DEP-ROLLBACK` | cannot roll back: no previous build id is recorded | Deploy first: every deploy records the pointer's previous value |
+| `DEP-ROOT` | dist root {} is not a directory | Pass the build's dist directory (the `oxide build` output) |
 | `DEP-URL` | `{}` is not a deploy target URL: {} | Use s3://bucket/prefix, r2://bucket/prefix?endpoint=... (the endpoint query parameter is required for r2), file:///path or mem://label |
 | `DEV-BUNDLE` | rebuild failed for {pstr}: {err_msg} | — |
 | `DEV-HMR-001` | HMR fell back to a full reload: {reason} | — |
@@ -114,9 +115,9 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DEV-HMR-003` | HMR frame speaks schema v{found}; this build speaks v{} | — |
 | `DEV-NOTIFY` | create watcher: {e} | — |
 | `DEV-QR` | QR generation failed: {e} | — |
-| `DEV-TLS` | certificate params failed: {e} | — |
 | `DEV-RFN-001` | the native fn crate {name} failed to build (cargo build --lib): {tail} | the compile error above is the fix; a successful build must produce the cdylib the [lib] crate-type declares |
 | `DEV-RFN-002` | the rebuilt library's types payload does not parse (the §9.4 id bindings cannot be re-derived): {e} | rebuild with the `export_table!` macro's `oxide_fn_types_json` side export; the loop refuses rather than swap with guessed ids |
+| `DEV-TLS` | certificate params failed: {e} | — |
 | `DEV-WS-001` | workspace discovery failed for {path}: {err_msg} | Check the manifest's shape — pnpm-workspace.yaml `packages:` is a list of glob entries (block or flow), package.json `workspaces` is a list of globs — and run the package manager's install so linked packages resolve under node_modules |
 | `DOC-001` | config keys carry no schema description; the page refuses to render (E11 acceptance) | add a `description` in `crates/config/src/schema.rs`, then regenerate the pages |
 | `DOC-002` | docs/errors.toml carries an entry the strict registry format rejects (the diagnostic names the line) | fix the entry the diagnostic names (the format is `[CODE]` + `message`/`fix`/`spec_only`) |
@@ -133,8 +134,8 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `FN-BAD-REQUEST` | the server-function envelope is malformed (the 400 dispatch class) | Send the envelope shape `/_oxide/fn/<id>` documents |
 | `FN-INTERNAL` | the server-function dispatch failed internally (the 500 dispatch class) | Inspect the server logs; the dispatch failed inside the host |
 | `FN-NOT-FOUND` | no server function with that id is registered in this build | Rebuild, or check the id the client posts to `/_oxide/fn/<id>` |
-| `FN-TIMEOUT` | the native function `{name}` exceeded its {secs}s budget | Raise the call budget or make the function faster; long work belongs in a background job |
 | `FN-THREW` | the server function threw; the envelope carries the function's own error message | — |
+| `FN-TIMEOUT` | the native function `{name}` exceeded its {secs}s budget | Raise the call budget or make the function faster; long work belongs in a background job |
 | `GRAPH-ARTIFACT` | rkyv serialize: {e} | — |
 | `GRAPH-CANCEL` | computation cancelled: a newer change invalidated in-flight work | — |
 | `GRAPH-CORRUPT` | artifact: truncated header | — |
