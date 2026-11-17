@@ -474,6 +474,69 @@ impl Hub {
         self.sweep(sub.as_ref());
         self.index(sub);
     }
+
+    /// The inspector's live-subscriber rows (§V2-E08, F05): per-key live
+    /// counts over both tag indexes, sorted by key for a stable render.
+    /// Read-only — the snapshot never mutates the indexes, skips dead
+    /// entries (a subscriber whose `Guard` dropped without a `sweep` —
+    /// impossible today, tolerated anyway) and never fabricates a row:
+    /// an empty hub snapshots empty.
+    ///
+    /// A connection holding several tags contributes to each of its
+    /// rows — the rows are per-tag counts, not a partition. The global
+    /// count stays on [`Self::count`].
+    #[must_use]
+    pub fn tag_snapshot(&self) -> Vec<LiveTagCount> {
+        let mut rows: Vec<LiveTagCount> = Vec::new();
+        for entry in &self.by_tag {
+            let alive = entry
+                .value()
+                .iter()
+                .filter(|w| w.upgrade().is_some())
+                .count();
+            if alive > 0 {
+                rows.push(LiveTagCount {
+                    tag: entry.key().clone(),
+                    wildcard: false,
+                    subscribers: u64::try_from(alive).unwrap_or(u64::MAX),
+                });
+            }
+        }
+        for entry in &self.by_prefix {
+            let alive = entry
+                .value()
+                .iter()
+                .filter(|w| w.upgrade().is_some())
+                .count();
+            if alive > 0 {
+                rows.push(LiveTagCount {
+                    tag: entry.key().clone(),
+                    wildcard: true,
+                    subscribers: u64::try_from(alive).unwrap_or(u64::MAX),
+                });
+            }
+        }
+        rows.sort_by(|a, b| a.tag.cmp(&b.tag).then(a.wildcard.cmp(&b.wildcard)));
+        rows
+    }
+}
+
+/// One row of the inspector's live-subscriber table (§V2-E08): a tag
+/// index key and the number of live connections registered under it —
+/// the record [`Hub::tag_snapshot`] hands the dev crate's `LiveRow`
+/// schema (the mapping is the caller's, the `InspectorSnapshot` shape
+/// lives in `oxide-fw-dev`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveTagCount {
+    /// The index key. Exact tags appear as registered; a wildcard
+    /// subscription (`comments:*`) appears as its stored prefix
+    /// (`comments:`) with [`Self::wildcard`] set.
+    pub tag: String,
+    /// The row came from the wildcard-prefix index (`by_prefix`), not
+    /// the exact-tag index.
+    pub wildcard: bool,
+    /// Live (non-dropped) connections registered under the key.
+    pub subscribers: u64,
 }
 
 fn push_unique(out: &mut Vec<Arc<Sub>>, s: Arc<Sub>) {
