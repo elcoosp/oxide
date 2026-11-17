@@ -17,13 +17,13 @@ use oxide_fw_compiler::props_surface::{pure_on_props_warnings, scan_on_props};
 fn page_with(n: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
-        let _ = write!(src, "import C{i} from './c{i}';\n");
+        let _ = writeln!(src, "import C{i} from './c{i}';");
     }
     src.push_str("export default function Page() {\n  return (\n    <>\n");
     for i in 0..n {
-        let _ = write!(
+        let _ = writeln!(
             src,
-            "      <C{i} onClick={{() => {{}}}} onInput={{() => {{}}}} />\n"
+            "      <C{i} onClick={{() => {{}}}} onInput={{() => {{}}}} />"
         );
     }
     src.push_str("    </>\n  );\n}\n");
