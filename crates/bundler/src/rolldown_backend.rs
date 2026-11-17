@@ -226,8 +226,17 @@ impl RolldownBundler {
         let body = serde_json::json!({
             "compilerOptions": compiler_options,
         });
-        if let Some(parent) = synthetic.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        if let Some(parent) = synthetic.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            // The write below fails for the same reason and warns; naming
+            // the dir-create here keeps the first cause loud instead of
+            // surfacing later as an unrelated write failure.
+            tracing::warn!(
+                error = %e,
+                dir = %parent.display(),
+                "oxide: the synthetic tsconfig directory create failed"
+            );
         }
         // The serialized bytes come first: a serialize failure must
         // not hand Rolldown an EMPTY synthetic tsconfig — the old
@@ -411,8 +420,18 @@ impl RolldownBundler {
                 };
                 if let Ok(Some(new_src)) = hook.call(&c.file, &src)
                     && new_src != src
+                    && let Err(e) = std::fs::write(&file_path, &new_src)
                 {
-                    let _ = std::fs::write(&file_path, &new_src);
+                    // The hook's output is the build's product: a write
+                    // failure that stayed silent would report success
+                    // while shipping the un-hooked source (the synthetic
+                    // tsconfig warn above is the modeled shape).
+                    tracing::warn!(
+                        error = %e,
+                        file = %file_path.display(),
+                        "oxide: the renderChunk hook output write failed; \
+                         the chunk ships un-hooked"
+                    );
                 }
             }
         }
@@ -1936,8 +1955,17 @@ impl IncrementalWorker {
                 if let Ok(src) = std::fs::read_to_string(&file_path)
                     && let Ok(Some(new_src)) = hook.call(&c.file, &src)
                     && new_src != src
+                    && let Err(e) = std::fs::write(&file_path, &new_src)
                 {
-                    let _ = std::fs::write(&file_path, &new_src);
+                    // Same loudness rule as the dev-path write above: the
+                    // hook's output is the build's product, a silent
+                    // failure ships the un-hooked source.
+                    tracing::warn!(
+                        error = %e,
+                        file = %file_path.display(),
+                        "oxide: the renderChunk hook output write failed; \
+                         the chunk ships un-hooked"
+                    );
                 }
             }
         }
