@@ -21,8 +21,8 @@ use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
 use oxide_fw_server::{
-    ComponentCost, CostEndpoint, CostSource, OxideRequest, OxideResponse, Pipeline,
-    ProfiledCostSource, SnapshotCostSource,
+    ComponentCost, CostEndpoint, CostSource, FileCostsSource, OxideRequest, OxideResponse,
+    Pipeline, ProfiledCostSource, SnapshotCostSource,
 };
 
 /// Two records: one fully measured (React-shaped), one bytes-only
@@ -76,6 +76,92 @@ fn dispatch()
     |_r: OxideRequest| {
         Box::pin(async { OxideResponse::new(500, "dispatch must not run") })
             as std::pin::Pin<Box<dyn std::future::Future<Output = OxideResponse> + Send>>
+    }
+}
+
+/// The file-backed walk: the no-build miss, the first load, the
+/// orphan's empty chunk, and the rebuild's reload (no re-attach).
+fn walk_file_backed_feed() {
+    println!("\nfile-backed feed (the dev-side adapter the boot attaches):");
+    // The dev-side design: the build persists the records beside the
+    // client manifest (the bundler's `write_source_costs` — the same
+    // `{ source, bytes, gzip, chunk }` rows), and the boot attaches
+    // `FileCostsSource` once; a rebuild rewrites the file, the NEXT query
+    // reloads (the mtime check), no re-attach. The walk: the no-build
+    // miss, the first load, the rebuild's reload.
+    let dir = tempfile::tempdir().expect("example tempdir");
+    let costs_path = dir.path().join("client.costs.json");
+    let file_source = FileCostsSource::from_path(&costs_path);
+    let file_ep = CostEndpoint::new(Arc::new(file_source) as Arc<dyn CostSource>);
+    println!(
+        "  no build yet: {} {}",
+        file_ep.serve("GET", "src=src/hero.tsx").status,
+        String::from_utf8_lossy(&file_ep.serve("GET", "src=src/hero.tsx").body)
+    );
+    std::fs::write(
+        &costs_path,
+        serde_json::to_string_pretty(&serde_json::json!([
+            { "source": "src/hero.tsx", "bytes": 4812, "gzip": 1901, "chunk": "chunk-abc.js" },
+            { "source": "src/orphan.tsx", "bytes": 921, "gzip": 430, "chunk": null }
+        ]))
+        .expect("records json"),
+    )
+    .expect("records write");
+    let resp = file_ep.serve("GET", "src=src/hero.tsx");
+    println!(
+        "  first build:  {} {}",
+        resp.status,
+        String::from_utf8_lossy(&resp.body)
+    );
+    let resp = file_ep.serve("GET", "src=src/orphan.tsx");
+    println!(
+        "  orphan row:   {} {}",
+        resp.status,
+        String::from_utf8_lossy(&resp.body)
+    );
+    std::fs::write(
+        &costs_path,
+        serde_json::to_string_pretty(&serde_json::json!([
+            { "source": "src/hero.tsx", "bytes": 2222, "gzip": 999, "chunk": "chunk-rebuilt.js" }
+        ]))
+        .expect("records json"),
+    )
+    .expect("records rewrite");
+    std::thread::sleep(std::time::Duration::from_millis(25));
+    let resp = file_ep.serve("GET", "src=src/hero.tsx");
+    println!(
+        "  after rebuild: {} {} (the stat pair moved: reloaded, no re-attach)",
+        resp.status,
+        String::from_utf8_lossy(&resp.body)
+    );
+}
+
+/// The profiled-adapter walk: the snapshot base decorated with the
+/// profiler's p50 and the tier map (the record's remaining halves).
+fn walk_profiled_adapter() {
+    let base = SnapshotCostSource::from_pairs([
+        (
+            "src/hero.tsx".to_string(),
+            ComponentCost::bytes_only(4812, 1901, "chunk-abc.js"),
+        ),
+        (
+            "src/counter.svelte".to_string(),
+            ComponentCost::bytes_only(921, 430, "chunk-def.js"),
+        ),
+    ]);
+    let profiled = ProfiledCostSource::from_maps(
+        Arc::new(base) as Arc<dyn CostSource>,
+        [("src/counter.svelte".to_string(), 1.25)],
+        [("src/counter.svelte".to_string(), "L0".to_string())],
+    );
+    let ep = CostEndpoint::new(Arc::new(profiled) as Arc<dyn CostSource>);
+    for src in ["src/counter.svelte", "src/hero.tsx", "src/ghost.tsx"] {
+        let resp = ep.serve("GET", &format!("src={src}"));
+        println!(
+            "  {src}: {} {}",
+            resp.status,
+            String::from_utf8_lossy(&resp.body)
+        );
     }
 }
 
@@ -150,36 +236,10 @@ fn main() {
         String::from_utf8_lossy(&resp.body)
     );
 
-    // 7. The profiler + tier-map adapter (the record's remaining halves):
-    //    the build's snapshot decorated with the render profiler's p50 and
-    //    the pipeline's tier map — the bytes-only record gains the two
-    //    halves, the fully-measured record keeps its own, and a source the
-    //    build never produced stays the documented 404.
     println!("\nprofiled adapter (snapshot + profiler p50 + tier map):");
-    let base = SnapshotCostSource::from_pairs([
-        (
-            "src/hero.tsx".to_string(),
-            ComponentCost::bytes_only(4812, 1901, "chunk-abc.js"),
-        ),
-        (
-            "src/counter.svelte".to_string(),
-            ComponentCost::bytes_only(921, 430, "chunk-def.js"),
-        ),
-    ]);
-    let profiled = ProfiledCostSource::from_maps(
-        Arc::new(base) as Arc<dyn CostSource>,
-        [("src/counter.svelte".to_string(), 1.25)],
-        [("src/counter.svelte".to_string(), "L0".to_string())],
-    );
-    let ep = CostEndpoint::new(Arc::new(profiled) as Arc<dyn CostSource>);
-    for src in ["src/counter.svelte", "src/hero.tsx", "src/ghost.tsx"] {
-        let resp = ep.serve("GET", &format!("src={src}"));
-        println!(
-            "  {src}: {} {}",
-            resp.status,
-            String::from_utf8_lossy(&resp.body)
-        );
-    }
+    walk_profiled_adapter();
+
+    walk_file_backed_feed();
 
     println!("\npipeline:");
     let mut p = Pipeline::default().with_cost_endpoint(Arc::new(ep));
