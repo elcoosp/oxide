@@ -15,10 +15,14 @@
 //! the gate off (the default — the spec defers by default) the registry
 //! is returned unchanged and nothing is written.
 //!
-//! Deliberately queued (recorded in `docs/deviations.md`): the dev-time
-//! warn when a pure-classified component receives `on*` props — the warn
-//! needs the dev transform pipeline's per-component props surface, which
-//! is a separate adoption from the build scan.
+//! The dev-warn half (the row's last thin half, landed here): the dev
+//! server scans the SAME set at boot ([`dev_island_manifest`], read-only
+//! — no side-car, no registry merge) and carries the manifest in
+//! [`crate::esm_dev::EsmDevState`]; the ESM transform pipeline checks
+//! each served module's `on*`-props usage surface against it and logs the
+//! pure-classified mismatches (`AST-ISL-002`). The scan-set rule is this
+//! file's ([`scanned_sources`]), so dev and build can never disagree
+//! about what was scanned.
 
 use crate::*;
 
@@ -109,26 +113,15 @@ fn scan_set(
     files
 }
 
-/// The registry the boot entry hydrates: the config's islands merged with
-/// the auto-discovered interactive files (the §V2-F02 adoption). When the
-/// gate is off the config registry comes back unchanged; when it is on
-/// the scan runs, the side-car lands at `.oxide/island-manifest.json`,
-/// and every file the scanner found interactive joins the registry under
-/// a derived name unless it was already registered.
-pub(crate) fn islands_for_boot(
-    cfg: &oxide_fw_config::OxideConfig,
-    tree: &oxide_fw_router::RouteTree,
+/// The scan set with frameworks resolved and sources read: the
+/// `(rel-path, (framework, source))` map the engine consumes (the module
+/// never touches the filesystem itself). The build side-car and the dev
+/// manifest scan the SAME map — one rule, two consumers.
+pub(crate) fn scanned_sources(
     rootp: &std::path::Path,
-    w: Writer<'_>,
-) -> anyhow::Result<std::collections::BTreeMap<String, oxide_fw_config::IslandSpec>> {
-    let mut merged = cfg.framework.islands.clone();
-    if !cfg.framework.auto_islands {
-        return Ok(merged);
-    }
-    let _ = tree;
+    cfg: &oxide_fw_config::OxideConfig,
+) -> std::collections::BTreeMap<String, (oxide_fw_compiler::Framework, String)> {
     let files = scan_set(rootp, &cfg.routes.dir, &cfg.framework.islands);
-    // The engine consumes (rel-path, (framework, source)); sources are the
-    // file contents (the module never touches the filesystem).
     let project_framework = cfg
         .framework
         .adapter
@@ -155,6 +148,43 @@ pub(crate) fn islands_for_boot(
         let fw = scan_framework_of(&rel, explicit, &project_framework, &source);
         scanned.insert(rel, (fw, source));
     }
+    scanned
+}
+
+/// The dev-boot island manifest (the F02 dev-warn half): the same scan
+/// the build runs, READ-ONLY — no side-car write, no registry merge; the
+/// classification stays the hydration decision's, the warn only reads it.
+/// `None` with the gate off (the default): no auto classification
+/// exists, so there is nothing to warn about.
+pub(crate) fn dev_island_manifest(
+    rootp: &std::path::Path,
+    cfg: &oxide_fw_config::OxideConfig,
+) -> Option<oxide_fw_compiler::IslandManifest> {
+    if !cfg.framework.auto_islands {
+        return None;
+    }
+    let scanned = scanned_sources(rootp, cfg);
+    Some(oxide_fw_compiler::IslandManifest::build(&scanned))
+}
+
+/// The registry the boot entry hydrates: the config's islands merged with
+/// the auto-discovered interactive files (the §V2-F02 adoption). When the
+/// gate is off the config registry comes back unchanged; when it is on
+/// the scan runs, the side-car lands at `.oxide/island-manifest.json`,
+/// and every file the scanner found interactive joins the registry under
+/// a derived name unless it was already registered.
+pub(crate) fn islands_for_boot(
+    cfg: &oxide_fw_config::OxideConfig,
+    tree: &oxide_fw_router::RouteTree,
+    rootp: &std::path::Path,
+    w: Writer<'_>,
+) -> anyhow::Result<std::collections::BTreeMap<String, oxide_fw_config::IslandSpec>> {
+    let mut merged = cfg.framework.islands.clone();
+    if !cfg.framework.auto_islands {
+        return Ok(merged);
+    }
+    let _ = tree;
+    let scanned = scanned_sources(rootp, cfg);
     let manifest = oxide_fw_compiler::IslandManifest::build(&scanned);
     let sidecar = rootp.join(".oxide").join("island-manifest.json");
     std::fs::create_dir_all(rootp.join(".oxide"))?;
@@ -286,5 +316,41 @@ mod tests {
         assert!(!is_client_source("types/routes.d.ts"));
         assert!(is_client_source("routes/index/page.tsx"));
         assert!(is_client_source("routes/blog/Banner.vue"));
+    }
+
+    /// The dev-warn manifest (the F02 dev-warn half): gate off is `None`
+    /// and nothing is written — the dev posture is read-only.
+    #[test]
+    fn dev_manifest_gate_off_is_none_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = cfg_with(false, &[("Counter", "src/islands/counter.tsx")]);
+        let manifest = dev_island_manifest(dir.path(), &cfg);
+        assert!(manifest.is_none(), "{manifest:?}");
+        assert!(!dir.path().join(".oxide/island-manifest.json").exists());
+    }
+
+    /// Gate on: the manifest classifies the same set the build scans,
+    /// read-only — no side-car lands (the build half owns that write).
+    #[test]
+    fn dev_manifest_gate_on_classifies_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("routes")).unwrap();
+        std::fs::write(
+            root.join("routes/counter.tsx"),
+            "export default function C() { const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>{n}</button>; }",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("routes/banner.tsx"),
+            "export default function B() { return <p>hi</p>; }",
+        )
+        .unwrap();
+        let mut cfg = cfg_with(true, &[]);
+        cfg.routes.dir = "routes".to_string();
+        let manifest = dev_island_manifest(root, &cfg).expect("the gate is on");
+        assert!(manifest.get("routes/counter.tsx").unwrap().is_interactive());
+        assert!(!manifest.get("routes/banner.tsx").unwrap().is_interactive());
+        assert!(!root.join(".oxide/island-manifest.json").exists());
     }
 }
