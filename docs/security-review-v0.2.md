@@ -32,15 +32,17 @@ latency concern, not an access-control one.
 | Threat | Control | Where | Pinned by |
 | --- | --- | --- | --- |
 | Guessing ids / reading another user's stream | The stream id is `blake3(request_id ‖ counter)` — a full 256-bit digest, minted per stream and disclosed **only** in the response head (`x-oxide-stream`) of the response that created it; a reattach with an unknown, expired or overflowed id answers `410` (empty body) | `crates/server/src/stream_store.rs` (`stream_id`, `Reattach::Gone`), wired at `crates/cli/src/dispatch/stages/endpoint.rs` (the tee-into-store + head step) | the stream-store TDD pins (reattach-at-end byte-identical, `410` shapes) |
+| Reading a DISCLOSED id from another session | The §13.4 session binding: the tee site mints the buffer BOUND to the original request's hashed session cookie (`CookieBindingSource` — blake3 keyed with a per-boot random key over the named `oxide_session` cookie), and the reattach arm hashes the presented cookie through the SAME boot-owned source; a foreign or missing cookie is the same `Gone` (`410`, empty body) an unknown id gets, so a refusal never confirms the id exists, and the refusal logs one warn that carries the stream id but never the cookie or digest | `crates/server/src/stream_store.rs` (`SessionBinding`, `SessionBindingSource`, `begin_bound`, `get_bound` — the constant-time compare is the crate's SEC-04 helper), wired at `crates/cli/src/dispatch/stages/endpoint.rs` (tee) + `stages/prelude.rs` (reattach), the boot-owned source in `crates/cli/src/serve/streams.rs` | the stream TDD pins (`a_bound_stream_refuses_a_foreign_session`, `the_mismatch_is_indistinguishable_from_an_unknown_id`, `two_sources_with_different_keys_never_agree`, `the_binding_never_carries_the_cookie_value`); the CLI arms compile-verified (V8-linked, riding CI's nextest job) |
 | Unbounded replay buffer (memory DoS) | The store is a bounded buffer; reattach past the buffer's length or past an overflowed buffer is `410` | `stream_store.rs` | the overflow pins |
 | Cross-plane access | The endpoint rides the data plane: the A04 build-header stage gates it like `/__data` | the dispatch stage table | the A04 stage pins |
 
-**Gap (recorded, not shipped):** the spec's R05 control "bind the id to the
-original request's session-cookie hash; mismatch gives 410" is **not**
-implemented — the compensating controls are the 256-bit id entropy and the
-fact that the id is never disclosed outside the creating response. A
-multi-user deployment that treats stream bytes as per-session secret must
-not enable resumable streams until the binding lands (v0.3 candidate).
+**Landed (this diff):** the spec's R05 control "bind the id to the original
+request's session-cookie hash; mismatch gives 410" is implemented — the
+binding source is injectable (`SessionBindingSource`), the default derives
+from the framework's session cookie, and an UNBOUND stream (a deployment
+minting through plain `begin`, or a request with no session at all) keeps
+today's identity-free reattach. The one residual: the CLI arms are
+compile-verified here, their runtime pins ride CI's V8-linked nextest job.
 
 ## 3. `/_oxide/fn/*` — server functions incl. the Rust host (F08)
 
@@ -60,13 +62,15 @@ only. Recorded below.
 | Threat | Control | Where | Pinned by |
 | --- | --- | --- | --- |
 | Query DoS | Per-peer rate limit — `20` requests / `10 s` (`SEARCH_RATE_MAX`/`SEARCH_RATE_WINDOW_SECS`); result cap `MAX_RESULT_LIMIT = 100` (default 10) so one query cannot serialize the whole corpus; non-GET is `405` + `allow: GET` | `crates/server/src/search_endpoint.rs` | the endpoint pins (rate-limit + caps) |
+| Oversized query | The §13.4 cap is a named constant — `MAX_QUERY_LENGTH = 200` BYTES over the raw `q`; over-cap answers the documented plain-text `400` naming the cap, BEFORE the engine runs (the L1 cache key and the engine parse never see the oversized text) | `crates/server/src/search_endpoint.rs` (`MAX_QUERY_LENGTH`, the `search_response` gate) | the endpoint pins (`an_over_cap_query_is_a_400`, `the_cap_boundary_is_inclusive`, `an_over_cap_query_never_reaches_the_engine`) |
 | Engine error leakage | Engine codes map to stable responses: the known `SRC-104` shape is a `400`; any other engine code is a `500` naming the code — a serialization failure is a loud `500` text body, never a silent `200 {null}` | `search_endpoint.rs` (`search_response`) | the error-shape pins |
 | Regex injection | The client static matcher (`packages/core/src/client/searchEngine.ts`) does substring/postings arithmetic only — no regex evaluation of user input; the server engine is fuzzy-substring over the tantivy schema, also not regex | `searchEngine.ts`, `crates/search` | the F09 conformance assertion + engine pins |
 | Client-side posture | Search ships as a plain client module riding the static index — **no WASM**, so the attack surface is the same origin's own JS | `packages/core/src/client/searchEngine.ts` | the `search:` conformance assertion (§22) |
 
-**Gap:** the spec's explicit "query length cap (200)" is not a named
-constant — the rate limit and result cap are the implemented DoS controls;
-a query-length cap is a one-line follow-up recorded below.
+**Landed (this diff):** the spec's explicit "query length cap (200)" is a
+named constant (`MAX_QUERY_LENGTH`) enforced bytes-first in the endpoint's
+gate — the refusal is a client-error `400` that names the cap, and it fires
+before the L1 cache and the engine.
 
 ## 5. Record and replay (F15) — secret leakage
 
@@ -98,18 +102,21 @@ a query-length cap is a one-line follow-up recorded below.
 
 ## 8. Gaps and follow-ups (honest list)
 
-1. **Stream↔session binding** (Section 2): the id is 256-bit and disclosed
-   only to the creating response, but the spec's session-cookie-hash
-   binding is not implemented. Multi-user per-session-secret deployments
-   should keep resumable streams off until it lands.
+1. **Stream↔session binding** (Section 2): **landed (this diff)** — the
+   §13.4 binding rides `StreamStore::begin_bound`/`get_bound` over the
+   injectable `SessionBindingSource` (the default: the framework's
+   `oxide_session` cookie, blake3 keyed per boot); a mismatch is the same
+   `410` an unknown id gets. The CLI arms are compile-verified here; their
+   runtime pins ride CI's V8-linked nextest job.
 2. **Fuzz targets**: `fuzz/` carries `odf_decode`, `path_split`,
    `router_match`, `config_extract`. The spec's `odf_patch` (patch-op
    depth/count limits), `rustfn_shim` (decoder bounds) and `stream_range`
    (reattach arithmetic) targets do not exist yet; the corresponding unit
    pins cover the happy paths and the named refusals (`MAX_DEPTH`,
    `MAX_REFS`, `RawBuf` bounds).
-3. **Search query-length cap** (Section 4): not a named constant; the rate
-   limit + result cap are the live controls.
+3. **Search query-length cap** (Section 4): **landed (this diff)** —
+   `MAX_QUERY_LENGTH = 200` (bytes) is enforced before the engine, with
+   the boundary and never-reaches-the-engine pins.
 4. **`.oxide/records` gitignore**: covered at this repo's roots by the
    `/.oxide/` entries; the create-oxide scaffold's generated gitignore
    must carry the same line — a release-checklist verification, not a code
