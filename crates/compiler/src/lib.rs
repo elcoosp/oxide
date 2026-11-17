@@ -38,6 +38,7 @@ pub mod islands;
 pub mod lexer;
 pub mod migrate;
 pub mod native;
+pub mod props_surface;
 // §V2-C02/C03/C04/C05: the native framework compilers, each behind its
 // feature flag (see `native/mod.rs` for the registry push list).
 #[cfg(feature = "native-solid")]
@@ -75,6 +76,10 @@ pub use migrate::{
 pub use native::{Backend, CompileOutput, CompileRequest, NativeCompiler, NativeRegistry};
 pub use oxc_backend::{
     OxcTransformer, inject_react_refresh, lower_to_js, lower_to_js_with_refresh,
+};
+pub use props_surface::{
+    OnPropsUsage, PureOnPropsWarn, pure_on_props_in_file, pure_on_props_warnings,
+    scan_component_imports, scan_on_props,
 };
 
 pub type Result<T> = std::result::Result<T, OxideError>;
