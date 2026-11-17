@@ -4367,3 +4367,75 @@ built are the export-map pins asserting `dist/`, gitignored on a fresh checkout 
 Known script drift recorded: `count-tests.sh --badge`'s TS half greps the TAP `# pass` summary, which node 24's piped
 reporter does not emit (it prints the spec-reporter `ℹ pass` shape) — the badge's TS value was measured by summing
 the suite summaries directly, and the script's TS arm needs a reporter-shaped grep to work again.
+
+## The R05 implementation gaps close — the stream↔session binding + the search query-length cap (this diff)
+
+**M1 — the §13.4 stream↔session binding** (`crates/server/src/stream_store.rs`
++ the CLI wire): the security table's "bind id to the original request's
+session cookie hash; mismatch gives 410" is implemented as an injectable
+seam, the codebase's standard shape:
+
+- `SessionBinding` — the opaque 32-byte digest newtype; no `PartialEq`
+  (every identity check rides `matches`, the crate's SEC-04
+  `constant_time_eq` — promoted `pub(crate)` so the crate's secret compares
+  keep ONE definition site); a redacted `Debug` (the digest IS the
+  reattach credential).
+- `SessionBindingSource` — the object-safe seam; the default
+  `CookieBindingSource` hashes the named cookie value with blake3 KEYED by
+  a per-boot random key (ring `SystemRandom`, the session codec's RNG):
+  two constructed sources never agree (pinned), so a binding minted by one
+  serve never validates against another's and a leaked digest cannot be
+  replayed offline. An RNG failure at construction is `SEC-SESSION`
+  (the registered session code — no registry row needed).
+- `StreamStore::begin_bound(id, Option<SessionBinding>)` — the tee site
+  mints BOUND to the ORIGINAL request's identity; `begin` keeps the
+  unbound semantics (today's shapes, pinned unchanged).
+  `StreamStore::get_bound(id, Option<&SessionBinding>)` — a mismatch
+  (foreign OR missing cookie) is the same `Reattach::Gone` an unknown id
+  gets (the endpoint's `410` is unchanged, so a refusal never confirms
+  the id exists), with one loud warn per refusal that carries the stream
+  id and NEVER the cookie or digest (the SEC-07 never-logged rule).
+- The CLI wire: `serve/session.rs` gains `SESSION_COOKIE_NAME` (the ONE
+  definition site — the `Set-Cookie` emission and the binding source spell
+  the same constant); `serve/streams.rs`'s `StreamWiring` carries the
+  boot-owned `CookieBindingSource` and delegates through `binding_of`
+  (the stages call the wiring method — no trait import in a stage body);
+  the tee arm (`dispatch/stages/endpoint.rs`) and the reattach arm
+  (`dispatch/stages/prelude.rs`) adopt `begin_bound`/`get_bound`.
+  Both arms are recorded as `split_selfcheck.py` STAGE_RULES entries —
+  `--stages`/`--phases` green (55,496 tokens, zero diffs).
+
+**M2 — the §13.4 search query-length cap**
+(`crates/server/src/search_endpoint.rs`): the spec's "query length cap
+(200)" is the named `MAX_QUERY_LENGTH` constant, enforced BYTES-first in
+`search_response` — before the L1 cache and the engine ever see the text
+(an oversized `q` can never become cache-key material or an engine parse).
+The refusal is the endpoint's plain-text `400` and its body names the cap.
+Pins: over-cap 400, the inclusive boundary (exactly 200 queries, 201
+refuses), and never-reaches-the-engine. The new `search` criterion bench
+measures the refusal path against the L1 hit (session numbers, short-sample
+criterion: `stream_binding/hash` ≈ 93 ns — the keyed hash per reattach;
+`search_gate/over_cap_refusal` ≈ 13.9 µs, dominated by the 400 response
+build, not the gate).
+
+**Micro-debt retired along the way:** `count-tests.sh`'s TS arm greps BOTH
+reporter shapes now (node 24's piped reporter prints the spec-reporter
+`ℹ pass N`; the recorded drift closed — the grep is `(^# pass|ℹ pass)`,
+verified against a live node 24 run); the badge re-measured **2531 → 2542
+Rust** (8 stream pins + 3 search pins; TS unchanged — no TS changes), the
+README badge updated in place.
+
+**Docs drift fixed:** `docs/security-review-v0.2.md`'s Section 2 gap
+flipped to landed (a new threat row: reading a DISCLOSED id from another
+session) and Section 4's gap flipped to landed (the oversized-query row);
+the §8 honest list now names items 1 and 3 as landed with their pins, and
+`docs/spec-v0.2-draft.md`'s R05 row carries the pointer.
+
+**Deliberately not done here (still honest gaps):** the `odf_patch` /
+`rustfn_shim` / `stream_range` fuzz targets (cargo-fuzz is nightly-only —
+out of this sandbox's stable-only gate), the create-oxide scaffold
+gitignore verification (the release checklist's per-app verification), and
+the F02 dev-warn half (the V8-linked dev transform pipeline). The CLI
+stream arms are compile-verified only (`cargo check -p oxide-fw-cli
+--all-targets`); their runtime pins ride CI's nextest job, per the
+recorded convention.
