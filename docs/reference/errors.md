@@ -114,6 +114,8 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DEV-HMR-002` | {} is not imported by any module | — |
 | `DEV-HMR-003` | HMR frame speaks schema v{found}; this build speaks v{} | — |
 | `DEV-NOTIFY` | create watcher: {e} | — |
+| `DEV-OPEN-001` | {file} is not a file the project root owns (the endpoint opens files under the project root only — the path must exist and be a file) | Link only files the project serves — the overlay's targets are sources under the project root; check the path exists and is a file (directories and missing files refuse) |
+| `DEV-OPEN-002` | the editor launch failed: {e} | Set `OXIDE_EDITOR` (or `EDITOR`) to an editor command on the PATH — e.g. `OXIDE_EDITOR='code -g'` for the documented default |
 | `DEV-QR` | QR generation failed: {e} | — |
 | `DEV-RFN-001` | the native fn crate {name} failed to build (cargo build --lib): {tail} | the compile error above is the fix; a successful build must produce the cdylib the [lib] crate-type declares |
 | `DEV-RFN-002` | the rebuilt library's types payload does not parse (the §9.4 id bindings cannot be re-derived): {e} | rebuild with the `export_table!` macro's `oxide_fn_types_json` side export; the loop refuses rather than swap with guessed ids |
