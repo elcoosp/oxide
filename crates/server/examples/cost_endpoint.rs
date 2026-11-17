@@ -22,6 +22,7 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use oxide_fw_server::{
     ComponentCost, CostEndpoint, CostSource, OxideRequest, OxideResponse, Pipeline,
+    SnapshotCostSource,
 };
 
 /// Two records: one fully measured (React-shaped), one bytes-only
@@ -113,6 +114,41 @@ fn main() {
                 .unwrap_or("")
         );
     }
+
+    println!("\nthe production adapter (SnapshotCostSource):");
+    // The build-side records map one-to-one: the bundler's `source_costs`
+    // triple rides `bytes_only` (the render and cache halves belong to
+    // the profiler and the tier map), and the `?src=` spelling is the
+    // `data-ox-src` stamp's. Misses stay the documented 404.
+    let snapshot = SnapshotCostSource::from_pairs([
+        (
+            "src/hero.tsx".to_string(),
+            ComponentCost {
+                bytes: 4812,
+                gzip: 1901,
+                chunk: "chunk-abc.js".into(),
+                render_ms_p50: Some(2.5),
+                cache: Some("L0".into()),
+            },
+        ),
+        (
+            "src/counter.svelte".to_string(),
+            ComponentCost::bytes_only(921, 430, "chunk-def.js"),
+        ),
+    ]);
+    let ep = CostEndpoint::new(Arc::new(snapshot) as Arc<dyn CostSource>);
+    let resp = ep.serve("GET", "src=src/counter.svelte");
+    println!(
+        "  bytes-only hit: {} {}",
+        resp.status,
+        String::from_utf8_lossy(&resp.body)
+    );
+    let resp = ep.serve("GET", "src=src/ghost.tsx");
+    println!(
+        "  miss: {} {}",
+        resp.status,
+        String::from_utf8_lossy(&resp.body)
+    );
 
     println!("\npipeline:");
     let mut p = Pipeline::default().with_cost_endpoint(Arc::new(ep));
