@@ -4552,3 +4552,50 @@ other E10/E11 tails). The CLI pins (the 3 esm-dev warn pins + the 2
 dev-manifest pins + the 2 endpoints-page pins) are compile-verified
 locally (`cargo check -p oxide-fw-cli --all-targets`); their runtime
 rides CI's nextest workspace job, per the recorded convention.
+
+## The WASM plugin `load`/`resolveId` ABI + the compat matrix (SPEC-15.2/15.3, E05 substrate)
+
+**What the spec asks.** The §15.2 hook set usable from every plugin kind, with
+a published compatibility table (`docs/plugin-compat.md`) that tells the truth
+per kind × hook.
+
+**What lands.** `crates/plugin/src/compat.rs`: `SupportLevel` (the four
+published-table markers), `compat(kind, hook)` — the single source of truth,
+reading `Hook::supported_in_bridge` for the JS column and the WASM host's
+landed ABI for the WASM column — and `compat_markdown_table()`, the
+deterministic render the published table embeds byte-identically (pinned by
+`compat_tdd::plugin_compat_doc_embeds_the_generated_table`; the E11
+`doc_table_matches_the_function` pattern). The WASM host gains the two
+option-returning call paths (`call_load_hook`/`call_resolve_hook`, probed as
+`(string) -> option<string>` and `(string, string) -> option<string>`) and
+`missing_hooks()` (the compat runner's `unsupportedHooks`); the object-safe
+[`HookHost`] seam (`lib.rs`) carries the three callable bridges so a pipeline
+programs against `dyn HookHost`.
+
+**Deltas.**
+- The table's WASM `load`/`resolveId` rows flip 🚫 → 🟡 (host-callable, CLI
+  call site pending) and the JS `configureServer`/`cacheHandler` rows flip
+  ✅ → 🚫 (`PLG-HOOK` at load — the code and the legend always said so; the
+  hand-maintained table disagreed).
+- `hook_export_name(Hook::ResolveId)` flips `resolve_id` → `resolve-id`:
+  the component model refuses underscore extern names, so the snake spelling
+  was never exercisable. The other multi-word hook names stay snake (they have
+  no call path yet; their rows remain 🚫 and the rename rides their landing).
+- The WASM `transform` ABI stays `(string) -> string` (not the JS `(code, id)`):
+  the host passes the source, the id rides the call-site closure — recorded
+  here because the table's Notes column carries the JS shape.
+- `HookSig` gained the two option shapes; `load` keeps its non-optional
+  `call_string_hook` path (back-compat for `(string) -> string` exports).
+- The temporary `wat` dev-dependency used to diagnose the canonical-ABI
+  fixtures is gone; the landed fixtures hand-write the canonical ABI
+  (return-pointer convention, `cabi_realloc` bump allocator) with inline WAT.
+
+**Dead deps.** `wit-parser` and `wasmtime-wasi` rode the plugin crate unused
+(the host never opened WASI preopens) — removed from the crate and the
+workspace table (the C01 shed-the-dead-deps precedent).
+
+**Remaining half.** The CLI wire: `build_transform_hook` (crates/cli/src/hooks.rs)
+wraps only `Transform` today; the adoption composes the loaded component's
+`load`/`resolveId` into `BundleOptions.load_hook`/`resolve_hook` (the bundler
+consults both, `lib.rs:772`/`:852`) beside the JS bridge's hooks. V8-link
+cost rides CI per the recorded convention.
