@@ -322,8 +322,25 @@ pub(crate) async fn phase_bundle_client(cx: &mut BuildCtx<'_>) -> anyhow::Result
     // scan let a failed `CMP-SECRET` build look "unchanged" on the next run:
     // `skip_client` was true, the scan saw no chunks, and the build went
     // green without ever re-checking the leaking bundle.
-    if !skip_client && let Err(e) = build_cache::env_store(rootp, "client", &client_fp) {
-        eprintln!("warn: could not store client env fingerprint: {e}");
+    if !skip_client {
+        if let Err(e) = build_cache::env_store(rootp, "client", &client_fp) {
+            eprintln!("warn: could not store client env fingerprint: {e}");
+        }
+        // V2-F17 (the dev feed): persist the cost records beside the client
+        // manifest — the file the serve boot's `FileCostsSource` re-reads per
+        // stat move, so `GET /__oxide/cost?src=` answers the CURRENT build
+        // without re-attaching. A write failure warns and the build
+        // continues: the file is dev-plane telemetry, the endpoint answers
+        // its documented 404s without it. On a fingerprint-match skip the
+        // previous file stays (the bundle is byte-identical, so are its
+        // records).
+        let records = oxide_fw_bundler::cost::source_costs(&client_outcome, rootp);
+        if let Err(e) = oxide_fw_bundler::cost::write_source_costs(
+            &records,
+            &client_out.join("client.costs.json"),
+        ) {
+            eprintln!("warn: could not write client cost records: {e}");
+        }
     }
     // >>> phase-wrapper (not part of the moved body; split_selfcheck --phases strips this block)
     cx.client_outcome = Some(client_outcome);
