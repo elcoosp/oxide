@@ -6,6 +6,12 @@ pub(crate) fn session_ttl_secs() -> u64 {
     SESSION_TTL_SECS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The framework's session cookie name — the ONE definition site (the
+/// `Set-Cookie` emission here and the §13.4 stream binding source the
+/// stream wiring injects both spell it through this constant, so a rename
+/// cannot split the two sides).
+pub(crate) const SESSION_COOKIE_NAME: &str = "oxide_session";
+
 /// Set the session cookie TTL. Called by the CLI at server start from
 /// `cfg.security.session_ttl_secs`.
 pub(crate) fn set_session_ttl(ttl: u64) {
@@ -38,7 +44,7 @@ pub(crate) fn encode_session_cookie(
     }
     match sess.encode(codec) {
         Ok(token) => Some(format!(
-            "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={ttl_secs}"
+            "{SESSION_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={ttl_secs}"
         )),
         Err(e) => {
             tracing::warn!(error = %e.0.message, "session encode failed; cookie not set");
