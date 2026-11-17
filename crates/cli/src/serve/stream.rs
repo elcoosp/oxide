@@ -9,6 +9,12 @@ impl oxide_fw_server::InspectorSnapshot for CliInspector {
     fn render_html(&self) -> String {
         oxide_fw_dev::render_inspector_html(&self.state)
     }
+    fn render_html_search(&self, query: &str) -> String {
+        // §V2-E08 item 2: the `?q=` module-graph search renders through the
+        // dev crate's filtered renderer (the same rows the unfiltered page
+        // carries, narrowed by the arm's decoded query).
+        oxide_fw_dev::render_inspector_html_with_query(&self.state, Some(query))
+    }
 }
 
 /// Construct the production pipeline (§12.1) from config and start serving.
