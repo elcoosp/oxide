@@ -153,14 +153,16 @@ fn comments_strings_and_non_jsx_report_nothing() {
     );
     assert!(
         scan_on_props("const n = 1; export default n;\n").is_empty(),
-        "non-JSX reports nothing: {:?}", scan_on_props("const n = 1; export default n;\n")
+        "non-JSX reports nothing: {:?}",
+        scan_on_props("const n = 1; export default n;\n")
     );
     // A parse failure is not a conservative hit here: the warn surface
     // under-reports by design (a skipped warn costs nothing; a false one
     // trains the developer to ignore the channel).
     assert!(
         scan_on_props("export default function <(").is_empty(),
-        "a parse failure reports nothing: {:?}", scan_on_props("export default function <(")
+        "a parse failure reports nothing: {:?}",
+        scan_on_props("export default function <(")
     );
 }
 
