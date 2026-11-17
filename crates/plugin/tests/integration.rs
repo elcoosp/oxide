@@ -175,7 +175,10 @@ fn chain_orders_pre_then_default_then_post_stable() {
         .collect();
     assert_eq!(load_names, vec!["p5-pre-load"]);
     // a hook nobody declares yields an empty chain
-    assert!(r.chain(Hook::Diagnostics).is_empty());
+    assert!(
+        r.chain(Hook::Diagnostics).is_empty(),
+        "the diagnostics chain must be empty"
+    );
 }
 
 #[test]
@@ -213,7 +216,7 @@ fn manifest(wit_world: &str, capabilities: &[&str], hooks: Vec<Hook>) -> WasmPlu
     WasmPluginManifest {
         name: "acme-img".into(),
         wit_world: wit_world.into(),
-        capabilities: capabilities.iter().map(|s| s.to_string()).collect(),
+        capabilities: capabilities.iter().copied().map(String::from).collect(),
         hooks,
     }
 }
