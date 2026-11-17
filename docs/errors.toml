@@ -369,6 +369,14 @@ message = "HMR frame speaks schema v{found}; this build speaks v{}"
 [DEV-NOTIFY]
 message = "create watcher: {e}"
 
+[DEV-OPEN-001]
+message = "{file} is not a file the project root owns (the endpoint opens files under the project root only — the path must exist and be a file)"
+fix = "Link only files the project serves — the overlay's targets are sources under the project root; check the path exists and is a file (directories and missing files refuse)"
+
+[DEV-OPEN-002]
+message = "the editor launch failed: {e}"
+fix = "Set `OXIDE_EDITOR` (or `EDITOR`) to an editor command on the PATH — e.g. `OXIDE_EDITOR='code -g'` for the documented default"
+
 [DEV-QR]
 message = "QR generation failed: {e}"
 
