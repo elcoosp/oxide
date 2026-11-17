@@ -52,7 +52,7 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `content.collections[].name` — `string` — default —: §16.5: the collection name (also the static JSON index file's stem).
 ### `deploy`
 
-- `deploy` — `object` — default —: V2-F10/F11: the deploy machinery's knobs. Inert at the wiring until the F10 CLI adoption lands (booting the serving pools from dist/ + the F11 releases/ layout, the promote-on-reload, the 30 s expiry task, the F12 brownout trigger); the engine-side default stays the plumbing default and this section is its config face. A window literal that does not parse, a zero window or a zero generation count fails the load (CFG-DEPLOY).
+- `deploy` — `object` — default —: V2-F10/F11: the deploy machinery's knobs. Wired: the serving pools boot from dist/ per generation (the F10 CLI adoption) and `oxide deploy` reads both knobs over the delta/objstore engines (F11); the engine-side default stays the plumbing default and this section is its config face. A window literal that does not parse, a zero window or a zero generation count fails the load (CFG-DEPLOY).
 - `deploy.generations` — `integer` — default `3`: How many past generations stay roll-back-able (the F11 releases/ retention; the spec's N=3 default). CFG-DEPLOY refuses zero.
 - `deploy.skewWindow` — `string` — default `"15m"`: How long a demoted generation keeps serving after the promote — the duration grammar <n>s|m|h|d, plain integers are seconds ('15m' is the spec default). Parsed by parse_duration_secs and validated at load (CFG-DEPLOY); a zero window is refused.
 ### `dev`
@@ -133,7 +133,7 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `modules` — `string[]` — default —: §15.4: distributable modules to install.
 ### `offline`
 
-- `offline` — `object` — default —: V2-F14: the offline-first knobs. Inert at the wiring until the F14 CLI adoption lands (the PWA worker's precache emitting from the client manifest, the client outbox boot); the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).
+- `offline` — `object` — default —: V2-F14: the offline-first knobs. Wired: the CLI emission gate writes dist/sw.js from the produced client manifest and the boot module answers the worker's activate fan-out with a queue flush; the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).
 - `offline.enabled` — `boolean` — default `false`: Master switch. false (the default) installs no service worker and boots no outbox.
 - `offline.outbox` — `boolean` — default `true`: The offline action outbox (packages/core's enqueue/flush, the x-oxide-idem replay header). On inside an enabled section (the spec's example shape); false keeps the precache-only posture.
 - `offline.precache` — `string` — default `"routes"`: The precache breadth: 'routes' caches the shell + the prerendered routes (the navigation-fallback surface), 'all' caches every hashed asset the client manifest carries.
