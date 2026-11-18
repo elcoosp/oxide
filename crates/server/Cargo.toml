@@ -51,6 +51,12 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 # P-12: hot-asset body cache (no blocking re-read per request).
 moka = { workspace = true }
+# V2-F24: the log feed's capture arm (`CaptureLayer`) is a
+# `tracing_subscriber::Layer` — a second read on the event stream the
+# host's subscriber installs. The dev-dep copy the F22 test pins ride
+# is promoted to a regular dep; the render half the CLI installs is
+# unchanged.
+tracing-subscriber = { workspace = true }
 
 [features]
 # V2-F05: exposes the criterion bench harness (the V2-B09 pattern — plain
@@ -102,6 +108,16 @@ required-features = ["bench-util"]
 # like every other criterion bench in the workspace.
 [[bench]]
 name = "trace_export"
+harness = false
+required-features = ["bench-util"]
+
+# V2-F24: criterion bench for the dev-plane log feed (the steady-state
+# ring record at capacity, the capture layer's per-event cost under a
+# live subscriber, the full-window snapshot and the endpoint's serve
+# render), behind the `bench-util` opt-in like every other criterion
+# bench in the workspace.
+[[bench]]
+name = "log_feed"
 harness = false
 required-features = ["bench-util"]
 
