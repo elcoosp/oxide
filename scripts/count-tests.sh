@@ -11,11 +11,14 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # Rust: static count of test attributes (cheap, no toolchain run needed —
-# the badge is a count of test *functions*, not a run result).
+# the badge is a count of test *functions*, not a run result). The tokio
+# pattern accepts the flavoured spelling too (`#[tokio::test(flavor =
+# "multi_thread")]`): 31 of those rode the tree uncounted until the
+# script was fixed to the `(\(|\])` shape.
 rust_count() {
   local bare tokio
   bare=$(grep -rh '#\[test\]' crates/ --include='*.rs' 2>/dev/null | wc -l | tr -d ' ')
-  tokio=$(grep -rh '#\[tokio::test\]' crates/ --include='*.rs' 2>/dev/null | wc -l | tr -d ' ')
+  tokio=$(grep -rhE '#\[tokio::test(\(|\])' crates/ --include='*.rs' 2>/dev/null | wc -l | tr -d ' ')
   echo $((bare + tokio))
 }
 
