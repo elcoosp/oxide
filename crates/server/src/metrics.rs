@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 const BUCKET_BOUNDS_MS: [u64; 10] = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000];
@@ -90,7 +90,7 @@ pub struct Metrics {
     /// F37: the attached cache-plane exposition (`set_cache_plane`) — the
     /// boot's closure renders the cache plane's families per scrape; `None`
     /// (the default) appends nothing.
-    cache_plane: CachePlane(std::sync::RwLock<Option<CachePlaneExposition>>),
+    cache_plane: CachePlane,
 }
 
 /// The F37 slot: a locked option over the attached exposition. The newtype
@@ -108,10 +108,10 @@ pub struct VitalAgg {
 
 /// The attached cache-plane exposition (F37): an `Fn() -> String` the serve
 /// boot fills with the cache plane's Prometheus families. The closure is
-/// opaque (Debug prints attachment only) and the slot is OPTIONAL (Default
-/// renders nothing) — the registry is byte-identical to the pre-slot shape
-/// until a boot attaches a plane.
-#[derive(Default)]
+/// opaque (Debug prints attachment only) and the slot is OPTIONAL (the
+/// wrapping `CachePlane` newtype is `Default` through the `RwLock<Option<_>>`
+/// — `None` renders nothing) — the registry is byte-identical to the
+/// pre-slot shape until a boot attaches a plane.
 struct CachePlaneExposition(Arc<dyn Fn() -> String + Send + Sync>);
 
 impl std::fmt::Debug for CachePlaneExposition {
@@ -140,11 +140,7 @@ impl Metrics {
     /// `set_cache_plane` replaces the first). An unattached registry renders
     /// byte-identical to the pre-slot shape.
     pub fn set_cache_plane(&self, render: impl Fn() -> String + Send + Sync + 'static) {
-        let mut slot = self
-            .cache_plane
-            .0
-            .write()
-            .expect("cache plane lock");
+        let mut slot = self.cache_plane.0.write().expect("cache plane lock");
         *slot = Some(CachePlaneExposition(Arc::new(render)));
     }
 
@@ -386,7 +382,13 @@ impl Metrics {
         // F37: the attached cache-plane exposition renders LAST — the
         // request-plane exposition above stays byte-stable, and one scrape
         // reads both planes. Unattached (the default): nothing appended.
-        if let Some(plane) = self.cache_plane.0.read().expect("cache plane lock").as_ref() {
+        if let Some(plane) = self
+            .cache_plane
+            .0
+            .read()
+            .expect("cache plane lock")
+            .as_ref()
+        {
             out.push_str(&(plane.0)());
         }
         out
