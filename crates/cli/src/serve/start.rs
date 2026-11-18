@@ -521,12 +521,36 @@ pub(crate) async fn start_server_inner_full(
     // recorder rides. `None` for a non-inspector server: the record point
     // is a None check and the endpoint falls through (production
     // byte-identical).
-    let trace_sink: Option<std::sync::Arc<dyn oxide_fw_server::TraceSink>> =
+    //
+    // V2-F22: the export arm. When `OXIDE_TRACE_LOG` opts in, the
+    // pipeline's slot becomes a `FanoutTraceSink` over the ring and the
+    // `TracingTraceSink` — every completed request's row ALSO leaves as
+    // one `tracing::info!` event (the subscriber `init_tracing` installed
+    // at boot renders it: console, `OXIDE_LOG=json`, and with
+    // `OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream). The endpoint keeps
+    // serving the ring, so the wire contract is unchanged. Default off:
+    // the console output stays byte-identical.
+    let trace_ring: Option<std::sync::Arc<oxide_fw_server::RingTraceSink>> =
         with_inspector.then(|| {
             std::sync::Arc::new(oxide_fw_server::RingTraceSink::new(
                 oxide_fw_server::TRACE_FEED_CAPACITY,
-            )) as std::sync::Arc<dyn oxide_fw_server::TraceSink>
+            ))
         });
+    let trace_export: Option<std::sync::Arc<oxide_fw_server::TracingTraceSink>> = with_inspector
+        .then(crate::observability::trace_log_enabled)
+        .filter(|enabled| *enabled)
+        .map(|_| std::sync::Arc::new(oxide_fw_server::TracingTraceSink::new()));
+    let trace_sink: Option<std::sync::Arc<dyn oxide_fw_server::TraceSink>> =
+        match (trace_ring.clone(), trace_export) {
+            (Some(ring), Some(export)) => Some(std::sync::Arc::new(
+                oxide_fw_server::FanoutTraceSink::new(vec![
+                    ring as std::sync::Arc<dyn oxide_fw_server::TraceSink>,
+                    export as std::sync::Arc<dyn oxide_fw_server::TraceSink>,
+                ]),
+            )),
+            (Some(ring), None) => Some(ring),
+            (None, None) | (None, Some(_)) => None,
+        };
     // §16.6: the session codec from `security.sessionKeys`. A malformed key
     // (too short) is a hard config error — silently falling back to an
     // unsigned cookie would be a security downgrade.
@@ -777,9 +801,15 @@ pub(crate) async fn start_server_inner_full(
         // request into the ring, the `GET /__oxide/traces` endpoint serves
         // the same instance. Production never attaches either (the gate is
         // the dev plane's), so the default pipeline stays byte-identical.
+        // V2-F22: the pipeline's slot may be the fanout (ring + tracing,
+        // `OXIDE_TRACE_LOG`); the endpoint stays ring-backed either way —
+        // the wire contract is unchanged.
         trace_sink: trace_sink.clone(),
-        trace_feed: trace_sink
-            .map(|sink| std::sync::Arc::new(oxide_fw_server::TracesEndpoint::new(sink))),
+        trace_feed: trace_ring.map(|ring| {
+            std::sync::Arc::new(oxide_fw_server::TracesEndpoint::new(
+                ring as std::sync::Arc<dyn oxide_fw_server::TraceSink>,
+            ))
+        }),
         page_renderer: None,
         // SPEC-14: the HMR hub's broadcast sender, dev only.
         hmr: hmr.as_ref().map(|h| h.sender()),
