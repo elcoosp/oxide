@@ -5492,3 +5492,60 @@ the filtered-window section in the `trace_feed` example.
   missing consumer example landed (`crates/graph/examples/pipeline.rs` —
   the demand → memoization → invalidation walk over an env source, the
   shape `build_graph.rs` drives in production).
+
+## The cache plane's observability arms land (F30 + F31, 2026-11-18)
+
+**Branch:** `feat/cache-observability-arms` (uncommitted changes; `ship.toml`
++ `.github/pr-body.md` gitignored). **Mint:** the WP table's F30/F31 rows —
+both are the F28 cache observer seam's named follow-ons, so the seam's own
+doc was the work plan.
+
+- **F30, the metrics exporter** (`crates/cache/src/metrics.rs`): the seam
+  doc's "attach a custom impl for the structured end — a metrics exporter"
+  is now an in-crate type. `MetricsCacheObserver` aggregates every completed
+  event into monotone counters (per-tier hits L0/L1/L2, stale hits, misses,
+  sets, deletes, served/stored bytes, invalidations + affected keys);
+  `CacheMetricsSnapshot` is the `Clone`+`Eq`+`Default` value mirror;
+  `render_prometheus` renders the §20 text exposition in the request plane's
+  `Metrics::render` shape. The family prefix is `oxide_cache_plane_*` — the
+  request plane's `oxide_cache_l0_*` page-render rows are a DIFFERENT cache,
+  and the module doc says so, so one scrape carries both without a label
+  collision. Counters SATURATE at `u64::MAX` (`fetch_update` +
+  `saturating_add`) — the pin caught the first draft's `fetch_add` wrap, and
+  a saturated counter reads "at or past the bound" honestly. No new error
+  codes: the seam is infallible (the F21 posture for a seam without
+  refusals). 8 pins in `metrics_tdd` (incl. push/pull parity with `stats()`
+  over real traffic), the `cache_metrics_exporter`/`cache_metrics_render`
+  criterion groups, the `metrics` example.
+
+- **F31, the bounded lossy feed** (`crates/cache/src/feed.rs`): the seam
+  doc's "a heavy consumer should enqueue into its own channel and process
+  elsewhere — the `FileTraceSink` posture is the model" made real.
+  `EventFeed` enqueues owned FIFO `(key, op)` rows behind a bounded queue;
+  the host drains with `try_pop`/`drain` from its own task. The DECISIONS:
+  saturation drops the ARRIVING row (the stream posture — a stalled consumer
+  keeps what it can still receive; a retention ring would silently drop the
+  OLD rows), the FIRST drop leaves one sticky warn under `oxide::cache`
+  (warn state under the same lock as the queue, so two producers
+  saturating together warn exactly once), a zero capacity retains nothing
+  (the `RingLogSink` posture, the warn still fires), and `dropped()` keeps
+  the score. 9 pins in `feed_tdd` (incl. the warn-once capture through a
+  steered `MakeWriter` and the two-producers-vs-draining-consumer honesty),
+  the `cache_event_feed` criterion group, the `event_feed` example.
+
+- **Docs drift fixed (additive).** The `observer` module doc's prescriptions
+  ("a metrics exporter", "a heavy consumer should enqueue…") described
+  consumers that did not exist in the crate — both now point at the in-crate
+  types they name. `crates/cache/README.md` (the crate's rustdoc landing
+  page, `include_str!`'d) never gained the F28 seam in its "What it
+  provides" list — the observability bullet names all four shapes now
+  (pull `stats()`, tracing, metrics, feed). The README badge re-measured
+  2883 → 2904 by `scripts/count-tests.sh` (+21: the 17 TDD pins + the 4
+  module tests).
+
+- **Micro-debt cleaned (additive).** `crates/cache/src/http_handler.rs`'s
+  `invalidate_tag` body serialization carried the last silent
+  `unwrap_or_default()` in the file — the sibling arms were made loud in
+  earlier sessions ("loud, not silent") but this one was missed; the
+  impossible path warns with the code, tag and error now (behavior
+  unchanged: the bool map cannot fail to serialize).
