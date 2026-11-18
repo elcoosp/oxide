@@ -540,16 +540,54 @@ pub(crate) async fn start_server_inner_full(
         .then(crate::observability::trace_log_enabled)
         .filter(|enabled| *enabled)
         .map(|_| std::sync::Arc::new(oxide_fw_server::TracingTraceSink::new()));
+    // V2-F25: the file arm. When `OXIDE_TRACE_FILE` opts in, the dev boot
+    // opens the path (create + append) and the pipeline's slot becomes a
+    // `FanoutTraceSink` over the ring, the `TracingTraceSink` and the
+    // `FileTraceSink` — every completed request's row ALSO appends as one
+    // JSONL line (the same camelCase row shape the endpoint serves; the
+    // line is flushed on record, so a crash cannot lose the already-
+    // recorded rows). The attach is loud: a bad path aborts the boot
+    // rather than silently losing the audit trail. Default off: no file
+    // is written.
+    let trace_file: Option<std::sync::Arc<oxide_fw_server::FileTraceSink>> = match with_inspector
+        .then(crate::observability::trace_file_path)
+        .flatten()
+        .map(|path| oxide_fw_server::FileTraceSink::create(&path))
+    {
+        Some(Ok(sink)) => Some(std::sync::Arc::new(sink)),
+        // The attach is loud: a bad path aborts the boot rather than
+        // silently losing the audit trail (the session-keys posture).
+        Some(Err(e)) => {
+            return Err(anyhow::anyhow!(
+                "OXIDE_TRACE_FILE export cannot be opened: {e}"
+            ));
+        }
+        None => None,
+    };
     let trace_sink: Option<std::sync::Arc<dyn oxide_fw_server::TraceSink>> =
-        match (trace_ring.clone(), trace_export) {
-            (Some(ring), Some(export)) => Some(std::sync::Arc::new(
-                oxide_fw_server::FanoutTraceSink::new(vec![
-                    ring as std::sync::Arc<dyn oxide_fw_server::TraceSink>,
-                    export as std::sync::Arc<dyn oxide_fw_server::TraceSink>,
-                ]),
-            )),
-            (Some(ring), None) => Some(ring),
-            (None, None) | (None, Some(_)) => None,
+        match trace_ring.clone() {
+            Some(ring) => {
+                // The window child stays first (the fanout's snapshot
+                // contract: each child's rows in construction order, the
+                // exporters contributing none — the endpoint renders the
+                // ring's JSON either way).
+                let mut children: Vec<std::sync::Arc<dyn oxide_fw_server::TraceSink>> =
+                    vec![ring.clone() as std::sync::Arc<dyn oxide_fw_server::TraceSink>];
+                if let Some(export) = trace_export {
+                    children.push(export as std::sync::Arc<dyn oxide_fw_server::TraceSink>);
+                }
+                if let Some(file) = trace_file {
+                    children.push(file as std::sync::Arc<dyn oxide_fw_server::TraceSink>);
+                }
+                if children.len() == 1 {
+                    Some(ring as std::sync::Arc<dyn oxide_fw_server::TraceSink>)
+                } else {
+                    Some(std::sync::Arc::new(oxide_fw_server::FanoutTraceSink::new(
+                        children,
+                    )))
+                }
+            }
+            None => None,
         };
     // §16.6: the session codec from `security.sessionKeys`. A malformed key
     // (too short) is a hard config error — silently falling back to an
@@ -810,6 +848,23 @@ pub(crate) async fn start_server_inner_full(
                 ring as std::sync::Arc<dyn oxide_fw_server::TraceSink>,
             ))
         }),
+        // V2-F24 (the dev-plane attach): the log feed rides the same
+        // `with_inspector` gate. `init_tracing` created the ring when the
+        // command was the dev boot and installed the capture layer over
+        // the subscriber it builds — the §20 events the pipeline and the
+        // engine emit land in the window; the endpoint serves the same
+        // instance (the one-instance-two-readers posture the trace feed
+        // rides). `None` for a non-dev boot: no capture layer was
+        // installed, the endpoint stays absent, production is
+        // byte-identical.
+        log_feed: with_inspector
+            .then(crate::observability::log_feed_ring)
+            .flatten()
+            .map(|ring| {
+                std::sync::Arc::new(oxide_fw_server::LogsEndpoint::new(
+                    ring as std::sync::Arc<dyn oxide_fw_server::LogSink>,
+                ))
+            }),
         page_renderer: None,
         // SPEC-14: the HMR hub's broadcast sender, dev only.
         hmr: hmr.as_ref().map(|h| h.sender()),
