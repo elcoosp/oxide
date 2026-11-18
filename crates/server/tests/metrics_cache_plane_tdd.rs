@@ -123,5 +123,8 @@ fn observe_and_render_with_an_attached_plane_coexist() {
         text.contains("oxide_cache_plane_alive 1"),
         "the plane renders under concurrent traffic"
     );
-    assert!(text.contains("oxide_request_duration_ms_bucket"), "the raced route renders");
+    assert!(
+        text.contains("oxide_request_duration_ms_bucket"),
+        "the raced route renders"
+    );
 }
