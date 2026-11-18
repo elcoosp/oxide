@@ -10,6 +10,21 @@
 /// shipped asynchronously). The provider is stored in a process-wide
 /// `OnceLock` so it lives for the process duration — dropping it would
 /// silently close the exporter.
+/// The dev boot's log-feed ring (V2-F24): `init_tracing` creates one when
+/// the command is the dev boot (the capture layer rides the subscriber it
+/// installs), and the serve boot reads the same instance for the
+/// `GET /__oxide/logs` endpoint — the one-instance-two-readers posture
+/// the trace feed rides. `None` for a non-dev command: no capture layer
+/// was installed and the endpoint stays absent (production
+/// byte-identical).
+static LOG_FEED_RING: std::sync::OnceLock<std::sync::Arc<oxide_fw_server::RingLogSink>> =
+    std::sync::OnceLock::new();
+
+/// The ring the dev boot attached (the endpoint's window source).
+pub(crate) fn log_feed_ring() -> Option<std::sync::Arc<oxide_fw_server::RingLogSink>> {
+    LOG_FEED_RING.get().cloned()
+}
+
 pub(crate) fn init_tracing() {
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -22,11 +37,32 @@ pub(crate) fn init_tracing() {
         .map(|v| v.eq_ignore_ascii_case("json"))
         .unwrap_or(false);
 
+    // V2-F24: the dev boot's log-feed capture. When the command is the
+    // dev boot (`set_dev_mode` — the same gate the dev runtime rides,
+    // applied pre-runtime in `apply_startup_env`), one ring is created
+    // here and stashed for the serve boot (the `GET /__oxide/logs`
+    // endpoint serves the same instance). The capture layer is a second
+    // read on the event stream — it changes no rendering, so the console
+    // output stays byte-identical (the F22 posture). Production never
+    // installs the layer.
+    let log_feed_capture: Option<oxide_fw_server::CaptureLayer> = if oxide_fw_server::dev_mode() {
+        let ring = std::sync::Arc::new(oxide_fw_server::RingLogSink::new(
+            oxide_fw_server::LOG_FEED_CAPACITY,
+        ));
+        let _ = LOG_FEED_RING.set(ring.clone());
+        Some(oxide_fw_server::CaptureLayer::new(
+            ring as std::sync::Arc<dyn oxide_fw_server::LogSink>,
+        ))
+    } else {
+        None
+    };
+
     macro_rules! build {
         ($otel:expr) => {{
             let base = tracing_subscriber::registry()
                 .with($otel)
-                .with(env_filter());
+                .with(env_filter())
+                .with(log_feed_capture.clone());
             if json {
                 Box::new(
                     base.with(
@@ -80,6 +116,23 @@ pub(crate) fn trace_log_enabled() -> bool {
     match std::env::var("OXIDE_TRACE_LOG") {
         Ok(value) => !matches!(value.as_str(), "" | "0" | "false" | "off"),
         Err(_) => false,
+    }
+}
+
+/// The trace rows' file-export gate (`OXIDE_TRACE_FILE`, V2-F25): when
+/// set to anything but the falsy spellings (`""`, `0`, `false`, `off`),
+/// the dev boot opens the path (`FileTraceSink::create` — a bad path
+/// aborts the boot) and attaches the sink beside the ring and the
+/// tracing arm — every completed request's row appends as one JSONL
+/// line (the same camelCase row shape the endpoint serves). Default
+/// off: no file is written, and production never attaches (the F21
+/// posture holds).
+pub(crate) fn trace_file_path() -> Option<std::path::PathBuf> {
+    match std::env::var("OXIDE_TRACE_FILE") {
+        Ok(value) if !matches!(value.as_str(), "" | "0" | "false" | "off") => {
+            Some(std::path::PathBuf::from(value))
+        }
+        _ => None,
     }
 }
 
