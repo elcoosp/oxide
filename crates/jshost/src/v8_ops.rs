@@ -17,6 +17,7 @@
 //! produced by the JS render path and land with the streaming render wiring;
 //! a JS caller for those still gets `Op not found` from deno_core.
 
+use crate::CallInput;
 use deno_core::op2;
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -59,13 +60,145 @@ thread_local! {
 
 /// Install the current request's `traceparent` for the worker thread.
 ///
-/// **Not yet called from a live site.** The V8 op args do not carry the
-/// inbound request headers (only the payload does), so the trace id would
-/// have to be threaded through `CallInput` per op. The Node backend already
-/// propagates correctly (the loader payload carries the request headers);
-/// this is the V8 parity follow-up.
+/// §20: called by [`TraceParentGuard::for_call`] — the guard the worker
+/// loop installs around every `V8Msg::Call` — so the `fetch` op can
+/// propagate the request's W3C trace context to every outgoing request.
+/// The value is the extraction over [`crate::CallInput`]
+/// ([`trace_parent_from_call_input`]): the host-threaded `headers` map
+/// first, then the payload's host-validated `trace.traceparent`, then the
+/// payload's raw `headers` pairs. Malformed values are dropped, never
+/// forwarded — the Node worker's `traceparentFromPayload` rule mirrored
+/// for V8 parity.
 pub fn set_trace_parent(value: Option<String>) {
     TRACE_PARENT.with(|c| *c.borrow_mut() = value);
+}
+
+/// The current worker thread's seeded `traceparent`, if any. The read
+/// half of [`set_trace_parent`] — tests and embedder hosts use it to pin
+/// the seed/clear cycle; the `fetch` op reads the private half directly.
+#[must_use]
+pub fn current_trace_parent() -> Option<String> {
+    trace_parent()
+}
+
+/// The W3C Trace Context `traceparent` shape the Node worker's
+/// `TRACEPARENT_RE` accepts, verbatim: `version-traceid-spanid-flags`
+/// with 2/32/16/2 lowercase hex groups. Parity, not breadth — a value
+/// the Node backend drops is dropped here too.
+fn is_w3c_traceparent(value: &str) -> bool {
+    let groups: [&str; 4] = match value.split('-').collect::<Vec<_>>()[..] {
+        [a, b, c, d] => [a, b, c, d],
+        _ => return false,
+    };
+    let lens = [2, 32, 16, 2];
+    groups.iter().zip(lens).all(|(group, len)| {
+        group.len() == len && group.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+    })
+}
+
+/// The request's W3C `traceparent` out of a `CallInput`, or `None` when
+/// the call carries no (valid) trace context.
+///
+/// Extraction order (the map is the host-threaded channel — when it
+/// speaks, it wins):
+///
+/// 1. the `headers` map's `traceparent` entry (case-insensitive key), or
+/// 2. the payload's host-validated `trace.traceparent` (the value the CLI
+///    derives per hop for the worker), or
+/// 3. the payload's raw `headers` pairs (`[["traceparent", …]]`).
+///
+/// A malformed value is DROPPED, never forwarded — garbage must not reach
+/// upstream APM pipelines (S-14 / the Node worker's `traceparentFromPayload`).
+#[must_use]
+pub fn trace_parent_from_call_input(input: &CallInput) -> Option<String> {
+    for (k, v) in &input.headers {
+        if k.eq_ignore_ascii_case("traceparent") {
+            return is_w3c_traceparent(v).then(|| v.to_string());
+        }
+    }
+    trace_parent_from_payload_value(&input.payload)
+}
+
+/// The `CallInput.headers` map the request-driven hosts stamp at boot:
+/// the validated `traceparent` (from the payload's `trace` value, else
+/// its raw `headers` pairs) as the only entry, or an empty map for an
+/// untraced request — nothing is fabricated.
+#[must_use]
+pub fn payload_trace_headers(
+    payload: &serde_json::Value,
+) -> std::collections::BTreeMap<String, String> {
+    let mut map = std::collections::BTreeMap::new();
+    if let Some(tp) = trace_parent_from_payload_value(payload) {
+        map.insert("traceparent".to_string(), tp);
+    }
+    map
+}
+
+/// The extraction over a bare payload value (the hosts' envelopes carry
+/// `trace` / `headers` in the same shape the CLI's payload whitelist
+/// builds, whether the envelope is the payload itself or the render
+/// input nested at `payload.input`).
+fn trace_parent_from_payload_value(payload: &serde_json::Value) -> Option<String> {
+    if let Some(tp) = payload
+        .get("trace")
+        .and_then(|t| t.get("traceparent"))
+        .and_then(|v| v.as_str())
+    {
+        return is_w3c_traceparent(tp).then(|| tp.to_string());
+    }
+    if let Some(pairs) = payload.get("headers").and_then(|v| v.as_array()) {
+        for pair in pairs {
+            if let (Some(k), Some(v)) = (
+                pair.get(0).and_then(|x| x.as_str()),
+                pair.get(1).and_then(|x| x.as_str()),
+            ) && k.eq_ignore_ascii_case("traceparent")
+            {
+                return is_w3c_traceparent(v).then(|| v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// The per-call RAII the worker loop installs around every `V8Msg::Call`:
+/// seed the fetch op's slot from the call's trace context on construction,
+/// clear it on drop. The worker runs one call at a time, so CLEARING —
+/// not restoring — is the right hygiene (the Node worker stashes one
+/// module-level value and clears it after each dispatch); a previous
+/// traced call's value must never leak into the next untraced one on the
+/// reused worker thread.
+pub struct TraceParentGuard {
+    _private: (),
+}
+
+impl TraceParentGuard {
+    /// Seed the slot for `input`'s duration — the extracted value
+    /// ([`trace_parent_from_call_input`]), or `None` to clear a stale one.
+    #[must_use]
+    pub fn for_call(input: &CallInput) -> Self {
+        set_trace_parent(trace_parent_from_call_input(input));
+        Self { _private: () }
+    }
+}
+
+impl Drop for TraceParentGuard {
+    fn drop(&mut self) {
+        set_trace_parent(None);
+    }
+}
+
+/// §20: propagate the seeded inbound trace to an outgoing request's
+/// headers. A caller that already set its own `traceparent` wins (it
+/// knows the span better — the case-insensitive check mirrors HTTP
+/// header semantics). Without a seeded slot the headers are untouched.
+pub fn propagate_trace_parent(headers: &mut Vec<(String, String)>) {
+    if let Some(tp) = trace_parent()
+        && !headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("traceparent"))
+    {
+        headers.push(("traceparent".to_string(), tp));
+    }
 }
 
 fn trace_parent() -> Option<String> {
@@ -220,15 +353,11 @@ pub async fn op_oxide_fetch(
     };
     let mut headers: Vec<(String, String)> =
         serde_json::from_str(&headers_json).unwrap_or_default();
-    // §20: propagate the inbound trace to the outbound request. A caller that
-    // already set its own `traceparent` wins (it knows the span better).
-    if let Some(tp) = trace_parent()
-        && !headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("traceparent"))
-    {
-        headers.push(("traceparent".to_string(), tp));
-    }
+    // §20: propagate the inbound trace to the outbound request. A caller
+    // that already set its own `traceparent` wins (it knows the span
+    // better) — the append rule rides [`propagate_trace_parent`] so the
+    // pins and the example hold the one behavior the op ships.
+    propagate_trace_parent(&mut headers);
     use base64::Engine as _;
     let body = base64::engine::general_purpose::STANDARD
         .decode(&body_b64)
