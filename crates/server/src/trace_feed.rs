@@ -178,8 +178,10 @@ impl TraceSink for RingTraceSink {
     }
 }
 
-/// One row's wire shape — the camelCase record the endpoint serves.
-fn row_json(row: &RequestTrace) -> serde_json::Value {
+/// One row's wire shape — the camelCase record the endpoint serves. The
+/// file export arm re-renders it (V2-F25): one row, one rendering, both
+/// surfaces (the wire identity rule).
+pub(crate) fn row_json(row: &RequestTrace) -> serde_json::Value {
     serde_json::json!({
         "requestId": row.request_id,
         "method": row.method,
