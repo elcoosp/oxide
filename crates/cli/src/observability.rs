@@ -1,5 +1,13 @@
 //! The CLI's tracing setup (§20), split verbatim out of lib.rs by
 //! scripts/split_cli.py (V2-A01).
+//!
+//! The subscriber's filter arrangement (V2-F26): the host filter
+//! (`RUST_LOG`, default `info`) is the registry's global filter by
+//! default; `OXIDE_LOG_FEED_LEVEL` moves it per-layer onto the formatter
+//! and export layers and gives the log-feed capture layer its own floor
+//! — the console stays byte-identical while the dev-plane window widens
+//! past the host filter (see `oxide_fw_server::log_feed`'s module docs
+//! for the seam and the pinned composition).
 
 /// Install the tracing subscriber (§20). Console logging is always on;
 /// OpenTelemetry OTLP export is opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`.
@@ -26,7 +34,7 @@ pub(crate) fn log_feed_ring() -> Option<std::sync::Arc<oxide_fw_server::RingLogS
 }
 
 pub(crate) fn init_tracing() {
-    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::layer::{Layer as _, SubscriberExt};
 
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
     // SPEC-24 / §20: `OXIDE_LOG=json` selects structured JSON log lines; the
@@ -57,24 +65,77 @@ pub(crate) fn init_tracing() {
         None
     };
 
+    // V2-F26: the feed's own level floor (`OXIDE_LOG_FEED_LEVEL`). Set,
+    // the dev boot widens the feed past the host filter: the host filter
+    // rides the formatter and export layers per-layer and the capture
+    // layer admits its own floor — the console stays byte-identical while
+    // the window captures the events the console never renders. Unset
+    // keeps the F24 subscriber shape (the global filter), byte-identical.
+    let feed_floor = feed_filter_level();
+
     macro_rules! build {
         ($otel:expr) => {{
-            let base = tracing_subscriber::registry()
-                .with($otel)
-                .with(env_filter())
-                .with(log_feed_capture.clone());
-            if json {
-                Box::new(
-                    base.with(
-                        tracing_subscriber::fmt::layer()
-                            .with_target(false)
-                            .json()
-                            .flatten_event(true),
-                    ),
-                ) as Box<dyn tracing::Subscriber + Send + Sync>
+            let host = env_filter();
+            if let Some(floor) = feed_floor {
+                // The widening shape: no global filter — the host filter
+                // is per-layer, the feed's floor is the capture layer's
+                // own gate (the gate is load-bearing: with no global
+                // filter the subscriber hands every event to every layer,
+                // and the gate keeps the window exactly as wide as the
+                // floor).
+                let gate =
+                    std::sync::Arc::new(floor) as std::sync::Arc<dyn oxide_fw_server::LogGate>;
+                let capture = log_feed_capture.clone().map(|layer| {
+                    layer.with_gate(gate.clone()).with_filter(
+                        tracing_subscriber::filter::filter_fn(move |meta| gate.admits(meta)),
+                    )
+                });
+                if json {
+                    Box::new(
+                        tracing_subscriber::registry()
+                            .with($otel.with_filter(host.clone()))
+                            .with(capture)
+                            .with(
+                                tracing_subscriber::fmt::layer()
+                                    .with_target(false)
+                                    .json()
+                                    .flatten_event(true)
+                                    .with_filter(host),
+                            ),
+                    ) as Box<dyn tracing::Subscriber + Send + Sync>
+                } else {
+                    Box::new(
+                        tracing_subscriber::registry()
+                            .with($otel.with_filter(host.clone()))
+                            .with(capture)
+                            .with(
+                                tracing_subscriber::fmt::layer()
+                                    .with_target(false)
+                                    .with_filter(host),
+                            ),
+                    ) as Box<dyn tracing::Subscriber + Send + Sync>
+                }
             } else {
-                Box::new(base.with(tracing_subscriber::fmt::layer().with_target(false)))
-                    as Box<dyn tracing::Subscriber + Send + Sync>
+                // The F24 shape: the host filter is the registry's global
+                // filter, the capture layer rides the default gate —
+                // byte-identical to the pre-F26 boot.
+                let base = tracing_subscriber::registry()
+                    .with($otel)
+                    .with(host)
+                    .with(log_feed_capture.clone());
+                if json {
+                    Box::new(
+                        base.with(
+                            tracing_subscriber::fmt::layer()
+                                .with_target(false)
+                                .json()
+                                .flatten_event(true),
+                        ),
+                    ) as Box<dyn tracing::Subscriber + Send + Sync>
+                } else {
+                    Box::new(base.with(tracing_subscriber::fmt::layer().with_target(false)))
+                        as Box<dyn tracing::Subscriber + Send + Sync>
+                }
             }
         }};
     }
@@ -102,6 +163,31 @@ pub(crate) fn init_tracing() {
 pub(crate) fn env_filter() -> tracing_subscriber::EnvFilter {
     tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+}
+
+/// The log feed's own level floor (`OXIDE_LOG_FEED_LEVEL`, V2-F26): when
+/// set to one of the five `tracing` level names (anything but the falsy
+/// spellings `""`/`0`/`false`/`off`), the dev boot widens the feed past
+/// the host filter — the host filter rides the formatter and export
+/// layers per-layer and the capture layer admits its own floor, so the
+/// console stays byte-identical while the window captures the events the
+/// console never renders (a dev loop with the console at `info` and the
+/// feed at `debug`). `None` — unset, a falsy spelling, or an unknown
+/// name (one stderr notice, then the F24 shape) — keeps the subscriber
+/// byte-identical; production never attaches the layer either way.
+fn feed_filter_level() -> Option<oxide_fw_server::LevelFloor> {
+    match std::env::var("OXIDE_LOG_FEED_LEVEL") {
+        Ok(value) if !matches!(value.as_str(), "" | "0" | "false" | "off") => {
+            let floor = oxide_fw_server::LevelFloor::parse(&value);
+            if floor.is_none() {
+                eprintln!(
+                    "oxide: OXIDE_LOG_FEED_LEVEL={value} is not a tracing level; the feed mirrors the host filter"
+                );
+            }
+            floor
+        }
+        _ => None,
+    }
 }
 
 /// The trace rows' export gate (`OXIDE_TRACE_LOG`, V2-F22): when set to
