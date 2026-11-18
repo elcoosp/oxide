@@ -12,9 +12,10 @@
 //! serves the rows as camelCase JSON.
 //!
 //! This example walks the shapes against an in-process ring (no server,
-//! no build data needed): the capture shapes, the eviction, the
-//! endpoint contracts, the filtered window and the pipeline's
-//! one-instance-two-readers attach.
+//! no build data needed): the capture shapes, the admission gate (V2-F26
+//! — the default, the narrowing floor, the widening composition), the
+//! eviction, the endpoint contracts, the filtered window and the
+//! pipeline's one-instance-two-readers attach.
 //!
 //! Run: `cargo run -p oxide-fw-server --example log_feed`
 
@@ -22,8 +23,8 @@ use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
 use oxide_fw_server::{
-    CaptureLayer, LOG_FEED_CAPACITY, LOG_FEED_ENDPOINT_PATH, LogSink, LogsEndpoint, OxideRequest,
-    OxideResponse, Pipeline, RingLogSink,
+    AdmitAll, CaptureLayer, LOG_FEED_CAPACITY, LOG_FEED_ENDPOINT_PATH, LevelFloor, LogGate,
+    LogSink, LogsEndpoint, OxideRequest, OxideResponse, Pipeline, RingLogSink,
 };
 
 /// A minimal GET request helper (the `trace_feed_tdd.rs` shape).
@@ -119,10 +120,118 @@ fn walk_filtered_window(ep: &LogsEndpoint) {
     );
 }
 
+/// The gate walk (V2-F26): the admission seam's three shapes — the
+/// default capture (everything the subscriber admits), the narrowing
+/// floor (events below the floor never join the window), and the
+/// widening composition (the console layer keeps the host filter while
+/// the feed's own floor admits what the console never renders — the
+/// `OXIDE_LOG_FEED_LEVEL` recipe, printed with the console bytes and
+/// the window rows side by side).
+fn walk_gate() {
+    use tracing_subscriber::layer::{Layer as _, SubscriberExt as _};
+
+    let emit = |level: tracing::Level, message: &str| match level {
+        tracing::Level::TRACE => tracing::trace!(target: "oxide_fw_server::demo", "{message}"),
+        tracing::Level::DEBUG => tracing::debug!(target: "oxide_fw_server::demo", "{message}"),
+        tracing::Level::INFO => tracing::info!(target: "oxide_fw_server::demo", "{message}"),
+        tracing::Level::WARN => tracing::warn!(target: "oxide_fw_server::demo", "{message}"),
+        tracing::Level::ERROR => tracing::error!(target: "oxide_fw_server::demo", "{message}"),
+    };
+    let window = |sink: &Arc<RingLogSink>| -> Vec<String> {
+        sink.snapshot().iter().map(|r| r.message.clone()).collect()
+    };
+
+    // The default gate: everything admitted joins (the F24 shape —
+    // `with_gate(AdmitAll)` is spelled out to show the seam; `new` is the
+    // same shape).
+    let sink = Arc::new(RingLogSink::new(8));
+    let layer = CaptureLayer::new(sink.clone() as Arc<dyn LogSink>).with_gate(Arc::new(AdmitAll));
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+        emit(tracing::Level::DEBUG, "debug event");
+        emit(tracing::Level::INFO, "info event");
+    });
+    println!("  default (AdmitAll): {:?}", window(&sink));
+
+    // The narrowing floor: a subscriber with NO filter admits every
+    // level; the gate still keeps the window to the floor and above.
+    let sink = Arc::new(RingLogSink::new(8));
+    let layer = CaptureLayer::new(sink.clone() as Arc<dyn LogSink>)
+        .with_gate(Arc::new(LevelFloor::new(tracing::Level::INFO)));
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+        emit(tracing::Level::DEBUG, "debug event");
+        emit(tracing::Level::INFO, "info event");
+        emit(tracing::Level::ERROR, "error event");
+    });
+    println!(
+        "  LevelFloor::new(INFO): {:?} (debug never joins)",
+        window(&sink)
+    );
+
+    // The widening composition: the console keeps `info`, the feed
+    // captures `debug` — the console bytes and the window rows side by
+    // side. The gate is load-bearing: with no global filter the
+    // subscriber hands every event to every layer, and the gate keeps
+    // the window exactly as wide as the floor.
+    let sink = Arc::new(RingLogSink::new(8));
+    let gate = Arc::new(LevelFloor::new(tracing::Level::DEBUG)) as Arc<dyn LogGate>;
+    let console = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let fmt = tracing_subscriber::fmt::layer()
+        .with_writer(ConsoleWriter(console.clone()))
+        .with_filter(tracing_subscriber::filter::EnvFilter::new("info"));
+    let gated = CaptureLayer::new(sink.clone() as Arc<dyn LogSink>)
+        .with_gate(gate.clone())
+        .with_filter(tracing_subscriber::filter::filter_fn(move |meta| {
+            gate.admits(meta)
+        }));
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(fmt).with(gated), || {
+        emit(tracing::Level::INFO, "console info event");
+        emit(tracing::Level::DEBUG, "feed debug event");
+    });
+    let rendered = String::from_utf8(console.lock().expect("console").clone())
+        .expect("console bytes are UTF-8");
+    println!(
+        "  widening (console info / feed debug): console {:?}, window {:?}",
+        rendered.lines().any(|l| l.contains("console info event")),
+        window(&sink)
+    );
+}
+
+/// A minimal `MakeWriter` over a shared buffer — the console side of the
+/// widening walk (the bytes one fmt render leaves).
+#[derive(Clone)]
+struct ConsoleWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for ConsoleWriter {
+    type Writer = ConsoleSink;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        ConsoleSink(self.0.clone())
+    }
+}
+
+struct ConsoleSink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for ConsoleSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("console buffer")
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn main() {
     println!("== the capture: the layer's shapes ==");
     let sink = Arc::new(RingLogSink::new(8));
     walk_capture(&sink);
+
+    println!("== the gate: the admission seam (V2-F26) ==");
+    walk_gate();
 
     println!("== the eviction: capacity bounds the window ==");
     let tiny = Arc::new(RingLogSink::new(2));
