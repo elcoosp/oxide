@@ -838,6 +838,13 @@ message = "gzip failed: {e}"
 [SRV-CSRF]
 message = "cross-origin request rejected by Origin/Sec-Fetch-Site verification"
 
+[SRV-GEN-DEPTH]
+message = "snapshot tree deeper than 24 at {}"
+fix = "A loader source tree nested past the snapshot's depth guard is a build artifact, not a source; keep the generations snapshot to real source trees"
+
+[SRV-GEN-IO]
+message = "the generation source snapshot's file system step failed ({step} {path}: {e}); the generation downgrades to acceptance-only"
+
 [SRV-NOENC]
 message = "unsupported content encoding `{other}`"
 
