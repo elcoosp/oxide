@@ -64,6 +64,13 @@ pub enum Command {
         /// Without it the dev loop runs until Ctrl-C (§13, not exercised in tests).
         #[arg(long, hide = true)]
         once: bool,
+        /// V2-F28: the dev-plane log feed's level floor, beside the
+        /// `OXIDE_LOG_FEED_LEVEL` env var (the flag wins). One of the five
+        /// `tracing` level names; the console stays byte-identical while
+        /// `GET /__oxide/logs` captures the events the console never renders
+        /// (V2-F26's widening composition, opted in from the boot flag).
+        #[arg(long, value_name = "LEVEL")]
+        log_feed_level: Option<String>,
     },
     /// Build for production (all environments + manifests, §6).
     Build {
@@ -484,6 +491,17 @@ pub fn apply_startup_env(cli: &Cli) {
             // SAFETY: pre-runtime — see the function doc.
             unsafe { std::env::set_var("OXIDE_DEV_NO_ESM", "1") };
         }
+        // V2-F28: `--log-feed-level` beside the `OXIDE_LOG_FEED_LEVEL` env
+        // var (the flag wins). The override atomic is the `set_dev_mode`
+        // shape — a command-level fact decided once pre-runtime; the env
+        // var remains the shell user's spelling.
+        if let Command::Dev {
+            log_feed_level: Some(level),
+            ..
+        } = &cli.command
+        {
+            crate::observability::set_feed_level_override(Some(level.clone()));
+        }
     }
     // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
     // once by the warm-up block in `start_server_inner_full`.
@@ -547,6 +565,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             no_esm,
             include_secrets,
             once,
+            // V2-F28: the flag rode `apply_startup_env` into the override
+            // atomic pre-runtime; the dev boot reads it there.
+            log_feed_level: _,
         } => {
             cmd_dev(
                 &root,
