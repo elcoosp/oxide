@@ -71,6 +71,17 @@ pub enum Command {
         /// (V2-F26's widening composition, opted in from the boot flag).
         #[arg(long, value_name = "LEVEL")]
         log_feed_level: Option<String>,
+        /// V2-F22 polish tail: the dev-plane trace rows' export arm,
+        /// beside the `OXIDE_TRACE_LOG` env var (the flag wins when
+        /// present). Set, the boot attaches the `TracingTraceSink` beside
+        /// the ring — every completed request's row ALSO leaves as one
+        /// `tracing::info!` event (console, `OXIDE_LOG=json`, and with
+        /// `OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream), while the
+        /// endpoint keeps serving the ring. Absent, the env var keeps its
+        /// spelling (the falsy spellings `""`/`0`/`false`/`off` stay off).
+        /// Default off either way: the console output stays byte-identical.
+        #[arg(long)]
+        trace_log: bool,
     },
     /// Build for production (all environments + manifests, §6).
     Build {
@@ -502,6 +513,16 @@ pub fn apply_startup_env(cli: &Cli) {
         {
             crate::observability::set_feed_level_override(Some(level.clone()));
         }
+        // V2-F22 polish tail: `--trace-log` beside the `OXIDE_TRACE_LOG` env
+        // var (the flag wins when present). The override slot is the
+        // `FEED_LEVEL_OVERRIDE` shape — a command-level fact decided once
+        // pre-runtime; the env var remains the shell user's spelling.
+        if let Command::Dev {
+            trace_log: true, ..
+        } = &cli.command
+        {
+            crate::observability::set_trace_log_override(Some(true));
+        }
     }
     // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
     // once by the warm-up block in `start_server_inner_full`.
@@ -568,6 +589,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F28: the flag rode `apply_startup_env` into the override
             // atomic pre-runtime; the dev boot reads it there.
             log_feed_level: _,
+            // V2-F22 polish tail: the flag rode `apply_startup_env` into
+            // the override slot pre-runtime; the boot reads it there.
+            trace_log: _,
         } => {
             cmd_dev(
                 &root,
