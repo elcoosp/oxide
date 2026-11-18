@@ -1,0 +1,115 @@
+//! Criterion bench for the cache plane's hot-key attribution
+//! (`hot_keys.rs`, §20): what the ledger's bounded per-key shape costs
+//! on the two sides that matter.
+//!
+//! 1. The per-event attribution delta — `on_event` for a RESIDENT key
+//!    (one lock, one lookup, one saturating add) versus a NEW key under
+//!    the cap (admission: one insert) versus a NEW key PAST the cap
+//!    (the refusal: the unattributed score, no map mutation). The
+//!    resident arm is the hot L0 hit's whole attribution cost.
+//! 2. The reads — `top(10)` over a 256-key window (the dashboard's
+//!    sample call: one lock, the sort, the owned rows).
+//!
+//! The key pool is built ONCE in setup (never inside a measured loop —
+//! the measured op is the observer's, not a `format!`), and the new-key
+//! arms rotate over it so every iteration is a distinct borrow handed
+//! to the seam (the zero-alloc promise: the event carries the `&str` it
+//! already holds).
+//!
+//! Run: `cargo bench -p oxide-fw-cache --features bench-util --bench hot_keys`
+
+use std::hint::black_box;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use criterion::{Criterion, criterion_group, criterion_main};
+use oxide_fw_cache::{CacheEvent, CacheObserver, CacheOp, HotKeyObserver};
+
+/// The rotation pool: `n` distinct route keys, built once per bench.
+fn key_pool(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("route:/{i:04}")).collect()
+}
+
+fn bench_attribution_delta(c: &mut Criterion) {
+    let mut g = c.benchmark_group("cache_hot_key_attribution");
+    g.sample_size(30);
+    g.measurement_time(Duration::from_secs(3));
+    let keys = key_pool(1024);
+
+    // Resident key: one lock, one lookup, one saturating add — the hot
+    // L0 hit's whole attribution cost.
+    let resident = HotKeyObserver::bounded(1024);
+    let event = CacheEvent {
+        key: "route:/a",
+        op: CacheOp::Set { bytes: 512 },
+    };
+    resident.on_event(&event);
+    g.bench_function("on-event/resident-key", |b| {
+        b.iter(|| resident.on_event(black_box(&event)));
+    });
+
+    // New key under the cap: the admission arm (one insert), rotating
+    // over the pool so every iteration hands the ledger a fresh borrow.
+    let admitting = HotKeyObserver::bounded(usize::MAX);
+    let cursor = AtomicUsize::new(0);
+    g.bench_function("on-event/new-key-admits", |b| {
+        b.iter(|| {
+            let i = cursor.fetch_add(1, Ordering::Relaxed) & 1023;
+            let event = CacheEvent {
+                key: keys[i].as_str(),
+                op: CacheOp::Set { bytes: 512 },
+            };
+            admitting.on_event(black_box(&event));
+        });
+    });
+
+    // New key past the cap: the refusal arm (the unattributed score,
+    // no map mutation) — a tiny bound with the same stream.
+    let refusing = HotKeyObserver::bounded(1);
+    refusing.on_event(&CacheEvent {
+        key: "route:/a",
+        op: CacheOp::Set { bytes: 512 },
+    });
+    let rotating = AtomicUsize::new(0);
+    g.bench_function("on-event/cap-full-refuses", |b| {
+        b.iter(|| {
+            let i = rotating.fetch_add(1, Ordering::Relaxed) & 1023;
+            let event = CacheEvent {
+                key: keys[i].as_str(),
+                op: CacheOp::Set { bytes: 512 },
+            };
+            refusing.on_event(black_box(&event));
+        });
+    });
+
+    g.finish();
+}
+
+fn bench_top_window(c: &mut Criterion) {
+    let mut g = c.benchmark_group("cache_hot_key_attribution");
+    g.sample_size(30);
+    g.measurement_time(Duration::from_secs(3));
+    let keys = key_pool(256);
+
+    // A 256-key window: the dashboard's sample call — one lock, the
+    // deterministic sort, the owned rows.
+    let hot = HotKeyObserver::bounded(1024);
+    for key in &keys {
+        hot.on_event(&CacheEvent {
+            key,
+            op: CacheOp::Set { bytes: 8 },
+        });
+    }
+    g.bench_function("top/256-resident", |b| {
+        b.iter(|| hot.top(black_box(10)));
+    });
+
+    g.finish();
+}
+
+criterion_group!(
+    cache_hot_key_attribution,
+    bench_attribution_delta,
+    bench_top_window
+);
+criterion_main!(cache_hot_key_attribution);
