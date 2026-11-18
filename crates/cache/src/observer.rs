@@ -29,7 +29,12 @@
 //!   that finished, one aggregate `invalidate` row per completed
 //!   [`TieredCache::invalidate_tag`](crate::tiers::TieredCache::invalidate_tag)
 //!   call (the affected-key count rides the row — never one event per
-//!   key). Push-only: no replay of pre-attach traffic.
+//!   key), and one aggregate `coalesce` row per completed single-flight
+//!   flight the host records through
+//!   [`TieredCache::record_coalesced`](crate::tiers::TieredCache::record_coalesced)
+//!   (the join count rides the row — the push twin of the pull channel's
+//!   `coalesced` counter, F33). Push-only: no replay of pre-attach
+//!   traffic.
 //! - [`CacheOp::Hit`] names the tier that SERVED
 //!   ([`Layer`](crate::Layer)`::L0` memory, `L1` disk, `L2` remote) and
 //!   whether the serve was stale (the SWR window). An expired entry is
@@ -93,6 +98,15 @@ pub enum CacheOp {
         /// The number of distinct keys affected.
         count: usize,
     },
+    /// One aggregate row per completed single-flight (§11.3): the owner's
+    /// render finished and `followers` coalesced onto it (the push twin
+    /// of the pull channel's `coalesced` counter, F33). The key names the
+    /// flight's key; a zero-follower flight still completes and still
+    /// records.
+    Coalesce {
+        /// The number of followers that joined the owner's result.
+        followers: u64,
+    },
 }
 
 /// One cache event: the borrowed key plus the op payload. The borrow is
@@ -109,7 +123,7 @@ pub struct CacheEvent<'a> {
 
 impl CacheEvent<'_> {
     /// The stable row name a filter or exporter keys on: `"hit"`,
-    /// `"miss"`, `"set"`, `"delete"`, `"invalidate"`.
+    /// `"miss"`, `"set"`, `"delete"`, `"invalidate"`, `"coalesce"`.
     #[must_use]
     pub fn kind(&self) -> &'static str {
         match self.op {
@@ -118,6 +132,7 @@ impl CacheEvent<'_> {
             CacheOp::Set { .. } => "set",
             CacheOp::Delete => "delete",
             CacheOp::Invalidate { .. } => "invalidate",
+            CacheOp::Coalesce { .. } => "coalesce",
         }
     }
 }
@@ -195,6 +210,12 @@ impl CacheObserver for TracingCacheObserver {
                 count = *count,
                 "cache tag invalidated"
             ),
+            CacheOp::Coalesce { followers } => tracing::debug!(
+                target: "oxide::cache",
+                key = %event.key,
+                followers = *followers,
+                "cache flight coalesced"
+            ),
         }
     }
 }
@@ -209,6 +230,7 @@ mod tests {
         assert_eq!(k(CacheOp::Miss), "miss");
         assert_eq!(k(CacheOp::Set { bytes: 0 }), "set");
         assert_eq!(k(CacheOp::Delete), "delete");
+        assert_eq!(k(CacheOp::Coalesce { followers: 1 }), "coalesce");
         assert_eq!(
             k(CacheOp::Invalidate {
                 tag: "t".into(),
@@ -243,6 +265,10 @@ mod tests {
                 stale: true,
                 bytes: 0,
             },
+        });
+        obs.on_event(&CacheEvent {
+            key: "k",
+            op: CacheOp::Coalesce { followers: 3 },
         });
     }
 }
