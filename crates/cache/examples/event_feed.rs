@@ -44,6 +44,7 @@ fn kind(op: &CacheOp) -> &'static str {
         CacheOp::Set { .. } => "set",
         CacheOp::Delete => "delete",
         CacheOp::Invalidate { .. } => "invalidate",
+        CacheOp::Coalesce { .. } => "coalesce",
     }
 }
 
