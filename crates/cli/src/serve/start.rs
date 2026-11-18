@@ -647,6 +647,11 @@ pub(crate) async fn start_server_inner_full(
     // feature) constructs nothing, byte-identical to the pre-F09 shape.
     #[cfg(feature = "search")]
     let (search_endpoint, hot_search) = build_search_endpoint(&cfg.search, &rootp);
+    // Whether a search endpoint actually opened — read BEFORE
+    // `search_endpoint` moves into the pipeline struct (the render stage's
+    // `search_flag` at the dispatch build reads the fact, not the endpoint).
+    #[cfg(feature = "search")]
+    let search_configured = search_endpoint.is_some();
     // V2-F15: the recorder capture (`record:` config key) and the
     // in-flight map. The observer rides the pipeline (the one
     // `finish_response` funnel); the closure receives the same pair.
@@ -1111,7 +1116,7 @@ pub(crate) async fn start_server_inner_full(
                     Err(e) => {
                         tracing::warn!(
                             code = "SKW-SNAPSHOT",
-                            msg = e,
+                            msg = %e,
                             "skew: the boot generation's loader sources could not be                                  frozen; the two-pool route step stays inert and the boot                                  handles serve every generation"
                         );
                         None
@@ -1191,7 +1196,7 @@ pub(crate) async fn start_server_inner_full(
         // (or a build without the `search` feature) emits nothing, so the
         // client matcher keeps its static-export fallback.
         #[cfg(feature = "search")]
-        search_flag: search_endpoint.as_ref().map(|_| "server" as &'static str),
+        search_flag: search_configured.then_some("server" as &'static str),
         #[cfg(not(feature = "search"))]
         search_flag: None,
     });
@@ -1443,7 +1448,7 @@ pub(crate) async fn cmd_serve(
                                         }
                                         Err(e) => tracing::warn!(
                                             code = "SKW-SNAPSHOT",
-                                            msg = e,
+                                            msg = %e,
                                             "skew: the promoted generation's loader sources could not be frozen; the boot handles keep serving",
                                         ),
                                     }
