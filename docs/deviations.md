@@ -5039,3 +5039,102 @@ default pipeline stays byte-identical.
   would render an always-empty table — the honest attach needs the hub
   sampled per render (a `CliInspector` field) or the literal hoisted,
   which is a boot-order refactor this session kept out of the milestone.
+
+## The §20 trace context gets consumed — the dev-plane trace feed and the `traceresponse` response half land (`feat/dev-plane-trace-feed` + `feat/trace-response-header`, 2026-11-17)
+
+**What lands.**
+
+§20 says "W3C trace context propagated into `fetch` op calls and user
+code". The request half landed long ago — `trace_context.rs` parses the
+`traceparent` header at the pipeline entry and rides
+`OxideRequest.trace` — but the module's own doc recorded the honest
+gap: the context was *available* and *not consumed by any live call
+site* (the `fetch` op itself is the §4.5 stub). Two milestones consume
+it.
+
+**M1 — the dev-plane trace feed (`feat/dev-plane-trace-feed`, V2-F21
+minted).** `crates/server/src/trace_feed.rs`: the `TraceSink` record
+seam (`record` + `snapshot`), `RingTraceSink` (the bounded production
+impl — capacity-capped FIFO ring, oldest evicted at capacity, snapshot
+newest-first, a zero capacity records nothing) and `RequestTrace::of`
+(one completed request's row: request id, method, path, status,
+wall-clock duration, and the parsed trace halves — an untraced request
+records the `None` halves honestly rather than being skipped).
+`TracesEndpoint` answers `GET /__oxide/traces` with the rows as
+camelCase JSON (the §14 convention); a non-GET verb is the documented
+405 + `allow: GET` (the nav/open contract); there is no query
+parameter — the window is the answer. The pipeline records on EVERY
+completed request: the native arms (Raw/Static/LocalImage/RemoteImage/
+ServerFn) and the dispatch arm all call `record_request_trace`, whose
+`Option` check IS the production cost (no sink → no row, no
+allocation, byte-identical). The §V2.J map gained its 13th row
+(`/__oxide/traces`, dev plane, F21; the row-count pin moved 12 → 13)
+and `docs/reference/endpoints.md` regenerated with it. The dev boot
+attaches ONE `RingTraceSink` at `TRACE_FEED_CAPACITY` (256) to both
+halves under the `with_inspector` gate — the WaterfallRecorder's
+one-instance-two-readers posture; production never attaches. The feed's
+snapshot is a point-in-time read taken BEFORE the query's own row
+exists (the row lands on completion — the endpoint never fabricates a
+record for a request whose status is not yet known), so a query answers
+the pre-query state and its own row rides the NEXT query's answer (the
+red-first pin encoded the wrong expectation and was corrected to the
+honest contract). 17 server pins red-first (E0432/E0609/E0599 over
+`RingTraceSink`/`RequestTrace`/`TRACE_FEED_ENDPOINT_PATH`/
+`trace_sink`/`with_trace_*`), the `trace_sink_ring`/
+`trace_feed_snapshot`/`trace_feed_serve` criterion groups, and the
+`trace_feed` walkthrough example.
+
+**M2 — the `traceresponse` response half (`feat/trace-response-header`).**
+`crates/server/src/trace_context.rs`: `to_traceresponse` (the W3C
+Trace Context Level 2 DRAFT's response header — `00-<trace-id>-<response-id>-<flags>`,
+the same grammar as `traceparent`; the draft is NOT a Recommendation,
+recorded here so nobody cites it as one) and `response_span_id` (the
+response span id derives from the SEC-02 per-request id's first 16 hex
+— deterministic per request, unpredictable across requests, no second
+RNG draw; a malformed id degrades to no header, never a fabricated
+span id). The dispatch arm emits it on a traced response: never over a
+header the dispatch already set, never on an untraced request
+(byte-identical), and scoped to the dispatch arm only — the
+framework-rendered path where §20's "user code" answers (static/image/
+server-fn arms stay header-free, recorded as the scoping decision).
+The `trace_context.rs` module doc's "available but not consumed" note
+is now the drift it warns about, and was rewritten to the two live
+consumption paths (the `fetch` op remains the §4.5 stub). 8 pins
+red-first (E0599 over `to_traceresponse`/`response_span_id`), the
+`trace_response_format` criterion group, and the response-half section
+in the `trace_feed` example.
+
+**Deltas recorded.**
+
+- V2-F21 is a MINTED work package: F01–F20 were all taken (F18 the
+  load-bench scripts, F19 the capability-permissions spike, F20
+  attested builds), and the trace feed is new spec work riding §20's
+  observability row rather than a deferral of an existing package.
+- The feed records EVERY completed request — including health probes
+  and the dev-plane endpoint calls themselves. A bounded ring evicts
+  honestly; a dev loop with traffic turns the 256-row window over in
+  seconds and the probes cannot fill it alone. The alternative (skip
+  native arms, skip probes) would need a taxonomy the spec does not
+  define; the window is the honest answer.
+- The record point lives in `serve_request`'s match arms rather than
+  the `finish_response` helpers: the helpers lack the path, the trace
+  context and the start instant, and threading three more parameters
+  through two signatures for one call site each was the worse trade.
+  The dispatch arm records AFTER `finish_response_full_async` so the
+  row's duration covers the full serve path and the status is final.
+- The `traceresponse` id derives from the request id instead of a
+  fresh RNG draw: one response per request, the request id is already
+  SEC-02 CSPRNG, and the deterministic derivation is testable. The
+  emission is gated on the L2 draft's shape (16-hex response id), so a
+  counter-fallback request id (the RNG-failure branch) degrades to no
+  header.
+- Micro-debt cleaned in the same diff: the `crates/cli/Cargo.toml`
+  V2-A02 comment claimed `oxide-fw-dispatch` was "declared but unused"
+  while `commands/replay.rs` impls its `ReplayExecutor` today; the
+  `build_rewrite_map` doc still said "Phase 1b stub: files missing
+  until rolldown lands" after rolldown and the prebundle landed. Docs
+  drift fixed: `.github/PULL_REQUEST_TEMPLATE.md` and
+  `CONTRIBUTING.md` named `cargo audit` while CI's gate is cargo-deny
+  (licenses + advisories); `benchmarks/README.md` documented the
+  criterion gate as `baseline-v01.json … 5` while the live gate is
+  `after-wave-b.json … 10`.
