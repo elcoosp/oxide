@@ -242,6 +242,8 @@ fn snapshot_is_a_value_type() {
             stored_bytes: 0,
             invalidations: 0,
             invalidated_keys: 0,
+            coalesce_events: 0,
+            coalesced_followers: 0,
         }
     );
 
