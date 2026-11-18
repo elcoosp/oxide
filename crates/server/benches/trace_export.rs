@@ -7,7 +7,8 @@
 //! under a live subscriber (field encode + dispatch, the shape the
 //! capture pins render), the no-op branch when no subscriber is
 //! installed, and the dev-boot fanout (ring + tracing) record against a
-//! full ring.
+//! full ring. The V2-F25 file arm rides beside them (`OXIDE_TRACE_FILE`):
+//! the JSONL render + append + flush per record.
 //!
 //! The subscriber is the capture layer the `trace_export_tdd.rs` pins
 //! use (fields visited into a bounded Vec — a fixed-format writer is
@@ -23,7 +24,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use oxide_fw_server::{FanoutTraceSink, RequestTrace, RingTraceSink, TraceSink, TracingTraceSink};
+use oxide_fw_server::{
+    FanoutTraceSink, FileTraceSink, RequestTrace, RingTraceSink, TraceSink, TracingTraceSink,
+};
 use tracing_subscriber::layer::SubscriberExt as _;
 
 /// One pre-built row (the fixture shape the pipeline records — a traced
@@ -139,5 +142,29 @@ fn bench_fanout_record(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_export_record, bench_fanout_record);
+fn bench_file_record(c: &mut Criterion) {
+    // V2-F25: the file arm's per-record cost once `OXIDE_TRACE_FILE`
+    // attaches it — the row render + the append + the flush (the
+    // durability rule: the bytes are on disk before the record returns).
+    // The file lands in a temp dir (the bench measures the write path;
+    // the numbers are informational — the file arm is dev-only and
+    // opt-in).
+    let mut group = c.benchmark_group("trace_export_file");
+    let dir = tempfile::tempdir().expect("temp dir");
+    let sink =
+        FileTraceSink::create(&dir.path().join("traces.jsonl")).expect("the export file opens");
+    group.bench_function("jsonl/flush-per-record", |b| {
+        b.iter(|| {
+            sink.record(black_box(row(0)));
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_export_record,
+    bench_fanout_record,
+    bench_file_record
+);
 criterion_main!(benches);
