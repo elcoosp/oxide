@@ -20,15 +20,24 @@
 //! - [`RingTraceSink`] is the bounded production impl: a capacity-capped
 //!   ring, the oldest row evicted at capacity, the snapshot newest-first.
 //!   A zero capacity records nothing — the honest empty window.
-//! - [`TracesEndpoint`] answers `GET /__oxide/traces` with the ring's
+//! - [`TracesEndpoint`] answers `GET /__oxide/traces` with the window's
 //!   rows as camelCase JSON (the §14 convention). A non-GET verb is the
-//!   documented `405` + `allow: GET` (the nav/open contract). There is
-//!   no query parameter: the window is the answer.
+//!   documented `405` + `allow: GET` (the nav/open contract). The F23
+//!   query seam filters the window — `?status=5xx` (a response-class
+//!   spelling) or `?status=404` (exact), `?method=POST` (case-insensitive
+//!   exact), `?path=/api` (a percent-decoded, segment-honest prefix),
+//!   `?limit=50` (positive, capped at [`TRACE_FEED_CAPACITY`]); the
+//!   filters AND together, the newest-first order is never re-ordered,
+//!   unknown parameters (`token=…` rides the same query) are ignored, and
+//!   an invalid optional value degrades to no filter — never an error
+//!   (the nav endpoint's optional-limit posture). [`TracesEndpoint::serve`]
+//!   stays the no-query whole-window shape, byte-identical to F21's
+//!   contract: the window, filtered, is the answer.
 //!
 //! The endpoint is the WIRE CONTRACT only: the sink behind it is the
 //! injected seam (the dev boot attaches one [`RingTraceSink`] the
 //! pipeline records into and the endpoint serves — the
-//! WaterfallRecorder's one-instance-two-readers posture). The endpoint
+//! `WaterfallRecorder`'s one-instance-two-readers posture). The endpoint
 //! only exists when attached (the inspector's posture):
 //! [`crate::Pipeline::trace_sink`] and [`crate::Pipeline::trace_feed`]
 //! are `None` in the default pipeline — production never attaches, the
@@ -184,6 +193,133 @@ fn row_json(row: &RequestTrace) -> serde_json::Value {
     })
 }
 
+/// One parsed `?status=` spelling: an exact status (`404`) or a response
+/// class (`5xx` — case-insensitive). An unparsable spelling is no filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatusFilter {
+    Exact(u16),
+    /// The class digit (1–5): rows whose status is `digit`00–`digit`99.
+    Class(u8),
+}
+
+impl StatusFilter {
+    fn parse(value: &str) -> Option<Self> {
+        let bytes = value.as_bytes();
+        if bytes.len() != 3 {
+            return None;
+        }
+        let lowered = value.to_ascii_lowercase();
+        if let Some(digit) = lowered
+            .strip_suffix("xx")
+            .and_then(|head| head.chars().next().and_then(|c| c.to_digit(10)))
+            .and_then(|d| u8::try_from(d).ok())
+        {
+            return if (1..=5).contains(&digit) {
+                Some(Self::Class(digit))
+            } else {
+                None
+            };
+        }
+        if bytes.iter().all(u8::is_ascii_digit) {
+            return value.parse::<u16>().ok().map(Self::Exact);
+        }
+        None
+    }
+
+    fn matches(self, status: u16) -> bool {
+        match self {
+            Self::Exact(expected) => status == expected,
+            Self::Class(digit) => status / 100 == u16::from(digit),
+        }
+    }
+}
+
+/// The parsed `GET /__oxide/traces` query: the F23 filter seam over the
+/// window. Parse never fails — every parameter is optional and an
+/// unparsable value degrades to no filter (the nav endpoint's
+/// optional-limit posture), so a malformed query renders the whole
+/// window rather than erroring. The filters AND together.
+///
+/// Unknown parameters are ignored by construction (the parse reads only
+/// the four filter spellings — the D41 `token` rides the same query and
+/// the dev-plane arm consumes it before the endpoint sees anything).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TraceQuery {
+    status: Option<StatusFilter>,
+    method: Option<String>,
+    path_prefix: Option<String>,
+    limit: Option<usize>,
+}
+
+impl TraceQuery {
+    /// Parse the raw query string (`status=5xx&limit=10`) into the
+    /// filter set. The empty string (or `None`, in
+    /// [`TracesEndpoint::serve_query`]) filters nothing.
+    #[must_use]
+    pub fn parse(query: &str) -> Self {
+        let mut parsed = Self::default();
+        for kv in query.split('&') {
+            if let Some(value) = kv.strip_prefix("status=") {
+                parsed.status = StatusFilter::parse(value);
+            } else if let Some(value) = kv.strip_prefix("method=") {
+                parsed.method = (!value.is_empty()).then(|| value.to_ascii_uppercase());
+            } else if let Some(value) = kv.strip_prefix("path=") {
+                let decoded = crate::percent_decode(value);
+                parsed.path_prefix = (!decoded.is_empty()).then_some(decoded);
+            } else if let Some(value) = kv.strip_prefix("limit=") {
+                // Positive, capped at the default window (the nav
+                // endpoint's `?limit=` shape: a bigger number cannot
+                // out-render the ring, a zero or unparsable one is no
+                // limit).
+                parsed.limit = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|l| *l > 0)
+                    .map(|l| l.min(TRACE_FEED_CAPACITY));
+            }
+        }
+        parsed
+    }
+
+    /// Does one row pass every filter?
+    #[must_use]
+    pub fn matches(&self, row: &RequestTrace) -> bool {
+        self.status.as_ref().is_none_or(|f| f.matches(row.status))
+            && self
+                .method
+                .as_deref()
+                .is_none_or(|m| row.method.eq_ignore_ascii_case(m))
+            && self
+                .path_prefix
+                .as_deref()
+                .is_none_or(|p| path_prefix_matches(&row.path, p))
+    }
+
+    /// The render cap: the parsed `?limit=`, or the default window when
+    /// unlimited (the window itself never exceeds the ring's capacity,
+    /// so the cap never clips an unfiltered window).
+    #[must_use]
+    pub fn limit(&self) -> usize {
+        self.limit.unwrap_or(TRACE_FEED_CAPACITY)
+    }
+
+    /// Was no positive `?limit=` parsed? (A zero or unparsable limit is
+    /// no limit — the whole filtered window renders.)
+    #[must_use]
+    pub fn is_unlimited(&self) -> bool {
+        self.limit.is_none()
+    }
+}
+
+/// The segment-honest prefix match: `/api` matches `/api/x` but not
+/// `/apiology`; `/api/` matches `/api/…`; the exact path matches itself.
+fn path_prefix_matches(path: &str, prefix: &str) -> bool {
+    if !path.starts_with(prefix) {
+        return false;
+    }
+    path.len() == prefix.len() || prefix.ends_with('/') || path.as_bytes()[prefix.len()] == b'/'
+}
+
 /// The endpoint state: the injected sink (the same instance the pipeline
 /// records into — the dev boot attaches both halves of one
 /// [`RingTraceSink`]).
@@ -203,13 +339,32 @@ impl TracesEndpoint {
     /// reaches this module).
     ///
     /// - non-`GET` → `405` + `allow: GET` (the nav/open contract).
-    /// - a `GET` → `200` JSON `{"traces": [...]}`, newest row first.
+    /// - a `GET` → `200` JSON `{"traces": [...]}`, newest row first, the
+    ///   WHOLE window — the F21 contract, byte-identical to serving no
+    ///   query ([`TracesEndpoint::serve_query`] with `None`).
     #[must_use]
     pub fn serve(&self, method: &str) -> OxideResponse {
+        self.serve_query(method, None)
+    }
+
+    /// The F23 filtered shape: the same contract with the query applied
+    /// — the window, filtered, is the answer. `query` is the raw query
+    /// string (everything after the `?`; `None` is the unfiltered
+    /// whole-window render above). See [`TraceQuery`] for the filter
+    /// spellings and the degrade-to-no-filter posture.
+    #[must_use]
+    pub fn serve_query(&self, method: &str, query: Option<&str>) -> OxideResponse {
         if !method.eq_ignore_ascii_case("GET") {
             return error_response(405, "the trace feed answers GET", Some(("allow", "GET")));
         }
-        let rows = self.sink.snapshot();
+        let parsed = query.map_or_else(TraceQuery::default, TraceQuery::parse);
+        let rows: Vec<RequestTrace> = self
+            .sink
+            .snapshot()
+            .into_iter()
+            .filter(|row| parsed.matches(row))
+            .take(parsed.limit())
+            .collect();
         tracing::info!(rows = rows.len(), "trace feed served");
         OxideResponse::json(
             200,
