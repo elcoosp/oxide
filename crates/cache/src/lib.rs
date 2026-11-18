@@ -3,15 +3,17 @@
 //! oxide-fw-cache — L0/L1/L2 tiers, tags, single-flight, handlers (spec §11).
 //!
 //! - L0: full response (HTML, headers, tags) — Rust, no JS on hit.
-//! - L1: data from `cache()` / `'use cache'` (ODF bytes).
+//! - L1: data from `cache()` / `` `'use cache'` `` (ODF bytes).
 //! - L2: outbound fetch memoization within a request + optional cross-request.
 //!
 //! Semantics (§11.3): TTL, stale-while-revalidate, stale-if-error, single-flight
 //! coalescing, soft/hard tag invalidation, distributed invalidation via pub/sub,
-//! build seeding, HTTP headers (Cache-Control, ETag, Vary, Last-Modified) + 304.
+//! build seeding, HTTP headers (`Cache-Control`, `ETag`, `Vary`,
+//! `Last-Modified`) + 304.
 //!
 //! Submodules: [`tiers`] (memory/disk/tiered store, §11.2), [`single_flight`]
-//! (coalescing, §11.3), [`http`] (Cache-Control/ETag/304 + fetch memo).
+//! (coalescing, §11.3), [`http`] (Cache-Control/ETag/304 + fetch memo),
+//! [`observer`] (the §20 push seam: one callback per completed cache event).
 
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -21,6 +23,7 @@ pub mod codec;
 pub mod http;
 pub mod http_handler;
 pub mod keyhash;
+pub mod observer;
 pub mod single_flight;
 pub mod tiers;
 
@@ -31,6 +34,7 @@ pub use http::{
 };
 pub use http_handler::HttpCacheHandler;
 pub use keyhash::{KeyStr, key_of};
+pub use observer::{CacheEvent, CacheObserver, CacheOp, TracingCacheObserver};
 pub use single_flight::{FlightOwnerGuard, FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
 
