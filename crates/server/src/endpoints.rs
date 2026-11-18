@@ -138,6 +138,13 @@ pub const ENDPOINT_MAP: &[EndpointRow] = &[
         purpose: "Recent-request trace feed over the §20 context; the window answers filtered (?status=, ?method=, ?path=, ?limit=; dev-token guarded)",
     },
     EndpointRow {
+        path: "/__oxide/logs",
+        method: "GET",
+        plane: EndpointPlane::Dev,
+        work_packages: "F24",
+        purpose: "Recent log-event feed over the capture layer; the window answers filtered (?level=, ?target=, ?q=, ?limit=; dev-token guarded)",
+    },
+    EndpointRow {
         path: "/__oxide",
         method: "GET",
         plane: EndpointPlane::Dev,
@@ -204,7 +211,7 @@ mod tests {
     /// no blank cells for the docs-check gate to render.
     #[test]
     fn every_row_is_complete() {
-        assert_eq!(ENDPOINT_MAP.len(), 13, "the spec's map has 13 rows");
+        assert_eq!(ENDPOINT_MAP.len(), 14, "the spec's map has 14 rows");
         for row in ENDPOINT_MAP {
             assert!(!row.path.is_empty());
             assert!(!row.method.is_empty());
