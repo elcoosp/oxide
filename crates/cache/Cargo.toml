@@ -73,6 +73,14 @@ name = "feed"
 harness = false
 required-features = ["bench-util"]
 
+# The posture pull's two costs (§20): the snapshot walk over the tier
+# state (memory-only vs the full stack) and the gauge render's stability
+# across the posture state.
+[[bench]]
+name = "health"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
