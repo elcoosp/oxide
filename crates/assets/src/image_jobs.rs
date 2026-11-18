@@ -92,13 +92,41 @@ impl ImageCas for DirImageCas {
     }
 
     fn put(&self, key: &str, bytes: Arc<Vec<u8>>) {
-        if std::fs::create_dir_all(&self.root).is_err() {
+        // The CAS is best-effort by contract (a missing variant is a
+        // cache miss that re-encodes), but the gap must be VISIBLE — the
+        // house convention is loud, not silent — else a disk problem
+        // burns the encode lanes on every request invisibly.
+        if let Err(e) = std::fs::create_dir_all(&self.root) {
+            tracing::warn!(
+                code = "AST-JOBS",
+                root = %self.root.display(),
+                error = %e,
+                "the image CAS root could not be created; variants will not persist"
+            );
             return;
         }
         let path = self.path_for(key);
         let tmp = self.root.join(format!(".{key}.tmp"));
-        if std::fs::write(&tmp, bytes.as_ref()).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
+        if let Err(e) = std::fs::write(&tmp, bytes.as_ref()) {
+            tracing::warn!(
+                code = "AST-JOBS",
+                key = %key,
+                error = %e,
+                "the image variant's scratch write failed; serving will re-encode"
+            );
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            tracing::warn!(
+                code = "AST-JOBS",
+                key = %key,
+                error = %e,
+                "the image variant's final rename failed; serving will re-encode"
+            );
+            // A failed rename leaves the scratch file beside its target —
+            // debris the next put overwrites as the scratch name (never
+            // read), so this removal is hygiene, not correctness.
+            let _ = std::fs::remove_file(&tmp);
         }
     }
 }
