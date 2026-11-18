@@ -18,7 +18,7 @@ Every box must be ticked before review. CI enforces the same gates.
 - [ ] `cargo fmt --all --check`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
 - [ ] `cargo nextest run --workspace --no-fail-fast`
-- [ ] `cargo audit` (exit 0)
+- [ ] cargo-deny (licenses + advisories, exit 0)
 - [ ] `pnpm -r --filter '!./packages/oxide-website' --filter '!./examples/*' run build`
 - [ ] Adapter tests (core, react, vue, svelte, solid)
 - [ ] `pnpm -C conformance test`
