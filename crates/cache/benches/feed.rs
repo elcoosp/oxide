@@ -8,6 +8,9 @@
 //!    state is a counter add, not a render).
 //! 2. The consumer side — `try_pop` and the batch `drain` over a full
 //!    queue, the loop a host's task runs to move rows off-process.
+//! 3. The gate's two arms (F35) — the admit path's delta over the
+//!    ungated push (the predicate call before the push) and the reject
+//!    path's floor (the predicate call, no owned row, no lock).
 //!
 //! Run: `cargo bench -p oxide-fw-cache --features bench-util --bench feed`
 
@@ -16,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use oxide_fw_cache::{CacheEvent, CacheObserver, CacheOp, EventFeed};
+use oxide_fw_cache::{CacheEvent, CacheObserver, CacheOp, EventFeed, KindGate};
 
 fn bench_feed_producer(c: &mut Criterion) {
     let mut g = c.benchmark_group("cache_event_feed");
@@ -32,7 +35,7 @@ fn bench_feed_producer(c: &mut Criterion) {
                 key: black_box("route:/a"),
                 op: CacheOp::Set { bytes: 512 },
             });
-        })
+        });
     });
 
     // Saturated: the drop path (queue pinned full; every arrival drops).
@@ -48,7 +51,7 @@ fn bench_feed_producer(c: &mut Criterion) {
                 key: black_box("route:/a"),
                 op: CacheOp::Set { bytes: 512 },
             });
-        })
+        });
     });
 
     g.finish();
@@ -80,7 +83,7 @@ fn bench_feed_consumer(c: &mut Criterion) {
                 }
             },
             criterion::BatchSize::SmallInput,
-        )
+        );
     });
 
     // The batch arm: one drain call empties the full queue.
@@ -102,11 +105,52 @@ fn bench_feed_consumer(c: &mut Criterion) {
                 black_box(rows.len());
             },
             criterion::BatchSize::SmallInput,
-        )
+        );
     });
 
     g.finish();
 }
 
-criterion_group!(bench_feed, bench_feed_producer, bench_feed_consumer);
+fn bench_feed_gate(c: &mut Criterion) {
+    let mut g = c.benchmark_group("cache_event_feed_gate");
+    g.sample_size(30);
+    g.measurement_time(Duration::from_secs(3));
+
+    let event = CacheEvent {
+        key: "route:/a",
+        op: CacheOp::Set { bytes: 512 },
+    };
+    let rejected = CacheEvent {
+        key: "route:/a",
+        op: CacheOp::Miss,
+    };
+
+    // The admit arm: the gate's predicate call before the ungated push —
+    // the delta over `on-event/roomy` is the narrowing's price.
+    let gated = EventFeed::gated(1024, Arc::new(KindGate::only(&["set"])));
+    let admitted_obs: Arc<dyn CacheObserver> = gated.clone();
+    g.bench_function("on-event/gated/admitted", |b| {
+        b.iter(|| {
+            admitted_obs.on_event(black_box(&event));
+            while gated.try_pop().is_some() {}
+        });
+    });
+
+    // The reject arm: the predicate call, no owned row, no lock — the
+    // floor a narrow watcher pays for the hot rows it declines.
+    let narrow = EventFeed::gated(1024, Arc::new(KindGate::only(&["invalidate"])));
+    let narrow_obs: Arc<dyn CacheObserver> = narrow.clone();
+    g.bench_function("on-event/gated/rejected", |b| {
+        b.iter(|| narrow_obs.on_event(black_box(&rejected)));
+    });
+
+    g.finish();
+}
+
+criterion_group!(
+    bench_feed,
+    bench_feed_producer,
+    bench_feed_consumer,
+    bench_feed_gate
+);
 criterion_main!(bench_feed);
