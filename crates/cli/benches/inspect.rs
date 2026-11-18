@@ -6,7 +6,8 @@
 //! Run with `cargo bench -p oxide-fw-cli --features bench-util --bench
 //! inspect` (the bench-util opt-in keeps plain `cargo test` off criterion).
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 /// A PATH-shaped fixture: a few plausible bin dirs (the benches run with
 /// the developer's real PATH inherited, so the numbers move with the
