@@ -515,6 +515,10 @@ pub fn apply_startup_env(cli: &Cli) {
     }
 }
 
+/// Entry point used by both `main.rs` and tests.
+///
+/// Runs [`run_with_writer`] into a buffer, then flushes it to stdout (so tests can
+/// capture tables via [`run_with_writer`] while the binary keeps its real stdout).
 pub async fn run(cli: Cli) -> anyhow::Result<i32> {
     init_tracing();
     let mut buf: Vec<u8> = Vec::new();
