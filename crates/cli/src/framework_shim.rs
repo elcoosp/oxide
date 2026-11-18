@@ -396,6 +396,16 @@ pub struct FrameworkStack {
     /// the server built its own `TieredCache` and the worker had a second
     /// one, so they could not see each other's invalidations.
     pub cache_tier: Option<Arc<dyn oxide_fw_cache::CacheHandler>>,
+    /// F36: the TYPED half of `cache_tier` — the erased handler cannot name
+    /// `record_coalesced`, and the render stage's flight owner records the
+    /// publish count through this handle (the F33 emitter's live call
+    /// site). `Some` exactly when `cache_tier` is (both wrap one tier).
+    pub cache_tier_typed: Option<Arc<oxide_fw_cache::TieredCache>>,
+    /// F37: the §20 exporter attached over `cache_tier_typed` at
+    /// construction — the handle the serve boot hands to
+    /// `Metrics::set_cache_plane` so the `/_oxide/metrics` scrape renders
+    /// the `oxide_cache_plane_*` families beside the request-plane rows.
+    pub cache_exporter: Option<Arc<oxide_fw_cache::MetricsCacheObserver>>,
     /// §6.4: the component source handed to the worker's resolver. Dev fills
     /// `sources`; prod leaves it empty and the renderer derives the generated
     /// SSR entry from the project root.
@@ -411,6 +421,8 @@ impl FrameworkStack {
             pool: None,
             tooling_pool: None,
             cache_tier: None,
+            cache_tier_typed: None,
+            cache_exporter: None,
             component_source: Arc::new(std::sync::RwLock::new(
                 oxide_fw_jshost::ComponentSource::default(),
             )),
@@ -631,11 +643,20 @@ pub async fn build_framework_stack(
         // §11.2: the remote tier. `remote_cache_handler` builds the real
         // driver for http/redis/s3; memory/disk fall through to the local
         // tier the caller already materialized (None).
-        match remote_cache_handler(cache_handler).await {
-            Some(remote) => Arc::new(tier.with_remote(remote)),
-            None => Arc::new(tier),
-        }
-    };
+        // F36/F37: the concrete tier stays TYPED on the stack (the erased
+        // handler cannot name `record_coalesced`) and the §20 exporter
+        // attaches at construction — one tier, both halves.
+        let cache_exporter: Arc<oxide_fw_cache::MetricsCacheObserver> =
+            Arc::new(oxide_fw_cache::MetricsCacheObserver::new());
+        let cache_tier_typed: Arc<oxide_fw_cache::TieredCache> = {
+            let tier = match remote_cache_handler(cache_handler).await {
+                Some(remote) => tier.with_remote(remote),
+                None => tier,
+            };
+            Arc::new(tier.with_observer(Arc::clone(&cache_exporter) as Arc<dyn oxide_fw_cache::CacheObserver>))
+        };
+        let cache_tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+            Arc::clone(&cache_tier_typed) as Arc<dyn oxide_fw_cache::CacheHandler>;
 
     // PERF-05: the `fetch` op handler (SSRF-hardened, backed by oxide-fw-server).
     let fetch_handler: Arc<dyn oxide_fw_jshost::FetchHandler> = Arc::new(CliFetchHandler {
@@ -842,6 +863,8 @@ pub async fn build_framework_stack(
         // BUG-02: hand the shared cache tier back to the caller so the L0
         // response cache wraps the *same* handler the worker uses.
         cache_tier: Some(Arc::clone(&cache_tier)),
+        cache_tier_typed: Some(Arc::clone(&cache_tier_typed)),
+        cache_exporter: Some(cache_exporter),
         component_source,
     }
 }
