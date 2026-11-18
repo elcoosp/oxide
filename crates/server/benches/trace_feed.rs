@@ -119,6 +119,37 @@ fn bench_serve(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_serve_query(c: &mut Criterion) {
+    // The F23 filtered window: the per-query cost of the filter walk
+    // over the full snapshot (parse + match + take) — the shape a
+    // consumer's `?status=5xx&limit=50` poll pays against a busy window.
+    let sink = Arc::new(RingTraceSink::new(256)) as Arc<dyn TraceSink>;
+    for i in 0..256 {
+        sink.record(row(i));
+    }
+    let ep = TracesEndpoint::new(sink);
+    let mut group = c.benchmark_group("trace_feed_query");
+    group.bench_function("unfiltered/no-query", |b| {
+        b.iter(|| {
+            let resp = ep.serve_query(black_box("GET"), None);
+            black_box(resp.status);
+        });
+    });
+    group.bench_function("filtered/status-and-limit", |b| {
+        b.iter(|| {
+            let resp = ep.serve_query(black_box("GET"), Some("status=5xx&limit=50"));
+            black_box(resp.status);
+        });
+    });
+    group.bench_function("filtered/method-and-path", |b| {
+        b.iter(|| {
+            let resp = ep.serve_query(black_box("GET"), Some("method=GET&path=/routes"));
+            black_box(resp.status);
+        });
+    });
+    group.finish();
+}
+
 fn bench_traceresponse_format(c: &mut Criterion) {
     // The §20 response half (V2-F21): the `traceresponse` emission a
     // traced dispatch response pays — the format render plus the
@@ -141,6 +172,7 @@ criterion_group!(
     bench_ring_record,
     bench_snapshot,
     bench_serve,
+    bench_serve_query,
     bench_traceresponse_format
 );
 criterion_main!(benches);
