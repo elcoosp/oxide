@@ -5549,3 +5549,76 @@ doc was the work plan.
   earlier sessions ("loud, not silent") but this one was missed; the
   impossible path warns with the code, tag and error now (behavior
   unchanged: the bool map cannot fail to serialize).
+
+## The cache plane's posture pull and the coalesce parity row land (F32 + F33, 2026-11-18)
+
+**Branch:** `feat/cache-plane-health-and-coalesce` (uncommitted changes;
+`ship.toml` + `.github/pr-body.md` gitignored). **Mint:** the WP table's
+F32/F33 rows — F32 completes the §20 pull side the F28/F30/F31 push arms
+left unbalanced, F33 closes the one row class the push channel still could
+not see.
+
+- **F32, the posture pull** (`crates/cache/src/health.rs`): `stats()` counts
+  events and the F30 exporter aggregates them, but neither answers an
+  operator's boot probe — "what is this cache stack": which tiers are
+  attached, what each resident tier holds, the tag-index pressure, whether
+  the observability seam itself is wired. `TieredCache::health()` samples
+  every tier's live state into one value-shaped `CacheHealth`
+  (`Clone`+`Eq`+`Default`+serde). Nothing is fabricated: an unattached tier
+  reads `false`/`0`/`None`. The remote tier is an opaque
+  `Arc<dyn CacheHandler>` — its identity rides the new defaulted
+  `CacheHandler::handler_kind` introspection method (`"tiered"`, `"http"`,
+  behind their features `"redis"`/`"s3"`, `"custom"` for host drivers), the
+  trait seam that lets the posture name the driver without widening the
+  trait's protocol surface. `render_prometheus` renders the §20 exposition
+  in the F30 shape with GAUGE TYPEs — a scrape reads current posture, not
+  deltas since attach, and the metric kind is what separates the two
+  `oxide_cache_plane_*` halves on one scrape. The remote driver's kind is
+  intentionally NOT a label: the kind is a per-stack constant the snapshot
+  carries, and the numeric exposition stays stable when a host swaps
+  drivers underneath. No error codes: the seam is infallible (the F21
+  posture). 13 pins in `health_tdd` (incl. the exact `stats()` parity on
+  the memory plane, the introspection table with the redis/s3 drivers
+  feature-gated the way their suites gate, the byte-equal deterministic
+  render, the JSON round-trip with the entry-weight rule documented), the
+  `cache_health_snapshot`/`cache_health_render` criterion groups, the
+  `health` example.
+
+- **F33, the coalesce parity row** (`observer.rs` + `tiers.rs` +
+  `metrics.rs`): the pull channel's `coalesced` counter had no push twin,
+  and `record_coalesced` had NO production caller — only an in-crate test
+  fed it while its doc claimed "the render layer's single-flight usage"
+  (a consumer that does not exist in the tree; the CLI's
+  `l0_lookup.rs` coalesced path keeps its own map and never reports). The
+  row lands honestly: `CacheOp::Coalesce { followers }` is one aggregate
+  row per completed flight, the emitter is the now key-carrying
+  `TieredCache::record_coalesced(key, followers)` — the host's flight
+  owner calls it on completion with the count
+  `SingleFlight::publish_and_cleanup` returned — and the doc now
+  describes the actual contract instead of naming a phantom caller. Every
+  in-crate consumer inherits the row: `kind()` names it `"coalesce"`,
+  the tracing observer emits it (debug, the hot-path arm) with the
+  `followers` field, the exporter counts it into
+  `oxide_cache_plane_coalesce_events_total` /
+  `oxide_cache_plane_coalesced_followers_total` (the same saturating
+  counters), and the feed carries it as any other row. `stats().coalesced`
+  keeps its meaning — the pins hold the two-channel agreement. 7 pins in
+  `coalesce_tdd`, the `cache_coalesce_record` criterion group (the
+  attached-vs-no-observer record delta), the `coalesce` example (the
+  inline fanout impl demonstrating the seam's custom-impl contract).
+  The recorded follow-on: the CLI render layer's flight loop calling
+  `record_coalesced` at its own coalesced site (a one-line wire-in when
+  the CLI's V8-link gate is cheap to run).
+
+- **Docs drift fixed (additive).** `docs/architecture.md`'s `cache` row
+  predated the entire observability plane — it listed the §11 machinery
+  and nothing from F28/F30/F31; the row now names the push seam, its
+  three in-crate consumers, and the posture pull. `crates/cache/README.md`
+  gained the posture bullet beside the observability bullet. The README
+  badge re-measured by `scripts/count-tests.sh`.
+
+- **Micro-debt cleaned (additive).** `crates/cache/src/s3_handler.rs`'s
+  `get` bound `meta_len` into the match tuple and immediately discarded it
+  (`let _ = meta_len;`) — the size cap already refused the oversized
+  object before buffering, so the binding was dead scaffolding; the arm
+  yields the bytes now and the discard line is gone.
