@@ -5696,3 +5696,66 @@ they finish the "one slot, many shapes" story the F28 seam doc prescribes.
   names the composition arm and the gate now; `crates/cache/README.md`'s
   observability bullet names the four consumer shapes and the gate. The
   README badge re-measured by `scripts/count-tests.sh`.
+
+## The coalesce wire lands in production and the cache plane joins the §20 scrape (F36 + F37, 2026-11-18)
+
+**What the spec asks.** §11.3's single-flight coalescing is observable (F33's
+`CacheOp::Coalesce` rows) and §20's metrics endpoint exposes the cache plane.
+Both seams were crate-complete and production-dead: `TieredCache::record_coalesced`
+had no production caller (the F33 row's emitter doc named a consumer that did not
+exist — the render stage's owner site named the count it dropped), and the §20
+endpoint served only the request plane's `oxide_cache_l0_*` rows — the F30
+exporter attached nowhere, so a real scrape carried no `oxide_cache_plane_*`
+family at all.
+
+**What lands.** F36 — the render stage's flight owner records the publish count
+(`crates/cli/src/dispatch/stages/render.rs`): the typed `TieredCache` half of the
+boot's shared tier rides `FrameworkStack` (`cache_tier_typed`,
+`crates/cli/src/framework_shim.rs`) and `DispatchDeps` (`l0_tiered`,
+`crates/cli/src/dispatch/deps.rs`, `Some` exactly when `l0` is — a recording half
+for a plane with no flights is never fabricated) down to the owner site, where the
+count `FlightOwnerGuard::publish` returns (the F33 follow-on's shape) lands in
+`TieredCache::record_coalesced`. The response shapes are byte-identical — the wire
+records, it does not reroute: the follower still rides `L0-coalesced`, a
+zero-follower flight still records (one row, zero joins), and the un-wired boot
+stays silent. F37 — the serve boot attaches the F30 exporter over the boot's tier
+(`FrameworkStack::cache_exporter`, attached in `build_framework_stack` and
+mirrored by the test-stack arm in `start_server`) and hands its scrape to the §20
+endpoint through `Metrics::set_cache_plane`
+(`crates/server/src/metrics.rs`): `render()` appends the closure's rows beside the
+request-plane rows (appended last, one closure run per scrape — a pull reads the
+posture NOW, never a value frozen at attach), and the unattached render is
+byte-identical.
+
+**Why not a typed dependency.** The server crate's dead `oxide-fw-cache`
+dependency was removed deliberately (the recorded micro-debt); a `Metrics`-side
+`Fn() -> String` slot keeps it out — the CLI (which already depends on both) does
+the composition, and the server crate gains a generic extra-exposition seam the
+next plane can ride. The closure indirection also keeps the slot honest at the
+type level: the endpoint cannot reach into the cache plane, it can only append
+what the boot handed it.
+
+**Deltas recorded.** The exporter attach is unconditional at serve boot — the
+hot-path delta is the F28-benched one-virtual-call cost, and the §20 endpoint then
+exposes the families without a new config knob (the scrape is the knob). Dev-mode
+boots attach nothing (no L0 plane, no flights). The coalesce row joins via the
+flight's L0 store key (the P-04-reused `flight_key`, the canonical hashed
+spelling) — the pipeline pins pin kind and count, not the hash. The CLI pins ride
+the recorded V8-link convention (compile-verified locally, CI's nextest workspace
+job runs them).
+
+**Micro-debt cleaned (additive).** `crates/assets/tests/integration.rs` was the
+recorded `mod placeholder {}` stub; it now pins three cross-module flows
+(prerendered HTML → the JSON route index, byte-stable across builds; the SVG
+sprite's referenced ids surviving the identity build shape with the preservation
+assertion green; a scanned collection's broken-reference diagnostics naming the
+missing target). The serve boot's `l0-seed.json` read — a PRESENT-but-corrupt
+manifest was silently skipped (`if let Ok(bytes) … if let Ok(v)`) — now warns
+loudly under `CACHE-SEED` naming the path; a MISSING manifest stays silent (a
+build with no prerendered pages is normal).
+
+**Docs drift fixed (additive).** The spec's WP table gained the F36/F37 landed
+rows; `docs/architecture.md`'s cache/server/cli rows name the wire;
+`crates/cache/README.md`'s observability bullet names the production consumers.
+The README badge re-measured by `scripts/count-tests.sh`. The `boot_posture`
+example walks the whole wire in one run (attach, fly, record, both expositions).
