@@ -35,6 +35,14 @@ pub(crate) struct DispatchDeps {
     /// `security.sri` is off or the manifest predates the field).
     pub boot_script_integrity: Option<String>,
     pub l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
+    /// F36: the typed half of the SAME shared tier `l0` wraps — the erased
+    /// `Arc<dyn CacheHandler>` cannot name `record_coalesced`, so the render
+    /// stage's flight owner records the publish count through this handle
+    /// (the F33 emitter's live call site). `Some` exactly when `l0` is
+    /// `Some` (a recording half for a plane with no flights is never
+    /// fabricated); `None` in dev and the test-helper default — the coalesce
+    /// rows join the §20 channel only on a wired boot.
+    pub l0_tiered: Option<std::sync::Arc<oxide_fw_cache::TieredCache>>,
     pub actions: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
     pub archived: Option<std::sync::Arc<oxide_fw_router::ArchivedTree>>,
     pub pool: Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
