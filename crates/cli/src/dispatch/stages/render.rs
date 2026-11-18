@@ -45,6 +45,7 @@ pub(crate) async fn stage_render(
     let boot_script_integrity_for_render = &cx.boot_script_integrity_for_render;
     let ppr_for_request = d.ppr_shells.clone();
     let l0 = d.l0.clone();
+    let l0_tiered = d.l0_tiered.clone();
     let l0_eligible = cx.l0_eligible;
     let l0_route = &cx.l0_route;
     let l0_params = &cx.l0_params;
@@ -490,14 +491,18 @@ pub(crate) async fn stage_render(
                         );
                         cache.store_entry(&store_key, entry.clone()).await;
                         if let Some(guard) = flight_owner {
-                            // The publish now returns the follower count
-                            // the F33 emitter routes to
-                            // `record_coalesced`; this stage holds no
-                            // typed `TieredCache` half (the L0 flight is
-                            // over the page-render cache), so the count
-                            // is named as dropped here until the
-                            // recorded wire-in lands.
-                            let _dropped_join_count = guard.publish(std::sync::Arc::new(entry));
+                            // F36: the publish count IS the coalesce row's
+                            // join number — the owner records it through
+                            // the typed half (the F33 emitter's live call
+                            // site; the count this site used to name as
+                            // dropped).
+                            let joins = guard.publish(std::sync::Arc::new(entry));
+                            if let Some(tier) = l0_tiered.as_ref() {
+                                tier.record_coalesced(
+                                    &store_key,
+                                    u64::try_from(joins).unwrap_or(u64::MAX),
+                                );
+                            }
                         }
                     });
                     let stream: oxide_fw_server::BodyStream =
