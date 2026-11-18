@@ -100,6 +100,14 @@ pub use cost_endpoint::{
     ProfiledCostSource, SnapshotCostSource,
 };
 
+// V2-F21 (server half): the dev-plane trace feed — the `TraceSink` record
+// seam, the bounded `RingTraceSink`, the `RequestTrace` row and the
+// `GET /__oxide/traces` endpoint the §V2.J dev-plane row names.
+pub use trace_feed::{
+    RequestTrace, RingTraceSink, TRACE_FEED_CAPACITY, TRACE_FEED_ENDPOINT_PATH, TraceSink,
+    TracesEndpoint,
+};
+
 // V2-F09: the search endpoint's attached state (`search` feature) — the
 // read-only engine plus its L1. `SEARCH_ENDPOINT_PATH` itself lives in
 // `oxide_fw_search` (the engine crate owns the wire constants).
@@ -107,6 +115,7 @@ pub use cost_endpoint::{
 pub use search_endpoint::SearchEndpoint;
 
 pub mod trace_context;
+pub mod trace_feed;
 
 /// The §V2-F08 dispatcher consult (the native `*.server.rs` registry
 /// answers before the JS pool).
@@ -2279,6 +2288,22 @@ pub struct Pipeline {
     /// and production is byte-identical. Attached via
     /// [`Pipeline::with_cost_endpoint`].
     pub cost_endpoint: Option<Arc<cost_endpoint::CostEndpoint>>,
+    /// V2-F21 (server half): the dev-plane trace feed's record seam. When
+    /// `Some`, every completed request the pipeline answers (the native
+    /// arms and the dispatch arm) records one
+    /// [`trace_feed::RequestTrace`] into it — the §20 consumption of the
+    /// parsed W3C trace context. `None` (the default) leaves the record
+    /// point a `None` check: no row, no allocation, production is
+    /// byte-identical. Attached via [`Pipeline::with_trace_sink`].
+    pub trace_sink: Option<Arc<dyn trace_feed::TraceSink>>,
+    /// V2-F21 (server half): the `GET /__oxide/traces` dev-plane endpoint
+    /// (dev-token guarded, D41) — the §V2.J map's row beside the open and
+    /// cost surfaces. Serves the same sink instance the pipeline records
+    /// into (the WaterfallRecorder's one-instance-two-readers posture).
+    /// `None` (the default) leaves the endpoint absent: the request falls
+    /// through to the normal dispatch and production is byte-identical.
+    /// Attached via [`Pipeline::with_trace_feed`].
+    pub trace_feed: Option<Arc<trace_feed::TracesEndpoint>>,
     /// SPEC-14 / §13.3: the dev HMR message source. `Some` only in dev; the
     /// `/_oxide/hmr` WebSocket subscribes to it. `oxide-fw-server` does not
     /// depend on `oxide-fw-dev`, so this is a broadcast of pre-serialized JSON
@@ -2932,6 +2957,8 @@ impl Default for Pipeline {
             inspector: None,
             open_editor: None,
             cost_endpoint: None,
+            trace_sink: None,
+            trace_feed: None,
             hmr: None,
             hmr_build_id: String::new(),
             page_renderer: None,
@@ -4206,6 +4233,29 @@ impl Pipeline {
         self
     }
 
+    /// V2-F21 (server half): attach the trace feed's record seam — the
+    /// production impl is [`trace_feed::RingTraceSink`] (the dev boot
+    /// attaches one at [`trace_feed::TRACE_FEED_CAPACITY`]); tests and
+    /// embedded hosts inject fakes. When `Some`, every completed request
+    /// records one [`trace_feed::RequestTrace`]; when `None` (the
+    /// default) the record point is a `None` check and production is
+    /// byte-identical. Chainable.
+    pub fn with_trace_sink(mut self, sink: Arc<dyn trace_feed::TraceSink>) -> Self {
+        self.trace_sink = Some(sink);
+        self
+    }
+
+    /// V2-F21 (server half): attach the `GET /__oxide/traces` dev-plane
+    /// endpoint (dev-token guarded, D41). Serve the same sink instance
+    /// the pipeline records into — the one-instance-two-readers posture
+    /// the WaterfallRecorder rides. When `None` (the default) the
+    /// endpoint does not exist and the request falls through to the
+    /// normal dispatch. Chainable.
+    pub fn with_trace_feed(mut self, ep: Arc<trace_feed::TracesEndpoint>) -> Self {
+        self.trace_feed = Some(ep);
+        self
+    }
+
     /// Attach a page renderer (§7). When set, `serve_request` dispatches page
     /// renders to it. When `None` (default), the pipeline preserves the
     /// legacy neutral-IR behavior. Chainable.
@@ -4307,6 +4357,14 @@ impl Pipeline {
                 if let Some(m) = &metrics {
                     m.observe("_native", started.elapsed(), resp.status);
                 }
+                self.record_request_trace(
+                    &req.request_id,
+                    &req.method,
+                    &path_of(&req.url),
+                    req.trace.as_ref(),
+                    resp.status,
+                    started.elapsed(),
+                );
                 Box::pin(std::future::ready(resp).instrument(span))
             }
             NativePrefix::Static(resp, rule_headers) => {
@@ -4321,6 +4379,14 @@ impl Pipeline {
                 if let Some(m) = &metrics {
                     m.observe("_static", started.elapsed(), finished.status);
                 }
+                self.record_request_trace(
+                    &request_id,
+                    &req.method,
+                    &path_of(&req.url),
+                    req.trace.as_ref(),
+                    finished.status,
+                    started.elapsed(),
+                );
                 Box::pin(std::future::ready(finished).instrument(span))
             }
             NativePrefix::LocalImage {
@@ -4332,16 +4398,27 @@ impl Pipeline {
                 let request_id = req.request_id.clone();
                 let method = req.method.clone();
                 let cookie = req.header("cookie").map(str::to_string);
+                let trace = req.trace.clone();
+                let url_path = path_of(&req.url);
                 Box::pin(
                     async move {
                         let resp = serve_local_image(&endpoint, request, key).await;
-                        self.finish_response_with_request(
+                        let finished = self.finish_response_with_request(
                             resp,
                             &rule_headers,
                             &request_id,
                             Some(&method),
                             cookie.as_deref(),
-                        )
+                        );
+                        self.record_request_trace(
+                            &request_id,
+                            &method,
+                            &url_path,
+                            trace.as_ref(),
+                            finished.status,
+                            started.elapsed(),
+                        );
+                        finished
                     }
                     .instrument(span),
                 )
@@ -4355,16 +4432,27 @@ impl Pipeline {
                 let request_id = req.request_id.clone();
                 let method = req.method.clone();
                 let cookie = req.header("cookie").map(str::to_string);
+                let trace = req.trace.clone();
+                let url_path = path_of(&req.url);
                 Box::pin(
                     async move {
                         let resp = fetch_remote_image(endpoint, request, format).await;
-                        self.finish_response_with_request(
+                        let finished = self.finish_response_with_request(
                             resp,
                             &rule_headers,
                             &request_id,
                             Some(&method),
                             cookie.as_deref(),
-                        )
+                        );
+                        self.record_request_trace(
+                            &request_id,
+                            &method,
+                            &url_path,
+                            trace.as_ref(),
+                            finished.status,
+                            started.elapsed(),
+                        );
+                        finished
                     }
                     .instrument(span),
                 )
@@ -4380,17 +4468,28 @@ impl Pipeline {
                 let request_id = req.request_id.clone();
                 let method = req.method.clone();
                 let cookie = req.header("cookie").map(str::to_string);
+                let trace = req.trace.clone();
+                let url_path = path_of(&req.url);
                 let dispatch = self.server_fns.clone();
                 Box::pin(
                     async move {
                         let resp = run_server_fn(dispatch.as_deref(), &id, &args).await;
-                        self.finish_response_with_request(
+                        let finished = self.finish_response_with_request(
                             resp,
                             &rule_headers,
                             &request_id,
                             Some(&method),
                             cookie.as_deref(),
-                        )
+                        );
+                        self.record_request_trace(
+                            &request_id,
+                            &method,
+                            &url_path,
+                            trace.as_ref(),
+                            finished.status,
+                            started.elapsed(),
+                        );
+                        finished
                     }
                     .instrument(span),
                 )
@@ -4412,6 +4511,10 @@ impl Pipeline {
                 // (match/cache/load/render/inject) needs the pipeline to
                 // expose stage instants; scoped.
                 let started_render = started;
+                // V2-F21: capture the trace halves before `req` moves into
+                // the dispatch closure — the record rides them.
+                let trace = req.trace.clone();
+                let url_path = path_of(&req.url);
                 // Call dispatch synchronously; only the (Send) boxed future crosses the await.
                 let fut = dispatch(req);
                 Box::pin(
@@ -4425,6 +4528,25 @@ impl Pipeline {
                             let ms = started_render.elapsed().as_secs_f64() * 1000.0;
                             resp = resp.with_header("Server-Timing", format!("total;dur={ms:.2}"));
                         }
+                        // §20 (the response half, V2-F21): a traced request
+                        // leaves with a `traceresponse` header (the W3C
+                        // Trace Context Level 2 draft's shape) so the
+                        // caller sees the server's response span id. The
+                        // id derives from the SEC-02 per-request id; a
+                        // header the dispatch already set is never
+                        // overwritten, and an untraced request stays
+                        // byte-identical (no header, no cost).
+                        if let Some(tc) = &trace
+                            && !resp
+                                .headers
+                                .iter()
+                                .any(|(k, _)| k.eq_ignore_ascii_case("traceresponse"))
+                            && let Some(id) =
+                                crate::trace_context::TraceContext::response_span_id(&request_id)
+                            && let Some(value) = tc.to_traceresponse(id)
+                        {
+                            resp = resp.with_header("traceresponse", value);
+                        }
                         // SPEC-10: the resolved locale rides the page response.
                         if let Some(loc) = &content_language
                             && !resp
@@ -4434,19 +4556,51 @@ impl Pipeline {
                         {
                             resp = resp.with_header("Content-Language", loc.clone());
                         }
-                        self.finish_response_full_async(
-                            resp,
-                            &rule_headers,
+                        let finished = self
+                            .finish_response_full_async(
+                                resp,
+                                &rule_headers,
+                                &request_id,
+                                Some(&method),
+                                cookie.as_deref(),
+                                accept_encoding.as_deref(),
+                            )
+                            .await;
+                        self.record_request_trace(
                             &request_id,
-                            Some(&method),
-                            cookie.as_deref(),
-                            accept_encoding.as_deref(),
-                        )
-                        .await
+                            &method,
+                            &url_path,
+                            trace.as_ref(),
+                            finished.status,
+                            started_render.elapsed(),
+                        );
+                        finished
                     }
                     .instrument(span),
                 )
             }
+        }
+    }
+
+    /// V2-F21: record one completed request into the attached trace sink
+    /// ([`Pipeline::trace_sink`]). The `Option` check IS the production
+    /// cost — no sink attached, no row, no allocation; the default
+    /// pipeline stays byte-identical. The trace halves ride the parsed
+    /// W3C context (`None` for an untraced request — the row still
+    /// records, the §20 consumption is the attached sink's contract).
+    fn record_request_trace(
+        &self,
+        request_id: &str,
+        method: &str,
+        path: &str,
+        trace: Option<&crate::trace_context::TraceContext>,
+        status: u16,
+        elapsed: std::time::Duration,
+    ) {
+        if let Some(sink) = &self.trace_sink {
+            sink.record(trace_feed::RequestTrace::of(
+                request_id, method, path, trace, status, elapsed,
+            ));
         }
     }
 
@@ -4710,6 +4864,24 @@ impl Pipeline {
             }
             let query = req.url.split_once('?').map_or("", |(_, q)| q);
             return NativePrefix::Raw(ep.serve(&req.method, query));
+        }
+
+        // (3a.2.3) trace feed (V2-F21, server half) — dev plane,
+        // dev-token guarded (D41) like the open and cost endpoints above.
+        // Only when attached: the default pipeline leaves the endpoint
+        // absent (the request falls through, production byte-identical).
+        if path == trace_feed::TRACE_FEED_ENDPOINT_PATH
+            && let Some(ep) = &self.trace_feed
+        {
+            if let Some(want) = &self.dev_token
+                && !dev_token_ok(req, want)
+            {
+                return NativePrefix::Raw(
+                    OxideResponse::new(403, "traces requires the dev token")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+            return NativePrefix::Raw(ep.serve(&req.method));
         }
 
         // (3a.1.6) learned prefetch (V2-F13). Two halves, gated on the
