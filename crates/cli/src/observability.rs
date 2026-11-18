@@ -1,9 +1,6 @@
-//! Moved verbatim from lib.rs by scripts/split_cli.py (V2-A01).
+//! The CLI's tracing setup (§20), split verbatim out of lib.rs by
+//! scripts/split_cli.py (V2-A01).
 
-/// Entry point used by both `main.rs` and tests.
-///
-/// Runs [`run_with_writer`] into a buffer, then flushes it to stdout (so tests can
-/// capture tables via [`run_with_writer`] while the binary keeps its real stdout).///
 /// Install the tracing subscriber (§20). Console logging is always on;
 /// OpenTelemetry OTLP export is opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`.
 /// When the env var is unset, no OTLP layer is installed and behaviour is
@@ -62,9 +59,28 @@ pub(crate) fn init_tracing() {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
+/// The `RUST_LOG`-style filter every subscriber branch installs: the
+/// env var wins when it parses, the default is `info` — the console
+/// formatter renders info-level events (the dev-plane request traces
+/// among them, once `OXIDE_TRACE_LOG` attaches the export arm).
 pub(crate) fn env_filter() -> tracing_subscriber::EnvFilter {
     tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+}
+
+/// The trace rows' export gate (`OXIDE_TRACE_LOG`, V2-F22): when set to
+/// anything but the falsy spellings (`""`, `0`, `false`, `off`), the
+/// dev boot attaches the `TracingTraceSink` beside the ring — every
+/// completed request's row leaves as one `tracing::info!` event through
+/// the subscriber this module installs at boot (console, `OXIDE_LOG=json`,
+/// and with `OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream). Default off:
+/// the console output stays byte-identical, and production never
+/// attaches (the F21 posture holds).
+pub(crate) fn trace_log_enabled() -> bool {
+    match std::env::var("OXIDE_TRACE_LOG") {
+        Ok(value) => !matches!(value.as_str(), "" | "0" | "false" | "off"),
+        Err(_) => false,
+    }
 }
 
 /// Build the `tracing-opentelemetry` layer for the given OTLP endpoint.
