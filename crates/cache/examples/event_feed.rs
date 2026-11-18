@@ -4,7 +4,10 @@
 //! builder, drives traffic, drains the queue FIFO from the "host task"
 //! side, then saturates the feed against a tiny bound to show the lossy
 //! contract: the arriving rows drop, the sticky warn fires ONCE, the
-//! counter keeps the score.
+//! counter keeps the score. The gate section (F35) narrows the intake:
+//! a deploy-watch consumer admits only the rows it was built for — the
+//! hot rows never enqueue at all, and a rejection is admission, not a
+//! drop.
 //!
 //! Run with:
 //!
@@ -15,14 +18,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxide_fw_cache::{CacheOp, Entry, EventFeed, Policy, TieredCache};
+use oxide_fw_cache::{CacheOp, Entry, EventFeed, KindGate, Policy, TieredCache};
 
 fn entry(body: &[u8], tags: &[&str]) -> Entry {
     Entry {
         body: body.to_vec(),
         status: 200,
         headers: vec![("content-type".into(), "text/html".into())],
-        tags: tags.iter().map(|s| s.to_string()).collect(),
+        tags: tags.iter().copied().map(str::to_string).collect(),
         policy: Policy {
             ttl: Duration::from_secs(60),
             swr: None,
@@ -32,7 +35,9 @@ fn entry(body: &[u8], tags: &[&str]) -> Entry {
         stored_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("the wall clock runs")
-            .as_millis() as u64,
+            .as_millis()
+            .try_into()
+            .unwrap_or_default(),
         etag: "\"v1\"".into(),
     }
 }
@@ -108,5 +113,42 @@ fn main() {
             println!("{key} -> {}", kind(op));
         }
         assert!(tiny.is_empty(), "the batch arm empties the queue");
+
+        // 6. The gate (F35): the deploy-watch shape — a narrow consumer
+        //    admits only the rows it was built for. Hot rows (hits,
+        //    misses, sets) never enqueue at all; the invalidation and
+        //    coalesce rows land FIFO. A rejection is admission, not a
+        //    drop: `dropped()` stays 0, the warn never fires.
+        let watch = EventFeed::gated(64, Arc::new(KindGate::only(&["invalidate", "coalesce"])));
+        let cache = Arc::new(TieredCache::new(64 * 1024 * 1024).with_observer(watch.clone()));
+        for i in 0..3 {
+            cache
+                .set(
+                    &format!("route:/b/{i}"),
+                    entry(b"<html>b</html>", &["content:posts"]),
+                )
+                .await
+                .expect("the memory tier accepts the entry");
+            let _ = cache
+                .get(&format!("route:/b/{i}"))
+                .await
+                .expect("the memory tier");
+            let _ = cache.get("route:/missing").await.expect("the memory tier");
+        }
+        cache
+            .invalidate_tag("content:posts", true)
+            .await
+            .expect("the memory tier invalidates");
+        cache.record_coalesced("route:/b/0", 2);
+
+        println!("=== the gated feed: the deploy-watch intake ===");
+        println!(
+            "queued: {}, dropped: {} (nine hot rows rejected by the gate, never enqueued)",
+            watch.len(),
+            watch.dropped()
+        );
+        for (key, op) in watch.drain() {
+            println!("{key} -> {}", kind(&op));
+        }
     });
 }
