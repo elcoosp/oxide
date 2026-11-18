@@ -87,7 +87,17 @@ pub struct Metrics {
     /// `"<experiment>/<variant>"` (the pair the dispatch's experiment stage
     /// assigns). exposition: `oxide_experiment_assignment{experiment,variant}`.
     pub experiments: RwLock<HashMap<String, AtomicU64>>,
+    /// F37: the attached cache-plane exposition (`set_cache_plane`) — the
+    /// boot's closure renders the cache plane's families per scrape; `None`
+    /// (the default) appends nothing.
+    cache_plane: CachePlane(std::sync::RwLock<Option<CachePlaneExposition>>),
 }
+
+/// The F37 slot: a locked option over the attached exposition. The newtype
+/// carries the derive pair (Debug names attachment, Default is unattached)
+/// the `dyn Fn` field cannot.
+#[derive(Debug, Default)]
+struct CachePlane(std::sync::RwLock<Option<CachePlaneExposition>>);
 
 /// A reported web-vital aggregate: how many samples, and their summed value.
 #[derive(Debug, Default, Clone, Copy)]
@@ -96,10 +106,46 @@ pub struct VitalAgg {
     pub sum: f64,
 }
 
+/// The attached cache-plane exposition (F37): an `Fn() -> String` the serve
+/// boot fills with the cache plane's Prometheus families. The closure is
+/// opaque (Debug prints attachment only) and the slot is OPTIONAL (Default
+/// renders nothing) — the registry is byte-identical to the pre-slot shape
+/// until a boot attaches a plane.
+#[derive(Default)]
+struct CachePlaneExposition(Arc<dyn Fn() -> String + Send + Sync>);
+
+impl std::fmt::Debug for CachePlaneExposition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CachePlaneExposition(attached)")
+    }
+}
+
 impl Metrics {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The §20 cache-plane exposition slot (F37): the serve boot hands a
+    /// closure rendering the cache plane's Prometheus families — the F30
+    /// exporter's `oxide_cache_plane_*` text — and every `render()` appends
+    /// its rows beside the request-plane rows.
+    ///
+    /// The slot is deliberately an `Fn() -> String`, not a typed dependency:
+    /// the server crate must not reach into the cache plane (the dead
+    /// `oxide-fw-cache` dependency stays out), so the host that owns both —
+    /// the CLI boot — does the composition. The closure runs per render (a
+    /// scrape is a pull: it reads the plane's posture as it stands NOW,
+    /// never a value frozen at attach), and the LAST attach wins (a second
+    /// `set_cache_plane` replaces the first). An unattached registry renders
+    /// byte-identical to the pre-slot shape.
+    pub fn set_cache_plane(&self, render: impl Fn() -> String + Send + Sync + 'static) {
+        let mut slot = self
+            .cache_plane
+            .0
+            .write()
+            .expect("cache plane lock");
+        *slot = Some(CachePlaneExposition(Arc::new(render)));
     }
 
     pub fn observe(&self, route: &str, latency: Duration, status: u16) {
@@ -336,6 +382,12 @@ impl Metrics {
                 continue;
             }
             render_route_histogram(&mut out, route, m);
+        }
+        // F37: the attached cache-plane exposition renders LAST — the
+        // request-plane exposition above stays byte-stable, and one scrape
+        // reads both planes. Unattached (the default): nothing appended.
+        if let Some(plane) = self.cache_plane.0.read().expect("cache plane lock").as_ref() {
+            out.push_str(&(plane.0)());
         }
         out
     }
