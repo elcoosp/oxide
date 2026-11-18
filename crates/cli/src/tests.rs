@@ -4772,6 +4772,211 @@ async fn middleware_headers_ride_l0_hits() {
     );
 }
 
+// -------------------------------- F36: the coalesce wire (§11.3 / §20)
+//
+// The render stage's flight owner publishes through the F33-emitting
+// guard; the publish count IS the coalesce row's join number. These pins
+// drive the PIPELINE over a typed `TieredCache` half: the owner records
+// the count through `record_coalesced`, the §20 push channel (the F30
+// exporter + the F31 feed behind the F34 fan) hears the row, and the
+// pull channel's `coalesced` counter agrees. V8-linked test target —
+// compile-verified locally, riding the CI `nextest` workspace job.
+
+/// A `PageRenderer` that takes `delay` to render, so a request launched
+/// mid-render enters the L0 single-flight as a follower — a deterministic
+/// coalesce instead of a polled race.
+struct SlowRenderer {
+    delay: std::time::Duration,
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_server::PageRenderer for SlowRenderer {
+    fn name(&self) -> &str {
+        "slow"
+    }
+    async fn render(
+        &self,
+        _input: oxide_fw_server::PageRenderInput,
+    ) -> oxide_fw_server::Result<String> {
+        tokio::time::sleep(self.delay).await;
+        Ok("<!doctype html><html><body>slow</body></html>".to_string())
+    }
+}
+
+/// Drain a streamed response to completion. The owner's tee runs the L0
+/// store + the flight publish at stream end, so the coalesce record can
+/// only land when the body is consumed — the shape a real client pays.
+async fn drain_stream(resp: oxide_fw_server::OxideResponse) -> oxide_fw_server::OxideResponse {
+    use futures::StreamExt as _;
+    if let Some(mut stream) = resp.stream {
+        while let Some(item) = stream.next().await {
+            let _ = item;
+        }
+    }
+    resp
+}
+
+/// The response's `x-oxide-fw-cache` value — the L0 plane's own label.
+fn cache_label(resp: &oxide_fw_server::OxideResponse) -> Option<&str> {
+    resp.headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
+        .map(|(_, v)| v.as_str())
+}
+
+/// Poll until `done` holds (the record rides the owner's spawn task, a
+/// hair after the follower's recv wakes) or the budget runs out.
+async fn until(budget: std::time::Duration, mut done: impl FnMut() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + budget;
+    while tokio::time::Instant::now() < deadline {
+        if done() {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    done()
+}
+
+/// The wired flight fixture: one typed `TieredCache` half carrying the
+/// §20 fan (exporter + feed), the same tier erased under the L0 cache,
+/// a renderer slow enough that a staggered second request coalesces.
+struct CoalesceFixture {
+    dispatch:
+        std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
+    typed: std::sync::Arc<oxide_fw_cache::TieredCache>,
+    exporter: std::sync::Arc<oxide_fw_cache::MetricsCacheObserver>,
+    feed: std::sync::Arc<oxide_fw_cache::EventFeed>,
+}
+
+fn coalesce_fixture(l0_tiered: bool) -> CoalesceFixture {
+    use std::sync::Arc;
+    let exporter = Arc::new(oxide_fw_cache::MetricsCacheObserver::new());
+    let feed = Arc::new(oxide_fw_cache::EventFeed::bounded(64));
+    let fan = oxide_fw_cache::FanoutCacheObserver::shared(vec![
+        exporter.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+        feed.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+    ]);
+    let typed = Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024).with_observer(fan));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        Arc::clone(&typed) as Arc<dyn oxide_fw_cache::CacheHandler>,
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            page_renderer: Some(Arc::new(SlowRenderer {
+                delay: std::time::Duration::from_millis(300),
+            })),
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            l0_tiered: l0_tiered.then(|| Arc::clone(&typed)),
+            ..Default::default()
+        },
+    );
+    CoalesceFixture {
+        dispatch,
+        typed,
+        exporter,
+        feed,
+    }
+}
+
+#[tokio::test]
+async fn l0_flight_owner_records_the_publish_count() {
+    let f = coalesce_fixture(true);
+    // The owner starts first and holds the flight while it renders; the
+    // second request lands mid-render and rides it out as a follower.
+    let owner = tokio::spawn((f.dispatch)(test_request("GET", "/")));
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let follower = tokio::spawn((f.dispatch)(test_request("GET", "/")));
+
+    let owner_resp = owner.await.expect("owner task joins");
+    assert_eq!(cache_label(&owner_resp), Some("L0-miss"), "owner renders");
+    // Drain the owner's teed body: the store + the publish (and with the
+    // wire, the record) run at stream end.
+    let _owner_resp = drain_stream(owner_resp).await;
+    let follower_resp = follower.await.expect("follower task joins");
+    assert_eq!(
+        cache_label(&follower_resp),
+        Some("L0-coalesced"),
+        "the staggered request coalesced"
+    );
+
+    // The pull channel: the publish's join count (one follower).
+    let recorded = until(std::time::Duration::from_secs(2), || {
+        f.typed.stats().coalesced == 1
+    })
+    .await;
+    assert!(recorded, "the publish count reached record_coalesced");
+
+    // The push channel agrees: one flight row, one follower — and the
+    // feed carries it keyed, FIFO after the flight's own set row.
+    let snap = f.exporter.snapshot();
+    assert_eq!(snap.coalesce_events, 1, "one flight recorded");
+    assert_eq!(snap.coalesced_followers, 1, "one follower joined");
+    let rows = f.feed.drain();
+    let coalesce_rows: Vec<_> = rows
+        .iter()
+        .filter(|(_, op)| matches!(op, oxide_fw_cache::CacheOp::Coalesce { followers: 1 }))
+        .collect();
+    assert_eq!(coalesce_rows.len(), 1, "the feed keeps the coalesce row");
+}
+
+#[tokio::test]
+async fn l0_flight_without_followers_records_zero() {
+    let f = coalesce_fixture(true);
+    // A lone owner: the flight completes with zero followers, and the F33
+    // contract records it anyway (one row, zero joins).
+    let resp = (f.dispatch)(test_request("GET", "/")).await;
+    assert_eq!(cache_label(&resp), Some("L0-miss"));
+    let _ = drain_stream(resp).await;
+
+    let recorded = until(std::time::Duration::from_secs(2), || {
+        f.exporter.snapshot().coalesce_events == 1
+    })
+    .await;
+    assert!(recorded, "the zero-follower flight still records");
+    let snap = f.exporter.snapshot();
+    assert_eq!(snap.coalesce_events, 1);
+    assert_eq!(snap.coalesced_followers, 0, "nobody joined");
+    assert_eq!(f.typed.stats().coalesced, 0, "the pull counter stays 0");
+
+    // The next request is an L0 HIT — no flight, no second row.
+    let hit = (f.dispatch)(test_request("GET", "/")).await;
+    assert_eq!(cache_label(&hit), Some("L0-hit"));
+    let _ = drain_stream(hit).await;
+    let snap = f.exporter.snapshot();
+    assert_eq!(snap.coalesce_events, 1, "a hit flight spawns no row");
+    assert_eq!(snap.coalesced_followers, 0);
+}
+
+#[tokio::test]
+async fn l0_flight_without_the_typed_half_records_nothing() {
+    // The pre-wire shape (`l0_tiered: None`): the response labels are
+    // byte-identical (the follower still coalesces) and the pull channel
+    // stays silent — the row only exists where the typed half is wired.
+    let f = coalesce_fixture(false);
+    let owner = tokio::spawn((f.dispatch)(test_request("GET", "/")));
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let follower = tokio::spawn((f.dispatch)(test_request("GET", "/")));
+
+    let owner_resp = owner.await.expect("owner task joins");
+    let _ = drain_stream(owner_resp).await;
+    let follower_resp = follower.await.expect("follower task joins");
+    assert_eq!(
+        cache_label(&follower_resp),
+        Some("L0-coalesced"),
+        "the flight itself is unchanged"
+    );
+
+    // The un-wired pull counter stays 0 past the follower's own resolve.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(f.typed.stats().coalesced, 0, "no wire, no record");
+    assert_eq!(f.exporter.snapshot().coalesce_events, 0, "no row emitted");
+}
+
 // ------------------------------------------- V2-F04 experiments (§15.4)
 //
 // The stage wiring pins. The engine's shapes are pinned V8-free in
