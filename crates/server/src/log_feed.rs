@@ -27,13 +27,33 @@
 //!   capacity-capped ring, the oldest row evicted at capacity, the
 //!   snapshot newest-first, a zero capacity records nothing.
 //! - [`CaptureLayer`] is the capture arm: a
-//!   `tracing_subscriber::Layer` that records every event the
-//!   subscriber admits into the attached sink. The layer is a second
-//!   read on the event stream — it changes no rendering, so the console
-//!   output stays byte-identical (the F22 posture: capture is additive).
-//!   The feed never records its own module's events (the serving event
+//!   `tracing_subscriber::Layer` that records the events the subscriber
+//!   admits into the attached sink. The layer is a second read on the
+//!   event stream — it changes no rendering, so the console output
+//!   stays byte-identical (the F22 posture: capture is additive). The
+//!   feed never records its own module's events (the serving event
 //!   included — the target `oxide_fw_server::log_feed` is skipped), so
-//!   polling the endpoint cannot fill the window with itself.
+//!   polling the endpoint cannot fill the window with itself. What
+//!   joins the window is the admission gate's business (V2-F26): the
+//!   [`LogGate`] seam decides per event — the default [`AdmitAll`] is
+//!   the F24 shape (every admitted event joins), and [`LevelFloor`]
+//!   narrows the record (events below the floor never join the window —
+//!   the capture-side narrowing: the [`LogQuery`] filter seam narrows
+//!   the RENDER, the gate narrows the RECORD). The gate travels the
+//!   layer's `Clone` (the dev boot builds one gated layer and clones it
+//!   per subscriber branch).
+//!
+//!   The gate can only narrow what reaches the layer — a layer never
+//!   sees an event the subscriber's own filter dropped. The WIDENING
+//!   half is the composition the CLI's `OXIDE_LOG_FEED_LEVEL` gate
+//!   builds: the host filter rides the formatter (and export) layers
+//!   per-layer (`Layer::with_filter`, no global filter on the registry)
+//!   and the feed layer admits its own floor — the console stays
+//!   byte-identical while the window captures the events the console
+//!   never renders (a dev loop with the console at `info` and the feed
+//!   at `debug`). The composition is pinned end to end in
+//!   `tests/log_feed_gate_tdd.rs` (the flagship pin proves the
+//!   console/window split with the same primitives the boot builds).
 //! - [`LogsEndpoint`] answers `GET /__oxide/logs` with the window's
 //!   rows as camelCase JSON (`tsMs`/`level`/`target`/`message`/
 //!   `fields`). A non-GET verb is the documented `405` + `allow: GET`
@@ -189,33 +209,130 @@ impl tracing::field::Visit for FieldVisitor<'_> {
     }
 }
 
-/// The capture arm: a `tracing_subscriber::Layer` that records every
-/// event the subscriber admits into the attached sink. Install it
-/// beside the formatter layers (`registry().with(CaptureLayer::new(sink))
-/// .with(fmt::layer())`) — it is a second read on the event stream and
-/// changes no rendering.
+/// The capture arm's admission seam (V2-F26): does one event join the
+/// window? The gate is the RECORD-side predicate — it narrows what the
+/// capture layer keeps, never what the subscriber renders (the console
+/// and export layers are untouched). The production default is
+/// [`AdmitAll`]; [`LevelFloor`] is the narrowing impl the CLI's
+/// `OXIDE_LOG_FEED_LEVEL` gate rides.
+pub trait LogGate: Send + Sync + 'static {
+    /// `true` when the event joins the window. Called once per admitted
+    /// event (a pure predicate — no side effects, no allocation).
+    fn admits(&self, meta: &tracing::Metadata<'_>) -> bool;
+}
+
+/// The F24 default gate: every event the subscriber admits joins the
+/// window. The shape [`CaptureLayer::new`] installs, so an un-gated
+/// boot stays byte-identical.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdmitAll;
+
+impl LogGate for AdmitAll {
+    fn admits(&self, _meta: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+}
+
+/// The narrowing gate: events below the floor never join the window —
+/// even when the subscriber admits them. A floor of `INFO` keeps info,
+/// warn and error; a floor of `DEBUG` keeps everything but `trace`.
+/// (The comparison rides `tracing::Level`'s own `Ord`, which is reversed
+/// from the intuitive severity order — `error` sorts smallest, `trace`
+/// largest — so "at or above the floor" is `event level <= floor`.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelFloor(tracing::Level);
+
+impl LevelFloor {
+    /// A floor at `floor` — the event joins the window when its level is
+    /// `floor` or more severe.
+    #[must_use]
+    pub fn new(floor: tracing::Level) -> Self {
+        Self(floor)
+    }
+
+    /// The floor the gate holds.
+    #[must_use]
+    pub fn level(&self) -> tracing::Level {
+        self.0
+    }
+
+    /// Parse the env spelling (the CLI's `OXIDE_LOG_FEED_LEVEL` value):
+    /// the five `tracing` level names, case-insensitive, trimmed.
+    /// `None` for anything else — the caller degrades to the un-gated
+    /// default (the F24 posture) rather than failing the boot.
+    #[must_use]
+    pub fn parse(spelling: &str) -> Option<Self> {
+        let lowered = spelling.trim().to_ascii_lowercase();
+        let floor = match lowered.as_str() {
+            "trace" => tracing::Level::TRACE,
+            "debug" => tracing::Level::DEBUG,
+            "info" => tracing::Level::INFO,
+            "warn" => tracing::Level::WARN,
+            "error" => tracing::Level::ERROR,
+            _ => return None,
+        };
+        Some(Self(floor))
+    }
+}
+
+impl LogGate for LevelFloor {
+    fn admits(&self, meta: &tracing::Metadata<'_>) -> bool {
+        // `tracing::Level`'s `Ord` is reversed from the intuitive
+        // severity order (a more severe level sorts smaller), so "at or
+        // above the floor" is `<=`.
+        *meta.level() <= self.0
+    }
+}
+
+/// The capture arm: a `tracing_subscriber::Layer` that records the
+/// events the subscriber admits (and the gate admits) into the attached
+/// sink. Install it beside the formatter layers
+/// (`registry().with(CaptureLayer::new(sink)).with(fmt::layer())`) — it
+/// is a second read on the event stream and changes no rendering.
 ///
 /// The layer never records the feed's own module (the target
 /// [`FEED_TARGET`] is skipped): the endpoint emits one serving event per
 /// poll, and a capture that recorded it would grow the window the poll
-/// renders — the no-feedback rule.
+/// renders — the no-feedback rule. What else joins is the gate's
+/// ([`LogGate`]) business: the default [`AdmitAll`] keeps the F24
+/// contract, [`LevelFloor`] narrows the record.
 #[derive(Clone)]
 pub struct CaptureLayer {
     sink: Arc<dyn LogSink>,
+    gate: Arc<dyn LogGate>,
 }
 
 impl std::fmt::Debug for CaptureLayer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The sink is the layer's identity (the boot's attach shape).
+        // The sink and the gate are the layer's identity (the boot's
+        // attach shape); neither carries render state.
         f.debug_struct("CaptureLayer").finish_non_exhaustive()
     }
 }
 
 impl CaptureLayer {
-    /// A capture layer over one log sink.
+    /// A capture layer over one log sink, every admitted event joining
+    /// the window (the [`AdmitAll`] default — the F24 shape).
     #[must_use]
     pub fn new(sink: Arc<dyn LogSink>) -> Self {
-        Self { sink }
+        Self {
+            sink,
+            gate: Arc::new(AdmitAll),
+        }
+    }
+
+    /// The capture layer with its own admission gate (V2-F26): the gate
+    /// decides per event whether it joins the window. The gate narrows
+    /// the RECORD only — the console and export layers the boot
+    /// installed render exactly what they rendered before. To WIDEN the
+    /// window past the host's filter (the `OXIDE_LOG_FEED_LEVEL`
+    /// recipe), compose the layer per-layer (`Layer::with_filter`) so
+    /// the events reach it at all — the composition is the CLI's, and
+    /// pinned end to end in `tests/log_feed_gate_tdd.rs`.
+    #[must_use]
+    pub fn with_gate(mut self, gate: Arc<dyn LogGate>) -> Self {
+        self.gate = gate;
+        self
     }
 }
 
@@ -226,7 +343,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::layer::Layer<S> for CaptureLaye
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
         let meta = event.metadata();
-        if meta.target() == FEED_TARGET {
+        if meta.target() == FEED_TARGET || !self.gate.admits(meta) {
             return;
         }
         let mut fields = Vec::new();
