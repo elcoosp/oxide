@@ -67,7 +67,7 @@ fn bench_exporter_hot_path(c: &mut Criterion) {
         b.iter(|| {
             let hit = rt.block_on(cache.get(black_box("route:/")));
             black_box(hit.expect("memory get"));
-        })
+        });
     });
 
     // The direct-event arms price the counter adds without the cache's
@@ -80,7 +80,7 @@ fn bench_exporter_hot_path(c: &mut Criterion) {
                 key: black_box("route:/"),
                 op: CacheOp::Miss,
             });
-        })
+        });
     });
     g.bench_function("on-event/hit-l0", |b| {
         b.iter(|| {
@@ -93,7 +93,43 @@ fn bench_exporter_hot_path(c: &mut Criterion) {
                     bytes: 512,
                 },
             });
-        })
+        });
+    });
+    // The F33 coalesce arm: one flight row lands as two counter adds
+    // (events + joins), the same cost shape as the set arm.
+    g.bench_function("on-event/coalesce", |b| {
+        b.iter(|| {
+            let observer: Arc<dyn oxide_fw_cache::CacheObserver> = metrics.clone();
+            observer.on_event(&CacheEvent {
+                key: black_box("route:/"),
+                op: CacheOp::Coalesce { followers: 3 },
+            });
+        });
+    });
+
+    g.finish();
+}
+
+/// The host-side record cost (F33): what
+/// `TieredCache::record_coalesced` adds when the flight owner completes —
+/// the counter bump plus the row's trip through the seam (exporter
+/// attached vs the no-observer default, the seam-dispatch delta the
+/// `cache_observer` bench prices for the tier ops). The record is a
+/// synchronous counter bump + row delivery — no runtime needed.
+fn bench_record_coalesced(c: &mut Criterion) {
+    let metrics = Arc::new(MetricsCacheObserver::new());
+    let attached = TieredCache::new(64 * 1024 * 1024).with_observer(metrics.clone());
+    let bare = TieredCache::new(64 * 1024 * 1024);
+
+    let mut g = c.benchmark_group("cache_coalesce_record");
+    g.sample_size(30);
+    g.measurement_time(Duration::from_secs(3));
+
+    g.bench_function("attached/exporter", |b| {
+        b.iter(|| attached.record_coalesced(black_box("route:/"), 3));
+    });
+    g.bench_function("no-observer/default", |b| {
+        b.iter(|| bare.record_coalesced(black_box("route:/"), 3));
     });
 
     g.finish();
@@ -130,17 +166,22 @@ fn bench_render_scrape(c: &mut Criterion) {
         b.iter(|| {
             let text = idle.render_prometheus();
             black_box(text.len());
-        })
+        });
     });
     g.bench_function("scrape/populated", |b| {
         b.iter(|| {
             let text = full.render_prometheus();
             black_box(text.len());
-        })
+        });
     });
 
     g.finish();
 }
 
-criterion_group!(bench_metrics, bench_exporter_hot_path, bench_render_scrape);
+criterion_group!(
+    bench_metrics,
+    bench_exporter_hot_path,
+    bench_render_scrape,
+    bench_record_coalesced
+);
 criterion_main!(bench_metrics);
