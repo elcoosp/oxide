@@ -28,7 +28,7 @@ A change is ready when every gate below passes **locally**:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace --no-fail-fast
-cargo audit
+cargo deny check licenses advisories
 pnpm -r --filter '!./packages/oxide-website' --filter '!./examples/*' run build
 for p in core react vue svelte solid; do pnpm --filter "@oxide-fw/$p" test; done
 pnpm -C conformance test
