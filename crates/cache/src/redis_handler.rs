@@ -250,6 +250,10 @@ impl CacheHandler for RedisCacheHandler {
             .map_err(|e| err("CACHE-REDIS", format!("publish: {e}")))?;
         Ok(())
     }
+
+    fn handler_kind(&self) -> &'static str {
+        "redis"
+    }
 }
 
 #[cfg(test)]
