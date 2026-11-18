@@ -21,7 +21,7 @@
 ## Sandbox notes for the next session
 
 - The standing gotchas hold: `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0`; nasm 2.16.03 extracted to `/home/z/my-project/scripts/nasm-prefix/usr/bin` (on PATH for the CLI check — the /tmp extracts die with the sandbox, this one lives in the workspace's scripts dir); disk held this session but the V8-linked CLI check still dominates it.
-- The remaining §20 tail is unchanged and V8-host-bound (the fetch op's outbound propagation — `set_trace_parent` is "Not yet called from a live site" in `crates/jshost/src/v8_ops.rs`; CI tests the V8 chain on macOS). The E08/F17 tails are unchanged (the overlay's source-mapped frames, `oxide doctor`, the F17 overlay UI, the inspector's live/generations boot refactor). The assets crate's placeholder integration suite remains.
+- The remaining §20 tail is unchanged and V8-host-bound (the fetch op's outbound propagation — `set_trace_parent` HAS its live call site now: `TraceParentGuard::for_call` (`crates/jshost/src/v8_ops.rs`) seeds the request's W3C trace context around every worker `V8Msg::Call` and pops it on drop; the "Not yet called from a live site" drift note an earlier handoff carried is rewritten here, and the tail that remains is the end-to-end V8-host check, which CI runs on macOS). The E08/F17 tails are unchanged (the overlay's source-mapped frames, `oxide doctor`, the F17 overlay UI, the inspector's live/generations boot refactor). The assets crate's placeholder integration suite remains.
 - The feed's filter surface has a natural next half, if the boot grows a flag surface: a `--log-feed-level` CLI flag beside the env var (the recorded polish said "boot flag OR env var"; the env var landed).
 
 ## Where to pick up, in one sentence
