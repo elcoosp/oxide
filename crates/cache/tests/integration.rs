@@ -137,13 +137,17 @@ async fn single_flight_coalesces_a_rebuild_over_the_tiered_store() {
     };
 
     // The owner computes (stores the row), then publishes through the
-    // RAII guard — followers receive it, the map cleans itself.
+    // RAII guard — followers receive it, the map cleans itself. The
+    // follower count is the F33 emitter's join number; this pin reaches
+    // exactly one follower.
     let computed = Arc::new(row(&["route:/submit"], Duration::from_secs(60), None));
     cache
         .set(&digest, (*computed).clone())
         .await
         .expect("the computed row stores");
-    FlightOwnerGuard::new(flights.clone(), digest.clone(), owner_tx).publish(computed.clone());
+    let reached =
+        FlightOwnerGuard::new(flights.clone(), digest.clone(), owner_tx).publish(computed.clone());
+    assert_eq!(reached, 1, "the one subscribed follower was reached");
     let received = rx.recv().await.expect("the follower receives the row");
     assert_eq!(received.body, computed.body);
     assert!(
