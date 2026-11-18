@@ -45,8 +45,7 @@ fn key() -> &'static [u8; 32] {
             h.update(
                 &std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(0)
+                    .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
                     .to_le_bytes(),
             );
             k.copy_from_slice(h.finalize().as_bytes());
@@ -62,6 +61,7 @@ fn mac(bytes: &[u8]) -> [u8; 32] {
 }
 
 /// Prefix `bytes` with its 32-byte keyed MAC.
+#[must_use = "the sealed envelope is the L2 wire format; dropping it drops the entry"]
 pub fn seal_entry(bytes: &[u8]) -> Vec<u8> {
     let m = mac(bytes);
     let mut out = Vec::with_capacity(MAC_LEN + bytes.len());
@@ -72,6 +72,7 @@ pub fn seal_entry(bytes: &[u8]) -> Vec<u8> {
 
 /// Verify and strip the MAC. Returns `None` (a miss) on a missing/short/exact
 /// mismatch — the comparison is constant-time via BLAKE3's `Hash::eq`.
+#[must_use = "the verified body is the entry; dropping it drops the read"]
 pub fn open_entry(sealed: &[u8]) -> Option<&[u8]> {
     if sealed.len() < MAC_LEN {
         return None;
@@ -97,12 +98,18 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, ()> {
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() {
-        let hi = (b[i] as char).to_digit(16).ok_or(())? as u8;
-        let lo = (b[i + 1] as char).to_digit(16).ok_or(())? as u8;
+        let hi = hex_nibble(b[i])?;
+        let lo = hex_nibble(b[i + 1])?;
         out.push((hi << 4) | lo);
         i += 2;
     }
     Ok(out)
+}
+
+/// One hex digit → its 4-bit value (`u8` by construction: a hex digit
+/// parsed by `to_digit(16)` is 0..=15).
+fn hex_nibble(b: u8) -> Result<u8, ()> {
+    u8::try_from((b as char).to_digit(16).ok_or(())?).map_err(|_| ())
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -120,10 +127,9 @@ fn getrandom(buf: &mut [u8]) -> Result<(), ()> {
 /// Default is **strict** (MAC failure = miss). `OXIDE_CACHE_SEALING=legacy`
 /// restores the upgrade window for one migration; a deployment that sets it
 /// has chosen to re-open the hole, so the choice is explicit and greppable.
+#[must_use]
 pub fn legacy_sealing_allowed() -> bool {
-    std::env::var("OXIDE_CACHE_SEALING")
-        .map(|v| v.eq_ignore_ascii_case("legacy"))
-        .unwrap_or(false)
+    std::env::var("OXIDE_CACHE_SEALING").is_ok_and(|v| v.eq_ignore_ascii_case("legacy"))
 }
 
 #[cfg(target_family = "wasm")]
