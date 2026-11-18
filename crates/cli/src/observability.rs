@@ -232,11 +232,37 @@ fn feed_floor_from(value: String, source: &str) -> Option<oxide_fw_server::Level
 /// and with `OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream). Default off:
 /// the console output stays byte-identical, and production never
 /// attaches (the F21 posture holds).
+///
+/// The `--trace-log` boot flag (the F22 polish tail) rides the
+/// [`TRACE_LOG_OVERRIDE`] slot — the flag wins when present; absent, the
+/// env var keeps its shell spelling.
 pub(crate) fn trace_log_enabled() -> bool {
+    if let Some(flag) = trace_log_override() {
+        return flag;
+    }
     match std::env::var("OXIDE_TRACE_LOG") {
         Ok(value) => !matches!(value.as_str(), "" | "0" | "false" | "off"),
         Err(_) => false,
     }
+}
+
+/// The `--trace-log` boot flag's override (the F22 polish tail), written
+/// once pre-runtime by `apply_startup_env` — the `FEED_LEVEL_OVERRIDE`
+/// shape: a command-level fact decided before the tokio runtime exists,
+/// so the read side never races a mid-async write. `None` (the flag was
+/// absent) leaves the `OXIDE_TRACE_LOG` env var in charge.
+static TRACE_LOG_OVERRIDE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+/// Install the boot flag's trace-export override (see
+/// [`TRACE_LOG_OVERRIDE`]). `None` clears it (the pins' hygiene).
+pub(crate) fn set_trace_log_override(value: Option<bool>) {
+    if let Ok(mut slot) = TRACE_LOG_OVERRIDE.lock() {
+        *slot = value;
+    }
+}
+
+fn trace_log_override() -> Option<bool> {
+    TRACE_LOG_OVERRIDE.lock().ok().and_then(|slot| *slot)
 }
 
 /// The trace rows' file-export gate (`OXIDE_TRACE_FILE`, V2-F25): when
