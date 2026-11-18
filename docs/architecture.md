@@ -42,6 +42,20 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 
 ## What changed
 
+- The §20 trace context gets consumed (2026-11-17): the dev-plane trace
+  feed (`trace_feed`: the `TraceSink` record seam, the bounded
+  `RingTraceSink`, `RequestTrace::of` — one row per completed pipeline
+  request carrying the request id, method, path, status, duration and
+  the parsed W3C trace halves, untraced requests recording the `None`
+  halves honestly) and the `GET /__oxide/traces` dev-plane endpoint (the
+  §V2.J map's 13th row, dev-token guarded, camelCase JSON, newest-first);
+  the dispatch arm's response half — a traced request leaves with the
+  W3C Trace Context Level 2 draft's `traceresponse` header
+  (`to_traceresponse`, the span id derived from the SEC-02 per-request
+  id, never over an existing header, untraced requests byte-identical);
+  the CLI serve boot attaches one ring to both halves under the
+  `with_inspector` gate, production never attaches and stays
+  byte-identical.
 - The dev cost feed + the dev-plane attach (2026-11-17): the cost endpoint's records flow through a FILE — the bundler persists `client.costs.json` beside the client manifest (`write_source_costs`/`read_source_costs`, the `SourceCost` rows round-tripping), the server's `FileCostsSource` stat-pair-checks it per query (a rebuild's rewrite answers without a re-attach, a missing/unreadable file stays the documented miss), and the CLI serve boot attaches both dev-plane endpoints beside the inspector (`OpenEditorEndpoint` over the production `CommandOpener`, `CostEndpoint` over the file feed) — `oxide dev` and `oxide serve` answer `/__oxide/open` and `/__oxide/cost` at last; production never attaches and stays byte-identical.
 - The E08 inspector's module-graph search + the F17 profiler/tier-map
   adapter (2026-11-17): the §V2-E08 item 2 search lands — the dev crate's
