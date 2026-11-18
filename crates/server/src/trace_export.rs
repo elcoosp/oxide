@@ -28,13 +28,20 @@
 //!   re-ordering, because rows carry no global sequence (the window
 //!   child is listed first). An endpoint backed by a fanout whose
 //!   window child is the ring renders exactly the ring's JSON.
+//! - [`FileTraceSink`] is the durable half (V2-F25): one JSONL line per
+//!   recorded row, appended + flushed on record, the same camelCase row
+//!   shape the endpoint serves. The attach is loud (a bad path aborts
+//!   the dev boot); a mid-session write failure is sticky — one
+//!   `tracing::warn!`, then the rows drop (a half-written line is worse
+//!   than a stopped export). The dev boot attaches it beside the ring
+//!   and the tracing arm when `OXIDE_TRACE_FILE` opts in.
 //!
 //! The pipeline's record point is unchanged: still one `None` check on
 //! [`crate::Pipeline::trace_sink`] — a sink that happens to fan out is
 //! the attached seam's business, and the unattached pipeline stays
 //! byte-identical. The CLI's dev boot attaches the fanout only when
-//! `OXIDE_TRACE_LOG` opts in (production never attaches — the F21
-//! posture holds).
+//! `OXIDE_TRACE_LOG` (the tracing arm) or `OXIDE_TRACE_FILE` (the file
+//! arm) opts in (production never attaches — the F21 posture holds).
 
 use std::sync::Arc;
 
@@ -125,7 +132,8 @@ impl TraceSink for FanoutTraceSink {
     fn record(&self, trace: RequestTrace) {
         // One row reaches every child — each child gets its own clone
         // (the row is a plain record shape, `Clone` by design so the
-        // seams stay value-shaped; the dev boot is two children wide).
+        // seams stay value-shaped; the dev boot is ring + tracing + file
+        // wide at most).
         for child in &self.children {
             child.record(trace.clone());
         }
@@ -137,6 +145,93 @@ impl TraceSink for FanoutTraceSink {
             rows.extend(child.snapshot());
         }
         rows
+    }
+}
+
+/// V2-F25: the file arm — every recorded row appends as one JSONL line
+/// to the file the boot opened at attach time. The F22 export arm rides
+/// the standard `tracing` stream (whatever subscriber the host
+/// installed renders the rows); the file arm is the durable half — a
+/// dev session whose console scrolled past, or an OTLP collector that
+/// was down, still has the audit trail.
+///
+/// The rows are the endpoint's wire shape, re-rendered
+/// ([`crate::trace_feed::row_json`]): one row, one rendering, both
+/// surfaces (the wire identity rule). One row, one line, flushed on
+/// record: when the record returns, the bytes are in the file — a crash
+/// cannot lose the already-recorded rows.
+///
+/// The attach is loud: [`FileTraceSink::create`] opens (create + append)
+/// the file and surfaces the IO error — the dev boot aborts on a bad
+/// path rather than silently losing the audit trail (the session-keys
+/// posture: a silently degraded audit surface is a downgrade). A write
+/// that fails mid-session (a full disk is the realistic shape) is
+/// sticky: the sink emits one `tracing::warn!` and drops every
+/// subsequent row — it never half-writes a line, and it never panics
+/// the pipeline that records into it. The sink is not a window:
+/// [`TraceSink::snapshot`] stays empty because rows are emitted, never
+/// retained.
+pub struct FileTraceSink {
+    writer: std::sync::Mutex<std::io::BufWriter<std::fs::File>>,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl std::fmt::Debug for FileTraceSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The file handle is the sink's internal state (a buffered
+        // writer over the export path); the seam name is the identity
+        // the boot attaches.
+        f.debug_struct("FileTraceSink").finish_non_exhaustive()
+    }
+}
+
+impl FileTraceSink {
+    /// Open (create + append) the export file. The attach fails loudly —
+    /// a bad path aborts the dev boot rather than silently losing the
+    /// audit trail.
+    ///
+    /// # Errors
+    /// The underlying `OpenOptions::open` error: a missing parent
+    /// directory, an unwritable location, a directory path.
+    pub fn create(path: &std::path::Path) -> std::io::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        Ok(Self {
+            writer: std::sync::Mutex::new(std::io::BufWriter::new(file)),
+            failed: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+}
+
+impl TraceSink for FileTraceSink {
+    fn record(&self, trace: RequestTrace) {
+        use std::io::Write as _;
+        if self.failed.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let line = crate::trace_feed::row_json(&trace).to_string();
+        let mut writer = self.writer.lock().expect("trace file mutex poisoned");
+        let outcome = writer
+            .write_all(line.as_bytes())
+            .and_then(|_| writer.write_all(b"\n"))
+            .and_then(|_| writer.flush());
+        if let Err(e) = outcome {
+            // Sticky: one warning, then every row drops. A half-written
+            // line is worse than a stopped export — the audit trail's
+            // tail stays parseable.
+            self.failed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!(error = %e, "trace file export stopped; dropping further rows");
+        }
+    }
+
+    fn snapshot(&self) -> Vec<RequestTrace> {
+        // The file arm is an exporter, not a window: rows are emitted,
+        // never retained — a consumer wanting the window polls the
+        // ring-backed endpoint.
+        Vec::new()
     }
 }
 
