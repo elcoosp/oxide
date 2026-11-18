@@ -5622,3 +5622,77 @@ not see.
   (`let _ = meta_len;`) — the size cap already refused the oversized
   object before buffering, so the binding was dead scaffolding; the arm
   yields the bytes now and the discard line is gone.
+
+## The seam composes and the feed narrows (F34 + F35, 2026-11-18)
+
+**Branch:** `feat/cache-observability-fanout-and-gate` (uncommitted changes;
+`ship.toml` + `.github/pr-body.md` gitignored). **Mint:** the WP table's
+F34/F35 rows — F34 ships the composition arm the F22 request plane already
+named, F35 transposes the F26 filter surface to the cache feed; together
+they finish the "one slot, many shapes" story the F28 seam doc prescribes.
+
+- **F34, the observer fanout** (`crates/cache/src/fanout.rs`): the
+  `with_observer` slot holds ONE observer, the crate ships three consumers,
+  and the `coalesce` example carried the workaround — a four-line inline
+  `FanoutObserver` whose own doc said it copied the server crate's
+  `FanoutTraceSink` posture. `FanoutCacheObserver` is that posture shipped
+  once: one event reaches every child in construction order (the
+  `FanoutTraceSink` rule — no cross-child re-order is attempted, events
+  carry no global sequence), the borrowed event is RE-SHARED, not rebuilt
+  (a fan over N children is N virtual calls and zero copies — the seam's
+  zero-alloc promise kept for the composition), an empty fan is the honest
+  no-op (it attaches, `children() == 0`, delivers nowhere — the posture's
+  `observer_attached` reads true because the slot IS wired), and fans nest
+  (a fan over fans is just children again). `FanoutCacheObserver::shared`
+  is the `EventFeed::shared`-shaped convenience — the `Arc<dyn
+  CacheObserver>` ready for `with_observer`. No error codes: the fan is
+  infallible (the F21 posture). 8 pins in `fanout_tdd` (incl. the
+  payload-re-shared pin over a stale serve and the real-traffic composite
+  where the exporter's counters and the feed's FIFO describe the same
+  events), the `cache_observer_fanout` criterion group (one/two/three-child
+  fan delta + the composed hot path), the `fanout` walkthrough example, and
+  the `coalesce` example switches to the shipped type.
+
+- **F35, the feed's admission gate** (`crates/cache/src/feed.rs`): the
+  queue retained EVERY row — right for a pipeline consumer, wrong for a
+  narrow watcher: a deploy-watch consumer (`invalidate` + `coalesce` rows
+  only) paid the enqueue for the whole hot-hit stream it would have
+  drained and discarded, and a hot stream saturated its bound before the
+  deploy rows it actually wanted arrived. The gate is the record-side
+  narrowing (the server crate's F26 shape — `LogGate` narrowed the
+  capture, this narrows the enqueue): `FeedGate` sees the borrowed event
+  BEFORE the owned row is built, so a rejected row allocates nothing,
+  never joins the queue, never counts in `dropped()` and never fires the
+  sticky warn — admission is the feed's configured shape, not a
+  degradation. `AdmitAll` is the default spelled as a type (row-for-row
+  the ungated feed), `KindGate::only(&[kinds])` is the domain gate over
+  `event.kind()`'s stable names, `EventFeed::with_gate` is the builder arm
+  and `EventFeed::gated` the shared-shape sugar. The bound applies behind
+  the gate unchanged: admitted rows saturate exactly as before (the
+  warn-once rule holds — the gate and the bound compose). 9 pins in
+  `feed_gate_tdd`, the `cache_event_feed_gate` criterion group (the admit
+  delta over the ungated push + the reject floor), and the `event_feed`
+  example gains the gated section.
+
+- **Micro-debt cleaned (additive).**
+  `crates/cache/src/single_flight.rs`'s `FlightOwnerGuard::publish` sent
+  the entry to the followers and DROPPED the count the send produced
+  (`let _ = tx.send(entry);`) — the count is exactly what the F33 emitter
+  contract routes to `TieredCache::record_coalesced` ("the host's flight
+  owner calls it on completion with the count the publish reached"), so
+  the guard's owner had no honest join number to record; `publish` returns
+  the `publish_and_cleanup`-shaped count now (`#[must_use]` with the
+  emitter routing in the message) and two in-module pins hold the
+  one-follower and zero-follower arms. The CLI render stage's owner site
+  names the count it still drops (`let _dropped_join_count = …`) until the
+  recorded wire-in lands. The same pass made every file this session
+  touches pedantic-clean under clippy 1.100 (the session's added files and
+  the touched bench sites; `examples/metrics.rs`/`examples/health.rs` and
+  `tiers.rs`/`cache_tdd.rs` keep the crate's recorded residuals — the
+  hygiene pass that opts the crate into `[lints] workspace = true` remains
+  the recorded debt).
+
+- **Docs drift fixed (additive).** `docs/architecture.md`'s `cache` row
+  names the composition arm and the gate now; `crates/cache/README.md`'s
+  observability bullet names the four consumer shapes and the gate. The
+  README badge re-measured by `scripts/count-tests.sh`.
