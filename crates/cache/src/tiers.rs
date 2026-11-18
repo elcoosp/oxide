@@ -15,7 +15,8 @@
 //! 32 bytes roughly cover status/etag/timestamp bookkeeping). The canonical cache key
 //! length is not counted (it is a constant per layer in practice).
 
-use crate::{CacheHandler, Entry, Hit, Result, err};
+use crate::observer::{CacheEvent, CacheObserver, CacheOp};
+use crate::{CacheHandler, Entry, Hit, Layer, Result, err};
 use dashmap::DashMap;
 use moka::sync::Cache as MokaCache;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
@@ -656,6 +657,11 @@ pub struct TieredCache {
     misses: AtomicU64,
     stale_served: AtomicU64,
     coalesced: AtomicU64,
+    /// The observability seam's subscriber (§20): `None` = the pull-only
+    /// default (`stats()`), `Some` = one infallible callback per completed
+    /// event. The `CaptureLayer::with_gate` posture — private field, the
+    /// [`TieredCache::with_observer`] builder attaches.
+    observer: Option<Arc<dyn CacheObserver>>,
 }
 
 impl TieredCache {
@@ -671,6 +677,7 @@ impl TieredCache {
             misses: AtomicU64::new(0),
             stale_served: AtomicU64::new(0),
             coalesced: AtomicU64::new(0),
+            observer: None,
         })
     }
 
@@ -686,6 +693,7 @@ impl TieredCache {
             misses: AtomicU64::new(0),
             stale_served: AtomicU64::new(0),
             coalesced: AtomicU64::new(0),
+            observer: None,
         }
     }
 
@@ -704,6 +712,29 @@ impl TieredCache {
         self
     }
 
+    /// Attach the observability seam's subscriber (`observer.rs`, §20):
+    /// one infallible [`CacheObserver`] callback per completed event —
+    /// hits (with the serving layer and stale flag), misses, write-through
+    /// sets, deletes, and one aggregate row per completed tag
+    /// invalidation. Push-only: events flow from the attach onward, no
+    /// replay; the default (`None`) keeps the pull-only
+    /// [`TieredCache::stats`] contract untouched.
+    #[must_use = "the observer attaches through the builder chain; dropping it loses the seam"]
+    pub fn with_observer(mut self, observer: Arc<dyn CacheObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    /// Deliver one event to the attached observer. The no-observer path
+    /// is one `None` branch; the attached path is one virtual call. The
+    /// emit sites hand the `&str` they already hold, so a delivery
+    /// allocates nothing.
+    fn observe(&self, key: &str, op: CacheOp) {
+        if let Some(observer) = &self.observer {
+            observer.on_event(&CacheEvent { key, op });
+        }
+    }
+
     /// Get across tiers (memory → disk → remote). Every tier hit promotes the entry to
     /// memory. Records hits/misses/stale for [`TieredCache::stats`].
     pub async fn get(&self, key: &str) -> Result<Option<Hit>> {
@@ -714,10 +745,26 @@ impl TieredCache {
             match classify(&e, now) {
                 Freshness::Fresh => {
                     self.bump_hit(false);
+                    self.observe(
+                        key,
+                        CacheOp::Hit {
+                            layer: Layer::L0,
+                            stale: false,
+                            bytes: e.body.len() as u64,
+                        },
+                    );
                     return Ok(Some(Hit::Fresh(e)));
                 }
                 Freshness::Stale => {
                     self.bump_hit(true);
+                    self.observe(
+                        key,
+                        CacheOp::Hit {
+                            layer: Layer::L0,
+                            stale: true,
+                            bytes: e.body.len() as u64,
+                        },
+                    );
                     return Ok(Some(Hit::Stale(e)));
                 }
                 Freshness::Expired => {
@@ -749,11 +796,27 @@ impl TieredCache {
                     Freshness::Fresh => {
                         self.memory.insert(key, e.clone());
                         self.bump_hit(false);
+                        self.observe(
+                            key,
+                            CacheOp::Hit {
+                                layer: Layer::L1,
+                                stale: false,
+                                bytes: e.body.len() as u64,
+                            },
+                        );
                         return Ok(Some(Hit::Fresh(Arc::new(e))));
                     }
                     Freshness::Stale => {
                         self.memory.insert(key, e.clone());
                         self.bump_hit(true);
+                        self.observe(
+                            key,
+                            CacheOp::Hit {
+                                layer: Layer::L1,
+                                stale: true,
+                                bytes: e.body.len() as u64,
+                            },
+                        );
                         return Ok(Some(Hit::Stale(Arc::new(e))));
                     }
                     Freshness::Expired => {
@@ -773,11 +836,27 @@ impl TieredCache {
                 Freshness::Fresh => {
                     self.memory.insert(key, e.clone());
                     self.bump_hit(false);
+                    self.observe(
+                        key,
+                        CacheOp::Hit {
+                            layer: Layer::L2,
+                            stale: false,
+                            bytes: e.body.len() as u64,
+                        },
+                    );
                     return Ok(Some(Hit::Fresh(Arc::new(e))));
                 }
                 Freshness::Stale => {
                     self.memory.insert(key, e.clone());
                     self.bump_hit(true);
+                    self.observe(
+                        key,
+                        CacheOp::Hit {
+                            layer: Layer::L2,
+                            stale: true,
+                            bytes: e.body.len() as u64,
+                        },
+                    );
                     return Ok(Some(Hit::Stale(Arc::new(e))));
                 }
                 Freshness::Expired => {
@@ -787,6 +866,7 @@ impl TieredCache {
         }
 
         self.misses.fetch_add(1, Ordering::Relaxed);
+        self.observe(key, CacheOp::Miss);
         Ok(None)
     }
 
@@ -849,6 +929,12 @@ impl TieredCache {
                 v.insert(entry.tags.clone());
             }
         }
+        self.observe(
+            key,
+            CacheOp::Set {
+                bytes: entry.body.len() as u64,
+            },
+        );
         Ok(())
     }
 
@@ -880,6 +966,7 @@ impl TieredCache {
                 }
             }
         }
+        self.observe(key, CacheOp::Delete);
         Ok(())
     }
 
@@ -951,6 +1038,17 @@ impl TieredCache {
         if let Some(remote) = &self.remote {
             remote.publish_invalidation(tag, soft).await?;
         }
+        // The invalidate row keys on the TAG (the event the operator asks
+        // about is "tag X invalidated"), not on each affected cache key —
+        // the per-key traffic during the sweep emits its own rows.
+        self.observe(
+            tag,
+            CacheOp::Invalidate {
+                tag: tag.to_owned(),
+                soft,
+                count,
+            },
+        );
         Ok(count)
     }
 
@@ -1027,7 +1125,7 @@ impl CacheHandler for TieredCache {
         // to do with a stale one, and both fresh and stale entries are
         // returned here so that decision stays with the caller.
         match TieredCache::get(self, key).await? {
-            Some(Hit::Fresh(e)) | Some(Hit::Stale(e)) => Ok(Some((*e).clone())),
+            Some(Hit::Fresh(e) | Hit::Stale(e)) => Ok(Some((*e).clone())),
             None => Ok(None),
         }
     }
@@ -1035,7 +1133,7 @@ impl CacheHandler for TieredCache {
     async fn get_arc(&self, key: &str) -> Result<Option<Arc<Entry>>> {
         // P-03: hand back the shared entry — no body copy on a hot hit.
         match TieredCache::get(self, key).await? {
-            Some(Hit::Fresh(e)) | Some(Hit::Stale(e)) => Ok(Some(e)),
+            Some(Hit::Fresh(e) | Hit::Stale(e)) => Ok(Some(e)),
             None => Ok(None),
         }
     }
