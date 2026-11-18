@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use oxide_fw_assets::{
-    CollectionConfig, RouteSearchIndex, SchemaKind, assert_preserved,
-    build_route_search_index, check_references, extract_from_html, optimize_for_build,
-    referenced_svg_ids, route_search_index_to_json, scan_collection, select_optimizer,
+    CollectionConfig, RouteSearchIndex, SchemaKind, assert_preserved, build_route_search_index,
+    check_references, extract_from_html, optimize_for_build, referenced_svg_ids,
+    route_search_index_to_json, scan_collection, select_optimizer,
 };
 
 /// A prerendered dist tree: two routes, one with a per-locale variant,
@@ -119,7 +119,10 @@ fn the_svg_pipeline_preserves_the_referenced_ids() {
 
     let before = referenced_svg_ids(sprite);
     assert!(before.contains("shape"), "the use href is collected");
-    assert!(before.contains("grad"), "the paint-server spelling is collected");
+    assert!(
+        before.contains("grad"),
+        "the paint-server spelling is collected"
+    );
     assert!(before.contains("cap"), "the aria spelling is collected");
 
     // The default build shape: no `svg-oxvg` backend configured, the
@@ -135,7 +138,11 @@ fn the_svg_pipeline_preserves_the_referenced_ids() {
     // The optimizer-selection seam answers for both build shapes — the
     // disabled arm is the identity, wired without the optional backend.
     let optimizer = select_optimizer(false).expect("the identity selects");
-    assert_eq!(optimizer.id(), "identity", "the disabled arm is the identity");
+    assert_eq!(
+        optimizer.id(),
+        "identity",
+        "the disabled arm is the identity"
+    );
 }
 
 /// A scanned collection feeds the reference checker: the entries the
