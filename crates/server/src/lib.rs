@@ -127,10 +127,13 @@ pub use trace_export::{FanoutTraceSink, FileTraceSink, TracingTraceSink};
 // arm (a `tracing_subscriber::Layer` — a second read on the event
 // stream, no rendering change) and the `LogsEndpoint` wire contract
 // with the `LogQuery` filter seam (`?level=`, `?target=`, `?q=`,
-// `?limit=`; invalid values degrade to no filter).
+// `?limit=`; invalid values degrade to no filter). V2-F26: the capture
+// arm's admission gate (`LogGate`, the `AdmitAll` default, the
+// `LevelFloor` narrowing impl) — the record-side filter the CLI's
+// `OXIDE_LOG_FEED_LEVEL` gate rides.
 pub use log_feed::{
-    CaptureLayer, LOG_FEED_CAPACITY, LOG_FEED_ENDPOINT_PATH, LogEvent, LogQuery, LogSink,
-    LogsEndpoint, RingLogSink,
+    AdmitAll, CaptureLayer, LOG_FEED_CAPACITY, LOG_FEED_ENDPOINT_PATH, LevelFloor, LogEvent,
+    LogGate, LogQuery, LogSink, LogsEndpoint, RingLogSink,
 };
 
 // V2-F09: the search endpoint's attached state (`search` feature) — the
