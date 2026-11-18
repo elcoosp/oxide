@@ -103,10 +103,20 @@ pub use cost_endpoint::{
 // V2-F21 (server half): the dev-plane trace feed — the `TraceSink` record
 // seam, the bounded `RingTraceSink`, the `RequestTrace` row and the
 // `GET /__oxide/traces` endpoint the §V2.J dev-plane row names.
+// V2-F23: the endpoint's filtered window (`TraceQuery` — `?status=`,
+// `?method=`, `?path=`, `?limit=`; invalid values degrade to no filter).
 pub use trace_feed::{
-    RequestTrace, RingTraceSink, TRACE_FEED_CAPACITY, TRACE_FEED_ENDPOINT_PATH, TraceSink,
-    TracesEndpoint,
+    RequestTrace, RingTraceSink, TRACE_FEED_CAPACITY, TRACE_FEED_ENDPOINT_PATH, TraceQuery,
+    TraceSink, TracesEndpoint,
 };
+
+// V2-F22 (server half): the trace rows' tracing export — the
+// `TracingTraceSink` emits one event per recorded row (the subscriber the
+// CLI installs at boot rides it: console, `OXIDE_LOG=json`, and with
+// `OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream) and the
+// `FanoutTraceSink` fans one record into every child sink (the dev boot
+// attaches ring + tracing behind it; the endpoint stays ring-backed).
+pub use trace_export::{FanoutTraceSink, TracingTraceSink};
 
 // V2-F09: the search endpoint's attached state (`search` feature) — the
 // read-only engine plus its L1. `SEARCH_ENDPOINT_PATH` itself lives in
@@ -115,6 +125,7 @@ pub use trace_feed::{
 pub use search_endpoint::SearchEndpoint;
 
 pub mod trace_context;
+pub mod trace_export;
 pub mod trace_feed;
 
 /// The §V2-F08 dispatcher consult (the native `*.server.rs` registry
@@ -4881,7 +4892,9 @@ impl Pipeline {
                         .with_header("content-type", "text/plain; charset=utf-8"),
                 );
             }
-            return NativePrefix::Raw(ep.serve(&req.method));
+            return NativePrefix::Raw(
+                ep.serve_query(&req.method, req.url.split_once('?').map(|(_, q)| q)),
+            );
         }
 
         // (3a.1.6) learned prefetch (V2-F13). Two halves, gated on the
