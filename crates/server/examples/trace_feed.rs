@@ -54,6 +54,55 @@ fn ok_dispatch()
     }
 }
 
+/// The row count a trace-feed response carries (the `traces` array).
+fn trace_rows_len(resp: &OxideResponse) -> usize {
+    serde_json::from_slice::<serde_json::Value>(&resp.body)
+        .ok()
+        .and_then(|v| v["traces"].as_array().map(Vec::len))
+        .unwrap_or(0)
+}
+
+/// The F23 filtered-window walk: the window, filtered, is the answer —
+/// `?status=`, `?method=`, `?path=`, `?limit=` AND together; invalid
+/// values degrade to no filter; unknown parameters (the D41 `token`
+/// among them) are ignored; `serve` stays the no-query whole-window
+/// shape.
+fn walk_filtered_window(ep: &TracesEndpoint, sink: &Arc<RingTraceSink>) {
+    let rows = sink.snapshot();
+    println!("  the whole window: {} rows", rows.len());
+    let only_404 = ep.serve_query("GET", Some("status=404"));
+    println!(
+        "  ?status=404 -> {} rows (the exact spelling)",
+        trace_rows_len(&only_404)
+    );
+    let posts = ep.serve_query("GET", Some("method=post"));
+    println!(
+        "  ?method=post -> {} rows (case-insensitive exact)",
+        trace_rows_len(&posts)
+    );
+    let limited = ep.serve_query("GET", Some("limit=1"));
+    println!(
+        "  ?limit=1 -> {} row (the newest row alone)",
+        trace_rows_len(&limited)
+    );
+    let degraded = ep.serve_query("GET", Some("status=bogus&limit=abc"));
+    println!(
+        "  ?status=bogus&limit=abc -> {} rows (invalid values filter nothing)",
+        trace_rows_len(&degraded)
+    );
+    let combined = ep.serve_query("GET", Some("status=4xx&method=GET&path=/index"));
+    println!(
+        "  ?status=4xx&method=GET&path=/index -> {} row (the filters AND)",
+        trace_rows_len(&combined)
+    );
+    let refused_query = ep.serve_query("POST", Some("status=5xx"));
+    println!(
+        "  non-GET with a query -> {} (allow: {:?}; the guard precedes filtering)",
+        refused_query.status,
+        refused_query.header("allow")
+    );
+}
+
 fn main() {
     println!("== the ring: the record shapes ==");
     let sink = Arc::new(RingTraceSink::new(4));
@@ -128,6 +177,9 @@ fn main() {
             .unwrap_or("")
     );
 
+    println!("== the filtered window: the F23 query seam ==");
+    walk_filtered_window(&ep, &sink);
+
     println!("== the pipeline: one sink, two attach points ==");
     // The default pipeline never attaches: the endpoint falls through and
     // the record point is a None check (production byte-identical).
@@ -161,10 +213,23 @@ fn main() {
     );
 
     println!("== the response half: the traceresponse header ==");
-    // §20's propagation: a traced dispatch response carries the W3C L2
-    // draft's `traceresponse` header — the caller sees the server's
-    // response span id (derived from the SEC-02 per-request id). An
-    // untraced request stays byte-identical (no header).
+    walk_traceresponse(&mut p);
+
+    println!("== the window ==");
+    println!(
+        "  window now: {:?}",
+        sink.snapshot()
+            .iter()
+            .map(|r| r.path.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The §20 response-half walk: a traced dispatch response carries the W3C
+/// L2 draft's `traceresponse` header — the caller sees the server's
+/// response span id (derived from the SEC-02 per-request id). An
+/// untraced request stays byte-identical (no header).
+fn walk_traceresponse(p: &mut Pipeline) {
     let traced = {
         let mut req = get("/index");
         // A realistic SEC-02 per-request id (`req-` + 32 CSPRNG hex): the
@@ -179,14 +244,5 @@ fn main() {
     println!(
         "  traced response traceresponse: {:?}",
         rendered.header("traceresponse")
-    );
-
-    println!("== the window ==");
-    println!(
-        "  window now: {:?}",
-        sink.snapshot()
-            .iter()
-            .map(|r| r.path.as_str())
-            .collect::<Vec<_>>()
     );
 }
