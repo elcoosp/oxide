@@ -81,6 +81,14 @@ name = "health"
 harness = false
 required-features = ["bench-util"]
 
+# The observer fanout's composition cost (§20): the per-event fan delta
+# across one/two/three children and the composed hot path a three-child
+# dashboard boot pays on a fresh L0 hit.
+[[bench]]
+name = "fanout"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
