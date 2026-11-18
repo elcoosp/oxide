@@ -29,6 +29,7 @@ Concurrent misses for the same key run one render — the rest await the result 
 - **Tag and path invalidation** — `invalidate_tag`, `invalidate_path`
 - **Stale-while-revalidate and stale-if-error** — configurable policy windows
 - **Nonce sentinel handling** — a cached body serves any request without leaking another request's CSP nonce
+- **Observability seams** (F28, F30, F31) — the push channel beside the `stats()` pull channel: one infallible callback per completed cache event (`CacheObserver`), with the in-crate consumers the §20 doc names — `TracingCacheObserver` (rows under the `oxide::cache` target), `MetricsCacheObserver` (the `oxide_cache_plane_*` Prometheus exposition), and `EventFeed` (a bounded lossy FIFO the host drains off the hot path)
 
 ## Usage
 
