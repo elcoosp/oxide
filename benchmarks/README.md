@@ -2,7 +2,8 @@
 
 Targets are tracked per the spec's benchmark method: reference apps (Hello, Blog,
 Dashboard, Storefront) per framework, fixed hardware classes, warm+cold runs,
-wrk/oha load generation, CI regression gate at 5%.
+wrk/oha load generation, CI regression gate at 10% median vs the
+`after-wave-b.json` snapshot.
 
 - `crates/cli` `analyze` reports per-route JS bytes against `config.budgets`
   (§21: clientJs 150kb, routeJs 60kb) — exit code 1 on breach.
@@ -28,8 +29,9 @@ cargo bench -p oxide-fw-router -p oxide-fw-cache -p oxide-fw-dispatch \
 # summarize target/criterion into a JSON snapshot
 python3 benchmarks/criterion_summary.py benchmarks/after-wave-b.json
 
-# gate: fail when any shared benchmark regresses >5% vs a baseline snapshot
-python3 benchmarks/criterion_compare.py benchmarks/baseline-v01.json benchmarks/after-wave-b.json 5
+# gate (the shape ci.yml's bench-gate runs): fail when any shared benchmark
+# regresses >10% median vs the committed `after-wave-b.json` snapshot
+python3 benchmarks/criterion_compare.py benchmarks/after-wave-b.json /tmp/criterion-fresh.json 10
 ```
 
 Snapshots committed with the V2 Wave B milestone:
