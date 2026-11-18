@@ -171,7 +171,18 @@ impl crate::CacheHandler for HttpCacheHandler {
 
     async fn invalidate_tag(&self, tag: &str, soft: bool) -> Result<usize> {
         let url = format!("{}/invalidate/{tag}", self.base);
-        let body = serde_json::to_vec(&serde_json::json!({ "soft": soft })).unwrap_or_default();
+        // The serialization of a bool map cannot fail, so the shape stays
+        // infallible — but the impossible path is LOUD, not silent (the
+        // house convention this file's sibling arms already carry).
+        let body = serde_json::to_vec(&serde_json::json!({ "soft": soft })).unwrap_or_else(|e| {
+            tracing::warn!(
+                code = "CACHE-HTTP",
+                tag = %tag,
+                error = %e,
+                "the invalidate body did not serialize; sending an empty body"
+            );
+            Vec::new()
+        });
         match self.request("POST", &url, Some(&body)).await {
             Ok((200, b)) => {
                 // A malformed count reports 0 — behavior unchanged —
