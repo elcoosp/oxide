@@ -490,7 +490,14 @@ pub(crate) async fn stage_render(
                         );
                         cache.store_entry(&store_key, entry.clone()).await;
                         if let Some(guard) = flight_owner {
-                            guard.publish(std::sync::Arc::new(entry));
+                            // The publish now returns the follower count
+                            // the F33 emitter routes to
+                            // `record_coalesced`; this stage holds no
+                            // typed `TieredCache` half (the L0 flight is
+                            // over the page-render cache), so the count
+                            // is named as dropped here until the
+                            // recorded wire-in lands.
+                            let _dropped_join_count = guard.publish(std::sync::Arc::new(entry));
                         }
                     });
                     let stream: oxide_fw_server::BodyStream =
