@@ -5138,3 +5138,114 @@ in the `trace_feed` example.
   (licenses + advisories); `benchmarks/README.md` documented the
   criterion gate as `baseline-v01.json … 5` while the live gate is
   `after-wave-b.json … 10`.
+
+## The trace rows leave the process — the tracing export seam and the feed's filtered window land (`feat/trace-export-tracing` + `feat/trace-window-query`, 2026-11-18)
+
+**What lands.**
+
+The F21 handoff recorded two tails: "the CLI's observability module
+could feed a `TraceSink` bridge into a tracing layer" and the `fetch`
+op's outbound `traceparent`. The second tail turned out to be already
+implemented — `op_oxide_fetch` reads the worker thread's current
+`traceparent` and adds it to the outgoing headers (a caller-set header
+wins) — but *dormant*: no live call site invokes `set_trace_parent`
+(the V8 op args do not carry the inbound headers; the Node backend
+propagates through the loader payload). The module doc in
+`trace_context.rs` still claimed the op was "still a stub", the
+opposite drift, and now records the wired-but-latent truth. Two new
+milestones close the first tail and widen the feed's read contract.
+
+**M1 — the trace rows' tracing export (`feat/trace-export-tracing`,
+V2-F22 minted).** `crates/server/src/trace_export.rs`:
+`TracingTraceSink` is the export arm — one `tracing::info!` event per
+recorded row under the module-path target
+`oxide_fw_server::trace_export`, snake_case fields mirroring the row's
+Rust field names (`request_id`, `method`, `path`, `status`,
+`duration_ms`, `sampled`, `trace_id`, `parent_id`, `tracestate`), the
+absent W3C halves rendered as the empty string (the row's `None`
+halves stay recorded — the feed's own honesty rule, now on the event
+stream as on the wire). Whatever subscriber the host installed renders
+it: the console formatter, `OXIDE_LOG=json`, and with
+`OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream — the rows correlate with
+the §20 `oxide.request` span through the same `request_id` the
+`Server-Timing` header reports. The sink is not a window:
+`snapshot()` stays honestly empty (rows are emitted, never retained).
+`FanoutTraceSink` is the record fan — the pipeline has ONE
+`trace_sink` slot, so the dev boot that wants window + export needs a
+sink that is both: `record` fans to every child, `snapshot`
+concatenates each child's newest-first rows in construction order with
+no cross-child re-ordering (`RequestTrace` carries no global sequence,
+so any merge sort would be fabricated; the window child is listed
+first, so a fanout-backed endpoint renders the ring's JSON exactly).
+The CLI dev boot attaches fanout(ring, `TracingTraceSink`) only when
+`OXIDE_TRACE_LOG` opts in (`crates/cli/src/serve/start.rs`, the
+`trace_log_enabled` gate in `observability.rs` accepting anything but
+`""`/`0`/`false`/`off`) — the endpoint stays ring-backed and the
+default console output is byte-identical; production never attaches
+(the F21 posture holds). 11 server pins red-first (E0432 over
+`TracingTraceSink`/`FanoutTraceSink`), the `trace_export_record` and
+`trace_export_fanout` criterion groups, and the `trace_export`
+walkthrough example.
+
+**M2 — the trace feed's filtered window (`feat/trace-window-query`,
+V2-F23 minted).** F21's contract was "no query parameter — the window
+is the answer"; a consumer that asks "which requests failed recently?"
+or "what did the POSTs cost?" pulls 256 rows and filters by hand. The
+contract widens: `TraceQuery` parses `?status=5xx` (a response-class
+spelling) or `?status=404` (exact), `?method=` (case-insensitive
+exact), `?path=` (a percent-decoded, segment-honest prefix — `/api`
+matches `/api/x` but not `/apiology`), `?limit=` (positive, capped at
+`TRACE_FEED_CAPACITY`, the nav endpoint's optional-limit shape). The
+filters AND together, the newest-first order is never re-ordered,
+unknown parameters are ignored by construction (the D41 `token` rides
+the same query and the dev-plane arm consumes it before the endpoint
+sees anything), and an invalid optional value degrades to no filter —
+never an error. `TracesEndpoint::serve_query` renders the filtered
+window; `serve` delegates with `None` and stays the whole-window F21
+contract byte-identical; the dev-plane arm passes the raw query
+through. The §V2.J map row gained the query spelling and the spec's
+Appendix V2.J + the WP status table gained the F21/F22/F23 rows (the
+F21 rows were minted last session but never landed in the spec doc —
+drift fixed here). 18 server pins red-first (E0432 over `TraceQuery`,
+E0599 over `serve_query`), the `trace_feed_query` criterion group, and
+the filtered-window section in the `trace_feed` example.
+
+**Deltas recorded.**
+
+- The empty-string rendering for the absent W3C halves is a decision:
+  a combinatorial event shape (emit the field only when present) needs
+  three branches per row for the three `Option` halves, and a
+  subscriber visiting fewer fields makes "was it absent or was the
+  sink wrong?" unanswerable. The empty string keeps one event shape,
+  mirrors the W3C grammar (an absent `tracestate` is the empty
+  tracestate) and stays honest the way the row is.
+- The fanout snapshot is honest concatenation, not a merge: rows carry
+  no cross-child sequence number, so a globally sorted window would be
+  fabricated order. The window child listed first keeps every existing
+  endpoint contract intact (the tracing child contributes no rows).
+- The `OXIDE_TRACE_LOG` gate keeps the export arm opt-in: a dev
+  session's console would otherwise grow one line per request (the
+  events render at info, inside the default `RUST_LOG=info` filter).
+  Production never attaches either half — the unattached pipeline's
+  record point is still one `None` check, byte-identical.
+- Micro-debt cleaned in the same diff: the `observability.rs` module
+  doc was the split_cli.py orphan (`run`'s buffered-stdout doc glued
+  onto `init_tracing`, with a literal `).///` artifact) — moved home to
+  `args.rs::run`, `init_tracing` and `env_filter` got their own docs.
+  The badge counter (`scripts/count-tests.sh`) and the launch-content
+  gate (`scripts/check-launch-content.sh`) both missed the 31
+  flavoured `#[tokio::test(flavor = …)]` attributes — both count the
+  `(\(|\])` shape now, and the README badge/prose re-measured (2730 →
+  2792; the prose row said 2,155).
+- Docs drift fixed: the README status rows (95/100 → ~93 per scorecard
+  r9; 20/17 jobs → 24/21; `oxide gc`/`oxide bisect` dropped from the
+  top-level Operate list — they are `oxide cache gc` /
+  `oxide perf bisect`); `benchmarks/README.md` ("baseline-v01.json …
+  is the file future Wave B work diffs against" → the live gate diffs
+  against `after-wave-b.json`; the six-crate sweep vs CI's two-crate
+  bench-gate shape made explicit). The committed docs gate was red at
+  HEAD: `docs/reference/cli.md` predated the Fmt/Replay/Deploy commands
+  and `docs_tdd.rs::page_registry_lists_the_reference_pages` still
+  pinned the 4-page registry after `endpoints.md` joined — the pin
+  moved to 5 and the page regenerated with the `docs generate --check`
+  gate green.
