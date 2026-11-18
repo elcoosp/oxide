@@ -36,6 +36,13 @@
 //!   is one relaxed atomic add; a hot L0 hit pays one branch and one
 //!   add, the same cost [`crate::tiers::TieredCache::stats`]'s own
 //!   counters pay).
+//! - The single-flight joins ride the same rules (F33): one
+//!   `oxide_cache_plane_coalesce_events_total` counter per completed
+//!   flight the host records through
+//!   [`crate::tiers::TieredCache::record_coalesced`], and
+//!   `oxide_cache_plane_coalesced_followers_total` for the joins — the
+//!   push twin of `stats().coalesced`, so the pull and push channels
+//!   never disagree.
 //! - No error codes: nothing here can fail (the F21 posture — the
 //!   registry gains no rows for a seam without refusals).
 //! - `render_prometheus` is deterministic: the fixed family order, the
@@ -92,6 +99,12 @@ pub struct CacheMetricsSnapshot {
     /// Distinct keys the invalidations affected (the count each call
     /// returned).
     pub invalidated_keys: u64,
+    /// Completed single-flight flights the host recorded (one aggregate
+    /// row per flight, F33).
+    pub coalesce_events: u64,
+    /// Followers that coalesced onto those flights' owners (the join
+    /// count the push twin of `stats().coalesced` sums).
+    pub coalesced_followers: u64,
 }
 
 /// The metrics exporter: the F28 seam's named structured consumer. Every
@@ -128,6 +141,8 @@ pub struct MetricsCacheObserver {
     stored_bytes: AtomicU64,
     invalidations: AtomicU64,
     invalidated_keys: AtomicU64,
+    coalesce_events: AtomicU64,
+    coalesced_followers: AtomicU64,
 }
 
 impl MetricsCacheObserver {
@@ -146,6 +161,8 @@ impl MetricsCacheObserver {
             stored_bytes: AtomicU64::new(0),
             invalidations: AtomicU64::new(0),
             invalidated_keys: AtomicU64::new(0),
+            coalesce_events: AtomicU64::new(0),
+            coalesced_followers: AtomicU64::new(0),
         }
     }
 
@@ -166,6 +183,8 @@ impl MetricsCacheObserver {
             stored_bytes: load(&self.stored_bytes),
             invalidations: load(&self.invalidations),
             invalidated_keys: load(&self.invalidated_keys),
+            coalesce_events: load(&self.coalesce_events),
+            coalesced_followers: load(&self.coalesced_followers),
         }
     }
 
@@ -256,6 +275,18 @@ impl MetricsCacheObserver {
             "Cache-plane keys affected by tag invalidations",
             load(&self.invalidated_keys),
         );
+        family(
+            &mut out,
+            "oxide_cache_plane_coalesce_events_total",
+            "Cache-plane single-flight flights the host recorded",
+            load(&self.coalesce_events),
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_coalesced_followers_total",
+            "Cache-plane followers that coalesced onto flight owners",
+            load(&self.coalesced_followers),
+        );
 
         out
     }
@@ -303,6 +334,10 @@ impl CacheObserver for MetricsCacheObserver {
                 if let Ok(keys) = u64::try_from(count) {
                     saturating_add(&self.invalidated_keys, keys);
                 }
+            }
+            CacheOp::Coalesce { followers } => {
+                saturating_add(&self.coalesce_events, 1);
+                saturating_add(&self.coalesced_followers, followers);
             }
         }
     }
