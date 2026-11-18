@@ -223,6 +223,10 @@ impl crate::CacheHandler for HttpCacheHandler {
         }
         Ok(())
     }
+
+    fn handler_kind(&self) -> &'static str {
+        "http"
+    }
 }
 
 #[cfg(test)]
