@@ -4841,8 +4841,7 @@ async fn until(budget: std::time::Duration, mut done: impl FnMut() -> bool) -> b
 /// §20 fan (exporter + feed), the same tier erased under the L0 cache,
 /// a renderer slow enough that a staggered second request coalesces.
 struct CoalesceFixture {
-    dispatch:
-        std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
+    dispatch: std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
     typed: std::sync::Arc<oxide_fw_cache::TieredCache>,
     exporter: std::sync::Arc<oxide_fw_cache::MetricsCacheObserver>,
     feed: std::sync::Arc<oxide_fw_cache::EventFeed>,
