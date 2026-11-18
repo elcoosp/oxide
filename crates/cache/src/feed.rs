@@ -1,8 +1,8 @@
 //! The cache plane's bounded event feed (`observer.rs`'s named
 //! heavy-consumer shape): a `CacheObserver` that ENQUEUES the rows it
 //! receives into a bounded FIFO queue and lets the host's own task drain
-//! them elsewhere, instead of running its work inline on the cache's call
-//! path.
+//! them elsewhere, instead of running its work inline on the cache's
+//! call path.
 //!
 //! ## Why the feed exists
 //!
@@ -42,6 +42,23 @@
 //!   is safe on the cache's call path; the heavy work lives in the
 //!   consumer's own task behind [`EventFeed::try_pop`] and
 //!   [`EventFeed::drain`].
+//!
+//! ## The admission gate (F35)
+//!
+//! The queue retains EVERY row — right for a pipeline consumer, wrong for
+//! a narrow watcher: a deploy-watch consumer (`invalidate` + `coalesce`
+//! rows only) pays the enqueue for the whole hot-hit stream it would
+//! have drained and discarded, and a hot stream saturates its bound
+//! before the deploy rows it actually wants arrive. The gate is the
+//! record-side narrowing (the server crate's F26 filter-surface shape —
+//! `LogGate` narrowed the capture, this narrows the enqueue):
+//! [`FeedGate`] sees the borrowed event BEFORE the owned row is built, so
+//! a rejected row allocates nothing, never joins the queue, never counts
+//! in `dropped()` and never fires the warn — admission is the feed's
+//! configured shape, not a degradation. The bound applies behind the
+//! gate unchanged: admitted rows saturate exactly as before. The default
+//! is the gate spelled as a type ([`AdmitAll`]) — the ungated feed row
+//! for row.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -53,6 +70,66 @@ use crate::observer::{CacheEvent, CacheObserver, CacheOp};
 /// (the [`CacheEvent`](crate::CacheEvent) pair, copied out of the borrow
 /// the callback received).
 pub type FeedRow = (String, CacheOp);
+
+/// The feed's record-side admission predicate (F35, the F26 filter-surface
+/// shape transposed): the fanout and the exporters widen who hears an
+/// event, the gate narrows what the feed retains.
+///
+/// The gate sees the BORROWED event — [`on_event`](CacheObserver::on_event)
+/// consults it before the owned row is built, so a rejected row allocates
+/// nothing and never joins the queue. A rejection is admission, not
+/// saturation: it never counts in [`EventFeed::dropped`] and never fires
+/// the sticky warn (the warn is the bound's signal).
+///
+/// `Send + Sync + 'static` so the gate rides the `Arc`-shared feed across
+/// the cache's tasks. Implementations must be cheap and never panic — the
+/// predicate runs ON the cache's call path, the same contract the
+/// [`CacheObserver`](CacheObserver) callback carries.
+pub trait FeedGate: Send + Sync + 'static {
+    /// Whether the event joins the queue. The `event` borrow lives only
+    /// for the call.
+    fn admits(&self, event: &CacheEvent<'_>) -> bool;
+}
+
+/// The default gate spelled as a type: every row joins the queue. The
+/// ungated feed (`bounded`) is this predicate — `with_gate(Arc::new(
+/// AdmitAll))` matches it row for row (the F24 posture: the default
+/// shape never moves; the type exists so a host can NAME the default).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AdmitAll;
+
+impl FeedGate for AdmitAll {
+    fn admits(&self, _event: &CacheEvent<'_>) -> bool {
+        true
+    }
+}
+
+/// The domain gate: admits the row kinds named at construction and
+/// rejects the rest, keyed on [`CacheEvent::kind`]'s stable names
+/// (`"hit"`, `"miss"`, `"set"`, `"delete"`, `"invalidate"`,
+/// `"coalesce"`). The deploy-watch shape — `KindGate::only(&[
+/// "invalidate", "coalesce"])` stops paying the enqueue for the hot-hit
+/// stream a narrow consumer would have drained and discarded.
+#[derive(Debug, Clone)]
+pub struct KindGate {
+    admitted: &'static [&'static str],
+}
+
+impl KindGate {
+    /// A gate admitting only the named kinds. The slice is held by
+    /// reference (`&'static str` names are constants), so construction
+    /// allocates nothing.
+    #[must_use]
+    pub fn only(admitted: &'static [&'static str]) -> Self {
+        Self { admitted }
+    }
+}
+
+impl FeedGate for KindGate {
+    fn admits(&self, event: &CacheEvent<'_>) -> bool {
+        self.admitted.contains(&event.kind())
+    }
+}
 
 /// The bounded, lossy FIFO feed: attach one half through the F28 seam
 /// (`with_observer` — the `Arc<EventFeed>` coerces to the
@@ -70,14 +147,31 @@ pub type FeedRow = (String, CacheOp);
 ///     let _ = (key, op); // ship, batch, or render — off the hot path
 /// }
 /// ```
-#[derive(Debug)]
 pub struct EventFeed {
     /// The bounded FIFO. `Mutex` over `VecDeque`: the producer side is
     /// the cache's call path (short critical sections, no await held),
     /// the consumer side is any task the host owns.
     queue: Mutex<CacheQueue>,
-    /// The rows the bound dropped (never counted for drained rows).
+    /// The rows the bound dropped (never counted for drained rows, and
+    /// never counted for gate rejections — admission is not saturation).
     dropped: AtomicU64,
+    /// The F35 admission gate: `None` is the [`AdmitAll`] default (the
+    /// ungated shape, byte-identical), `Some` narrows the intake before
+    /// the owned row is built.
+    gate: Option<Arc<dyn FeedGate>>,
+}
+
+impl std::fmt::Debug for EventFeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The gate is the feed's attach shape (the FanoutTraceSink debug
+        // posture: name the shape, not the children's internals); the
+        // queue's own Debug carries its state.
+        f.debug_struct("EventFeed")
+            .field("queue", &self.queue)
+            .field("dropped", &self.dropped.load(Ordering::Relaxed))
+            .field("gated", &self.gate.is_some())
+            .finish()
+    }
 }
 
 /// The queue plus its one-shot warn state — one lock guards both, so a
@@ -94,7 +188,8 @@ struct CacheQueue {
 impl EventFeed {
     /// A feed holding at most `capacity` rows. A zero capacity retains
     /// nothing — every row is a drop (the `RingLogSink` posture), and the
-    /// sticky warn still fires once.
+    /// sticky warn still fires once. The gate is the untyped default
+    /// ([`AdmitAll`]); narrow the intake with [`EventFeed::with_gate`].
     #[must_use]
     pub fn bounded(capacity: usize) -> Self {
         Self {
@@ -104,7 +199,21 @@ impl EventFeed {
                 warned: false,
             }),
             dropped: AtomicU64::new(0),
+            gate: None,
         }
+    }
+
+    /// Narrow the feed's intake (F35): only events the gate admits join
+    /// the queue. The gate runs BEFORE the owned row is built, so a
+    /// rejected row allocates nothing, never counts in [`EventFeed::dropped`]
+    /// and never fires the sticky warn — admission is the feed's
+    /// configured shape, not a degradation. The bound applies behind the
+    /// gate unchanged; the builder consumes and returns the feed so the
+    /// attach chain stays one expression.
+    #[must_use = "the gate attaches through the builder chain; dropping it loses the narrowing"]
+    pub fn with_gate(mut self, gate: Arc<dyn FeedGate>) -> Self {
+        self.gate = Some(gate);
+        self
     }
 
     /// The bound the feed was built with.
@@ -182,6 +291,17 @@ impl EventFeed {
 
 impl CacheObserver for EventFeed {
     fn on_event(&self, event: &CacheEvent<'_>) {
+        // The F35 gate first, on the BORROWED event: a rejected row
+        // allocates nothing, never joins the queue, never counts in
+        // `dropped()` and never fires the warn — admission is the feed's
+        // configured shape, not a degradation. `None` (the default) is
+        // the `AdmitAll` shape — one `Option` branch, the ungated path
+        // byte-identical.
+        if let Some(gate) = &self.gate
+            && !gate.admits(event)
+        {
+            return;
+        }
         // One owned copy out of the borrow (the queue owns its rows), one
         // push under the lock. The lock is never held across an await —
         // the seam's synchronous contract — so the cache's call path pays
@@ -220,13 +340,23 @@ impl CacheObserver for EventFeed {
 /// The `Arc<EventFeed>` sharing convenience: one constructor that hands
 /// back the attached-and-drainable pair already split. (`with_observer`
 /// takes the `Arc<dyn CacheObserver>` coercion; the host keeps the typed
-/// half for draining.)
+/// half for draining.) A gated feed rides the same constructor —
+/// `EventFeed::gated(capacity, gate)` is
+/// `Arc::new(EventFeed::bounded(capacity).with_gate(gate))` with the
+/// shapes spelled.
 impl EventFeed {
     /// `Arc::new(EventFeed::bounded(capacity))` with the types spelled —
     /// the attach-and-drain shape the module doc shows.
     #[must_use]
     pub fn shared(capacity: usize) -> Arc<Self> {
         Arc::new(Self::bounded(capacity))
+    }
+
+    /// The gated feed's shared shape: the F35 narrowing over the
+    /// attach-and-drain constructor, one expression.
+    #[must_use]
+    pub fn gated(capacity: usize, gate: Arc<dyn FeedGate>) -> Arc<Self> {
+        Arc::new(Self::bounded(capacity).with_gate(gate))
     }
 }
 
