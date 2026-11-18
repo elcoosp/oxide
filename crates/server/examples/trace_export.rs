@@ -21,7 +21,9 @@
 //!
 //! This example installs the console subscriber, serves a few requests
 //! through the pipeline, and prints what the subscriber sees — the
-//! events appear in the console output above the walkthrough lines.
+//! events appear in the console output above the walkthrough lines —
+//! then walks the file arm's durable half and the injectable writer
+//! (V2-F27): the sticky write-failure rule the pins steer.
 //!
 //! Run: `cargo run -p oxide-fw-server --example trace_export`
 
@@ -68,6 +70,86 @@ fn ok_dispatch()
         Box::pin(async { OxideResponse::new(200, "ok") })
             as std::pin::Pin<Box<dyn std::future::Future<Output = OxideResponse> + Send>>
     }
+}
+
+/// The steered writer the V2-F27 walk injects: every byte accepted until
+/// steered to fail (the full-disk shape), the accepted bytes kept so the
+/// walk can print the side effects.
+#[derive(Clone, Default)]
+struct SteeredWriter {
+    state: Arc<std::sync::Mutex<(Vec<u8>, bool)>>,
+}
+
+impl SteeredWriter {
+    fn steer(&self, failing: bool) {
+        self.state.lock().expect("steered").1 = failing;
+    }
+}
+
+impl std::io::Write for SteeredWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut state = self.state.lock().expect("steered");
+        if state.1 {
+            return Err(std::io::Error::other("the walk steered a failure"));
+        }
+        state.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let state = self.state.lock().expect("steered");
+        if state.1 {
+            return Err(std::io::Error::other("the walk steered a failure"));
+        }
+        Ok(())
+    }
+}
+
+/// The injectable-writer walk (V2-F27): the JSONL framing over any byte
+/// sink, and the sticky write-failure rule — the first failing write
+/// flips the sink sticky (one warn, then every row drops; no half line
+/// ever lands).
+fn walk_writer_seam() {
+    let writer = SteeredWriter::default();
+    let sink = FileTraceSink::from_writer(writer.clone());
+    let trace = TraceContext::parse_traceparent(TRACED_PARENT).expect("valid traceparent");
+    sink.record(RequestTrace::of(
+        "req-ex-f27",
+        "GET",
+        "/index",
+        Some(&trace),
+        200,
+        Duration::from_micros(1250),
+    ));
+    let before = String::from_utf8(writer.state.lock().expect("steered").0.clone())
+        .expect("the accepted bytes are UTF-8 JSONL");
+    println!("  accepted before the failure: {before:?}");
+    writer.steer(true);
+    sink.record(RequestTrace::of(
+        "req-ex-f27",
+        "POST",
+        "/submit",
+        None,
+        404,
+        Duration::from_millis(3),
+    ));
+    sink.record(RequestTrace::of(
+        "req-ex-f27",
+        "GET",
+        "/api",
+        None,
+        200,
+        Duration::from_micros(900),
+    ));
+    let after = String::from_utf8(writer.state.lock().expect("steered").0.clone())
+        .expect("the accepted bytes are UTF-8 JSONL");
+    println!(
+        "  after two failed records: {after:?} (unchanged — the failure is sticky, no half line)"
+    );
+    println!(
+        "  snapshot stays empty: {} rows (an exporter, not a window)",
+        sink.snapshot().len()
+    );
 }
 
 fn main() {
@@ -182,5 +264,11 @@ fn main() {
     println!(
         "  the file line is the endpoint row: {}",
         last_line.get("requestId") == Some(&serde_json::Value::String("req-ex-f22".into()))
+    );
+
+    println!("== the injectable writer: the sticky failure rule (V2-F27) ==");
+    walk_writer_seam();
+    println!(
+        "  ^ the one warn event above names the stopped export (the sink drops silently after)"
     );
 }
