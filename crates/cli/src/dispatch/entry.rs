@@ -83,6 +83,10 @@ pub(crate) struct DispatchOpts {
     /// V2-E04: the manifest's integrity digest for the boot chunk.
     pub(crate) boot_script_integrity: Option<String>,
     pub(crate) l0: Option<std::sync::Arc<l0_cache::L0Cache>>,
+    /// F36: the typed `TieredCache` half the render stage records the
+    /// flight count through (see `DispatchDeps::l0_tiered`). `None` (the
+    /// test default) keeps the pre-wire shapes — no coalesce row lands.
+    pub(crate) l0_tiered: Option<std::sync::Arc<oxide_fw_cache::TieredCache>>,
     pub(crate) actions: Option<std::sync::Arc<dyn oxide_fw_server::ActionDispatcher>>,
     pub(crate) archived: Option<std::sync::Arc<oxide_fw_router::ArchivedTree>>,
     pub(crate) pool: Option<std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
@@ -127,6 +131,7 @@ pub(crate) fn build_dispatch(
         boot_script_url: opts.boot_script_url,
         boot_script_integrity: opts.boot_script_integrity,
         l0: opts.l0,
+        l0_tiered: opts.l0_tiered,
         actions: opts.actions,
         archived: opts.archived,
         pool: opts.pool,
