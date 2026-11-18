@@ -120,11 +120,23 @@ impl FlightOwnerGuard {
     /// Success: publish the computed entry to followers. Removes the in-flight
     /// entry before sending (same ordering guarantee as
     /// [`SingleFlight::publish_and_cleanup`]).
-    pub fn publish(mut self, entry: Arc<Entry>) {
+    ///
+    /// Returns the number of followers reached — the same count
+    /// [`SingleFlight::publish_and_cleanup`] returns, which the F33
+    /// emitter contract routes to
+    /// [`TieredCache::record_coalesced`](crate::tiers::TieredCache::record_coalesced)
+    /// ("the host's flight owner calls it on completion with the count
+    /// the publish reached"). The count previously rode the send and was
+    /// dropped on the floor, leaving the guard's owner with no honest
+    /// join number to record.
+    #[must_use = "the follower count is the F33 emitter's join number; record it (record_coalesced) or name the drop"]
+    pub fn publish(mut self, entry: Arc<Entry>) -> usize {
         // Remove only our own generation; a later owner may have replaced it.
         self.map.remove(&self.key);
         if let Some(tx) = self.tx.take() {
-            let _ = tx.send(entry);
+            tx.send(entry).unwrap_or_default()
+        } else {
+            0
         }
     }
 
@@ -246,10 +258,50 @@ mod tests {
             _ => panic!("follower"),
         };
         let guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
-        guard.publish(Arc::new(entry(b"v")));
+        let reached = guard.publish(Arc::new(entry(b"v")));
+        assert_eq!(reached, 1, "the one subscribed follower was reached");
         assert!(map.is_empty());
         let got = follower.recv().await.unwrap();
         assert_eq!(got.body, b"v");
+    }
+
+    #[tokio::test]
+    async fn owner_guard_publish_returns_the_follower_count() {
+        // The F33 emitter contract routes the count the publish reached
+        // to `record_coalesced` — the guard's publish must hand it back,
+        // not drop it on the floor (the micro-debt the count-carrying
+        // emitter exposed).
+        let map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>> =
+            Arc::new(DashMap::new());
+        let sf = SingleFlight::new();
+        let tx = match sf.acquire(&map, "k").await {
+            FlightSlot::Owner(tx) => tx,
+            _ => panic!("owner"),
+        };
+        let mut follower = match sf.acquire(&map, "k").await {
+            FlightSlot::Follower(rx) => rx,
+            _ => panic!("follower"),
+        };
+        let guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
+        let reached = guard.publish(Arc::new(entry(b"v")));
+        assert_eq!(reached, 1, "one follower was reached");
+        let _ = follower.recv().await;
+    }
+
+    #[tokio::test]
+    async fn owner_guard_publish_with_no_followers_returns_zero() {
+        // A zero-follower flight still completes and still records — the
+        // count is honest zero, not a dropped send.
+        let map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>> =
+            Arc::new(DashMap::new());
+        let sf = SingleFlight::new();
+        let tx = match sf.acquire(&map, "k").await {
+            FlightSlot::Owner(tx) => tx,
+            _ => panic!("owner"),
+        };
+        let guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
+        assert_eq!(guard.publish(Arc::new(entry(b"v"))), 0);
+        assert!(map.is_empty());
     }
 
     #[tokio::test]
