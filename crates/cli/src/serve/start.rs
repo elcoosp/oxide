@@ -930,8 +930,10 @@ pub(crate) async fn start_server_inner_full(
     // stack built WITHOUT a tier (tests, `FrameworkStack::empty()`) — it
     // keeps the same handler mapping so a test stack still exercises the
     // config path. Memory/disk are the local tiers every handler gets.
-    let l0_tier: std::sync::Arc<dyn oxide_fw_cache::CacheHandler> = match stack.cache_tier.clone() {
-        Some(tier) => tier,
+    // F36/F37: the typed half + the §20 exporter handle travel beside the
+    // erased handler (the stack carries both; this arm builds its own).
+    let (l0_tier, l0_tiered, cache_exporter) = match stack.cache_tier.clone() {
+        Some(tier) => (tier, stack.cache_tier_typed.clone(), stack.cache_exporter.clone()),
         None => {
             let mut tier = oxide_fw_cache::TieredCache::new(l0_bytes);
             match &cfg.cache.handler {
@@ -1005,7 +1007,18 @@ pub(crate) async fn start_server_inner_full(
                     }
                 }
             }
-            std::sync::Arc::new(tier)
+            // F36/F37: the test-stack arm attaches the §20 exporter over
+            // its own tier and keeps the typed half — the same wire the
+            // real stack carries.
+            let cache_exporter = std::sync::Arc::new(oxide_fw_cache::MetricsCacheObserver::new());
+            let typed = std::sync::Arc::new(tier.with_observer(
+                std::sync::Arc::clone(&cache_exporter) as std::sync::Arc<dyn oxide_fw_cache::CacheObserver>,
+            ));
+            (
+                std::sync::Arc::clone(&typed) as std::sync::Arc<dyn oxide_fw_cache::CacheHandler>,
+                Some(std::sync::Arc::clone(&typed)),
+                Some(cache_exporter),
+            )
         }
     };
     // §13 / HMR: `dev` must always re-render — a stale L0 entry would shadow
@@ -1013,6 +1026,17 @@ pub(crate) async fn start_server_inner_full(
     // circuits the render path entirely). `hmr: Some(_)` is the "dev mode"
     // signal in this function (production call sites pass `None`).
     let is_dev = hmr.is_some();
+    // F36: the recording half rides `l0`'s Some-ness — dev boots have no L0
+    // plane and no flights, so there is nothing to record and nothing to
+    // carry.
+    let l0_tiered = if is_dev { None } else { l0_tiered };
+    // F37: the §20 cache-plane exposition — the boot's exporter renders the
+    // `oxide_cache_plane_*` families beside the request-plane rows (the
+    // server crate stays cache-agnostic: the slot is an `Fn() -> String`).
+    if let Some(exporter) = cache_exporter.as_ref() {
+        let exporter = std::sync::Arc::clone(exporter);
+        metrics.set_cache_plane(move || exporter.snapshot().render_prometheus());
+    }
     let l0 = if is_dev {
         None
     } else {
@@ -1029,8 +1053,30 @@ pub(crate) async fn start_server_inner_full(
     // (dev, or a build with no prerendered pages) is a no-op.
     if let Some(cache) = l0.as_ref() {
         let seed_path = rootp.join("dist/server/l0-seed.json");
-        if let Ok(bytes) = std::fs::read(&seed_path)
-            && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        // A missing seed is normal (a build with no prerendered pages);
+        // a PRESENT-but-unreadable manifest is not — warn loudly (the
+        // CACHE-CODEC posture) instead of silently skipping the boot's
+        // warm-up.
+        let seed_bytes = match std::fs::read(&seed_path) {
+            Ok(bytes) => bytes,
+            Err(_) => Vec::new(),
+        };
+        let seed_json = if seed_bytes.is_empty() {
+            None
+        } else {
+            match serde_json::from_slice::<serde_json::Value>(&seed_bytes) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(
+                        path = %seed_path.display(),
+                        error = %e,
+                        "CACHE-SEED: the l0-seed.json manifest is unreadable; L0 seeding skipped",
+                    );
+                    None
+                }
+            }
+        };
+        if let Some(v) = seed_json
         {
             // Only seed a manifest from THIS build.
             let same_build = v.get("build_id").and_then(|b| b.as_str()) == Some(build_id.as_str());
