@@ -14,7 +14,8 @@
 //! `Server-Timing` header reports.
 //!
 //! The CLI's dev boot attaches the fanout only when `OXIDE_TRACE_LOG`
-//! opts in (`OXIDE_TRACE_LOG=1`); production never attaches either half
+//! opts in (the tracing arm; `OXIDE_TRACE_FILE` opts the V2-F25 file
+//! arm in beside it); production never attaches any arm
 //! — the F21 posture holds, and the default console output is
 //! byte-identical.
 //!
@@ -30,8 +31,8 @@ use std::time::Duration;
 use bytes::Bytes;
 use oxide_fw_server::trace_context::TraceContext;
 use oxide_fw_server::{
-    FanoutTraceSink, OxideRequest, OxideResponse, Pipeline, RequestTrace, RingTraceSink, TraceSink,
-    TracesEndpoint, TracingTraceSink,
+    FanoutTraceSink, FileTraceSink, OxideRequest, OxideResponse, Pipeline, RequestTrace,
+    RingTraceSink, TraceSink, TracesEndpoint, TracingTraceSink,
 };
 
 const TRACED_PARENT: &str = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
@@ -112,18 +113,24 @@ fn main() {
         export.snapshot().len()
     );
 
-    println!("== the dev-boot fanout: one slot, two halves ==");
+    println!("== the dev-boot fanout: one slot, the window plus the exports ==");
     // The pipeline has ONE trace_sink slot; the dev boot attaches the
-    // fanout — the ring stays the endpoint's window, the export rides
-    // beside it. OXIDE_TRACE_LOG gates the export child in the real
-    // boot; here the fanout is built unconditionally to show the shape.
+    // fanout — the ring stays the endpoint's window, the export arms ride
+    // beside it. OXIDE_TRACE_LOG gates the tracing child and
+    // OXIDE_TRACE_FILE the file child in the real boot; here the fanout
+    // is built unconditionally to show the shape (the window child stays
+    // first — the fanout's snapshot contract).
+    let dir = tempfile::tempdir().expect("temp dir for the file arm");
+    let file_path = dir.path().join("traces.jsonl");
     let ring = Arc::new(RingTraceSink::new(8)) as Arc<dyn TraceSink>;
     let fanout = Arc::new(FanoutTraceSink::new(vec![
         ring.clone(),
         Arc::new(TracingTraceSink::new()) as Arc<dyn TraceSink>,
+        Arc::new(FileTraceSink::create(&file_path).expect("the export file opens"))
+            as Arc<dyn TraceSink>,
     ]));
     println!(
-        "  fanout width: {} children (ring + tracing)",
+        "  fanout width: {} children (ring + tracing + file)",
         fanout.children()
     );
 
@@ -158,6 +165,22 @@ fn main() {
             .collect::<Vec<_>>()
     );
     println!(
-        "  (a fanout-backed endpoint renders the ring's JSON exactly — the export child adds no rows)"
+        "  (a fanout-backed endpoint renders the ring's JSON exactly — the export children add no rows)"
+    );
+
+    println!("== the file arm: the durable half (V2-F25) ==");
+    // The same dispatch recorded into the file child: one JSONL line per
+    // row, flushed on record — the bytes are on disk before the record
+    // returns, and the line is the endpoint's row shape verbatim (the
+    // wire identity rule).
+    let contents = std::fs::read_to_string(&file_path).expect("the rows are on disk");
+    for line in contents.lines() {
+        println!("  file line: {line}");
+    }
+    let last_line: serde_json::Value =
+        serde_json::from_str(contents.lines().last().unwrap_or("{}")).unwrap_or_default();
+    println!(
+        "  the file line is the endpoint row: {}",
+        last_line.get("requestId") == Some(&serde_json::Value::String("req-ex-f22".into()))
     );
 }
