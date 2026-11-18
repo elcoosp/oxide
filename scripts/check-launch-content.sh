@@ -55,8 +55,12 @@ README=README.md
 if [ -f "$README" ]; then
     # (a) The Rust test count in the badge and the prose must agree with the
     #     static count. No toolchain run needed — it is an attribute count.
+    #     The tokio pattern accepts the flavoured spelling
+    #     (`#[tokio::test(flavor = ...)]`), the same shape count-tests.sh
+    #     counts (31 flavoured tests rode the tree uncounted until both
+    #     scripts moved to the `(\(|\])` pattern).
     rust_measured=$(grep -rh '#\[test\]' crates/ --include='*.rs' 2>/dev/null | wc -l | tr -d ' ')
-    rust_tokio=$(grep -rh '#\[tokio::test\]' crates/ --include='*.rs' 2>/dev/null | wc -l | tr -d ' ')
+    rust_tokio=$(grep -rhE '#\[tokio::test(\(|\])' crates/ --include='*.rs' 2>/dev/null | wc -l | tr -d ' ')
     rust_total=$((rust_measured + rust_tokio))
     rust_badge=$(grep -oE 'Tests-[0-9]+%20Rust' "$README" | head -1 | sed -E 's/Tests-([0-9]+).*/\1/')
     if [ -n "$rust_badge" ] && [ "$rust_badge" != "$rust_total" ]; then
