@@ -40,7 +40,7 @@ fn build_store(target: &str) -> anyhow::Result<std::sync::Arc<dyn oxide_fw_adapt
     #[cfg(feature = "deploy-s3")]
     {
         let store = oxide_fw_adapters::deploy_target_from_url(target)?;
-        return Ok(std::sync::Arc::new(store));
+        Ok(std::sync::Arc::new(store))
     }
     #[cfg(not(feature = "deploy-s3"))]
     {
