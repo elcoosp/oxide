@@ -118,8 +118,33 @@ impl crate::CacheHandler for HttpCacheHandler {
 
     async fn delete(&self, key: &str) -> Result<()> {
         let url = format!("{}/entry/{key}", self.base);
-        let _ = self.request("DELETE", &url, None).await;
-        Ok(())
+        match self.request("DELETE", &url, None).await {
+            Ok((s, _)) if (200..300).contains(&s) || s == 404 => Ok(()),
+            // A failed remote delete is a staleness gap the operator has
+            // to see (the house convention: loud, not silent) — a key the
+            // remote still holds survives an invalidation that reported
+            // success locally. Not a local `Err`: the local tiers already
+            // served the delete, and the trait's delete contract stays
+            // "the local outcome".
+            Ok((s, _)) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    key = %key,
+                    status = s,
+                    "the remote delete returned a non-success status; the key may survive remotely"
+                );
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    key = %key,
+                    error = %e,
+                    "the remote delete failed; the key may survive remotely"
+                );
+                Ok(())
+            }
+        }
     }
 
     async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
@@ -171,8 +196,20 @@ impl crate::CacheHandler for HttpCacheHandler {
 
     async fn publish_invalidation(&self, tag: &str, soft: bool) -> Result<()> {
         // The invalidate POST *is* the publish — peers hitting the same
-        // service see the tag gone on their next fetch.
-        let _ = self.invalidate_tag(tag, soft).await;
+        // service see the tag gone on their next fetch. A failed publish
+        // is a cross-node invalidation gap: loud (the house convention),
+        // never silent — but not a local `Err`, for the same reason
+        // `delete` warns instead of failing: the local tiers already
+        // served the invalidation and the gap is the peers' alone.
+        if let Err(e) = self.invalidate_tag(tag, soft).await {
+            tracing::warn!(
+                code = "CACHE-HTTP",
+                tag = %tag,
+                soft = soft,
+                error = %e,
+                "the invalidation publish failed; peers may still serve the tag"
+            );
+        }
         Ok(())
     }
 }
