@@ -89,6 +89,14 @@ name = "fanout"
 harness = false
 required-features = ["bench-util"]
 
+# The hot-key attribution's bounded-ledger cost (§20): the per-event
+# attribution delta (resident / admits / refuses) and the top-window
+# read the dashboard's sample call pays.
+[[bench]]
+name = "hot_keys"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
