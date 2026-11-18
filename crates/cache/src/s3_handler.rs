@@ -130,7 +130,7 @@ impl CacheHandler for S3CacheHandler {
                 .get_opts(&Self::entry_path(key), GetOptions::default()),
         )
         .await;
-        let (bytes, meta_len) = match got {
+        let bytes = match got {
             Ok(Ok(r)) => {
                 // S-06: refuse an oversized object before buffering it.
                 let len = r.meta.size;
@@ -139,13 +139,12 @@ impl CacheHandler for S3CacheHandler {
                     return Ok(None);
                 }
                 match tokio::time::timeout(L2_OP_TIMEOUT, r.bytes()).await {
-                    Ok(Ok(b)) => (b, len),
+                    Ok(Ok(b)) => b,
                     _ => return Ok(None),
                 }
             }
             _ => return Ok(None),
         };
-        let _ = meta_len;
         // S-06: verify the keyed MAC before trusting the payload.
         let verified: &[u8] = match auth::open_entry(&bytes) {
             Some(body) => body,
@@ -306,6 +305,10 @@ impl CacheHandler for S3CacheHandler {
         // read; no delivery guarantee. §11.2 leaves cross-node
         // peer-revalidation implementation-defined.
         Ok(())
+    }
+
+    fn handler_kind(&self) -> &'static str {
+        "s3"
     }
 }
 
