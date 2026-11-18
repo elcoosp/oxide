@@ -87,6 +87,15 @@ name = "cost_endpoint"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F21: criterion bench for the dev-plane trace feed (the steady-state
+# ring record at capacity, the full-window snapshot and the endpoint's
+# serve render), behind the `bench-util` opt-in like every other
+# criterion bench in the workspace.
+[[bench]]
+name = "trace_feed"
+harness = false
+required-features = ["bench-util"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
 # V2-F05: the runner/stream pins run under tokio's paused clock
