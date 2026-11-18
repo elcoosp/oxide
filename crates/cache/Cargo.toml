@@ -33,6 +33,10 @@ futures = { workspace = true, optional = true }
 tempfile = { workspace = true }
 # V2-B09: benchmark harness for key construction, tag insert and disk writes.
 criterion = { workspace = true }
+# The `observer` example renders the seam's rows through a real subscriber
+# (the walkthrough's whole point); the bench installs a silent one so the
+# measured cost is the event dispatch, not the rendering.
+tracing-subscriber = { workspace = true }
 
 # V2-B09: criterion harness (opt-in via the bench-util feature so plain
 # `cargo test` never pays the criterion build).
@@ -44,6 +48,13 @@ required-features = ["bench-util"]
 # V2-A04: criterion bench for the canonical `build_id_of_dist` walk+hash.
 [[bench]]
 name = "build_id"
+harness = false
+required-features = ["bench-util"]
+
+# The observer seam's hot-path cost (§20): the delta an attached observer
+# puts on the memory-hit path against the no-observer default.
+[[bench]]
+name = "observer"
 harness = false
 required-features = ["bench-util"]
 
