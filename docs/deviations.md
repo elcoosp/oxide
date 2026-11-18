@@ -5249,3 +5249,87 @@ the filtered-window section in the `trace_feed` example.
   pinned the 4-page registry after `endpoints.md` joined — the pin
   moved to 5 and the page regenerated with the `docs generate --check`
   gate green.
+
+## The dev-plane log feed and the trace rows' file export (F24 + F25, 2026-11-18)
+
+**What landed (`feat/dev-plane-log-feed` + `feat/trace-file-export`).**
+
+- **F24, the server half** (`crates/server/src/log_feed.rs`): the
+  `LogSink` record seam + bounded `RingLogSink` (oldest evicted, snapshot
+  newest-first, a zero capacity records nothing), the `CaptureLayer`
+  capture arm — a `tracing_subscriber::Layer` that records every event
+  the subscriber admits into the attached sink, `GET /__oxide/logs` as
+  the §V2.J map's 14th row (dev plane, dev-token guarded, D41; 405 +
+  `allow: GET` on a non-GET verb) and the `LogQuery` filter seam
+  (`?level=warn,error` comma-separated exact names, `?target=` a target
+  prefix, `?q=` a message substring, `?limit=` positive capped at the
+  window; the filters AND together, unknown parameters are ignored, an
+  invalid value degrades to no filter — the F23 posture). 21 TDD pins +
+  3 module pins + the `log_feed` criterion group (ring record at
+  capacity, the capture layer's per-event cost under a live subscriber,
+  the snapshot, the serve render) + the walkthrough example.
+- **F24, the CLI half** (`crates/cli/src/observability.rs`,
+  `crates/cli/src/serve/start.rs`): `init_tracing` creates one
+  `RingLogSink` and installs the capture layer over the subscriber it
+  builds when the command is the dev boot (`set_dev_mode`'s gate — the
+  same predicate the dev runtime rides); the serve boot attaches the
+  `GET /__oxide/logs` endpoint over the SAME instance (the
+  one-instance-two-readers posture the trace feed rides). Production
+  never installs the layer: a non-dev command builds the same subscriber
+  branches as before, byte-identical.
+
+**Deltas recorded.**
+
+- The capture layer needs no env gate, unlike `OXIDE_TRACE_LOG`: it is a
+  second read on the event stream and changes no rendering, so the
+  console output stays byte-identical even when attached — the gate is
+  the dev-boot predicate itself, not an env var (a `serve` boot, which
+  is the production serving path, never attaches).
+- The feed never records its own module's events (the target
+  `oxide_fw_server::log_feed` is skipped): the endpoint emits one
+  serving event per poll, and a capture that recorded it would grow the
+  window the poll renders.
+- The wire renders the structured fields as an object with sorted keys
+  (the default `serde_json::Map` order — the workspace never enables
+  `preserve_order`, so the wire is deterministic bytes), and the
+  `message` field is excluded from it (the message has its own slot).
+- The capture wall clock is epoch milliseconds (`tsMs`), not ISO-8601:
+  `chrono` is not a server-crate dependency, and the ring already reads
+  newest-first — the consumer's timeline stays reconstructible across
+  ring turnover without a second date formatting.
+- **F25, the file arm** (`crates/server/src/trace_export.rs`,
+  `crates/server/src/trace_feed.rs`): `FileTraceSink` appends one JSONL
+  line per recorded row — the same camelCase row shape the endpoint
+  serves (`row_json` promoted to `pub(crate)`, one row, one rendering,
+  both surfaces), create + append at attach time, flush-per-record (the
+  bytes are on disk before the record returns — a crash cannot lose the
+  already-recorded rows). The attach is loud: a bad path aborts the dev
+  boot rather than silently losing the audit trail (the session-keys
+  posture). A mid-session write failure is sticky: one
+  `tracing::warn!`, then the rows drop — a half-written line is worse
+  than a stopped export. The snapshot stays honestly empty (the F22
+  posture: an exporter, not a window). The CLI dev boot attaches it as
+  the fanout's third child when `OXIDE_TRACE_FILE` opts in. 6 TDD pins +
+  the `trace_export_file` criterion group + the file walk in the
+  `trace_export` example.
+- The sticky-failure rule is implemented and documented but not
+  pinned: forcing a mid-stream write failure portably needs an
+  injectable writer (a directory path fails at OPEN, before any record),
+  and the trait's `record` returns `()` — the failure is observable only
+  through the side effect. The honest alternative (threading a
+  `Result` through `TraceSink::record`) would change every child sink's
+  signature for a dev-only arm; the rule stays documented in the sink's
+  docs.
+- Micro-debt cleaned in the same diff: `image_jobs.rs`'s leader future
+  replaced the `.expect("the image lanes are never closed")` panic with
+  the coded `AST-JOBS` refusal (a closed lane is the honest diagnostic
+  shape for the impossible case, not a panic in the future the pipeline
+  awaits — the doc's # Panics section updated); the server crate's
+  placeholder `mod integration {}` suite is a real cross-module pin now
+  (one pipeline, two dev-plane windows, one token guard; every routed
+  dev-plane path is in the map).
+- Docs drift fixed: `docs/reference/endpoints.md` regenerated (the F24
+  row; the table bytes match `endpoint_markdown_table()` verbatim), the
+  spec's F-table gained the F24/F25 landed rows and V2.J the map row,
+  the README badge/prose re-measured through `scripts/count-tests.sh`
+  (2792 → 2824).
