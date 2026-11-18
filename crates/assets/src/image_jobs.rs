@@ -201,12 +201,16 @@ impl ImageJobs {
     /// # Errors
     ///
     /// The job's own diagnostic; `AST-JOBS` when the job panicked inside
-    /// `spawn_blocking`. A failed or panicked job is NOT cached — its
-    /// single-flight entry is dropped so the next request retries.
+    /// `spawn_blocking`, or when the image lane is closed (the lanes are
+    /// closed only when the whole `ImageJobs` is dropped, which cancels
+    /// this future before it polls — the refusal is the honest shape for
+    /// the impossible case, not a panic). A failed or panicked job is
+    /// NOT cached — its single-flight entry is dropped so the next
+    /// request retries.
     ///
     /// # Panics
     ///
-    /// Never: the lanes are never closed, so `acquire` cannot fail.
+    /// Never: a closed lane is the coded `AST-JOBS` refusal, not a panic.
     pub async fn run<F>(&self, key: &str, avif: bool, job: F) -> JobOutcome
     where
         F: FnOnce() -> Result<Vec<u8>> + Send + 'static,
@@ -227,10 +231,19 @@ impl ImageJobs {
         let cas = Arc::clone(&self.cas);
         let job_key = key.clone();
         let leader = async move {
-            let _permit = lane
-                .acquire()
-                .await
-                .expect("the image lanes are never closed");
+            // The lanes are never closed (the semaphores live as long as
+            // the `ImageJobs`), so this arm is the honest coded refusal
+            // for the impossible case — a diagnostic, not a panic in the
+            // leader future the pipeline awaits.
+            let _permit = match lane.acquire().await {
+                Ok(permit) => permit,
+                Err(closed) => {
+                    return Err(err(
+                        "AST-JOBS",
+                        format!("the image lane is closed; the encoder cannot run: {closed}"),
+                    ));
+                }
+            };
             let outcome = tokio::task::spawn_blocking(job).await;
             match outcome {
                 Ok(Ok(bytes)) => {
