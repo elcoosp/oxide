@@ -21,4 +21,5 @@ Every HTTP surface the framework serves (Appendix V2.J), generated from the `oxi
 | `/_oxide/health, /_oxide/ready` | GET | ops | existing, F12 | Liveness and readiness (level reported) |
 | `/_oxide/{vitals,static,og,metrics,image,hmr}` | various | ops | existing | Unchanged |
 | `/__oxide/open, /__oxide/cost` | GET | dev | E08, F17 | Open in editor; component cost (dev-token guarded) |
+| `/__oxide/traces` | GET | dev | F21 | Recent-request trace feed over the §20 context (dev-token guarded) |
 | `/__oxide` | GET | dev | existing, E08 | Inspector |
