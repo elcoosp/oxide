@@ -523,9 +523,10 @@ pub fn generate_esm_boot_entry(
 
 // --- Rewrite map ---------------------------------------------------------
 
-/// Bare specifier → URL. Built from the prebundle list (Phase 1b stub: files
-/// missing until rolldown lands; the map is still correct so importing code
-/// produces a clear 404 instead of a bare-specifier error) and the framework
+/// Bare specifier → URL. Built from the prebundle list (the prebundled
+/// files land in `PREBUNDLE_DIR` — the rolldown-backed client bundle
+/// writes them, and a specifier the bundle has not produced yet answers a
+/// clear 404 instead of a bare-specifier error) and the framework
 /// package's `exports`.
 pub fn build_rewrite_map(root: &Path, prebundle: &[String]) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
