@@ -37,12 +37,18 @@ python3 benchmarks/criterion_compare.py benchmarks/after-wave-b.json /tmp/criter
 Snapshots committed with the V2 Wave B milestone:
 
 - `benchmarks/baseline-v01.json` — captured **before** B01/B02/B05/B06
-  (the pre-change matcher, tag index and disk tier). This is the file
-  future Wave B work diffs against.
+  (the pre-change matcher, tag index and disk tier). A historical
+  snapshot: the live criterion gate diffs against `after-wave-b.json`
+  (the compare command above), not against this file.
 - `benchmarks/after-wave-b.json` — captured after the milestone, at its
   HEAD. The two deliberate cost moves (`build/*`, `tag_insert/10000`)
   and the new ids (`key_construction/key_of`, `context_table_build/*`)
   are explained in `report.md` ("Criterion microbenchmarks").
+
+The six-crate `cargo bench` command above is the full local sweep; CI's
+bench-gate runs the two-crate shape (`cargo bench -p oxide-fw-router
+-p oxide-fw-cache --features bench-util`) and holds its medians against
+the committed `after-wave-b.json` at the 10% gate.
 
 Allocation budgets live in `crates/router/tests/alloc_match.rs` (dhat,
 own test binary: one profiler per process) — run by plain `cargo test`,
