@@ -96,8 +96,22 @@ name = "trace_feed"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F22: criterion bench for the trace rows' tracing export (the
+# per-record event emit under a live subscriber, the no-subscriber
+# no-op, and the dev-boot fanout shape), behind the `bench-util` opt-in
+# like every other criterion bench in the workspace.
+[[bench]]
+name = "trace_export"
+harness = false
+required-features = ["bench-util"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
+# V2-F22: the trace-export pins capture the emitted events (the
+# `tracing_subscriber::layer::Layer` capture the test file installs as the
+# thread-local default) and the bench measures the emit under a live
+# subscriber.
+tracing-subscriber = { workspace = true }
 # V2-F05: the runner/stream pins run under tokio's paused clock
 # (`start_paused` + `advance`) so debounce and keepalive cadence are
 # deterministic; `test-util` is test-only and never reaches production.
