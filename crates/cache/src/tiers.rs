@@ -715,10 +715,11 @@ impl TieredCache {
     /// Attach the observability seam's subscriber (`observer.rs`, §20):
     /// one infallible [`CacheObserver`] callback per completed event —
     /// hits (with the serving layer and stale flag), misses, write-through
-    /// sets, deletes, and one aggregate row per completed tag
-    /// invalidation. Push-only: events flow from the attach onward, no
-    /// replay; the default (`None`) keeps the pull-only
-    /// [`TieredCache::stats`] contract untouched.
+    /// sets, deletes, one aggregate row per completed tag invalidation,
+    /// and one aggregate row per completed single-flight the host records
+    /// through [`TieredCache::record_coalesced`]. Push-only: events flow
+    /// from the attach onward, no replay; the default (`None`) keeps the
+    /// pull-only [`TieredCache::stats`] contract untouched.
     #[must_use = "the observer attaches through the builder chain; dropping it loses the seam"]
     pub fn with_observer(mut self, observer: Arc<dyn CacheObserver>) -> Self {
         self.observer = Some(observer);
@@ -1084,10 +1085,45 @@ impl TieredCache {
         }
     }
 
-    /// Feed the coalesced counter from the render layer's single-flight usage
-    /// (the number of followers that were coalesced onto an owner).
-    pub fn record_coalesced(&self, followers: u64) {
+    /// The posture pull (`health.rs`, F32): the whole stack in one
+    /// [`CacheHealth`] value — tier attachment, resident occupancy, the
+    /// tag-index pressure, and the observability seam's own attachment
+    /// state. The two pulls sample the same live counters
+    /// (`health().memory_entries == stats().entries_memory`); what
+    /// `stats()` cannot say is the tier attachment facts, and those are a
+    /// fact of the tiers, not of the traffic. The remote tier is an
+    /// opaque `Arc<dyn CacheHandler>` — its posture rides the
+    /// [`CacheHandler::handler_kind`] introspection method, honestly
+    /// `None` when no tier is attached.
+    #[must_use]
+    pub fn health(&self) -> crate::health::CacheHealth {
+        crate::health::CacheHealth {
+            memory_entries: self.memory.len() as u64,
+            memory_bytes: self.memory.total_bytes(),
+            memory_capacity_bytes: self.memory.max_bytes,
+            disk_attached: self.disk.is_some(),
+            disk_bytes: self.disk.as_ref().map_or(0, |disk| disk.total_bytes()),
+            remote_attached: self.remote.is_some(),
+            remote_kind: self.remote.as_ref().map(|h| h.handler_kind().to_string()),
+            tags_indexed: self.tags.len() as u64,
+            keys_tracked: self.key_tags.len() as u64,
+            observer_attached: self.observer.is_some(),
+        }
+    }
+
+    /// Record one completed single-flight and emit its observer row (the
+    /// push twin of the pull channel's `coalesced` counter, F33): the
+    /// HOST's flight owner calls this when the owner's render finishes,
+    /// `followers` being the count the publish reached (what
+    /// [`crate::SingleFlight::publish_and_cleanup`] returns). The counter
+    /// bump feeds [`TieredCache::stats`]; the
+    /// [`CacheOp::Coalesce`] row joins the §20 push channel, so the
+    /// exporter and the feed see the joins the pull channel always
+    /// counted. One aggregate row per flight — the key names the flight's
+    /// key, a zero-follower flight still records.
+    pub fn record_coalesced(&self, key: &str, followers: u64) {
         self.coalesced.fetch_add(followers, Ordering::Relaxed);
+        self.observe(key, CacheOp::Coalesce { followers });
     }
 
     /// Tier-by-tier lookup without touching stats or promoting (used by invalidation).
@@ -1175,6 +1211,10 @@ impl CacheHandler for TieredCache {
     async fn publish_invalidation(&self, _tag: &str, _soft: bool) -> Result<()> {
         // No pub/sub on the local tiers; a remote handler does this.
         Ok(())
+    }
+
+    fn handler_kind(&self) -> &'static str {
+        "tiered"
     }
 }
 
@@ -1351,8 +1391,8 @@ mod tests {
         let key = CacheKey {
             layer: Layer::L0,
             route: "/".into(),
-            params: "".into(),
-            vary: "".into(),
+            params: String::new(),
+            vary: String::new(),
             build_id: crate::build_id(&[b"m"]),
         };
         cache
@@ -1360,7 +1400,7 @@ mod tests {
             .await
             .unwrap();
         assert!(cache.get(&key.canonical()).await.unwrap().is_some());
-        cache.record_coalesced(3);
+        cache.record_coalesced(&key.canonical(), 3);
         assert_eq!(cache.stats().coalesced, 3);
         assert_eq!(path_tag("/x"), "path:/x");
         assert!(PATH_TAG_PREFIX.starts_with("path"));
