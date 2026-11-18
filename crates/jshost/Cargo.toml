@@ -33,6 +33,18 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[features]
+default = []
+# §20: opts the trace-parent bench target in, so plain `cargo test` never
+# pays the criterion build (the workspace-wide bench-util gate shape).
+bench-util = []
+
+[[bench]]
+name = "trace"
+harness = false
+required-features = ["bench-util"]
 
 [package.metadata.docs.rs]
 all-features = true
