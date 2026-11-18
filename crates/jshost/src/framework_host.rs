@@ -117,6 +117,11 @@ impl FrameworkHost {
             .get("route")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        // §20: the render envelope carries the request's `trace`/`headers` —
+        // stamp the validated traceparent into CallInput.headers before the
+        // envelope nests into the payload, so the worker's `fetch` op can
+        // propagate it (empty map = untraced, nothing fabricated).
+        let trace_headers = crate::v8_ops::payload_trace_headers(&input);
         let payload = match components {
             Some(c) => serde_json::json!({
                 "path": config_path, "input": input, "components": c
@@ -125,7 +130,7 @@ impl FrameworkHost {
         };
         let call_input = CallInput {
             payload,
-            headers: Default::default(),
+            headers: trace_headers,
             has_body: false,
             request_id: format!("framework:render:{config_path}"),
             // PERF-02: affinity key = the route being rendered.
@@ -179,6 +184,11 @@ impl FrameworkHost {
             .get("route")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        // §20: the render envelope carries the request's `trace`/`headers` —
+        // stamp the validated traceparent into CallInput.headers before the
+        // envelope nests into the payload, so the worker's `fetch` op can
+        // propagate it (empty map = untraced, nothing fabricated).
+        let trace_headers = crate::v8_ops::payload_trace_headers(&input);
         let payload = match components {
             Some(c) => serde_json::json!({
                 "path": config_path, "input": input, "components": c
@@ -187,7 +197,7 @@ impl FrameworkHost {
         };
         let call_input = CallInput {
             payload,
-            headers: Default::default(),
+            headers: trace_headers,
             has_body: false,
             request_id: format!("framework:render:{config_path}"),
             // PERF-02: affinity key = the route being rendered.
