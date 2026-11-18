@@ -22,4 +22,5 @@ Every HTTP surface the framework serves (Appendix V2.J), generated from the `oxi
 | `/_oxide/{vitals,static,og,metrics,image,hmr}` | various | ops | existing | Unchanged |
 | `/__oxide/open, /__oxide/cost` | GET | dev | E08, F17 | Open in editor; component cost (dev-token guarded) |
 | `/__oxide/traces` | GET | dev | F21, F23 | Recent-request trace feed over the §20 context; the window answers filtered (?status=, ?method=, ?path=, ?limit=; dev-token guarded) |
+| `/__oxide/logs` | GET | dev | F24 | Recent log-event feed over the capture layer; the window answers filtered (?level=, ?target=, ?q=, ?limit=; dev-token guarded) |
 | `/__oxide` | GET | dev | existing, E08 | Inspector |
