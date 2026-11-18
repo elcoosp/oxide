@@ -34,7 +34,10 @@
 //!   the dev boot); a mid-session write failure is sticky — one
 //!   `tracing::warn!`, then the rows drop (a half-written line is worse
 //!   than a stopped export). The dev boot attaches it beside the ring
-//!   and the tracing arm when `OXIDE_TRACE_FILE` opts in.
+//!   and the tracing arm when `OXIDE_TRACE_FILE` opts in. V2-F27: the
+//!   JSONL framing rides one constructor over any `std::io::Write`
+//!   ([`FileTraceSink::from_writer`], the injectable writer the sticky
+//!   rule's pins steer; `create` stays the file-path shape).
 //!
 //! The pipeline's record point is unchanged: still one `None` check on
 //! [`crate::Pipeline::trace_sink`] — a sink that happens to fan out is
@@ -171,16 +174,22 @@ impl TraceSink for FanoutTraceSink {
 /// the pipeline that records into it. The sink is not a window:
 /// [`TraceSink::snapshot`] stays empty because rows are emitted, never
 /// retained.
+///
+/// The JSONL framing rides ONE constructor: [`FileTraceSink::from_writer`]
+/// takes any `std::io::Write` (V2-F27 — the injectable writer the
+/// sticky-failure rule's pins steer; an embedded exporter can point the
+/// seam at a socket or an in-memory sink), and `create` is the file-path
+/// shape over the same framing.
 pub struct FileTraceSink {
-    writer: std::sync::Mutex<std::io::BufWriter<std::fs::File>>,
+    writer: std::sync::Mutex<std::io::BufWriter<Box<dyn std::io::Write + Send>>>,
     failed: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for FileTraceSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The file handle is the sink's internal state (a buffered
-        // writer over the export path); the seam name is the identity
-        // the boot attaches.
+        // The writer is the sink's internal state (a buffered writer over
+        // the injected byte sink); the seam name is the identity the boot
+        // attaches.
         f.debug_struct("FileTraceSink").finish_non_exhaustive()
     }
 }
@@ -198,10 +207,21 @@ impl FileTraceSink {
             .create(true)
             .append(true)
             .open(path)?;
-        Ok(Self {
-            writer: std::sync::Mutex::new(std::io::BufWriter::new(file)),
+        Ok(Self::from_writer(file))
+    }
+
+    /// The seam over any byte sink (V2-F27): the same one-row-one-line
+    /// JSONL framing, flushed per record. The sticky write-failure rule
+    /// rides the injected writer too — the first failing write flips the
+    /// sink sticky (one warn, then the rows drop), which is what the
+    /// `trace_file_writer_tdd` pins steer. The writer is wrapped in a
+    /// `BufWriter` either way, so the syscall shape matches the file
+    /// constructor (one flushed write per record).
+    pub fn from_writer(writer: impl std::io::Write + Send + 'static) -> Self {
+        Self {
+            writer: std::sync::Mutex::new(std::io::BufWriter::new(Box::new(writer))),
             failed: std::sync::atomic::AtomicBool::new(false),
-        })
+        }
     }
 }
 
@@ -215,8 +235,8 @@ impl TraceSink for FileTraceSink {
         let mut writer = self.writer.lock().expect("trace file mutex poisoned");
         let outcome = writer
             .write_all(line.as_bytes())
-            .and_then(|_| writer.write_all(b"\n"))
-            .and_then(|_| writer.flush());
+            .and_then(|()| writer.write_all(b"\n"))
+            .and_then(|()| writer.flush());
         if let Err(e) = outcome {
             // Sticky: one warning, then every row drops. A half-written
             // line is worse than a stopped export — the audit trail's
