@@ -12857,3 +12857,107 @@ fn cmd_deploy_refuses_object_store_targets_without_the_feature() {
         "the refusal names the feature: {err}"
     );
 }
+
+// ------------------------------------------------------------------ V2-F28: the feed's boot flag
+// The F26 polish tail: `--log-feed-level` beside the `OXIDE_LOG_FEED_LEVEL`
+// env var. The flag is a command-level fact, decided once pre-runtime
+// (`apply_startup_env` → the override atomic, the `set_dev_mode` shape);
+// the env var remains the shell user's spelling. The flag wins.
+
+#[test]
+fn dev_log_feed_level_flag_parses() {
+    let cli = crate::Cli::parse_from(["oxide", "dev", "--log-feed-level", "debug"]);
+    match cli.command {
+        Command::Dev { log_feed_level, .. } => {
+            assert_eq!(log_feed_level.as_deref(), Some("debug"));
+        }
+        _ => panic!("expected the dev command"),
+    }
+}
+
+#[test]
+fn dev_log_feed_level_flag_defaults_to_none() {
+    let cli = crate::Cli::parse_from(["oxide", "dev"]);
+    match cli.command {
+        Command::Dev { log_feed_level, .. } => {
+            assert_eq!(log_feed_level, None);
+        }
+        _ => panic!("expected the dev command"),
+    }
+}
+
+#[test]
+fn feed_level_override_wins_over_the_env_var() {
+    crate::observability::set_feed_level_override(Some("debug".to_string()));
+    let floor = crate::observability::feed_filter_level();
+    crate::observability::set_feed_level_override(None);
+    assert!(
+        floor.is_some(),
+        "the override widens the feed past the host filter"
+    );
+}
+
+#[test]
+fn feed_level_override_falsy_spelling_degrades_to_no_floor() {
+    crate::observability::set_feed_level_override(Some("off".to_string()));
+    let floor = crate::observability::feed_filter_level();
+    crate::observability::set_feed_level_override(None);
+    assert!(floor.is_none(), "`off` keeps the F24 shape");
+}
+
+#[test]
+fn feed_level_override_unknown_name_degrades_to_no_floor() {
+    crate::observability::set_feed_level_override(Some("verbose".to_string()));
+    let floor = crate::observability::feed_filter_level();
+    crate::observability::set_feed_level_override(None);
+    assert!(
+        floor.is_none(),
+        "an unknown name degrades loudly-but-honestly"
+    );
+}
+
+#[test]
+fn feed_filter_level_still_reads_the_env_var_without_a_flag() {
+    // SAFETY: test process, single-threaded access to this key (the override
+    // pins read the override first and never this key).
+    unsafe {
+        std::env::set_var("OXIDE_LOG_FEED_LEVEL", "warn");
+    }
+    let floor = crate::observability::feed_filter_level();
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_LOG_FEED_LEVEL");
+    }
+    assert!(floor.is_some(), "the env var remains the shell spelling");
+}
+
+#[test]
+fn apply_startup_env_threads_the_flag_into_the_override() {
+    let cli = crate::Cli::parse_from(["oxide", "dev", "--log-feed-level", "info"]);
+    crate::args::apply_startup_env(&cli);
+    let floor = crate::observability::feed_filter_level();
+    crate::observability::set_feed_level_override(None);
+    assert!(
+        floor.is_some(),
+        "the flag lands pre-runtime via apply_startup_env"
+    );
+}
+
+// -------------------------------------------------- micro-debt: the generations snapshot's coded refusals
+// `snapshot_generation_sources` used to return bare `String` errors (no
+// code, no severity — the one weak-error site in the serve substrate).
+// The refusals are `SRV-*` diagnostics now; the pin holds the code so a
+// revert to bare strings is loud.
+
+#[test]
+fn generations_snapshot_refusal_names_the_srv_code() {
+    // A root with no `src/` tree: the documented refusal (the generation
+    // downgrades to acceptance-only, the pools skip the route step).
+    let root = tempfile::tempdir().expect("tempdir");
+    let err = crate::serve::generations::snapshot_generation_sources(root.path(), "gen-x")
+        .expect_err("a root without src/ refuses");
+    assert!(
+        err.to_string().starts_with("[SRV-GEN-IO]"),
+        "the refusal carries the coded diagnostic: {err}"
+    );
+}
