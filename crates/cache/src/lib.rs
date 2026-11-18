@@ -20,20 +20,24 @@
 
 pub mod auth;
 pub mod codec;
+pub mod feed;
 pub mod http;
 pub mod http_handler;
 pub mod keyhash;
+pub mod metrics;
 pub mod observer;
 pub mod single_flight;
 pub mod tiers;
 
 pub use auth::{MAC_LEN, open_entry, seal_entry};
 pub use codec::{MAX_ENTRY_BYTES, decode_entry, encode_entry};
+pub use feed::{EventFeed, FeedRow};
 pub use http::{
     FetchMemo, cache_control, conditional_response, http_date, memo_key, parse_http_date,
 };
 pub use http_handler::HttpCacheHandler;
 pub use keyhash::{KeyStr, key_of};
+pub use metrics::{CacheMetricsSnapshot, MetricsCacheObserver};
 pub use observer::{CacheEvent, CacheObserver, CacheOp, TracingCacheObserver};
 pub use single_flight::{FlightOwnerGuard, FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
