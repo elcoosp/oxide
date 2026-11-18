@@ -80,7 +80,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CFG-001` | unknown config key `framwork` | did you mean `framework`? |
 | `CFG-AVIF` | `images.avifSpeed` must be a whole number in 1..=10 (ravif's encoder speed) — got `{got}` | set `images.avifSpeed` to a whole number in 1..=10 (the default is 6) |
 | `CFG-BACKEND` | `framework.compilerBackend` must be one of `auto`, `native`, `node` — got `{got}` | set `framework.compilerBackend` to `auto` (the default), `native` or `node` |
-| `CFG-DEPLOY` | the `deploy` section carries a bad knob: {msg} | spell the section `deploy: { skewWindow: '15m', generations: 3 }` — the window grammar is `<n>s|m|h|d`, plain integers are seconds |
+| `CFG-DEPLOY` | the `deploy` section carries a bad knob: {msg} | spell the section `deploy: { skewWindow: '15m', generations: 3 }` — the window grammar is `<n>s\|m\|h\|d`, plain integers are seconds |
 | `CFG-EXTENDS` | extends chain too deep at `{spec}` (cycle?) | — |
 | `CFG-IO` | read {}: {e} | — |
 | `CFG-LLMS` | the `llms` section carries a bad knob: {msg} | fix the `llms` section — `enabled` is the unquoted boolean master switch and `include` an array of absolute site-path patterns like `/docs/**` |
@@ -210,6 +210,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `PLG-LOAD` | plugin:load requires a `path` | — |
 | `PLG-WASM` | wasmtime engine init failed: {e} | — |
 | `PLG-WIT` | WASM plugin `{}` declares no `wit_world` — a stable WIT interface is required (§15.1 kind 2) | — |
+| `RFN-001` | native function library speaks ABI {saw}, the host speaks ABI {want}; rebuild the user crate with the matching oxide-rustfn version | Rebuild the user crate with the matching `oxide-rustfn` version |
 | `RFN-002` | `*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08) | Use Binary or Docker, or remove the Rust functions |
 | `RFN-003` | native function library failed to load: {e} | Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type = ["cdylib"]` shape) |
 | `RFN-004` | native function payload did not convert: {e} | The client stub sends JSON args; the host converts to ODF at the boundary — check the args shape against the generated types |
@@ -265,4 +266,3 @@ Defined by the spec for work packages that have not landed; no call site raises 
 | `BLD-409` | Build header unknown or expired (surfaced client-side as a reload) | Reload the page |
 | `OX-SRC-001` | Search params failed `searchSchema` validation | Fix the URL or add defaults to the schema |
 | `PRM-001` | A route used a capability outside its declared permissions (F19) | Add it to `config.permissions` or remove the call |
-| `RFN-001` | native function library speaks ABI {saw}, the host speaks ABI {want}; rebuild the user crate with the matching oxide-rustfn version | Rebuild the user crate with the matching `oxide-rustfn` version |
