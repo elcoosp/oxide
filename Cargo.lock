@@ -6618,6 +6618,7 @@ dependencies = [
  "base64 0.23.1",
  "blake3",
  "bytes",
+ "criterion",
  "deno_core",
  "deno_error",
  "futures",
