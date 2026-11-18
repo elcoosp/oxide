@@ -290,7 +290,13 @@ fn page_registry_lists_the_reference_pages() {
     let paths: Vec<&str> = docs_gen_registry_paths();
     assert_eq!(
         paths,
-        vec!["capabilities.md", "cli.md", "config.md", "errors.md"],
+        vec![
+            "capabilities.md",
+            "cli.md",
+            "config.md",
+            "endpoints.md",
+            "errors.md"
+        ],
         "the registry order is the write order — it must be stable and sorted"
     );
 }
