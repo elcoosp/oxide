@@ -165,29 +165,63 @@ pub(crate) fn env_filter() -> tracing_subscriber::EnvFilter {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
 }
 
-/// The log feed's own level floor (`OXIDE_LOG_FEED_LEVEL`, V2-F26): when
-/// set to one of the five `tracing` level names (anything but the falsy
-/// spellings `""`/`0`/`false`/`off`), the dev boot widens the feed past
-/// the host filter — the host filter rides the formatter and export
-/// layers per-layer and the capture layer admits its own floor, so the
-/// console stays byte-identical while the window captures the events the
-/// console never renders (a dev loop with the console at `info` and the
-/// feed at `debug`). `None` — unset, a falsy spelling, or an unknown
-/// name (one stderr notice, then the F24 shape) — keeps the subscriber
-/// byte-identical; production never attaches the layer either way.
-fn feed_filter_level() -> Option<oxide_fw_server::LevelFloor> {
+/// The `--log-feed-level` boot flag's override (V2-F28), written once
+/// pre-runtime by `apply_startup_env` — the `set_dev_mode` shape: a
+/// command-level fact decided before the tokio runtime exists, so the
+/// read side never races a mid-async write. The env var remains the
+/// shell user's spelling; the flag wins over it.
+static FEED_LEVEL_OVERRIDE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Install the boot flag's feed-level override (see
+/// [`FEED_LEVEL_OVERRIDE`]). `None` clears it (the pins' hygiene).
+pub(crate) fn set_feed_level_override(value: Option<String>) {
+    if let Ok(mut slot) = FEED_LEVEL_OVERRIDE.lock() {
+        *slot = value;
+    }
+}
+
+fn feed_level_override() -> Option<String> {
+    FEED_LEVEL_OVERRIDE
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
+}
+
+/// The log feed's own level floor (V2-F26/F28): when set — by the
+/// `--log-feed-level` boot flag (which wins) or the
+/// `OXIDE_LOG_FEED_LEVEL` env var — to one of the five `tracing` level
+/// names (anything but the falsy spellings `""`/`0`/`false`/`off`), the
+/// dev boot widens the feed past the host filter — the host filter rides
+/// the formatter and export layers per-layer and the capture layer admits
+/// its own floor, so the console stays byte-identical while the window
+/// captures the events the console never renders (a dev loop with the
+/// console at `info` and the feed at `debug`). `None` — unset, a falsy
+/// spelling, or an unknown name (one stderr notice naming the source,
+/// then the F24 shape) — keeps the subscriber byte-identical; production
+/// never attaches the layer either way.
+pub(crate) fn feed_filter_level() -> Option<oxide_fw_server::LevelFloor> {
+    if let Some(value) = feed_level_override() {
+        return feed_floor_from(value, "--log-feed-level");
+    }
     match std::env::var("OXIDE_LOG_FEED_LEVEL") {
-        Ok(value) if !matches!(value.as_str(), "" | "0" | "false" | "off") => {
-            let floor = oxide_fw_server::LevelFloor::parse(&value);
-            if floor.is_none() {
-                eprintln!(
-                    "oxide: OXIDE_LOG_FEED_LEVEL={value} is not a tracing level; the feed mirrors the host filter"
-                );
-            }
-            floor
-        }
+        Ok(value) => feed_floor_from(value, "OXIDE_LOG_FEED_LEVEL"),
         _ => None,
     }
+}
+
+/// The falsy-spellings gate + the parse, shared by the flag and the env
+/// var spellings; the notice names the source so a typo is findable.
+fn feed_floor_from(value: String, source: &str) -> Option<oxide_fw_server::LevelFloor> {
+    if matches!(value.as_str(), "" | "0" | "false" | "off") {
+        return None;
+    }
+    let floor = oxide_fw_server::LevelFloor::parse(&value);
+    if floor.is_none() {
+        eprintln!(
+            "oxide: {source}={value} is not a tracing level; the feed mirrors the host filter"
+        );
+    }
+    floor
 }
 
 /// The trace rows' export gate (`OXIDE_TRACE_LOG`, V2-F22): when set to
