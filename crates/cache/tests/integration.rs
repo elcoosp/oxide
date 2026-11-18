@@ -37,6 +37,16 @@ fn row(tags: &[&str], ttl: Duration, swr: Option<Duration>) -> Entry {
     }
 }
 
+/// The decay arm's row: the same shape with `stored_at` BACKDATED by
+/// `back_ms` — the window's math runs on the stored stamp, so aging the
+/// stamp is the deterministic decay (a wall-clock sleep here raced its
+/// own 10 ms ttl under a loaded scheduler and flaked the pin).
+fn row_backdated(tags: &[&str], ttl: Duration, swr: Option<Duration>, back_ms: u64) -> Entry {
+    let mut entry = row(tags, ttl, swr);
+    entry.stored_at = entry.stored_at.saturating_sub(back_ms);
+    entry
+}
+
 /// A tiered store with a disk tier under it (both tiers cross the pins).
 fn tiered() -> Arc<TieredCache> {
     let root = Box::leak(Box::new(tempfile::tempdir().expect("temp disk tier")));
@@ -65,9 +75,13 @@ async fn key_digest_names_the_row_and_the_freshness_window_decays() {
     assert_eq!(digest.len(), 64, "the digest is blake3 hex");
 
     // The SWR row: fresh inside the TTL, stale inside the SWR window.
+    // The decay runs on BACKDATED stamps, not sleeps — the fresh row
+    // stores now (fresh for 60 s), the aged row's stamp sits 100 ms in
+    // the past with a 50 ms ttl (stale), the no-SWR row the same age
+    // (expired) — deterministic under any scheduler.
     let swr_row = row(
         &["route:/index"],
-        Duration::from_millis(10),
+        Duration::from_secs(60),
         Some(Duration::from_secs(60)),
     );
     cache.set(&digest, swr_row).await.expect("the row stores");
@@ -76,14 +90,31 @@ async fn key_digest_names_the_row_and_the_freshness_window_decays() {
         matches!(hit, Some(Hit::Fresh(_))),
         "a just-stored row answers fresh"
     );
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    let hit = cache.get(&digest).await.expect("the get succeeds");
+
+    let aged = row_backdated(
+        &["route:/index"],
+        Duration::from_millis(50),
+        Some(Duration::from_secs(60)),
+        100,
+    );
+    let digest_stale = CacheKey {
+        route: "/index-aged".into(),
+        ..key.clone()
+    };
+    cache
+        .set(&digest_stale.canonical(), aged)
+        .await
+        .expect("the row stores");
+    let hit = cache
+        .get(&digest_stale.canonical())
+        .await
+        .expect("the get succeeds");
     assert!(
         matches!(hit, Some(Hit::Stale(_))),
         "past the TTL, inside the SWR window, the row answers stale"
     );
 
-    // The no-SWR row under a second key: past the TTL there is no stale
+    // The no-SWR row under a third key: past the TTL there is no stale
     // window — a miss.
     let no_swr = CacheKey {
         layer: Layer::L1,
@@ -93,10 +124,12 @@ async fn key_digest_names_the_row_and_the_freshness_window_decays() {
     let digest_b = no_swr.canonical();
     assert_ne!(digest, digest_b, "a component change changes the digest");
     cache
-        .set(&digest_b, row(&[], Duration::from_millis(10), None))
+        .set(
+            &digest_b,
+            row_backdated(&[], Duration::from_millis(50), None, 100),
+        )
         .await
         .expect("the row stores");
-    tokio::time::sleep(Duration::from_millis(60)).await;
     let hit = cache.get(&digest_b).await.expect("the get succeeds");
     assert!(hit.is_none(), "no SWR window: the expired row is a miss");
 }
