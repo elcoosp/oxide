@@ -10,21 +10,33 @@
 //! trace id. The `fetch` op reads the current context and adds a `traceparent`
 //! header to outgoing requests.
 //!
-//! The context is consumed on two live paths since V2-F21:
+//! The context is consumed on three live paths since V2-F21:
 //!
 //! - the dev-plane trace feed ([`crate::trace_feed`]) records the parsed
 //!   halves (`traceId`/`parentId`/`sampled`/`tracestate`) per completed
-//!   request, and `GET /__oxide/traces` serves the window;
+//!   request, and `GET /__oxide/traces` serves the window (filtered, since
+//!   F23);
 //! - the response half: a traced dispatch response carries a
 //!   `traceresponse` header ([`TraceContext::to_traceresponse`], the W3C
 //!   Trace Context Level 2 DRAFT's shape — `00-<trace-id>-<response-id>-<flags>`;
 //!   the response id derives from the pipeline's SEC-02 per-request id,
 //!   [`TraceContext::response_span_id`]) so a traced caller sees the
-//!   server's response span id.
+//!   server's response span id;
+//! - the export half: the attached sink may be the F22
+//!   [`TracingTraceSink`](crate::trace_export::TracingTraceSink), whose
+//!   event per recorded row carries the same W3C halves into the
+//!   subscriber's stream (console, `OXIDE_LOG=json`, OTLP).
 //!
-//! Note: the `fetch` op itself is still a stub (§4.5 — the V8 host does not
-//! yet expose streaming ops), so the context is not yet propagated OUTBOUND
-//! on fetch op calls; the consumption above is the server's own paths.
+//! The `fetch` op is wired (jshost's `op_oxide_fetch`, the SSRF-guarded
+//! bridge over the injected `FetchHandler`) and its outbound propagation
+//! is implemented — the op reads the worker thread's current
+//! `traceparent` and adds it to the outgoing headers when the caller did
+//! not set one. The propagation is latent on the V8 backend today: the
+//! op's args do not carry the inbound request headers, so no live call
+//! site invokes `set_trace_parent` yet (the inbound id would ride
+//! `CallInput` per call); the Node backend propagates through the loader
+//! payload's request headers. The three consumption paths above are the
+//! server's own live paths.
 
 use std::collections::BTreeMap;
 
@@ -130,7 +142,7 @@ impl TraceContext {
     #[must_use]
     pub fn response_span_id(request_id: &str) -> Option<&str> {
         let rest = request_id.strip_prefix("req-")?;
-        let hex_len = rest.bytes().take_while(|b| b.is_ascii_hexdigit()).count();
+        let hex_len = rest.bytes().take_while(u8::is_ascii_hexdigit).count();
         if hex_len >= 16 {
             Some(&rest[..16])
         } else {
