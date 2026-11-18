@@ -10,10 +10,21 @@
 //! trace id. The `fetch` op reads the current context and adds a `traceparent`
 //! header to outgoing requests.
 //!
-//! Note: the `fetch` op itself is a stub today (§4.5 — the V8 host does not
-//! yet expose streaming ops), so the context is *available* but not yet
-//! *consumed* by any live call site. This module exists so the op's
-//! implementation lands with the format already stable.
+//! The context is consumed on two live paths since V2-F21:
+//!
+//! - the dev-plane trace feed ([`crate::trace_feed`]) records the parsed
+//!   halves (`traceId`/`parentId`/`sampled`/`tracestate`) per completed
+//!   request, and `GET /__oxide/traces` serves the window;
+//! - the response half: a traced dispatch response carries a
+//!   `traceresponse` header ([`TraceContext::to_traceresponse`], the W3C
+//!   Trace Context Level 2 DRAFT's shape — `00-<trace-id>-<response-id>-<flags>`;
+//!   the response id derives from the pipeline's SEC-02 per-request id,
+//!   [`TraceContext::response_span_id`]) so a traced caller sees the
+//!   server's response span id.
+//!
+//! Note: the `fetch` op itself is still a stub (§4.5 — the V8 host does not
+//! yet expose streaming ops), so the context is not yet propagated OUTBOUND
+//! on fetch op calls; the consumption above is the server's own paths.
 
 use std::collections::BTreeMap;
 
@@ -94,6 +105,37 @@ impl TraceContext {
         }
         let flags = if self.sampled { "01" } else { "00" };
         Some(format!("00-{}-{}-{}", self.trace_id, span_id, flags))
+    }
+
+    /// Emit a `traceresponse` value (the W3C Trace Context Level 2 DRAFT's
+    /// response header — not yet a Recommendation): the same
+    /// `00-<trace-id>-<response-id>-<flags>` grammar as `traceparent`,
+    /// with the caller-provided `response_id` naming the server's
+    /// response span. `None` when `response_id` is not 16 hex chars.
+    #[must_use]
+    pub fn to_traceresponse(&self, response_id: &str) -> Option<String> {
+        if response_id.len() != 16 || !is_hex(response_id) {
+            return None;
+        }
+        let flags = if self.sampled { "01" } else { "00" };
+        Some(format!("00-{}-{}-{}", self.trace_id, response_id, flags))
+    }
+
+    /// Derive the response span id the pipeline emits from its SEC-02
+    /// per-request id (`req-` + 32 CSPRNG hex): the first 16 hex chars —
+    /// deterministic per request (one response per request), unpredictable
+    /// across requests, no second RNG draw. `None` for a malformed or
+    /// too-short id — the emission degrades to no header, never a
+    /// fabricated span id.
+    #[must_use]
+    pub fn response_span_id(request_id: &str) -> Option<&str> {
+        let rest = request_id.strip_prefix("req-")?;
+        let hex_len = rest.bytes().take_while(|b| b.is_ascii_hexdigit()).count();
+        if hex_len >= 16 {
+            Some(&rest[..16])
+        } else {
+            None
+        }
     }
 }
 
@@ -191,5 +233,31 @@ mod tests {
         )
         .unwrap();
         assert!(tc.to_traceparent("xyz").is_none());
+    }
+
+    #[test]
+    fn to_traceresponse_roundtrips_through_the_same_grammar() {
+        let tc = TraceContext::parse_traceparent(
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        )
+        .unwrap();
+        let out = tc.to_traceresponse("b7ad6b7169203332").unwrap();
+        assert_eq!(
+            out,
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203332-01"
+        );
+        let back = TraceContext::parse_traceparent(&out).unwrap();
+        assert_eq!(back.trace_id, tc.trace_id);
+        assert_eq!(back.parent_id, "b7ad6b7169203332");
+    }
+
+    #[test]
+    fn response_span_id_derives_the_first_16_hex() {
+        assert_eq!(
+            TraceContext::response_span_id("req-11aa22bb33cc44dd55ee66ff77008899"),
+            Some("11aa22bb33cc44dd")
+        );
+        assert_eq!(TraceContext::response_span_id("req-f21"), None);
+        assert_eq!(TraceContext::response_span_id("not-an-id"), None);
     }
 }
