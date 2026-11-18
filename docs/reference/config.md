@@ -45,6 +45,9 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `cache.l0.maxSize` — `string` — default `"512mb"`: §5.3: the L0 in-process cache budget (`kb`/`mb`/`gb`); over-cap entries are GC'd (SPEC-5D).
 - `cache.l0.ttlSecs` — `integer` — default —: P-05: L0 freshness window in seconds (default 300).
 - `cache.l0.vary` — `string[]` — default —: Request headers the L0 fingerprint varies on. The primary language tag of accept-language is normalized automatically.
+### `check`
+
+- `check.typecheck` — `enum: `"tsgo"` \| `"oxlint"` \| `"tsrs"` \| `"tsc"` \| `"off"`` — default —: V2-C11: the typecheck backend `oxide check` runs. `tsgo` (the default) runs `tsgo --noEmit`; `oxlint` runs `oxlint --type-aware --type-check` (it orchestrates the Go-based tsgolint — `oxide doctor` says so); `tsrs` is opt-in and experimental; `tsc` runs plain `tsc --noEmit`; `off` skips the typecheck arm. A bad spelling fails the load with CFG-CHECK.
 ### `content`
 
 - `content.collections[].dir` — `string` — default —: §16.5: the content directory (Markdown + typed frontmatter) the collection maps to.
@@ -54,7 +57,7 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 
 - `deploy` — `object` — default —: V2-F10/F11: the deploy machinery's knobs. Wired: the serving pools boot from dist/ per generation (the F10 CLI adoption) and `oxide deploy` reads both knobs over the delta/objstore engines (F11); the engine-side default stays the plumbing default and this section is its config face. A window literal that does not parse, a zero window or a zero generation count fails the load (CFG-DEPLOY).
 - `deploy.generations` — `integer` — default `3`: How many past generations stay roll-back-able (the F11 releases/ retention; the spec's N=3 default). CFG-DEPLOY refuses zero.
-- `deploy.skewWindow` — `string` — default `"15m"`: How long a demoted generation keeps serving after the promote — the duration grammar <n>s|m|h|d, plain integers are seconds ('15m' is the spec default). Parsed by parse_duration_secs and validated at load (CFG-DEPLOY); a zero window is refused.
+- `deploy.skewWindow` — `string` — default `"15m"`: How long a demoted generation keeps serving after the promote — the duration grammar <n>s\|m\|h\|d, plain integers are seconds ('15m' is the spec default). Parsed by parse_duration_secs and validated at load (CFG-DEPLOY); a zero window is refused.
 ### `dev`
 
 - `dev` — `object` — default —: §13.5: dev-server options (https, host, qr, open, proxy).
@@ -86,10 +89,10 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 ### `framework`
 
 - `framework.adapter` — `enum: `"react"` \| `"vue"` \| `"svelte"` \| `"solid"`` — default —: §7: the component dialect the adapter compiles (the loader in `page.server.ts` stays framework-neutral).
-- `framework.autoIslands` — `boolean` — default `false`: V2-F02: the auto-islands gate. When true the build runs the compiler's interactivity scan over the client tree, writes .oxide/island-manifest.json and hydrates exactly the components the scanner found interactive; an explicit islands registration always wins and a pure classification is the only skip. Default false — the spec defers by default because a wrong inference silently breaks interactivity.
+- `framework.autoIslands` — `boolean` — default —: V2-F02: the auto-islands gate. When true the build runs the compiler's interactivity scan over the client tree, writes .oxide/island-manifest.json and hydrates exactly the components the scanner found interactive; an explicit islands registration always wins and a pure classification is the only skip. Default false — the spec defers by default because a wrong inference silently breaks interactivity.
 - `framework.compiler` — `boolean` — default —: C01: the native compiler pass for the adapter. true prefers the native backend when its toolchain is healthy; the node backend is the fallback (C01 / `compilerBackend`).
 - `framework.compilerBackend` — `enum: `"auto"` \| `"native"` \| `"node"`` — default —: V2-C01 (D26): the compiler backend the precompile pass consults per file. `auto` (the default) picks a native compiler when one is compiled in and healthy and uses the Node tooling pool otherwise; `native` requires the native path and refuses with CMP-NAT-001 when no healthy backend is available; `node` always uses the pool. Overridable via `OXIDE_COMPILER_BACKEND`.
-- `framework.islands` — `object` — default —: §10.3 islands registry: component name → source file. The CLI emits a synthetic __boot__ client entry that imports each entry; `<Island chunk="X">` on a page resolves to X in this map.
+- `framework.islands` — `object` — default —: §10.3 islands registry: component name → source file (V2-F01: string, or { src, framework? } for a mixed-framework island). The CLI emits a synthetic __boot__ client entry that registers each island with its own framework's adapter; `<Island chunk="X">` on a page resolves to X in this map.
 - `framework.name` — `string` — default —: §7: the framework adapter package the config exports (`@oxide-fw/react`, `@oxide-fw/vue`, ...).
 ### `i18n`
 
@@ -110,12 +113,6 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 ### `interactionReplay`
 
 - `interactionReplay` — `boolean` — default `true`: V2-F03: the pre-hydration interaction replay opt-out. Default true (flag absent = enabled): the boot capture records interactions until each island hydrates and replays them on done. false advertises interactionReplay:false in window.__oxide so boot skips startReplay. A non-boolean value fails the load (DSP-114).
-### `llms`
-
-- `llms.enabled` — `boolean` — default `false`: V2-E07: emit dist/llms.txt (title, summary, the included routes with their meta descriptions) and dist/llms-full.txt (the routes' text from the content collections, Markdown) at build. Default false: neither file is written. A bad include pattern fails the load (CFG-LLMS).
-- `llms.include` — `string[]` — default —: Route patterns the files cover — glob-lite: ** matches any run of segments, * within one segment ('/docs/**' = every /docs page). Empty means every prerendered page.
-- `llms.summary` — `string` — default —: The blockquote summary under the title.
-- `llms.title` — `string` — default —: The llms.txt H1 title. Defaults to the site name (the siteUrl host or the project directory name) when omitted.
 ### `live`
 
 - `live` — `object` — default —: V2-F05: live-loader transport knobs (the SSE hub's capacity, cadence and transport). Defaults are inert - with no route opting in (page.server.ts live: true) nothing listens and no hub is constructed. Validation (DSP-111): keepaliveSeconds >= 1, maxSubscribers >= 1, maxRerunsPerSecond >= 1, perIpMax <= maxSubscribers.
@@ -125,6 +122,12 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `live.maxSubscribers` — `integer` — default `5000`: The hub's total subscriber capacity; the endpoint answers 503 + retry-after above it.
 - `live.perIpMax` — `integer` — default `20`: Per-peer subscriber cap (security); cannot exceed maxSubscribers.
 - `live.transport` — `any` — default `"sse"`: sse streams snapshots over GET /__oxide/live; poll is the serverless fallback.
+### `llms`
+
+- `llms.enabled` — `boolean` — default `false`: V2-E07: emit dist/llms.txt (title, summary, the included routes with their meta descriptions) and dist/llms-full.txt (the routes' text from the content collections, Markdown) at build. Default false: neither file is written. A bad include pattern fails the load (CFG-LLMS).
+- `llms.include` — `string[]` — default —: Route patterns the files cover — glob-lite: ** matches any run of segments, * within one segment ('/docs/**' = every /docs page). Empty means every prerendered page.
+- `llms.summary` — `string` — default —: The blockquote summary under the title.
+- `llms.title` — `string` — default —: The llms.txt H1 title. Defaults to the site name (the siteUrl host or the project directory name) when omitted.
 ### `manifest`
 
 - `manifest` — `object` — default —: §16.3: web app manifest (PWA). Present -> oxide build emits manifest.webmanifest + a service worker.
@@ -136,7 +139,7 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `offline` — `object` — default —: V2-F14: the offline-first knobs. Wired: the CLI emission gate writes dist/sw.js from the produced client manifest and the boot module answers the worker's activate fan-out with a queue flush; the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).
 - `offline.enabled` — `boolean` — default `false`: Master switch. false (the default) installs no service worker and boots no outbox.
 - `offline.outbox` — `boolean` — default `true`: The offline action outbox (packages/core's enqueue/flush, the x-oxide-idem replay header). On inside an enabled section (the spec's example shape); false keeps the precache-only posture.
-- `offline.precache` — `string` — default `"routes"`: The precache breadth: 'routes' caches the shell + the prerendered routes (the navigation-fallback surface), 'all' caches every hashed asset the client manifest carries.
+- `offline.precache` — `enum: `"routes"` \| `"all"`` — default `"routes"`: The precache breadth: 'routes' caches the shell + the prerendered routes (the navigation-fallback surface), 'all' caches every hashed asset the client manifest carries.
 ### `og`
 
 - `og` — `object` — default —: S-09: on-demand OG-image endpoint (GET /_oxide/og). Off by default; opt in with og.enabled = true.
@@ -211,6 +214,9 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `stream.resume.maxBytesEach` — `string` — default `"4mb"`: Per-stream replay cap; past it the buffer loses replay and the client falls back to a fresh fetch.
 - `stream.resume.maxBytesTotal` — `string` — default `"256mb"`: Store-wide cap; the accounting evicts the oldest completed buffer first, then the oldest buffer.
 - `stream.resume.ttlSecs` — `integer` — default `60`: How long a buffer stays reattachable, in seconds (DSP-112 rejects 0).
+### `svg`
+
+- `svg.optimize` — `boolean` — default `false`: V2-C07: run the SVG optimizer over SVG documents that enter the build (imports and SVG-as-component sources). The backend is the OXVG optimiser's correctness preset behind the `svg-oxvg` feature; with the knob off (and in every feature-off build) documents ship byte-identical. Every optimizer output is held to the preservation rules — the source's `viewBox`, every `<use>`/`url(#…)`/`aria-*` referenced id, well-formed output — and a violation is refused with `AST-SVG-001`, the source kept.
 ### `sw`
 
 - `sw` — `object` — default —: §16.6: service worker configuration. Present only when the project wants to control emission beyond the default (manifest presence).
