@@ -13,7 +13,8 @@
 //!
 //! Submodules: [`tiers`] (memory/disk/tiered store, §11.2), [`single_flight`]
 //! (coalescing, §11.3), [`http`] (Cache-Control/ETag/304 + fetch memo),
-//! [`observer`] (the §20 push seam: one callback per completed cache event).
+//! [`observer`] (the §20 push seam: one callback per completed cache event),
+//! [`health`] (the §20 posture pull: the whole stack in one value).
 
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -21,6 +22,7 @@
 pub mod auth;
 pub mod codec;
 pub mod feed;
+pub mod health;
 pub mod http;
 pub mod http_handler;
 pub mod keyhash;
@@ -32,6 +34,7 @@ pub mod tiers;
 pub use auth::{MAC_LEN, open_entry, seal_entry};
 pub use codec::{MAX_ENTRY_BYTES, decode_entry, encode_entry};
 pub use feed::{EventFeed, FeedRow};
+pub use health::CacheHealth;
 pub use http::{
     FetchMemo, cache_control, conditional_response, http_date, memo_key, parse_http_date,
 };
@@ -220,6 +223,17 @@ pub trait CacheHandler: Send + Sync {
     async fn invalidate_tag(&self, tag: &str, soft: bool) -> Result<usize>;
     /// Publish an invalidation to other nodes (no-op for local handlers).
     async fn publish_invalidation(&self, tag: &str, soft: bool) -> Result<()>;
+    /// The driver's self-reported kind (the introspection seam the
+    /// posture pull [`CacheHealth`] reads, F32): `"custom"` for host
+    /// drivers that do not override, the crate's own drivers name
+    /// themselves (`"tiered"`, `"http"`, and behind their features
+    /// `"redis"` and `"s3"`). The posture renders the kind as data —
+    /// the numeric exposition stays stable when a host swaps drivers
+    /// underneath.
+    #[must_use]
+    fn handler_kind(&self) -> &'static str {
+        "custom"
+    }
 }
 
 /// Build id: hash of the build manifest set — part of L0 keys (§11.2).
