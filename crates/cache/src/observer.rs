@@ -42,8 +42,12 @@
 //! one `tracing` event under the `oxide::cache` target (the same
 //! convention as the §20 request log under `oxide::request`), debug for
 //! the hot-path rows (hit/miss/set/delete) and info for the
-//! deploy-visible arm (invalidations). Attach a custom impl for the
-//! structured end — a metrics exporter, a test harness, a feed.
+//! deploy-visible arm (invalidations). The crate ships the structured
+//! consumers the seam's doc named: the metrics exporter
+//! ([`crate::metrics::MetricsCacheObserver`], the §20 exposition), the
+//! bounded lossy feed ([`crate::feed::EventFeed`], enqueue here / drain
+//! elsewhere) — and a custom impl for anything else (a test harness, a
+//! dashboard batcher).
 
 use crate::Layer;
 
@@ -124,10 +128,10 @@ impl CacheEvent<'_> {
 ///
 /// Implementations must be cheap and never panic: the callback runs ON
 /// the cache's call path (the request path for a hot hit), so a slow
-/// observer slows the cache. A heavy consumer should enqueue into its
-/// own channel and process elsewhere — the server crate's
-/// `FileTraceSink` posture (one warn on failure, then degrade) is the
-/// model for lossy consumers.
+/// observer slows the cache. The crate ships the bounded feed for the
+/// heavy end — [`crate::feed::EventFeed`] enqueues the rows here and lets
+/// the host's own task process them elsewhere, lossy past its bound (the
+/// `FileTraceSink` posture: one warn, then degrade).
 pub trait CacheObserver: Send + Sync + 'static {
     /// Called once per completed cache event. The `event` borrow lives
     /// only for the call.
