@@ -192,17 +192,31 @@ impl ServingPools {
     }
 }
 
+/// The snapshot refusals' coded constructor — the crate-wide diagnostic
+/// convention (code + severity + message, `SRV-*` per the registry).
+fn gen_err(code: &'static str, msg: impl Into<String>) -> oxide_fw_diagnostics::OxideError {
+    oxide_fw_diagnostics::OxideError(Box::new(oxide_fw_diagnostics::Diagnostic::error(code, msg)))
+}
+
 /// Deep-copy the loader sources a generation serves into
 /// `.oxide/generations/<id>/src` (the bytes frozen at the moment the
 /// generation becomes current — the worker's per-run mtime recompile
 /// would otherwise let a later source edit leak into an accepted
-/// old-build response). `Err` lists the first failure; a failed snapshot
-/// downgrades the generation to "acceptance only" (the pools skip the
-/// route step) instead of failing the boot.
-pub fn snapshot_generation_sources(root: &std::path::Path, id: &str) -> Result<PathBuf, String> {
+/// old-build response). `Err` carries the first failure as a coded
+/// diagnostic (`SRV-GEN-IO` — the missing `src/` tree and every copy
+/// failure with the path in the message; `SRV-GEN-DEPTH` — the depth
+/// guard); a failed snapshot downgrades the generation to "acceptance
+/// only" (the pools skip the route step) instead of failing the boot.
+pub fn snapshot_generation_sources(
+    root: &std::path::Path,
+    id: &str,
+) -> Result<PathBuf, oxide_fw_diagnostics::OxideError> {
     let src = root.join("src");
     if !src.is_dir() {
-        return Err(format!("no src/ tree at {}", root.display()));
+        return Err(gen_err(
+            "SRV-GEN-IO",
+            format!("no src/ tree at {}", root.display()),
+        ));
     }
     let dest = root.join(".oxide").join("generations").join(id);
     if dest.join("src").is_dir() {
@@ -214,27 +228,37 @@ pub fn snapshot_generation_sources(root: &std::path::Path, id: &str) -> Result<P
 
 const SNAPSHOT_MAX_DEPTH: usize = 24;
 
-fn copy_tree(src: &std::path::Path, dest: &std::path::Path, depth: usize) -> Result<(), String> {
+fn copy_tree(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+    depth: usize,
+) -> Result<(), oxide_fw_diagnostics::OxideError> {
     if depth > SNAPSHOT_MAX_DEPTH {
-        return Err(format!(
-            "snapshot tree deeper than {SNAPSHOT_MAX_DEPTH} at {}",
-            src.display()
+        return Err(gen_err(
+            "SRV-GEN-DEPTH",
+            format!(
+                "snapshot tree deeper than {SNAPSHOT_MAX_DEPTH} at {}",
+                src.display()
+            ),
         ));
     }
-    std::fs::create_dir_all(dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
-    let entries = std::fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))?;
+    std::fs::create_dir_all(dest)
+        .map_err(|e| gen_err("SRV-GEN-IO", format!("mkdir {}: {e}", dest.display())))?;
+    let entries = std::fs::read_dir(src)
+        .map_err(|e| gen_err("SRV-GEN-IO", format!("read_dir {}: {e}", src.display())))?;
     for entry in entries {
-        let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
+        let entry = entry.map_err(|e| gen_err("SRV-GEN-IO", format!("dir entry: {e}")))?;
         let p = entry.path();
         let name = entry.file_name();
         let target = dest.join(&name);
         let ft = entry
             .file_type()
-            .map_err(|e| format!("file_type {}: {e}", p.display()))?;
+            .map_err(|e| gen_err("SRV-GEN-IO", format!("file_type {}: {e}", p.display())))?;
         if ft.is_dir() {
             copy_tree(&p, &target, depth + 1)?;
         } else if ft.is_file() {
-            std::fs::copy(&p, &target).map_err(|e| format!("copy {}: {e}", p.display()))?;
+            std::fs::copy(&p, &target)
+                .map_err(|e| gen_err("SRV-GEN-IO", format!("copy {}: {e}", p.display())))?;
         }
         // Symlinks and other entries are skipped: a generation's loader
         // graph is source files; a linked tree is a build artifact, not a
