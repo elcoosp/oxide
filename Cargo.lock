@@ -6763,6 +6763,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-stream",
  "tracing",
+ "tracing-subscriber",
  "url",
  "zstd",
 ]
