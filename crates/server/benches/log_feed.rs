@@ -5,8 +5,10 @@
 //! The wiring-relevant questions: the per-event record cost the capture
 //! layer pays on an attached sink (the steady-state eviction at
 //! capacity — every admitted event pays it), the capture layer's own
-//! per-event cost under a live subscriber (the field visitor walk), and
-//! the per-query render cost the dev feed's poll pays at the attached
+//! per-event cost under a live subscriber (the field visitor walk), the
+//! admission gate's per-event cost (V2-F26: the `AdmitAll` pass-through
+//! vs the `LevelFloor` comparison vs the dropped-event early return),
+//! and the per-query render cost the dev feed's poll pays at the attached
 //! window size.
 //!
 //! Run with: `cargo bench -p oxide-fw-server --features bench-util --bench log_feed`
@@ -81,6 +83,60 @@ fn bench_capture_layer(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_capture_gate(c: &mut Criterion) {
+    // V2-F26: the gate's per-event cost under a live subscriber — the
+    // admission predicate every admitted event pays once the layer is
+    // gated (the `AdmitAll` pass-through the default boot rides vs the
+    // `LevelFloor` comparison the `OXIDE_LOG_FEED_LEVEL` gate rides),
+    // plus the dropped-event early return (the predicate is the whole
+    // cost — no fields visited, no row built).
+    let sink = Arc::new(RingLogSink::new(256)) as Arc<dyn LogSink>;
+    for i in 0..256 {
+        sink.record(row(i));
+    }
+    let all = oxide_fw_server::CaptureLayer::new(sink.clone());
+    let floor = all
+        .clone()
+        .with_gate(Arc::new(oxide_fw_server::LevelFloor::new(
+            tracing::Level::INFO,
+        )));
+    let mut group = c.benchmark_group("log_feed_capture_gate");
+    group.bench_function("admit-all/one-field-info", |b| {
+        b.iter(|| {
+            tracing::subscriber::with_default(
+                tracing_subscriber::registry().with(all.clone()),
+                || {
+                    tracing::info!(target: "oxide_fw_server::bench", rows = 3, "bench event");
+                },
+            );
+            black_box(sink.snapshot().len());
+        });
+    });
+    group.bench_function("floor-info/one-field-info", |b| {
+        b.iter(|| {
+            tracing::subscriber::with_default(
+                tracing_subscriber::registry().with(floor.clone()),
+                || {
+                    tracing::info!(target: "oxide_fw_server::bench", rows = 3, "bench event");
+                },
+            );
+            black_box(sink.snapshot().len());
+        });
+    });
+    group.bench_function("floor-info/dropped-debug", |b| {
+        b.iter(|| {
+            tracing::subscriber::with_default(
+                tracing_subscriber::registry().with(floor.clone()),
+                || {
+                    tracing::debug!(target: "oxide_fw_server::bench", rows = 3, "bench event");
+                },
+            );
+            black_box(sink.snapshot().len());
+        });
+    });
+    group.finish();
+}
+
 fn bench_snapshot(c: &mut Criterion) {
     // The per-query read cost the dev feed's poll pays: the full window
     // cloned newest-first (the endpoint renders every row on a GET).
@@ -134,6 +190,7 @@ criterion_group!(
     benches,
     bench_ring_record,
     bench_capture_layer,
+    bench_capture_gate,
     bench_snapshot,
     bench_serve
 );
