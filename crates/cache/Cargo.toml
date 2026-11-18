@@ -58,6 +58,21 @@ name = "observer"
 harness = false
 required-features = ["bench-util"]
 
+# The metrics exporter's two costs (§20): the per-event counter adds on the
+# attached hot path, and the scrape render's stability across the counter
+# state.
+[[bench]]
+name = "metrics"
+harness = false
+required-features = ["bench-util"]
+
+# The event feed's two sides (§20): the bounded push the cache's call path
+# pays (roomy vs saturated) and the drain arms the host's task runs.
+[[bench]]
+name = "feed"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
