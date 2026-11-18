@@ -77,6 +77,15 @@ name = "navgraph"
 harness = false
 required-features = ["bench-util"]
 
+# F37: criterion bench for the §20 metrics endpoint's render — the bare
+# scrape, the cache-plane slot attached (the closure call + the append
+# delta), and the attach itself — behind the `bench-util` opt-in like
+# every other criterion bench in the workspace.
+[[bench]]
+name = "metrics"
+harness = false
+required-features = ["bench-util"]
+
 # V2-E08: criterion bench for the open-in-editor endpoint (the resolver
 # chain, the confinement and the full serve shapes), behind the
 # `bench-util` opt-in like every other criterion bench in the workspace.
