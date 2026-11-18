@@ -134,8 +134,8 @@ pub const ENDPOINT_MAP: &[EndpointRow] = &[
         path: "/__oxide/traces",
         method: "GET",
         plane: EndpointPlane::Dev,
-        work_packages: "F21",
-        purpose: "Recent-request trace feed over the §20 context (dev-token guarded)",
+        work_packages: "F21, F23",
+        purpose: "Recent-request trace feed over the §20 context; the window answers filtered (?status=, ?method=, ?path=, ?limit=; dev-token guarded)",
     },
     EndpointRow {
         path: "/__oxide",
@@ -151,17 +151,21 @@ pub const ENDPOINT_MAP: &[EndpointRow] = &[
 /// `--check` gate holds).
 #[must_use]
 pub fn endpoint_markdown_table() -> String {
+    use std::fmt::Write as _;
     let mut out = String::from("| path | method | plane | WP | purpose |\n");
     out.push_str("| --- | --- | --- | --- | --- |\n");
     for row in ENDPOINT_MAP {
-        out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} |\n",
+        // Deterministic bytes; `writeln!` appends without the intermediate
+        // `format!` allocation the `push_str(&format!(…))` shape pays.
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} | {} |",
             row.path.replace('|', "\\|"),
             row.method.replace('|', "\\|"),
             row.plane.as_str(),
             row.work_packages.replace('|', "\\|"),
             row.purpose.replace('|', "\\|")
-        ));
+        );
     }
     out
 }
