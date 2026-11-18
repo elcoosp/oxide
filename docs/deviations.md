@@ -5415,3 +5415,80 @@ the filtered-window section in the `trace_feed` example.
   filter). No new endpoint rows (no wire change — the gate is
   capture-side, the writer seam is sink-side), so the endpoints page
   needs no regeneration.
+
+## The dormant fetch propagation wakes up and the feed grows its boot flag (F28 + F29, 2026-11-18)
+
+**What landed (`feat/v8-traceparent-and-feed-flag`).**
+
+- **F28, the §20 tail** (`crates/jshost/src/v8_ops.rs` + the wire-up):
+  `set_trace_parent` was implemented but DORMANT — the recorded note said
+  so verbatim ("Not yet called from a live site"; the trace id would have
+  to be threaded through `CallInput` per op). The chain runs end to end
+  now. The extraction — `trace_parent_from_call_input` — mirrors the Node
+  worker's `traceparentFromPayload` for V8 parity: the host-threaded
+  `CallInput.headers` map first (case-insensitive key), then the
+  payload's host-validated `trace.traceparent` (the value the CLI derives
+  per hop), then the payload's raw `headers` pairs; the W3C shape check
+  is the Node worker's `TRACEPARENT_RE` VERBATIM (2-32-16-2 lowercase
+  hex groups — parity, not breadth), and a malformed value is DROPPED,
+  never forwarded (garbage must not reach upstream APM pipelines).
+  `TraceParentGuard::for_call` is the per-call RAII the worker loop
+  installs around every `V8Msg::Call` — seed on construction, CLEAR on
+  drop (the Node worker's per-op stash rule; the worker runs one call at
+  a time, so clearing — not restoring — is the honest hygiene, and a
+  previous traced call's value never leaks into the next untraced one on
+  the reused worker thread). The guard lives through the streaming drive
+  in the worker-loop arm, so a late `fetch()` during a pending render or
+  streaming loader propagates too. The request-driven hosts stamp the
+  validated value into `CallInput.headers` at boot —
+  `LoaderHost::run`/`run_streaming`, `EndpointHost::run` (the
+  `LoaderRunArgs.trace` path), `FrameworkHost::render` + the streaming
+  variant (the render envelope's `trace`/`headers`) — through
+  `payload_trace_headers`, whose empty map means UNTRACED, nothing
+  fabricated. The `fetch` op's append moved into the extracted
+  `propagate_trace_parent` (one behavior, one function: the site-set
+  `traceparent` wins, an absent slot leaves the outgoing headers
+  untouched) so the op, the pins and the example hold the same rule.
+  21 TDD pins (`trace_parent_tdd.rs`: the extraction spellings, the
+  guard cycle, the append rule, and the wire-up captured through a fake
+  `Pool` — `LoaderHost`/`EndpointHost`/`FrameworkHost` stamping verified
+  on the `CallInput` that reaches the pool). The first jshost bench
+  target joins (`benches/trace.rs` behind the crate's new `bench-util`
+  feature, the workspace gate shape): the extraction scan over a padded
+  header map, the guard cycle, and the append rule. The
+  `trace_propagation` example walks the three seams without spawning a
+  worker. The real end-to-end V8 fetch propagation rides CI's workspace
+  job per the recorded V8-link convention.
+
+- **F29, the feed's boot flag** (`crates/cli/src/args.rs` +
+  `crates/cli/src/observability.rs`): the F26 polish tail's other half —
+  `oxide dev --log-feed-level <LEVEL>` beside the `OXIDE_LOG_FEED_LEVEL`
+  env var. The flag is a command-level fact decided PRE-RUNTIME
+  (`apply_startup_env` writes the `FEED_LEVEL_OVERRIDE` atomic — the
+  `set_dev_mode` shape; no mid-async env writes, no set_var race), and
+  `feed_filter_level` prefers it over the env var. The falsy-spellings
+  gate and the loud-unknown-name notice are shared by both spellings
+  through `feed_floor_from`, whose notice NAMES THE SOURCE
+  (`--log-feed-level=verbose` vs `OXIDE_LOG_FEED_LEVEL=verbose`) so a
+  typo is findable. 7 CLI pins (the parse shape, the override
+  precedence, the falsy/unknown degrades, the env path unchanged, the
+  `apply_startup_env` threading) — the CLI behavioral pins ride CI's
+  nextest workspace job per the recorded V8-link convention;
+  `cargo check -p oxide-fw-cli --all-targets` is the local gate.
+
+- **Micro-debt + drift (additive).** The serve substrate's one weak-error
+  site is gone: `snapshot_generation_sources`/`copy_tree` returned bare
+  `Result<_, String>` — the refusals are coded `SRV-*` diagnostics now
+  (`SRV-GEN-IO` for the missing `src/` tree and every copy failure with
+  the path in the message, `SRV-GEN-DEPTH` for the depth guard), the two
+  `start.rs` call sites render the diagnostic (`msg = %e`), and the
+  registry gained the two rows (`docs/errors.toml`). The pin
+  (`generations_snapshot_refusal_names_the_srv_code`) holds the code so
+  a revert to bare strings is loud. Docs drift: the README's Security
+  row claimed `cargo audit` + a `.cargo/audit.toml` reachability file
+  that does not exist (the CI gate is cargo-deny — two unfixable
+  upstream advisories suppressed with reachability analyses IN
+  `deny.toml`); the row names cargo-deny now. The `graph` crate's
+  missing consumer example landed (`crates/graph/examples/pipeline.rs` —
+  the demand → memoization → invalidation walk over an env source, the
+  shape `build_graph.rs` drives in production).
