@@ -613,8 +613,15 @@ pub async fn build_framework_stack(
     // `op_request` protocol. Memory-only by default; a project that
     // configures a disk root gets the L1 tier too; §11.2: a configured
     // `cache.handler=http` attaches an `HttpCacheHandler` REMOTE tier via
-    // `with_remote` so `'use cache'` reads/writes through it.
-    let cache_tier: Arc<dyn oxide_fw_cache::CacheHandler> = {
+    // `with_remote` so `'use cache'` reads/writes through it. The block
+    // yields all three stack halves — the erased tier the pools consume,
+    // the TYPED tier the render stage records through, and the §20
+    // exporter the boot hands to `Metrics::set_cache_plane`.
+    let (cache_tier, cache_tier_typed, cache_exporter): (
+        Arc<dyn oxide_fw_cache::CacheHandler>,
+        Arc<oxide_fw_cache::TieredCache>,
+        Arc<oxide_fw_cache::MetricsCacheObserver>,
+    ) = {
         // B-19: only materialize the disk L1 when the configured handler is
         // disk-backed (disk/redis/s3/http). With the default `memory` handler
         // there is no persistent tier to warm, so attaching a disk cache just
@@ -653,11 +660,18 @@ pub async fn build_framework_stack(
                 Some(remote) => tier.with_remote(remote),
                 None => tier,
             };
-            Arc::new(tier.with_observer(Arc::clone(&cache_exporter) as Arc<dyn oxide_fw_cache::CacheObserver>))
+            Arc::new(tier.with_observer(
+                Arc::clone(&cache_exporter) as Arc<dyn oxide_fw_cache::CacheObserver>
+            ))
         };
-        let cache_tier: Arc<dyn oxide_fw_cache::CacheHandler> =
-            Arc::clone(&cache_tier_typed) as Arc<dyn oxide_fw_cache::CacheHandler>;
-
+        // The three halves ride out of the block together (the stack
+        // construction below clones each into its field).
+        (
+            Arc::clone(&cache_tier_typed) as Arc<dyn oxide_fw_cache::CacheHandler>,
+            cache_tier_typed,
+            cache_exporter,
+        )
+    };
     // PERF-05: the `fetch` op handler (SSRF-hardened, backed by oxide-fw-server).
     let fetch_handler: Arc<dyn oxide_fw_jshost::FetchHandler> = Arc::new(CliFetchHandler {
         ssrf_allow_list: Vec::new(),
