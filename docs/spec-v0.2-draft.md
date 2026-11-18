@@ -199,6 +199,9 @@ IDs: **A** foundations, **B** performance, **C** compilers and toolchain, **F** 
 | F18 | Performance bisect | S | B09 | `cli` |
 | F19 | Per-route capability permissions (spike) | L | A08 | `jshost` |
 | F20 | Attested reproducible builds | S | A04 | `cli` |
+| F21 | Dev-plane trace feed and the `traceresponse` half | M | none | `server`, `cli` — **landed** (`feat/dev-plane-trace-feed` + `feat/trace-response-header`, 2026-11-17): the `TraceSink` seam + bounded `RingTraceSink` (oldest evicted, snapshot newest-first), `GET /__oxide/traces` as the §V2.J map's 13th row (dev-token guarded), every completed pipeline request records one `RequestTrace` (the record point is a `None` check — production never attaches), and a traced dispatch response carries the W3C Trace Context Level 2 DRAFT's `traceresponse` header |
+| F22 | The trace rows' `tracing` export | S | F21 | `server`, `cli` — **landed** (`feat/trace-export-tracing`, 2026-11-18): `TracingTraceSink` emits one `tracing::info!` event per recorded row (snake_case fields, absent W3C halves rendered empty; whatever subscriber the host installed renders it — console, `OXIDE_LOG=json`, and with `OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream) and `FanoutTraceSink` fans one record into every child (snapshot: each child newest-first in construction order, no cross-child re-order); the CLI dev boot attaches fanout(ring, tracing) only when `OXIDE_TRACE_LOG` opts in, the endpoint stays ring-backed, production never attaches |
+| F23 | The trace feed's filtered window | S | F21 | `server`, `cli` — **landed** (`feat/trace-window-query`, 2026-11-18): `TraceQuery` parses `?status=5xx|404`, `?method=` (case-insensitive exact), `?path=` (percent-decoded, segment-honest prefix), `?limit=` (positive, capped at the default window) — the filters AND together, unknown parameters are ignored (`token` rides the same query), invalid values degrade to no filter; `TracesEndpoint::serve_query` renders the filtered window and the dev-plane arm passes the raw query; `serve` stays the whole-window F21 contract |
 | E01 | Complete HMR client and state-preserving HMR | M | none | `dev`, `packages/oxide` |
 | E02 | Typed search params, typed `href` and `goto` | M | none | `router`, `packages/*` |
 | E03 | Real `oxide migrate` codemods | M | none | `cli` |
@@ -2874,6 +2877,7 @@ Plane rule (existing): `/__oxide/*` is the **data plane** (build-header checked,
 | `/_oxide/health`, `/_oxide/ready` | GET | ops | existing, F12 | Liveness and readiness (level reported) |
 | `/_oxide/{vitals,static,og,metrics,image,hmr}` | various | ops | existing | Unchanged |
 | `/__oxide/open`, `/__oxide/cost` | GET | dev | E08, F17 | Open in editor; component cost (dev-token guarded) |
+| `/__oxide/traces` | GET | dev | F21, F23 | Recent-request trace feed over the §20 context; the window answers filtered (`?status=`, `?method=`, `?path=`, `?limit=`; dev-token guarded) |
 | `/__oxide` | GET | dev | existing, E08 | Inspector |
 
 A revalidation entry point already exists (locate with `rg -n "revalidate" crates/server/src crates/cli/src`); F05 hooks it and adds no new path.
