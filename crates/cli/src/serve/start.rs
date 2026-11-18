@@ -513,6 +513,20 @@ pub(crate) async fn start_server_inner_full(
     // dispatch then skips recording (a branch, not an allocation).
     let waterfall_recorder: Option<oxide_fw_dev::WaterfallRecorder> =
         with_inspector.then(oxide_fw_dev::WaterfallRecorder::new);
+    // V2-F21: the dev-plane trace feed's sink. Created here so the pipeline
+    // (which records one `RequestTrace` per completed request — the §20
+    // consumption of the parsed W3C trace context) and the
+    // `GET /__oxide/traces` endpoint (which serves the window) share one
+    // instance — the same one-instance-two-readers posture the waterfall
+    // recorder rides. `None` for a non-inspector server: the record point
+    // is a None check and the endpoint falls through (production
+    // byte-identical).
+    let trace_sink: Option<std::sync::Arc<dyn oxide_fw_server::TraceSink>> =
+        with_inspector.then(|| {
+            std::sync::Arc::new(oxide_fw_server::RingTraceSink::new(
+                oxide_fw_server::TRACE_FEED_CAPACITY,
+            )) as std::sync::Arc<dyn oxide_fw_server::TraceSink>
+        });
     // §16.6: the session codec from `security.sessionKeys`. A malformed key
     // (too short) is a hard config error — silently falling back to an
     // unsigned cookie would be a security downgrade.
@@ -758,6 +772,14 @@ pub(crate) async fn start_server_inner_full(
             )
                 as std::sync::Arc<dyn oxide_fw_server::CostSource>))
         }),
+        // V2-F21 (the dev-plane attach): the trace feed rides the same
+        // `with_inspector` gate — the pipeline records every completed
+        // request into the ring, the `GET /__oxide/traces` endpoint serves
+        // the same instance. Production never attaches either (the gate is
+        // the dev plane's), so the default pipeline stays byte-identical.
+        trace_sink: trace_sink.clone(),
+        trace_feed: trace_sink
+            .map(|sink| std::sync::Arc::new(oxide_fw_server::TracesEndpoint::new(sink))),
         page_renderer: None,
         // SPEC-14: the HMR hub's broadcast sender, dev only.
         hmr: hmr.as_ref().map(|h| h.sender()),
