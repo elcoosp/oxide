@@ -8,9 +8,10 @@
 //! owner completes and records the flight, and the row lands on every
 //! in-crate consumer — the metrics exporter's
 //! `oxide_cache_plane_coalesce_*` families and the bounded feed's FIFO.
-//! The two consumers ride one attach point through a tiny inline fanout
-//! impl — the seam's "a custom impl for anything else" contract, in
-//! four lines.
+//! The two consumers ride one attach point through the shipped
+//! [`FanoutCacheObserver`](oxide_fw_cache::FanoutCacheObserver) (F34) —
+//! the seam's composition arm; before it existed this example carried a
+//! four-line inline impl of the same shape.
 //!
 //! Run with:
 //!
@@ -22,22 +23,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use oxide_fw_cache::{CacheEvent, CacheObserver, Entry, MetricsCacheObserver, Policy, TieredCache};
-
-/// The host's fanout: one record into every consumer (the server crate's
-/// `FanoutTraceSink` posture, inline — the `CacheObserver` impl is the
-/// whole seam).
-struct FanoutObserver {
-    a: Arc<MetricsCacheObserver>,
-    b: Arc<oxide_fw_cache::EventFeed>,
-}
-
-impl CacheObserver for FanoutObserver {
-    fn on_event(&self, event: &CacheEvent<'_>) {
-        self.a.on_event(event);
-        self.b.on_event(event);
-    }
-}
+use oxide_fw_cache::{
+    CacheEvent, Entry, FanoutCacheObserver, MetricsCacheObserver, Policy, TieredCache,
+};
 
 fn entry(body: &[u8]) -> Entry {
     Entry {
@@ -54,7 +42,9 @@ fn entry(body: &[u8]) -> Entry {
         stored_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("the wall clock runs")
-            .as_millis() as u64,
+            .as_millis()
+            .try_into()
+            .unwrap_or_default(),
         etag: "\"v1\"".into(),
     }
 }
@@ -64,15 +54,15 @@ fn main() {
     rt.block_on(async {
         // 1. Attach the consumers: the exporter stays with the host for
         //    scraping, the bounded feed stands in for the off-process
-        //    pipeline — both through one inline fanout on the seam.
+        //    pipeline — both through the shipped fanout on the seam.
         let metrics = Arc::new(MetricsCacheObserver::new());
         let feed = Arc::new(oxide_fw_cache::EventFeed::bounded(64));
-        let cache = Arc::new(TieredCache::new(4 * 1024 * 1024).with_observer(Arc::new(
-            FanoutObserver {
-                a: metrics.clone(),
-                b: feed.clone(),
-            },
-        )));
+        let cache = Arc::new(TieredCache::new(4 * 1024 * 1024).with_observer(
+            FanoutCacheObserver::shared(vec![
+                metrics.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+                feed.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+            ]),
+        ));
 
         // 2. One flight, three followers: the owner renders, the
         //    followers await its broadcast.
