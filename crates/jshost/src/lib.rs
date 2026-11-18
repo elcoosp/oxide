@@ -2031,6 +2031,16 @@ fn spawn_v8_worker(
                 while let Some(msg) = rx.recv().await {
                     match msg {
                         V8Msg::Call { id, entry, input } => {
+                            // §20: the fetch op's outbound propagation rides
+                            // this call's W3C traceparent (the headers map
+                            // first, then the payload's trace value). The
+                            // guard clears on drop, so the next call on this
+                            // worker thread starts clean — a previous traced
+                            // call's value never leaks into an untraced one.
+                            // It stays alive through the streaming drive so
+                            // late fetches during a pending render propagate
+                            // too.
+                            let _trace_parent = crate::v8_ops::TraceParentGuard::for_call(&input);
                             let res = v8_dispatch(&mut js, &entry, &input).await;
                             // PERF-03: if this call opened a streaming render,
                             // hand the receiver to the caller FIRST, then drive
