@@ -116,7 +116,22 @@ pub use trace_feed::{
 // `OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream) and the
 // `FanoutTraceSink` fans one record into every child sink (the dev boot
 // attaches ring + tracing behind it; the endpoint stays ring-backed).
-pub use trace_export::{FanoutTraceSink, TracingTraceSink};
+// V2-F25: the `FileTraceSink` file arm — one JSONL line per recorded
+// row (the same camelCase row shape the endpoint serves), attached
+// beside the ring and the tracing arm when `OXIDE_TRACE_FILE` opts in.
+pub use trace_export::{FanoutTraceSink, FileTraceSink, TracingTraceSink};
+
+// V2-F24 (server half): the dev-plane log feed — `GET /__oxide/logs`
+// (dev-token guarded, D41). The `LogSink` seam + bounded `RingLogSink`
+// (oldest evicted, snapshot newest-first), the `CaptureLayer` capture
+// arm (a `tracing_subscriber::Layer` — a second read on the event
+// stream, no rendering change) and the `LogsEndpoint` wire contract
+// with the `LogQuery` filter seam (`?level=`, `?target=`, `?q=`,
+// `?limit=`; invalid values degrade to no filter).
+pub use log_feed::{
+    CaptureLayer, LOG_FEED_CAPACITY, LOG_FEED_ENDPOINT_PATH, LogEvent, LogQuery, LogSink,
+    LogsEndpoint, RingLogSink,
+};
 
 // V2-F09: the search endpoint's attached state (`search` feature) — the
 // read-only engine plus its L1. `SEARCH_ENDPOINT_PATH` itself lives in
@@ -124,6 +139,7 @@ pub use trace_export::{FanoutTraceSink, TracingTraceSink};
 #[cfg(feature = "search")]
 pub use search_endpoint::SearchEndpoint;
 
+pub mod log_feed;
 pub mod trace_context;
 pub mod trace_export;
 pub mod trace_feed;
@@ -384,6 +400,7 @@ impl OxideResponse {
         }
     }
 
+    #[must_use]
     pub fn with_header(mut self, k: &str, v: impl Into<String>) -> Self {
         self.headers.push((k.to_string(), v.into()));
         self
@@ -2310,11 +2327,19 @@ pub struct Pipeline {
     /// V2-F21 (server half): the `GET /__oxide/traces` dev-plane endpoint
     /// (dev-token guarded, D41) — the §V2.J map's row beside the open and
     /// cost surfaces. Serves the same sink instance the pipeline records
-    /// into (the WaterfallRecorder's one-instance-two-readers posture).
+    /// into (the `WaterfallRecorder`'s `one-instance-two-readers` posture).
     /// `None` (the default) leaves the endpoint absent: the request falls
     /// through to the normal dispatch and production is byte-identical.
     /// Attached via [`Pipeline::with_trace_feed`].
     pub trace_feed: Option<Arc<trace_feed::TracesEndpoint>>,
+    /// V2-F24 (server half): the `GET /__oxide/logs` dev-plane endpoint
+    /// (dev-token guarded, D41) — the §V2.J map's row beside the trace
+    /// feed. Serves the same sink instance the capture layer records
+    /// into (the one-instance-two-readers posture the trace feed rides).
+    /// `None` (the default) leaves the endpoint absent: the request falls
+    /// through to the normal dispatch and production is byte-identical.
+    /// Attached via [`Pipeline::with_log_feed`].
+    pub log_feed: Option<Arc<log_feed::LogsEndpoint>>,
     /// SPEC-14 / §13.3: the dev HMR message source. `Some` only in dev; the
     /// `/_oxide/hmr` WebSocket subscribes to it. `oxide-fw-server` does not
     /// depend on `oxide-fw-dev`, so this is a broadcast of pre-serialized JSON
@@ -2970,6 +2995,7 @@ impl Default for Pipeline {
             cost_endpoint: None,
             trace_sink: None,
             trace_feed: None,
+            log_feed: None,
             hmr: None,
             hmr_build_id: String::new(),
             page_renderer: None,
@@ -4207,6 +4233,7 @@ impl Pipeline {
     /// Attach a metrics registry (§20). The pipeline observes its own native
     /// branches (`_native`, `_static`); the JS delegate observes the dispatch
     /// path. Idempotent — replacing an existing registry is fine.
+    #[must_use]
     pub fn with_metrics(mut self, m: Arc<Metrics>) -> Self {
         self.metrics = Some(m);
         self
@@ -4219,6 +4246,7 @@ impl Pipeline {
     }
 
     /// Attach an inspector (§13.4). Only the dev command calls this.
+    #[must_use]
     pub fn with_inspector(mut self, insp: Arc<dyn InspectorSnapshot>) -> Self {
         self.inspector = Some(insp);
         self
@@ -4229,6 +4257,7 @@ impl Pipeline {
     /// guarded, D41) launches the editor on the confined file; when `None`
     /// (the default) the endpoint does not exist and the request falls
     /// through to the normal dispatch. Chainable.
+    #[must_use]
     pub fn with_editor_opener(mut self, ep: Arc<open_editor::OpenEditorEndpoint>) -> Self {
         self.open_editor = Some(ep);
         self
@@ -4239,6 +4268,7 @@ impl Pipeline {
     /// answers the cost record over the injected source; when `None` (the
     /// default) the endpoint does not exist and the request falls through
     /// to the normal dispatch. Chainable.
+    #[must_use]
     pub fn with_cost_endpoint(mut self, ep: Arc<cost_endpoint::CostEndpoint>) -> Self {
         self.cost_endpoint = Some(ep);
         self
@@ -4251,6 +4281,7 @@ impl Pipeline {
     /// records one [`trace_feed::RequestTrace`]; when `None` (the
     /// default) the record point is a `None` check and production is
     /// byte-identical. Chainable.
+    #[must_use]
     pub fn with_trace_sink(mut self, sink: Arc<dyn trace_feed::TraceSink>) -> Self {
         self.trace_sink = Some(sink);
         self
@@ -4259,17 +4290,31 @@ impl Pipeline {
     /// V2-F21 (server half): attach the `GET /__oxide/traces` dev-plane
     /// endpoint (dev-token guarded, D41). Serve the same sink instance
     /// the pipeline records into — the one-instance-two-readers posture
-    /// the WaterfallRecorder rides. When `None` (the default) the
+    /// the `WaterfallRecorder` rides. When `None` (the default) the
     /// endpoint does not exist and the request falls through to the
     /// normal dispatch. Chainable.
+    #[must_use]
     pub fn with_trace_feed(mut self, ep: Arc<trace_feed::TracesEndpoint>) -> Self {
         self.trace_feed = Some(ep);
+        self
+    }
+
+    /// V2-F24 (server half): attach the `GET /__oxide/logs` dev-plane
+    /// endpoint (dev-token guarded, D41). Serve the same sink instance
+    /// the capture layer records into — the one-instance-two-readers
+    /// posture the trace feed rides. When `None` (the default) the
+    /// endpoint does not exist and the request falls through to the
+    /// normal dispatch. Chainable.
+    #[must_use]
+    pub fn with_log_feed(mut self, ep: Arc<log_feed::LogsEndpoint>) -> Self {
+        self.log_feed = Some(ep);
         self
     }
 
     /// Attach a page renderer (§7). When set, `serve_request` dispatches page
     /// renders to it. When `None` (default), the pipeline preserves the
     /// legacy neutral-IR behavior. Chainable.
+    #[must_use]
     pub fn with_page_renderer(mut self, r: Arc<dyn crate::PageRenderer>) -> Self {
         self.page_renderer = Some(r);
         self
@@ -4280,6 +4325,7 @@ impl Pipeline {
     /// `/__data` requests and answers `GET /_oxide/nav?from=<route>` with
     /// the ranked edges; when `None` (the default) both behaviors are off
     /// and the endpoint 404s. Chainable.
+    #[must_use]
     pub fn with_nav_graph(mut self, nav: Arc<navgraph::NavGraph>) -> Self {
         self.nav = Some(nav);
         self
@@ -4289,6 +4335,7 @@ impl Pipeline {
     /// response side). The observer fires once per served response, after
     /// the security headers are stamped; `None` (the default) observes
     /// nothing. Chainable.
+    #[must_use]
     pub fn with_response_observer(mut self, obs: Arc<dyn ResponseObserver>) -> Self {
         self.response_observer = Some(obs);
         self
@@ -4299,6 +4346,7 @@ impl Pipeline {
     /// /_oxide/search` answers the corpus; when `None` (the default) the
     /// endpoint 404s with the not-configured message. Chainable.
     #[cfg(feature = "search")]
+    #[must_use]
     pub fn with_search(mut self, search: Arc<search_endpoint::SearchEndpoint>) -> Self {
         self.search = Some(search);
         self
@@ -4889,6 +4937,26 @@ impl Pipeline {
             {
                 return NativePrefix::Raw(
                     OxideResponse::new(403, "traces requires the dev token")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            }
+            return NativePrefix::Raw(
+                ep.serve_query(&req.method, req.url.split_once('?').map(|(_, q)| q)),
+            );
+        }
+
+        // (3a.2.4) log feed (V2-F24, server half) — dev plane,
+        // dev-token guarded (D41) like the trace feed arm above.
+        // Only when attached: the default pipeline leaves the endpoint
+        // absent (the request falls through, production byte-identical).
+        if path == log_feed::LOG_FEED_ENDPOINT_PATH
+            && let Some(ep) = &self.log_feed
+        {
+            if let Some(want) = &self.dev_token
+                && !dev_token_ok(req, want)
+            {
+                return NativePrefix::Raw(
+                    OxideResponse::new(403, "logs requires the dev token")
                         .with_header("content-type", "text/plain; charset=utf-8"),
                 );
             }
