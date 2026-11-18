@@ -31,20 +31,25 @@ impl HttpCacheHandler {
 
     /// `(status, body)` for one HTTP/1.1 exchange. A minimal client — the
     /// cache protocol is a handful of verbs on a URL.
+    ///
+    /// The transport failures carry the stable `CACHE-HTTP` code (the
+    /// house error-context convention — every arm below degrades on
+    /// `Err`, and a degraded arm that logs the error now names the code
+    /// it degraded under), never a bare `String`.
     async fn request(
         &self,
         method: &str,
         url: &str,
         body: Option<&[u8]>,
-    ) -> std::result::Result<(u16, Vec<u8>), String> {
+    ) -> Result<(u16, Vec<u8>)> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let rest = url
             .strip_prefix("http://")
-            .ok_or_else(|| format!("http-only: {url}"))?;
+            .ok_or_else(|| err("CACHE-HTTP", format!("http-only: {url}")))?;
         let (host_port, path) = rest.split_once('/').unwrap_or((rest, ""));
         let mut stream = tokio::net::TcpStream::connect(host_port)
             .await
-            .map_err(|e| format!("connect: {e}"))?;
+            .map_err(|e| err("CACHE-HTTP", format!("connect: {e}")))?;
         let b = body.unwrap_or(&[]);
         let req = format!(
             "{method} /{path} HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
@@ -53,28 +58,28 @@ impl HttpCacheHandler {
         stream
             .write_all(req.as_bytes())
             .await
-            .map_err(|e| format!("write: {e}"))?;
+            .map_err(|e| err("CACHE-HTTP", format!("write: {e}")))?;
         if !b.is_empty() {
             stream
                 .write_all(b)
                 .await
-                .map_err(|e| format!("write body: {e}"))?;
+                .map_err(|e| err("CACHE-HTTP", format!("write body: {e}")))?;
         }
         let mut buf = Vec::new();
         stream
             .read_to_end(&mut buf)
             .await
-            .map_err(|e| format!("read: {e}"))?;
+            .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
         let split = buf
             .windows(4)
             .position(|w| w == b"\r\n\r\n")
-            .ok_or_else(|| "no header terminator".to_string())?;
+            .ok_or_else(|| err("CACHE-HTTP", "no header terminator"))?;
         let head = String::from_utf8_lossy(&buf[..split]);
         let status: u16 = head
             .split_whitespace()
             .nth(1)
             .and_then(|s| s.parse().ok())
-            .ok_or_else(|| "no status".to_string())?;
+            .ok_or_else(|| err("CACHE-HTTP", "no status"))?;
         Ok((status, buf[split + 4..].to_vec()))
     }
 }
@@ -112,7 +117,8 @@ impl crate::CacheHandler for HttpCacheHandler {
         match self.request("PUT", &url, Some(&body)).await {
             Ok((s, _)) if (200..300).contains(&s) => Ok(()),
             Ok((s, _)) => Err(err("CACHE-HTTP", format!("set returned {s}"))),
-            Err(e) => Err(err("CACHE-HTTP", e)),
+            // The transport error already carries the `CACHE-HTTP` code.
+            Err(e) => Err(e),
         }
     }
 
