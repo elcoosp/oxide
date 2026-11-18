@@ -131,6 +131,13 @@ pub const ENDPOINT_MAP: &[EndpointRow] = &[
         purpose: "Open in editor; component cost (dev-token guarded)",
     },
     EndpointRow {
+        path: "/__oxide/traces",
+        method: "GET",
+        plane: EndpointPlane::Dev,
+        work_packages: "F21",
+        purpose: "Recent-request trace feed over the §20 context (dev-token guarded)",
+    },
+    EndpointRow {
         path: "/__oxide",
         method: "GET",
         plane: EndpointPlane::Dev,
@@ -193,7 +200,7 @@ mod tests {
     /// no blank cells for the docs-check gate to render.
     #[test]
     fn every_row_is_complete() {
-        assert_eq!(ENDPOINT_MAP.len(), 12, "the spec's map has 12 rows");
+        assert_eq!(ENDPOINT_MAP.len(), 13, "the spec's map has 13 rows");
         for row in ENDPOINT_MAP {
             assert!(!row.path.is_empty());
             assert!(!row.method.is_empty());
