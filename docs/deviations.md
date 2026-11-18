@@ -5333,3 +5333,85 @@ the filtered-window section in the `trace_feed` example.
   spec's F-table gained the F24/F25 landed rows and V2.J the map row,
   the README badge/prose re-measured through `scripts/count-tests.sh`
   (2792 → 2824).
+
+## The feed grows its own filter and the file arm's sticky rule gets pinned (F26 + F27, 2026-11-18)
+
+**What landed (`feat/log-feed-filter-surface` + `feat/trace-file-writer-seam`).**
+
+- **F26, the admission gate** (`crates/server/src/log_feed.rs`): the
+  F24 polish tail — the capture arm's record-side filter. `LogGate`
+  (the admission predicate — one pure call per admitted event),
+  `AdmitAll` (the F24 default — every event the subscriber admits joins
+  the window, byte-identical) and `LevelFloor` (events below the floor
+  never join the window — the capture-side narrowing: the `LogQuery`
+  seam narrows the RENDER, the gate narrows the RECORD),
+  `CaptureLayer::with_gate` (the gate travels the layer's `Clone`; the
+  no-feedback rule keeps precedence — the feed's own target stays
+  skipped under any gate). The WIDENING half is the CLI's
+  `OXIDE_LOG_FEED_LEVEL` composition
+  (`crates/cli/src/observability.rs`): the host filter rides the
+  formatter and export layers per-layer (`Layer::with_filter`, no
+  global filter on the registry) and the capture layer admits its own
+  floor — the console stays byte-identical while the window captures
+  the events the console never renders (a dev loop with the console at
+  `info` and the feed at `debug`). Unset (or falsy, or an unknown name
+  — one stderr notice) keeps the F24 subscriber shape byte-identical.
+  11 TDD pins (`log_feed_gate_tdd.rs`: the flagship pin proves the
+  console/window split with the same primitives the boot builds) + the
+  `log_feed_capture_gate` criterion group (the `AdmitAll` pass-through
+  vs the `LevelFloor` comparison vs the dropped-event early return) +
+  the gate section in the `log_feed` walkthrough example.
+- **F27, the injectable writer** (`crates/server/src/trace_export.rs`):
+  the F25 sticky-failure rule's recorded tail — the JSONL framing rides
+  ONE constructor over any `std::io::Write`:
+  `FileTraceSink::from_writer` (the seam the pins steer; `create` stays
+  the file-path shape over the same framing, a `BufWriter` either way
+  so the syscall shape matches). The sticky rule is now PINNED
+  (`trace_file_writer_tdd.rs`, 8 pins): a steered writer fails
+  mid-stream — the failed row never reaches the sink (no half line),
+  exactly one warn event names the stopped export (pinned through the
+  F24 capture arm itself — the observability surface rides its own
+  pins), every subsequent record leaves the writer untouched, the
+  snapshot stays honestly empty through the failure, and the injected
+  writer's line is the endpoint's row shape verbatim (the wire identity
+  rule). The file arm section in the `trace_export` example walks the
+  shape end to end.
+
+**Deltas recorded.**
+
+- `tracing::Level`'s `Ord` is REVERSED from the intuitive severity
+  order (`error` sorts smallest, `trace` largest — the ordering is
+  "filter verbosity", not severity), so "at or above the floor" is
+  `event level <= floor`. The first gate draft used `>=` and its own
+  pins caught it red — the doc comment on `LevelFloor` records the
+  footgun so the next reader does not re-derive it.
+- The widening composition widens the feed only as far as its GATE
+  allows: with no global filter on the registry the subscriber hands
+  every event to every layer, so a gate-less composition would widen
+  the window to everything (the pins hold `the_widening_composition_is_
+  only_as_wide_as_its_gate`). The gate is load-bearing in the boot's
+  composition, not scaffolding — the CLI passes the floor both
+  in-layer and through the per-layer `filter_fn` (the outer filter is
+  the cheap pre-dispatch skip; the in-layer gate is the invariant).
+- The env gate's invalid spelling degrades loudly-but-honestly: one
+  stderr notice naming the value, then the F24 shape (the falsy
+  spellings stay silent — the `OXIDE_TRACE_LOG`/`OXIDE_TRACE_FILE`
+  gate posture).
+- The F25 record's "implemented-but-unpinned" debt is closed: the
+  sticky rule's pins ride the injectable writer, not a directory-path
+  open failure (which fails at OPEN, before any record — the honest
+  alternative the F25 record weighed and deferred).
+- Micro-debt cleaned in the same diff: the cache crate's placeholder
+  `mod integration {}` suite is three real cross-module pins now (the
+  canonical digest names the tier row and the freshness window decays
+  as the policy promises; the single-flight owner/follower hand-off
+  over the tiered store with the RAII guard's publish; the soft/hard
+  tag invalidation across both tiers) — the assets placeholder suite
+  remains the recorded debt.
+- Docs: the spec's F-table gained the F26/F27 landed rows, the README
+  badge re-measured through `scripts/count-tests.sh`, the log feed's
+  module docs record the two-surface truth (the gate narrows the
+  record, the per-layer composition widens the feed past the host
+  filter). No new endpoint rows (no wire change — the gate is
+  capture-side, the writer seam is sink-side), so the endpoints page
+  needs no regeneration.
