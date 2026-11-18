@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use oxide_fw_cache::{
-    CacheEvent, Entry, EventFeed, FanoutCacheObserver, FlightSlot, KindGate,
-    MetricsCacheObserver, Policy, SingleFlight, TieredCache,
+    CacheEvent, Entry, EventFeed, FanoutCacheObserver, FlightSlot, KindGate, MetricsCacheObserver,
+    Policy, SingleFlight, TieredCache,
 };
 
 fn entry(body: &[u8]) -> Entry {
@@ -57,10 +57,9 @@ fn main() {
         //    coalesce rows ride it; hot-path rows stay off the wire), and
         //    the tracing arm for the subscriber.
         let metrics = Arc::new(MetricsCacheObserver::new());
-        let feed = Arc::new(EventFeed::gated(
-            64,
-            Arc::new(KindGate::only(&["invalidate", "coalesce"])),
-        ));
+        // `gated` already returns the shared `Arc<EventFeed>` — the attach
+        // cast wants that Arc, not one wrapped again.
+        let feed = EventFeed::gated(64, Arc::new(KindGate::only(&["invalidate", "coalesce"])));
         let cache = Arc::new(TieredCache::new(4 * 1024 * 1024).with_observer(
             FanoutCacheObserver::shared(vec![
                 metrics.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
@@ -72,8 +71,11 @@ fn main() {
 
         // 2. One flight, two followers — the render stage's shape: the
         //    owner acquires, the staggered requests coalesce onto it.
-        let flights: DashMap<String, Arc<tokio::sync::broadcast::Sender<Arc<Entry>>>> =
-            DashMap::new();
+        //    The map is Arc-shared: `acquire` reads it through the deref
+        //    and the F36 guard CONSUMES the Arc (its cleanup outlives the
+        //    flight).
+        let flights: Arc<DashMap<String, Arc<tokio::sync::broadcast::Sender<Arc<Entry>>>>> =
+            Arc::new(DashMap::new());
         let single = SingleFlight::new();
         let owner = single.acquire(&flights, "route:/a").await;
         let mut followers = Vec::new();
@@ -87,8 +89,7 @@ fn main() {
         let FlightSlot::Owner(tx) = owner else {
             panic!("the first acquirer owns the flight");
         };
-        let guard =
-            oxide_fw_cache::FlightOwnerGuard::new(Arc::clone(&flights), "route:/a".into(), tx);
+        let guard = oxide_fw_cache::FlightOwnerGuard::new(flights, "route:/a".into(), tx);
         let joins = guard.publish(Arc::new(entry(b"<html>a</html>")));
         let joins = u64::try_from(joins).unwrap_or(u64::MAX);
         cache.record_coalesced("route:/a", joins);
@@ -112,16 +113,16 @@ fn main() {
         //    gauges (the stack as it stands NOW), beside the pull
         //    channel's counter and the gated feed's rows.
         let snap = metrics.snapshot();
-        println!("pull stats().coalesced          = {}", cache.stats().coalesced);
+        println!(
+            "pull stats().coalesced          = {}",
+            cache.stats().coalesced
+        );
         println!("exporter coalesce_events        = {}", snap.coalesce_events);
         println!(
             "exporter coalesced_followers    = {}",
             snap.coalesced_followers
         );
-        println!(
-            "exporter invalidations          = {}",
-            snap.invalidations
-        );
+        println!("exporter invalidations          = {}", snap.invalidations);
         println!(
             "health observer_attached        = {}",
             cache.health().observer_attached
