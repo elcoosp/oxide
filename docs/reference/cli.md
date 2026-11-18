@@ -32,6 +32,9 @@ Start the dev server (on-demand ESM, HMR, §13)
 | `--no-esm <NO_ESM>` | §2.9: use the bundler path instead of the native ESM dev server (equivalent to `dev: { esm: false }` in `oxide.config.ts`). Serves `/client/*.js` from `dist/client/` instead of `/src/**` transformed modules |
 | `no_esm = true` |  |
 | `no_esm = false` |  |
+| `--include-secrets <INCLUDE_SECRETS>` | V2-F15: when `record:` is on, keep the secret header trio (`authorization`, `cookie`, `set-cookie`) verbatim in the records instead of the `sha256:<12 hex>` redaction — a replay can then exercise authenticated paths. Dev-only; the production stack never reads it |
+| `include_secrets = true` |  |
+| `include_secrets = false` |  |
 
 ### `oxide build`
 
@@ -98,6 +101,17 @@ Typecheck (tsgo), lint (oxlint), config + route diagnostics (§19.1)
 | argument | description |
 | --- | --- |
 | `--root <ROOT>` |  |
+
+### `oxide fmt`
+
+Format with `oxfmt`, falling back to `biome format` when absent (§V2-C11). No config key — the formatter is a CLI concern only
+
+| argument | description |
+| --- | --- |
+| `--root <ROOT>` |  |
+| `--check <CHECK>` | Check only: report files whose formatting differs and exit 1 instead of writing |
+| `check = true` |  |
+| `check = false` |  |
 
 ### `oxide why`
 
@@ -167,15 +181,33 @@ Plugin and dependency advisories (§17.2)
 
 ### `oxide migrate`
 
-Migrate from next/nuxt/sveltekit/vite (§19.2)
+Migrate to oxide from a detected source framework (V2-E03): a dry run prints the plan; `--apply` performs the mechanical halves (renames + import rewrites) and requires a clean git tree unless `--force`. The framework is detected from the project's manifest and config signatures; an explicit `source` must match it
 
 | argument | description |
 | --- | --- |
 | `--root <ROOT>` |  |
-| `<source>` |  |
-| `--write <WRITE>` | Actually write the converted files. Default is dry-run (plan only) |
-| `write = true` |  |
-| `write = false` |  |
+| `<source>` | The expected source framework (`sveltekit\|next\|nuxt\|vite`) — optional; given, it must match the detection |
+| `--apply <APPLY>` | Apply the plan's mechanical halves (renames + import rewrites). A dry run never writes |
+| `apply = true` |  |
+| `apply = false` |  |
+| `--force <FORCE>` | Apply even when the git tree is dirty (the clean-tree gate exists so a half-migration can be reverted) |
+| `force = true` |  |
+| `force = false` |  |
+
+### `oxide replay`
+
+V2-F15: re-execute a captured request deterministically and compare against its record (`.oxide/records/<id>.json`)
+
+| argument | description |
+| --- | --- |
+| `--root <ROOT>` |  |
+| `<id>` | The request id the record is stored under (the file stem) |
+| `--diff <DIFF>` | Compare the replayed response against the recorded one (nonce-normalized) |
+| `diff = true` |  |
+| `diff = false` |  |
+| `--json <JSON>` | For agents: emit `{ ok, divergences: [..] }` and nothing else |
+| `json = true` |  |
+| `json = false` |  |
 
 ### `oxide test`
 
@@ -187,11 +219,14 @@ In-process test helper: boot the app and expose `fetch` (§16.6 oxide/test)
 
 ### `oxide mcp`
 
-MCP server over stdio (§19.3): exposes routes, cache, graph and diagnostics as MCP tools so coding agents see accurate project facts
+MCP server over stdio (§19.3): exposes routes, cache, graph and diagnostics as MCP tools so coding agents see accurate project facts. Read-only by default; `--allow-write` enables the write tools (V2-E07, the SEC-09 CLI-flag shape)
 
 | argument | description |
 | --- | --- |
 | `--root <ROOT>` |  |
+| `--allow-write <ALLOW_WRITE>` | Enable the registry's write tools (`build.run`). Read-only by default — a write tool called without this flag is refused with a named refusal, not a protocol error |
+| `allow_write = true` |  |
+| `allow_write = false` |  |
 
 ### `oxide schema`
 
@@ -240,9 +275,22 @@ Generated reference docs (§V2-E11): `oxide docs generate` writes `docs/referenc
 | --- | --- |
 | `--root <ROOT>` | Project directory (default: cwd; the pages land under `<root>/docs/reference`) |
 
-### `oxide verify`
+### `oxide deploy`
 
-Verify an attested build (§V2-F20): the canonical form of the provenance, its ed25519 signature (with `--pubkey`) and every subject digest against the dist on disk. `--rebuild` re-runs the build in a scratch copy and compares the dist digests
+Verify an attested build (§V2-F20): the canonical form of the provenance, its ed25519 signature (with `--pubkey`) and every subject digest against the dist on disk. `--rebuild` re-runs the build in a scratch copy and compares the dist digests. Deploy the last build's `dist/` to a target (V2-F11): upload only what changed, swap the `current` pointer atomically. Targets: `dir:/path` (every build), `s3://bucket/prefix` / `r2://...` (S3 API; release builds with the `deploy-s3` feature)
+
+| argument | description |
+| --- | --- |
+| `<target>` | The deploy target |
+| `--root <ROOT>` |  |
+| `--prune <PRUNE>` | Age off the store's pending deletions (`deploy.skewWindow`) and delete the superseded releases (the pointer's release is never pruned — the rollback-safety rule) |
+| `prune = true` |  |
+| `prune = false` |  |
+| `--rollback <ROLLBACK>` | Swap the pointer back to the previous build (the one-write rollback) |
+| `rollback = true` |  |
+| `rollback = false` |  |
+
+### `oxide verify`
 
 | argument | description |
 | --- | --- |
