@@ -5759,3 +5759,71 @@ rows; `docs/architecture.md`'s cache/server/cli rows name the wire;
 `crates/cache/README.md`'s observability bullet names the production consumers.
 The README badge re-measured by `scripts/count-tests.sh`. The `boot_posture`
 example walks the whole wire in one run (attach, fly, record, both expositions).
+
+## The ledger, its gate and its wire — the record the last three sessions owed (F38 + F39 + F40 catch-up, 2026-11-19)
+
+**What this section is.** The F38, F39 and F40 sessions appended their records
+to `HANDOFF.md` and the spec's WP table but never to this file — the protocol
+every earlier session kept. This is the catch-up, recorded from those sessions'
+own handoff records (the authoritative source, committed beside this file), so
+the deviation log's chain is whole again. Nothing here is new work.
+
+**What landed (from the handoffs).** F38 — the F28 seam's dashboard-batcher
+shape ships in-crate: `HotKeyObserver` (`crates/cache/src/hot_keys.rs`), the
+bounded per-key event ledger with first-sight admission, the saturating
+counts, the deterministic `top(n)` read, the sticky-refusal warn under
+`oxide::cache` and the labeled `oxide_cache_plane_hot_key_total` exposition.
+F39 — the F35 filter-surface shape transposed to the ledger:
+`HotKeyGate`/`AdmitAllKeys`/`HotKeyKindGate::only` +
+`with_gate`/`gated` — rejections are admission (never counted, never warned),
+consulted on the borrowed event before the ledger lock. F40 — the ledger's
+production wire: the CLI boot attaches it beside the F30 exporter behind the
+F34 fan (`FrameworkStack::cache_hot_keys`, `CACHE_HOT_KEY_CAPACITY` = 2048)
+and the §20 cache-plane scrape composes the exporter's families with the
+ledger's labeled family through `cache_plane_scrape`; the server crate stays
+cache-agnostic.
+
+**Drift the catch-up repairs.** `docs/architecture.md`'s `cache` and `cli`
+rows named the gate but not the wire — both now name F40 (and F41, below).
+`crates/cache/README.md`'s hot-key bullet named F38/F39 but not the F40
+production consumer — it names the wire now.
+
+## The §20 hot-key top window is operator-tunable (F41, 2026-11-19)
+
+**What the spec asks.** Nothing new — this is the F40 handoff's recorded
+pickup verbatim: "thread an operator-tunable window through
+`CACHE_PLANE_HOT_KEY_TOP` so the §20 scrape's top-n is config-driven."
+
+**What lands.** The F40 scrape's top-n stops being a compile-time constant.
+`crates/cli/src/observability.rs` gains `cache_hot_key_top()` (the
+`OXIDE_CACHE_PLANE_HOT_KEY_TOP` gate, beside the `OXIDE_TRACE_FILE` /
+`OXIDE_TRACE_LOG` / `OXIDE_LOG_FEED_LEVEL` gates it mirrors) over the pure
+parse core `cache_hot_key_top_from(Option<&str>)`: the falsy spellings
+(`""`/`0`/`false`/`off`) keep the F40 default (`CACHE_PLANE_HOT_KEY_TOP`,
+unchanged), a parsed value rides verbatim clamped to the ledger's own bound
+(`CACHE_HOT_KEY_CAPACITY` — rows past the occupancy do not exist, so the cap
+keeps one scrape bounded), and garbage degrades loudly-but-honestly — one
+stderr notice naming the source, then the default (the `feed_floor_from`
+posture). `cache_plane_scrape` takes the window as a parameter and the boot
+resolves it ONCE at the `set_cache_plane` wire
+(`crates/cli/src/serve/start.rs` — the `trace_file_path` posture: a
+boot-time read, not a per-scrape env poll). Window `0` renders the bare
+family pair; the default shape is byte-identical to the const-rendered F40
+scrape.
+
+**Why a parameter, not ledger state.** The window is a BOOT decision about
+the SCRAPE (the §20 endpoint's render), not a property of the attribution —
+the ledger's contract (`top(n)` takes the caller's n) stays unchanged, the
+F30 exporter's families are parameter-free, and a future consumer (a flag, a
+config key) re-resolves at its own wire without touching the cache crate.
+
+**Pinned.** `crates/cli/src/tests.rs` (V2-F41 section): the resolver's parse
+core (unset/falsy/garbage/clamp — pure, parallel-safe), the one env-read pin
+over the real spelling (the `feed_filter_level_still_reads_the_env_var…`
+shape), the boot-observable composition and the window's two-sided bound
+(0 → the bare pair, 1 → one labeled row). TDD red-first: the pins failed
+with E0425 over the resolver fns and E0061 over the old 2-arg scrape before
+the impl existed, then went green. Benches: the `cache_hot_key_top_window`
+criterion group (`crates/cache/benches/hot_keys.rs`) — the read and render
+delta across default/operator/cap scales over a full-capacity ledger. The
+`hot_keys` example gains the operator-window section.
