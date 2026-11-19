@@ -1045,6 +1045,12 @@ pub(crate) async fn start_server_inner_full(
     // plane and no flights, so there is nothing to record and nothing to
     // carry.
     let l0_tiered = if is_dev { None } else { l0_tiered };
+    // F47: the health arm's tier handle — the posture pull needs the TYPED
+    // tier (`TieredCache::health`), captured beside the exporter/hot-key
+    // handles BEFORE the `is_dev` null-out above (that null-out is about
+    // the L0 RESPONSE plane, not about the tier the stack attached: the
+    // posture answers on the dev scrape too).
+    let cache_health_tier = stack.cache_tier_typed.clone();
     // F37: the §20 cache-plane exposition — the boot's exporter renders the
     // `oxide_cache_plane_*` families beside the request-plane rows (the
     // server crate stays cache-agnostic: the slot is an `Fn() -> String`).
@@ -1063,19 +1069,35 @@ pub(crate) async fn start_server_inner_full(
     // then the env spelling, then this baseline, then default-off) and
     // the closure composes the ledger's F44 coverage exposition when the
     // boot opted in (the default shape stays byte-identical).
+    // F47: the health opt-in joins the same precedence — the
+    // `OXIDE_CACHE_PLANE_HEALTH` env spelling resolves ONCE here (the
+    // `trace_file_path` posture) and the closure composes the posture
+    // pull's F32 gauge exposition when the boot opted in (the F32
+    // pull's zero-production-consumer gap closes; the default shape
+    // stays byte-identical — the tier handle rides the closure only so
+    // the arm CAN compose, the flag is what composes it).
+    // F48: the health arm's project baseline joins the precedence — the
+    // layered resolver takes the config's `cache.healthMetrics` (flag
+    // wins, then the env spelling, then this baseline, then default-off)
+    // and the closure composes the posture exposition when any layer
+    // opted in (the default shape stays byte-identical).
     if let Some(exporter) = cache_exporter.as_ref() {
         let exporter = std::sync::Arc::clone(exporter);
         let hot_keys = cache_hot_keys.clone();
+        let health_tier = cache_health_tier.clone();
         let hot_key_top =
             crate::observability::cache_hot_key_top_with_config(cfg.cache.hot_key_top);
         let coverage =
             crate::observability::cache_plane_coverage_with_config(cfg.cache.coverage_metrics);
+        let health = crate::observability::cache_plane_health_with_config(cfg.cache.health_metrics);
         metrics.set_cache_plane(move || {
             crate::framework_shim::cache_plane_scrape(
                 &exporter,
                 hot_keys.as_deref(),
                 hot_key_top,
                 coverage,
+                health_tier.as_deref(),
+                health,
             )
         });
     }
