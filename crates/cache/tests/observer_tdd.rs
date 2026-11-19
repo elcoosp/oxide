@@ -238,8 +238,12 @@ async fn observer_sees_stale_expired_and_invalidate() {
     );
 
     // Stale: stored_at rewound past the ttl but inside the SWR window.
+    // The SWR arm carries a 30s margin past the rewound stamp — a
+    // bare-exact window (SWR 30s at 90s old) lands the boundary on the
+    // get itself, and one clock tick between setup and read flips the
+    // pin to expired (the flake the parallel suite hit).
     let mut e = entry(b"stale", &[]);
-    e.policy.swr = Some(Duration::from_secs(30));
+    e.policy.swr = Some(Duration::from_secs(60));
     e.stored_at = now_ms().saturating_sub(90_000); // ttl 60s gone, SWR covers
     cache.set("route:/stale", e).await.expect("set");
     let stale = cache.get("route:/stale").await.expect("get");
