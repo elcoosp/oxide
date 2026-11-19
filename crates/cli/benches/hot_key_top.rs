@@ -57,9 +57,58 @@ fn bench_cache_hot_key_top_override(c: &mut Criterion) {
     group.finish();
 }
 
+/// The V2-F46 coverage arm's marginal cost over a FULL-capacity ledger:
+/// the boot's composition (`cache_plane_scrape` — the exporter's
+/// families, then the labeled window, then — when the operator opted in —
+/// the F44 coverage exposition) measured at both arms. The `off` arm is
+/// the byte-identical default shape; the `on` arm adds the
+/// `render_coverage_prometheus` pass (one lock pass over the ledger, ~9
+/// fixed rows — the occupancy/bound gauges and the unattributed score's
+/// counter a scrape diffs across windows).
+fn bench_cache_plane_coverage_scrape(c: &mut Criterion) {
+    use oxide_fw_cache::{
+        CacheEvent, CacheObserver, CacheOp, HotKeyObserver, MetricsCacheObserver,
+    };
+
+    // The boot's ledger shape: the F40 capacity, driven to FULL
+    // occupancy (first-sight admission over the rotation pool) so the
+    // coverage gauges render the bound's real posture, not an empty
+    // window.
+    const BENCH_LEDGER_CAPACITY: usize = 2048;
+    let keys: Vec<String> = (0..BENCH_LEDGER_CAPACITY)
+        .map(|i| format!("route:/{i:04}"))
+        .collect();
+    let exporter = MetricsCacheObserver::new();
+    let hot = HotKeyObserver::bounded(BENCH_LEDGER_CAPACITY);
+    for key in &keys {
+        let event = CacheEvent {
+            key,
+            op: CacheOp::Set { bytes: 512 },
+        };
+        hot.on_event(&event);
+    }
+
+    let mut group = c.benchmark_group("cache_plane_coverage_scrape");
+    group.bench_function("off_default_shape", |b| {
+        b.iter(|| {
+            black_box(black_box(&exporter).render_prometheus());
+            black_box(black_box(&hot).render_prometheus(black_box(10)));
+        })
+    });
+    group.bench_function("on_coverage_arm", |b| {
+        b.iter(|| {
+            black_box(black_box(&exporter).render_prometheus());
+            black_box(black_box(&hot).render_prometheus(black_box(10)));
+            black_box(black_box(&hot).render_coverage_prometheus());
+        })
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_cache_hot_key_top_parse,
-    bench_cache_hot_key_top_override
+    bench_cache_hot_key_top_override,
+    bench_cache_plane_coverage_scrape
 );
 criterion_main!(benches);
