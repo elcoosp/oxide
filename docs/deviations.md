@@ -6201,3 +6201,158 @@ redact-secrets). The posture's future polish tail: a `/-/health`-style
 endpoint reading `TieredCache::health()` directly (the pull is already
 the value shape a probe wants — the scrape arm was the recorded seam;
 the endpoint is the next one if the spec ever names it).
+
+## The posture probe lands unrecorded — the chain repair (F49 + F50, 2026-11-19)
+
+**Reconstruction.** The F49/F50 session landed in code (commits
+`35d1775`…`0d6ec21`) but never wrote its deviations record or handoff —
+the chain was one session behind (the F44/F45 session's own gap,
+reconstructed the same way in the F46 record). Reconstructed here from
+the code and the commit chain; the WP table gained the two rows
+alongside.
+
+**F49 — the posture probe (`/-/health` as JSON).** The F47/F48 record's
+named tail (a `/-/health`-style endpoint reading `TieredCache::health()`
+directly) landed: the server crate's one-method `CachePosture` provider
+trait (`posture_json() -> String`), the `Pipeline` pair
+(`posture_path` + `cache_posture`), the `(3b'')` dispatch arm (GET-only;
+`404 "posture probe not configured"` without a provider; `200` +
+`application/json; charset=utf-8` + `cache-control: no-store` with one),
+and the Ops-plane `/-/health` endpoint-map row (the plane-family test
+accepts `/-/` beside `/_oxide`). The CLI adapts the typed tier through
+`TierCachePosture` and `cache_posture_probe_json(&tier)` (the serde of
+`CacheHealth`; the impossible arm renders `{}`, never a request-path
+panic), gated by `posture_probe_provider` (opt-in AND path AND tier).
+Consumer example `crates/cli/examples/posture_probe.rs`; the
+`cache_posture_probe` criterion group; server pins red-first.
+
+**F50 — the probe's path knob.** The layered resolver family's fifth
+member: `cache.postureProbePath` (`CacheConfig::posture_probe_path`,
+schema'd string default `/-/health`), the `--cache-posture-path` boot
+flag on `Dev` and `Start` (outside the dev-mode gate — the value rides
+verbatim because a path CAN spell off), and the layered
+`cache_posture_path_with_config` (flag > env > config > default) over
+the pure parse core `cache_posture_path_from` (falsy spellings answer
+OFF — the empty path disables the surface; a `/`-led path rides
+verbatim; garbage degrades loudly to the recorded default). Config pins
+(5) + cli pins (14, the V2-F50 section); the endpoints reference page
+names the probe family carve-out; the README badge re-measured to 3095;
+`crates/cache/README.md`'s posture bullet names the F49 probe surface.
+
+**Deltas.** One unrelated fix rode the session: the graph crate's CAS
+fsync-before-rename refuses loudly (`2dc74c8`). The session left NO
+named tail beyond the standing 17-pin classify-and-repair pickup — the
+next session mints its own (F51/F52 below).
+
+## The cache eviction becomes a first-class event (F51 + F52, 2026-11-19)
+
+**Branch:** `feat/cache-eviction-event` — the next minted pickup after
+F49/F50 (whose record's only named tail was the standing 17-pin
+classify-and-repair session, not a codebase seam). This session minted
+its own: the observability plane's one blind spot.
+
+**Problem.** The S-08 budget prune (`DiskTier::prune_oldest_until`,
+the PERF-L1 victim pick) has been silent since it landed: a tier that
+decided to DELETE DURABLE DATA to stay under its budget counted
+nothing, emitted nothing, rendered nothing. The house convention is
+"loud, not silent" (the invalidation gaps, the poisoned locks, the
+malformed answers — every session made one more quiet path loud), and
+the observability plane (F28/F30/F31/F34/F35) had a row for every op
+EXCEPT the tier's own eviction decision. `conditional_response` and
+`FetchMemo` in `http.rs` are complete-but-unwired works (recorded
+below as gaps), but the eviction was the plane's own hole: the event
+contract named "completed operations" while the tier's most consequential
+completed operation never emitted one.
+
+**M1 — the eviction event (F51 minted).** `CacheOp::Evict { layer,
+bytes }` joins the contract (the stable kind `"evict"`; the tracing
+observer takes the row at debug, the hot-path posture). `bytes` is the
+TIER'S OWN accounting unit — the disk tier counts the compressed blob
+size it released — so the byte story is the S-08 budget's own story,
+never a re-weighting. `DiskTier` carries the saturating counters
+(`evictions()`/`evicted_bytes()`, the F30 rule, one `pub(crate)
+saturating_add` shape shared with the exporter) and the victim pick now
+captures the freed size in the SAME lock pass; each completed victim
+delivers `Evict` through the F28 seam after its delete lands. The
+wiring: `TieredCache::with_observer` writes the observer down into the
+disk tier's `OnceLock` (both builder orders — `with_disk` first lands
+in `with_disk`), `with_disk_tier(Arc<DiskTier>)` is the
+bring-your-own-tier composition arm (a tier opened with an explicit
+budget rides as-is), and `DiskTier::with_eviction_observer` is the
+standalone tier's own arm. `CacheStats::evictions` rides the pull
+channel (`#[serde(default)]` — pre-F51 payloads decode). The exporter
+counts the rows (`CacheMetricsSnapshot::evictions`/`evicted_bytes`) and
+renders two APPENDED families (`oxide_cache_plane_evictions_total`,
+`oxide_cache_plane_evicted_bytes_total` — the F33 order rule, after the
+coalesce families). The memory tier's moka eviction deliberately does
+NOT emit: amortized maintenance (P-17) with an async listener would
+break the observer contract's synchronous-delivery rule — the disk tier
+is the durable data-loss path this seam covers, documented on every
+surface.
+
+**M2 — the health pull rides (F52 minted).** `CacheHealth::disk_evictions`
+(`#[serde(default)]` — pre-F52 probe payloads and stored snapshots
+decode) samples the disk tier's counter at the posture pass, honestly
+zero without a disk tier; `render_prometheus` renders the tenth gauge
+family `oxide_cache_plane_disk_evictions` APPENDED after
+`observer_attached` (gauge, not the exporter's counter — posture vs
+deltas). The cli F47/F49 pins are membership + relative-order
+assertions, so the appended family stays green by construction (read,
+not run — the V8-linked cli suite is the recorded sandbox wall).
+
+**TDD.** One red state recorded before any impl: 28 compile errors over
+the unresolved F51/F52 surface (E0599 over `CacheOp::Evict`,
+`with_disk_tier`, `DiskTier::evictions`/`evicted_bytes`; E0609 over the
+`evictions`/`disk_evictions` fields; E0560 over the `CacheStats`
+literal). The two milestones' pins ride one file
+(`crates/cache/tests/eviction_tdd.rs`: 8 F51 pins + 3 F52 pins) and the
+impl landed in one sweep — a process deviation from the one-red-cycle-
+per-milestone rule, recorded here; each milestone's pins are separately
+green and the surface is complete, nothing partial shipped. Two
+pin-side corrections in the first green pass, both fixture-side: the
+zero-budget disk tier evicts the entry the set JUST WROTE (insert, then
+prune to target 0) — three sets answer three evictions and the disk
+ends empty, not the two the first draft pinned; and the retained feed
+row's payload comparison rides the variant, not the (event-only)
+`kind()` helper.
+
+**Evidence.** `cargo test -p oxide-fw-cache --all-features` green end to
+end (11 eviction pins + 35 cache + 13 health + 24 hot_keys + 10 gates +
+9 feed + 9 feed_gate + 8 fanout + 8 metrics + 7 coalesce + 6 observer +
+3 integration + lib + doc-tests); `cargo test -p oxide-fw-cache
+--features bench-util --bench eviction` green in test-mode
+(`cache_evict_write/steady-state-set` with and without an exporter over
+the zero-budget tier — each iteration is exactly one completed eviction,
+asserted post-run — and `cache_evict_reads/stats|health`); the
+`eviction` example executed green end to end (the write storm's five
+evictions, the exporter's two families, the tiered pulls' parity, the
+roomy store's delete-is-not-an-eviction) and the `health` example prints
+the F52 line and the appended gauge.
+
+**Micro-debt cleaned.** The three remaining poison-swallow lock reads
+(`crates/cli/src/serve/generations.rs` — `.write().ok()?` and two
+`.read().ok()` shapes) recovered with the house
+`PoisonError::into_inner` shape (the F47/F48 record's repair, third
+site family); the fourth recorded site (`prelude.rs`'s documented
+deliberate fallback) stays as its comment declares it.
+
+**Docs drift repaired.** The spec's WP table gains FOUR rows — the F49
+and F50 rows the unrecorded session owed and the F51/F52 rows this
+session minted; `docs/deviations.md` gains the F49/F50 reconstruction
+(this record) and the F51/F52 session record; `HANDOFF.md` prepends the
+session handoff; `docs/architecture.md`'s cache row names the eviction
+wire; `crates/cache/README.md`'s observability bullets name the F51/F52
+story; the README badge re-measured by `scripts/count-tests.sh`.
+
+**Deltas.** The reference pages need no regeneration (no config key, no
+CLI flag, no endpoint, no error code changed — the E11 drift check is
+unaffected); the V8-linked cli suite (the 17 recorded pins + the
+F47/F49/F50 sections) did not run in this sandbox (the recorded
+libclang/nasm wall) — every cli-side contract this session could touch
+was verified by READING the pin bodies (membership/order assertions,
+additive-safe). Recorded gaps this session did NOT close, for the next
+pickup: the 17 cli lib pins (standing), the cache `http` module's
+zero-consumer status (`conditional_response`, `FetchMemo`, the
+auth/codec re-exports — complete works no host composes), and the
+server crate's example-less surfaces (`Governor`, the page_renderer
+re-exports, `LiveHub`).
