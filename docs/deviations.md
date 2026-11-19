@@ -6003,3 +6003,96 @@ rows.
 example walking the flag through `Cli::parse_from`) stays the CLI session's
 pickup — this session's sandbox has no libclang/nasm, so the V8-linked
 build was not attempted; the 17 recorded cli lib pins remain unchanged.
+
+## The coverage exposition learns its operator (F46, 2026-11-19)
+
+**Branch:** `feat/cache-plane-coverage-scrape` — the F44/F45 session's
+recorded pickup (the F44 deviations log's named future consumer: "a host
+that wants the coverage families composes this beside it") lands as the
+CLI's boot composition. Since F44 the coverage families existed but NO
+production surface rendered them — an operator scraping `/_oxide/metrics`
+still could not compute coverage without driving the ledger's typed API
+out of band.
+
+**What the spec asks (§20).** The metrics plane is the operator's window
+into the cache: the exporter's families, the attribution ledger's labeled
+window, and — the coverage score the module docs always named — the
+unattributed/occupancy/bound triple. F44 shipped the exposition as a
+composable arm; the spec's dashboards paragraph expects a scrape to carry
+it when the operator asks.
+
+**What lands (F46 — `cli` + `config`).** `cache_plane_scrape` takes the
+coverage arm as a parameter (the F41 window shape): `true` composes
+`render_coverage_prometheus()` after the labeled family, `false` keeps the
+pre-F46 shape byte-identical (the F40 default-shape doctrine — the opt-in
+never silently widens a scrape). The opt-in speaks the layered resolver
+family's language end to end: the `OXIDE_CACHE_PLANE_COVERAGE` env
+spelling over the pure parse core `observability::cache_plane_coverage_from`
+(the truthy spellings `1`/`true`/`on`, the falsy spellings
+`""`/`0`/`false`/`off`, garbage degrades loudly-but-honestly to off — the
+`cache_hot_key_top_from` posture), the `--cache-plane-coverage` boot flag
+on `Dev` AND `Start` (the F42 shape: `apply_startup_env` writes the
+`CACHE_PLANE_COVERAGE_OVERRIDE` slot pre-runtime through the
+`cache_plane_coverage_arg()` accessor — the scrape is a production
+surface, so the flag rides the serve boot too), and the
+`cache.coverageMetrics` project baseline (`CacheConfig::coverage_metrics`,
+`Option<bool>`, schema'd boolean default false, the regenerated
+`schemas/oxide-fw-config.schema.json` + `docs/reference/config.md` row).
+The boot resolves the layered `observability::cache_plane_coverage_with_config`
+ONCE at the `set_cache_plane` wire (the `trace_file_path` posture); the
+falsy env spellings stop the env layer only, garbage degrades to the
+default-off — never silently to the baseline (the F43 doctrine transposed).
+
+**Pinned.** 23 red-first pins in `tests.rs` (the V2-F46 section: the parse
+core's four spellings, the flag parses/defaults on both boots, the
+accessor, the flag-wins precedence, the env fallback, the dev and serve
+thread-throughs, the four-layer precedence with the falsy and garbage
+decisions, and the two boot-observable compositions — the opt-in renders
+the coverage triple beside the labeled family, the default keeps the
+scrape byte-identical) and 5 pins in
+`crates/config/tests/cache_coverage_metrics_config.rs` (the parse, the
+default, both spellings legal, the schema declaration, the camelCase
+contract). The red states: the config pins failed with E0609 ×4 over the
+missing `coverage_metrics` field; the cli pins failed over the unresolved
+`cache_plane_coverage*` symbols (E0425/E0599) and the 4-arg
+`cache_plane_scrape` (E0061) recorded against the stashed impl.
+
+**Benches + example.** The `hot_key_top` bench gains the
+`cache_plane_coverage_scrape` group (`off_default_shape` vs
+`on_coverage_arm` over a FULL-capacity 2048-key ledger — the coverage
+pass's marginal cost measured, not assumed); the `hot_key_top` example
+gains the flag-parse walk (the recorded F42 polish tail —
+`Cli::parse_from` + `apply_startup_env`, both flags at once) and the
+coverage-arm section (the composition under `cache.coverageMetrics =
+true`).
+
+**Micro-debt cleaned.** The F42 session's `hot_key_top` bench target was
+NEVER declared — commit `94df30d6` ("build(cli): the hot_key_top bench
+target behind bench-util") actually added a `[lints]` table, so the bench
+rode undeclared auto-discovery (a `criterion_main!` file compiled under
+the libtest harness `cargo bench` generates). The `[[bench]] hot_key_top`
+declaration (`harness = false`, `required-features = ["bench-util"]`)
+lands now, matching every other bench in the workspace. The three
+override setters in `observability.rs` (`FEED_LEVEL_OVERRIDE`,
+`TRACE_LOG_OVERRIDE`, `CACHE_HOT_KEY_TOP_OVERRIDE`) swallowed a poisoned
+lock on BOTH sides (`if let Ok` / `.ok()`) — the critical section is one
+plain `Option` store, so poison recovery via
+`PoisonError::into_inner` lands and the flag's pre-runtime write is never
+silently lost (the new `CACHE_PLANE_COVERAGE_OVERRIDE` pair follows the
+recovered shape).
+
+**Docs drift repaired.** `docs/spec-v0.2-draft.md`'s WP table gains the
+F46 landed row; `docs/architecture.md`'s cache and cli rows name the F46
+coverage wire (the cli row's §-refs ended at V2-F43 — the F44/F45 cache
+arm never needed them, the F46 flag and baseline do); `crates/cli/
+README.md` gains the Observability section (the crate README carried
+ZERO cache-plane content — drift since F37); `crates/cache/README.md`'s
+coverage bullet names the F46 production consumer; the README badge is
+re-measured by `scripts/count-tests.sh`.
+
+**Deltas.** The F45 handoff's "run the smoke-app serve with
+`--cache-hot-key-top 50`" operator walk stays the V8-host session's
+pickup; the 17 recorded cli lib pins remain unchanged (the dedicated
+classify-and-repair session's job). The health-posture wire
+(`TieredCache::health()` → the scrape's gauge families — the F32 pull's
+own zero-production-consumer gap) is the recorded next seam.
