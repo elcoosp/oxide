@@ -98,6 +98,12 @@ fn warn_rows(buffer: &ConsoleWriter) -> usize {
         .count()
 }
 
+/// The capture pins' registration lock: two subscriber installs racing
+/// rebuild the tracing callsite cache, and a warn fired mid-rebuild is
+/// dropped — the sticky-warn pins register one at a time so each drive
+/// runs against a warm cache (the flake the parallel suite hit).
+static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+
 // --------------------------------------------------------------- the trait pin
 
 /// The seam pin: the feed IS a `CacheObserver`, attachable through the F28
@@ -266,6 +272,7 @@ fn sustained_overshoot_counts_every_drop() {
 /// the console.
 #[test]
 fn first_drop_warns_once_then_the_rows_drop_silently() {
+    let _capture = CAPTURE_LOCK.lock().expect("the capture lock");
     let buffer = ConsoleWriter(Arc::new(Mutex::new(Vec::new())));
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(buffer.clone())
@@ -303,6 +310,7 @@ fn first_drop_warns_once_then_the_rows_drop_silently() {
 /// the drop, not on the capacity.
 #[test]
 fn zero_capacity_warns_once() {
+    let _capture = CAPTURE_LOCK.lock().expect("the capture lock");
     let buffer = ConsoleWriter(Arc::new(Mutex::new(Vec::new())));
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(buffer.clone())
