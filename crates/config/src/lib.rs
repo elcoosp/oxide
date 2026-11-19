@@ -1135,6 +1135,17 @@ pub struct CacheConfig {
     /// `false` pins it off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_metrics: Option<bool>,
+    /// V2-F50: `cache: { postureProbePath: "/-/cache-posture" }` — the
+    /// project's committed path for the F49 posture probe's surface (the
+    /// `/-/health` JSON pull's location). The boot's precedence mirrors
+    /// the `healthMetrics` family: the `--cache-posture-path` flag wins,
+    /// the `OXIDE_CACHE_POSTURE_PATH` env var keeps the operator's shell
+    /// spelling, this key is the project's baseline, and with none set
+    /// the recorded default (`/-/health`) answers. A `/`-led path
+    /// relocates the probe; the empty string pins the surface off (the
+    /// ready-path shape — the knob is not a one-way opt-in).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub posture_probe_path: Option<String>,
 }
 
 /// §14.1: `cache.l0` — the L0 response-cache settings.
