@@ -8,6 +8,13 @@
 //! — the console stays byte-identical while the dev-plane window widens
 //! past the host filter (see `oxide_fw_server::log_feed`'s module docs
 //! for the seam and the pinned composition).
+//!
+//! The boot flags (V2-F22/F28/F42): `--trace-log`, `--log-feed-level`
+//! and `--cache-hot-key-top` write their override slots through
+//! `apply_startup_env` pre-runtime — command-level facts decided before
+//! the tokio runtime exists — and win over the env spellings
+//! (`OXIDE_TRACE_LOG`, `OXIDE_LOG_FEED_LEVEL`,
+//! `OXIDE_CACHE_PLANE_HOT_KEY_TOP`) that remain the shell user's form.
 
 /// Install the tracing subscriber (§20). Console logging is always on;
 /// OpenTelemetry OTLP export is opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`.
@@ -282,6 +289,39 @@ pub(crate) fn trace_file_path() -> Option<std::path::PathBuf> {
     }
 }
 
+/// The `--cache-hot-key-top` boot flag's override (V2-F42, the F41 polish
+/// tail), written once pre-runtime by `apply_startup_env` — the
+/// [`FEED_LEVEL_OVERRIDE`] shape: a command-level fact decided before the
+/// tokio runtime exists, so the read side never races a mid-async write.
+/// `None` (the flag was absent) leaves the
+/// `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var in charge (the F41 spelling).
+static CACHE_HOT_KEY_TOP_OVERRIDE: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
+
+/// Install the boot flag's hot-key window override (see
+/// [`CACHE_HOT_KEY_TOP_OVERRIDE`]). `None` clears it (the pins' hygiene).
+///
+/// # Examples
+///
+/// ```
+/// use oxide_fw_cli::observability::set_cache_hot_key_top_override;
+///
+/// set_cache_hot_key_top_override(Some(50));
+/// assert_eq!(oxide_fw_cli::observability::cache_hot_key_top(), 50);
+/// set_cache_hot_key_top_override(None);
+/// ```
+pub fn set_cache_hot_key_top_override(value: Option<usize>) {
+    if let Ok(mut slot) = CACHE_HOT_KEY_TOP_OVERRIDE.lock() {
+        *slot = value;
+    }
+}
+
+fn cache_hot_key_top_override() -> Option<usize> {
+    CACHE_HOT_KEY_TOP_OVERRIDE
+        .lock()
+        .ok()
+        .and_then(|slot| *slot)
+}
+
 /// The §20 scrape's hot-key top window (`OXIDE_CACHE_PLANE_HOT_KEY_TOP`,
 /// V2-F41): the F40 scrape's top-n stops being a compile-time constant —
 /// the boot resolves the operator's spelling ONCE at the
@@ -294,7 +334,15 @@ pub(crate) fn trace_file_path() -> Option<std::path::PathBuf> {
 /// the honest cap keeps one scrape bounded); anything unparsable
 /// degrades loudly-but-honestly — one stderr notice naming the source,
 /// then the default (the `feed_floor_from` posture).
-pub(crate) fn cache_hot_key_top() -> usize {
+///
+/// V2-F42: the `--cache-hot-key-top` boot flag wins when present — the
+/// [`CACHE_HOT_KEY_TOP_OVERRIDE`] slot is a command-level fact written
+/// pre-runtime by `apply_startup_env`; absent, the env var keeps its
+/// shell spelling (the `trace_log_enabled` shape).
+pub fn cache_hot_key_top() -> usize {
+    if let Some(top) = cache_hot_key_top_override() {
+        return top;
+    }
     let raw = std::env::var("OXIDE_CACHE_PLANE_HOT_KEY_TOP").ok();
     cache_hot_key_top_from(raw.as_deref())
 }
@@ -302,7 +350,7 @@ pub(crate) fn cache_hot_key_top() -> usize {
 /// The parse core behind [`cache_hot_key_top`]: `None` is the unset
 /// spelling. Pure — the pins drive it without touching the process env;
 /// the one env-read pin covers the real spelling.
-pub(crate) fn cache_hot_key_top_from(raw: Option<&str>) -> usize {
+pub fn cache_hot_key_top_from(raw: Option<&str>) -> usize {
     let Some(raw) = raw else {
         return crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP;
     };
@@ -318,6 +366,44 @@ pub(crate) fn cache_hot_key_top_from(raw: Option<&str>) -> usize {
             );
             crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP
         }
+    }
+}
+
+/// The V2-F43 layered resolver — the boot wire's entry point now that
+/// the window has a project baseline (`cache.hotKeyTop`, the
+/// `CacheConfig::hot_key_top` field) beside the F42 flag and the F41 env
+/// spelling. The precedence:
+///
+/// 1. the `--cache-hot-key-top` flag's override slot (the F42 shape —
+///    written pre-runtime by `apply_startup_env`),
+/// 2. the `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env spelling (the F41
+///    resolver: parsed values ride clamped, garbage degrades
+///    loudly-but-honestly to the DEFAULT — the notice names the source,
+///    and the project baseline is never a silent recovery for a typoed
+///    operator spelling),
+/// 3. the `cache.hotKeyTop` baseline, clamped here at the wire to the
+///    ledger's own bound (the config crate deliberately cannot see
+///    [`crate::framework_shim::CACHE_HOT_KEY_CAPACITY`]),
+/// 4. the F40 default — the boot shape is byte-identical when no layer
+///    speaks.
+///
+/// The env layer's falsy spellings (`""`/`0`/`false`/`off`) stop THAT
+/// layer only: a committed baseline below still answers — an operator's
+/// empty spelling is not the project's config being refused.
+pub fn cache_hot_key_top_with_config(config_top: Option<u64>) -> usize {
+    if let Some(top) = cache_hot_key_top_override() {
+        return top;
+    }
+    match std::env::var("OXIDE_CACHE_PLANE_HOT_KEY_TOP") {
+        Ok(raw) if !matches!(raw.as_str(), "" | "0" | "false" | "off") => {
+            cache_hot_key_top_from(Some(&raw))
+        }
+        _ => match config_top {
+            Some(top) => usize::try_from(top)
+                .unwrap_or(usize::MAX)
+                .min(crate::framework_shim::CACHE_HOT_KEY_CAPACITY),
+            None => crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+        },
     }
 }
 
