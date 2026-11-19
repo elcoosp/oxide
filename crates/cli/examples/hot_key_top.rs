@@ -21,6 +21,13 @@
 //!    boot's `cache_plane_scrape` rides: the exporter's families ahead,
 //!    the ledger's labeled `oxide_cache_plane_hot_key_total` family over
 //!    the boot's window.
+//! 5. (V2-F46) The FLAGS walk `Cli::parse_from` + `apply_startup_env` —
+//!    the parse-side thread the binary entry point rides, both flags at
+//!    once (`--cache-hot-key-top` and `--cache-plane-coverage`).
+//! 6. (V2-F46) The coverage arm: the ledger's F44 coverage exposition —
+//!    the unattributed score's counter, the occupancy and bound gauges —
+//!    composed beside the labeled family under the
+//!    `cache.coverageMetrics` opt-in.
 //!
 //! Run with:
 //!
@@ -28,11 +35,13 @@
 //! cargo run -p oxide-fw-cli --example hot_key_top
 //! ```
 
+use clap::Parser as _;
 use oxide_fw_cache::{
     CacheEvent, CacheObserver as _, CacheOp, HotKeyObserver, Layer, MetricsCacheObserver,
 };
 use oxide_fw_cli::observability::{
-    cache_hot_key_top, cache_hot_key_top_from, set_cache_hot_key_top_override,
+    cache_hot_key_top, cache_hot_key_top_from, cache_plane_coverage,
+    cache_plane_coverage_with_config, set_cache_hot_key_top_override,
 };
 
 fn main() {
@@ -89,4 +98,45 @@ fn main() {
         resolved.min(1)
     );
     println!("{}", &scrape[start..]);
+
+    // 5. The V2-F46 polish tail: the FLAGS walk `Cli::parse_from` — the
+    //    parse-side shape the F42 pins hold, here so a contributor sees
+    //    the whole thread: the flag parses, `apply_startup_env` writes
+    //    the override slots pre-runtime, and the resolvers answer from
+    //    them. (Sections 1-3 drove the resolvers directly; this walks
+    //    the command line the way the binary entry point does.)
+    let cli = oxide_fw_cli::Cli::parse_from([
+        "oxide",
+        "start",
+        "--cache-hot-key-top",
+        "50",
+        "--cache-plane-coverage",
+    ]);
+    oxide_fw_cli::apply_startup_env(&cli);
+    println!(
+        "parse_from(start --cache-hot-key-top 50 --cache-plane-coverage): top={}, coverage={}",
+        cache_hot_key_top(),
+        cache_plane_coverage()
+    );
+    // The hygiene the pins keep: the slots clear so the process-wide
+    // state never outlives the walk.
+    oxide_fw_cli::observability::set_cache_hot_key_top_override(None);
+    oxide_fw_cli::observability::set_cache_plane_coverage_override(None);
+
+    // 6. The V2-F46 coverage arm: the boot's composition with the
+    //    opt-in ON — the ledger's F44 coverage exposition (the
+    //    unattributed score's counter, the occupancy and bound gauges)
+    //    renders beside the labeled window family. The default shape
+    //    (opt-in off) is everything above this section's tail.
+    let coverage = cache_plane_coverage_with_config(Some(true));
+    let mut full_scrape = exporter.render_prometheus();
+    full_scrape.push_str(&ledger.render_prometheus(resolved.min(1)));
+    if coverage {
+        full_scrape.push_str(&ledger.render_coverage_prometheus());
+    }
+    let cov = full_scrape
+        .find("# HELP oxide_cache_plane_hot_key_unattributed_total")
+        .expect("the coverage exposition renders under the opt-in");
+    println!("--- the coverage arm (cache.coverageMetrics = true) ---");
+    println!("{}", &full_scrape[cov..]);
 }
