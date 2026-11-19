@@ -291,6 +291,11 @@ fn cache_schema() -> Value {
                 "type": "integer",
                 "minimum": 0,
                 "description": "V2-F43: the §20 scrape's hot-key top window — how many labeled oxide_cache_plane_hot_key_total rows one scrape renders beside the exporter's families. Precedence: the --cache-hot-key-top flag wins, the OXIDE_CACHE_PLANE_HOT_KEY_TOP env var keeps the operator's spelling, this key is the project's baseline, the F40 default (10) answers with none set. 0 renders the bare family pair."
+            },
+            "coverageMetrics": {
+                "type": "boolean",
+                "default": false,
+                "description": "V2-F46: the §20 scrape's coverage arm — the hot-key ledger's coverage exposition (the unattributed score's counter, the occupancy and bound gauges) renders beside the labeled window family when the operator opts in. Precedence: the --cache-plane-coverage flag wins, the OXIDE_CACHE_PLANE_COVERAGE env var keeps the operator's spelling, this key is the project's baseline, and the default-off shape answers byte-identically with none set (the F40 doctrine)."
             }
         }
     })
