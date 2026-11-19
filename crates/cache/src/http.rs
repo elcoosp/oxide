@@ -215,6 +215,119 @@ impl FetchMemo {
     }
 }
 
+// ------------------------------------------------------------------- the serving half (F54)
+
+/// The serving decision for one stored entry against a request's
+/// conditional headers (§11.3): the ONE call a host makes to serve a
+/// cached entry — the canonical 304 comparison ([`conditional_response`],
+/// RFC 9110 §13) and the §11.3 header set ([`cache_control`] from the
+/// entry's policy, the entry's ETag, the `Date` via [`http_date`])
+/// composed, so no host re-rolls the semantics (the L0 stage's
+/// hand-rolled `If-None-Match` match and the static-asset server's own
+/// are the evidence it happened twice).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServeOutcome {
+    /// The request's validators matched: answer 304 with the validator
+    /// set — the entry's `ETag` (when it carries one), the policy's
+    /// `Cache-Control`, the `Date`, and the `Last-Modified` the entry
+    /// stores (RFC 9110 §15.4.5: a 304 carries what the 200 would have).
+    /// No body.
+    NotModified {
+        /// The headers to answer the 304 with (lowercase names).
+        headers: Vec<(String, String)>,
+    },
+    /// Serve the entry in full: the entry's own status and body, the
+    /// stored headers verbatim, and the generated §11.3 set filling only
+    /// the gaps (`etag` when the entry carries one, `cache-control` from
+    /// the policy, `date`). A stored header always wins: a render that
+    /// set its own `Cache-Control` keeps it, the generated set never
+    /// appends a duplicate (one header per name, case-insensitive).
+    Full {
+        /// The entry's stored status.
+        status: u16,
+        /// The stored headers plus the generated gaps (lowercase names).
+        headers: Vec<(String, String)>,
+        /// The entry's body, verbatim.
+        body: Vec<u8>,
+    },
+}
+
+/// Serve one stored entry (§11.3, the serving half of the `http` module's
+/// Cache-Control/ETag/304 work): decide [`ServeOutcome::NotModified`] by
+/// the canonical conditional-request comparison (weak `If-None-Match`
+/// lists and `*` first, `If-Modified-Since` against the entry's
+/// `Last-Modified` second), else [`ServeOutcome::Full`] with the §11.3
+/// header set composed beside the entry's stored headers.
+///
+/// `now_secs` is unix seconds — the `Date` header's value, passed in so
+/// the decision stays deterministic for tests.
+///
+/// # Examples
+///
+/// ```
+/// use oxide_fw_cache::{Entry, Policy, ServeOutcome, serve_entry};
+/// use std::time::Duration;
+///
+/// let entry = Entry {
+///     body: b"<html>hi</html>".to_vec(),
+///     status: 200,
+///     headers: vec![],
+///     tags: vec![],
+///     policy: Policy { ttl: Duration::from_secs(60), swr: None, stale_if_error: None, soft_tags: true },
+///     stored_at: 0,
+///     etag: "\"v1\"".into(),
+/// };
+/// // A browser re-checking with the stored validator downloads nothing:
+/// let out = serve_entry(&entry, &[("if-none-match".into(), "\"v1\"".into())], 0);
+/// assert!(matches!(out, ServeOutcome::NotModified { .. }));
+/// // Everyone else gets the full entry with the §11.3 header set:
+/// let out = serve_entry(&entry, &[], 0);
+/// let ServeOutcome::Full { status, headers, .. } = out else { panic!() };
+/// assert_eq!(status, 200);
+/// assert!(headers.contains(&("cache-control".into(), "public, max-age=60, s-maxage=60".into())));
+/// ```
+pub fn serve_entry(entry: &Entry, req_headers: &[(String, String)], now_secs: u64) -> ServeOutcome {
+    // The 304 arm: the canonical comparison, then the validator set a
+    // 304 SHOULD carry (RFC 9110 §15.4.5).
+    if conditional_response(req_headers, entry) == Some(304) {
+        let mut headers: Vec<(String, String)> = Vec::new();
+        if !entry.etag.is_empty() {
+            headers.push(("etag".into(), entry.etag.clone()));
+        }
+        headers.push(("cache-control".into(), cache_control(&entry.policy)));
+        headers.push(("date".into(), http_date(now_secs)));
+        if let Some((_, lm)) = entry
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+        {
+            headers.push(("last-modified".into(), lm.clone()));
+        }
+        return ServeOutcome::NotModified { headers };
+    }
+
+    // The full arm: stored headers verbatim, the generated set fills the
+    // gaps (one header per name — a stored `Cache-Control` wins).
+    let mut headers = entry.headers.clone();
+    let stored = |name: &str| headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(name));
+    let (stored_etag, stored_cc, stored_date) =
+        (stored("etag"), stored("cache-control"), stored("date"));
+    if !entry.etag.is_empty() && !stored_etag {
+        headers.push(("etag".into(), entry.etag.clone()));
+    }
+    if !stored_cc {
+        headers.push(("cache-control".into(), cache_control(&entry.policy)));
+    }
+    if !stored_date {
+        headers.push(("date".into(), http_date(now_secs)));
+    }
+    ServeOutcome::Full {
+        status: entry.status,
+        headers,
+        body: entry.body.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
