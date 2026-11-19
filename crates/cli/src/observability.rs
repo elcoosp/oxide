@@ -649,6 +649,125 @@ pub fn cache_plane_health_with_config(config_metrics: Option<bool>) -> bool {
     }
 }
 
+/// The V2-F50 posture probe's surface location
+/// (`OXIDE_CACHE_POSTURE_PATH`): where the F49 probe answers — the F48
+/// handoff's recorded tail registered `/-/health`, and this knob lets an
+/// operator relocate it (a reserved prefix, a per-env path) or spell it
+/// OFF. A `/`-led path rides verbatim, the falsy spellings
+/// (`""`/`0`/`false`/`off`) answer the empty path (the ready-path shape:
+/// empty disables the endpoint entirely), and garbage degrades
+/// loudly-but-honestly to the recorded default — one stderr notice
+/// naming the source, then `/-/health` (the
+/// [`cache_plane_health_from`] posture over a String knob).
+///
+/// V2-F50: the `--cache-posture-path` boot flag wins when present — the
+/// [`CACHE_POSTURE_PATH_OVERRIDE`] slot is a command-level fact written
+/// pre-runtime by `apply_startup_env`; absent, the env var keeps its
+/// shell spelling (the [`cache_plane_health`] shape).
+pub fn cache_posture_path() -> String {
+    if let Some(path) = cache_posture_path_override() {
+        // The slot stores the flag's raw spelling (a command-level fact);
+        // the parse core is what gives the falsy spellings their OFF
+        // answer — the bool family's override is pre-typed, this one is
+        // not (V2-F50).
+        return cache_posture_path_from(Some(&path));
+    }
+    let raw = std::env::var("OXIDE_CACHE_POSTURE_PATH").ok();
+    cache_posture_path_from(raw.as_deref())
+}
+
+/// The parse core behind [`cache_posture_path`]: `None` is the unset
+/// spelling (the recorded default answers). Pure — the pins drive it
+/// without touching the process env; the env-read pins cover the real
+/// spellings.
+pub fn cache_posture_path_from(raw: Option<&str>) -> String {
+    const DEFAULT: &str = crate::framework_shim::CACHE_POSTURE_PROBE_PATH;
+    match raw {
+        None => DEFAULT.to_string(),
+        Some("" | "0" | "false" | "off") => String::new(),
+        Some(path) if path.starts_with('/') => path.to_string(),
+        Some(path) => {
+            eprintln!(
+                "oxide: OXIDE_CACHE_POSTURE_PATH={path} is not a probe path (no leading `/`); \
+                 the default {DEFAULT} answers"
+            );
+            DEFAULT.to_string()
+        }
+    }
+}
+
+/// The `--cache-posture-path` boot flag's override (V2-F50, the F48
+/// shape), written once pre-runtime by `apply_startup_env` — the
+/// [`CACHE_PLANE_HEALTH_OVERRIDE`] shape: a command-level fact decided
+/// before the tokio runtime exists, so the read side never races a
+/// mid-async write. `None` (the flag was absent) leaves the
+/// `OXIDE_CACHE_POSTURE_PATH` env var in charge.
+static CACHE_POSTURE_PATH_OVERRIDE: std::sync::Mutex<Option<String>> =
+    std::sync::Mutex::new(None);
+
+/// Install the boot flag's path override (see
+/// [`CACHE_POSTURE_PATH_OVERRIDE`]). `None` clears it (the pins'
+/// hygiene).
+///
+/// # Examples
+///
+/// ```
+/// use oxide_fw_cli::observability::set_cache_posture_path_override;
+///
+/// set_cache_posture_path_override(Some("/-/cache-posture".into()));
+/// assert_eq!(oxide_fw_cli::observability::cache_posture_path(), "/-/cache-posture");
+/// set_cache_posture_path_override(None);
+/// ```
+pub fn set_cache_posture_path_override(value: Option<String>) {
+    // Poison recovery: the `FEED_LEVEL_OVERRIDE` shape (the V2-F46
+    // micro-debt note there holds — the critical section cannot break an
+    // invariant, so the write lands instead of being swallowed).
+    let mut slot = CACHE_POSTURE_PATH_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = value;
+}
+
+fn cache_posture_path_override() -> Option<String> {
+    CACHE_POSTURE_PATH_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// The V2-F50 layered resolver — the boot wire's entry point now that
+/// the probe's surface has a project baseline
+/// (`cache.postureProbePath`, the `CacheConfig::posture_probe_path`
+/// field) beside the F50 flag and env spelling. The precedence mirrors
+/// the [`cache_plane_health_with_config`] family:
+///
+/// 1. the `--cache-posture-path` flag's override slot (the F48 shape —
+///    written pre-runtime by `apply_startup_env`),
+/// 2. the `OXIDE_CACHE_POSTURE_PATH` env spelling (a `/`-led path rides
+///    verbatim; garbage degrades loudly-but-honestly to the DEFAULT —
+///    the notice names the source, and the project baseline is never a
+///    silent recovery for a typoed operator spelling),
+/// 3. the `cache.postureProbePath` baseline — both spellings are real
+///    choices: a `/`-led path relocates the probe, the empty string pins
+///    the surface off,
+/// 4. the recorded default (`/-/health`) — the boot shape is
+///    byte-identical when no layer speaks (the F40 doctrine).
+///
+/// The env layer's falsy spellings (`""`/`0`/`false`/`off`) stop THAT
+/// layer only: a committed baseline below still answers — an operator's
+/// empty spelling is not the project's config being refused.
+pub fn cache_posture_path_with_config(config_path: Option<&str>) -> String {
+    if let Some(path) = cache_posture_path_override() {
+        return cache_posture_path_from(Some(&path));
+    }
+    match std::env::var("OXIDE_CACHE_POSTURE_PATH") {
+        Ok(raw) if !matches!(raw.as_str(), "" | "0" | "false" | "off") => {
+            cache_posture_path_from(Some(&raw))
+        }
+        _ => cache_posture_path_from(config_path),
+    }
+}
+
 /// Build the `tracing-opentelemetry` layer for the given OTLP endpoint.
 /// The returned layer is backed by a batch span processor whose lifetime is
 /// process-wide via a leaked `TracerProvider` — acceptable for a CLI that
