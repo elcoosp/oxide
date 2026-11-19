@@ -1051,11 +1051,16 @@ pub(crate) async fn start_server_inner_full(
     // F40: the hot-key ledger's labeled family rides the same scrape —
     // one run per pull renders both planes (the composition the F37 slot
     // was shaped for: the CLI, which depends on both crates, composes).
+    // F41: the hot-key top window is operator-tunable — the boot resolves
+    // the `OXIDE_CACHE_PLANE_HOT_KEY_TOP` spelling ONCE here (the
+    // `trace_file_path` posture: a boot-time read, not a per-scrape env
+    // poll) and the closure renders the boot's window.
     if let Some(exporter) = cache_exporter.as_ref() {
         let exporter = std::sync::Arc::clone(exporter);
         let hot_keys = cache_hot_keys.clone();
+        let hot_key_top = crate::observability::cache_hot_key_top();
         metrics.set_cache_plane(move || {
-            crate::framework_shim::cache_plane_scrape(&exporter, hot_keys.as_deref())
+            crate::framework_shim::cache_plane_scrape(&exporter, hot_keys.as_deref(), hot_key_top)
         });
     }
     let l0 = if is_dev {
@@ -1078,10 +1083,11 @@ pub(crate) async fn start_server_inner_full(
         // a PRESENT-but-unreadable manifest is not — warn loudly (the
         // CACHE-CODEC posture) instead of silently skipping the boot's
         // warm-up.
-        let seed_bytes = match std::fs::read(&seed_path) {
-            Ok(bytes) => bytes,
-            Err(_) => Vec::new(),
-        };
+        // (`unwrap_or_default`: a read error rides the same empty-Vec arm
+        // the match spelled — the clippy-gate rewrite, behavior identical;
+        // the missing-seed silence and the present-but-corrupt warn below
+        // are unchanged.)
+        let seed_bytes = std::fs::read(&seed_path).unwrap_or_default();
         let seed_json = if seed_bytes.is_empty() {
             None
         } else {
