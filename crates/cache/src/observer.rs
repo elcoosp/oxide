@@ -51,8 +51,11 @@
 //! consumers the seam's doc named: the metrics exporter
 //! ([`crate::metrics::MetricsCacheObserver`], the §20 exposition), the
 //! bounded lossy feed ([`crate::feed::EventFeed`], enqueue here / drain
-//! elsewhere) — and a custom impl for anything else (a test harness, a
-//! dashboard batcher).
+//! elsewhere), the per-key attribution ledger
+//! ([`crate::hot_keys::HotKeyObserver`], behind its F39 admission gate —
+//! the dashboard-batcher shape the sentence below named as a custom
+//! impl, shipped once) — and a custom impl for anything else (a test
+//! harness).
 
 use crate::Layer;
 
