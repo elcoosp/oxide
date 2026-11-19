@@ -17,7 +17,10 @@
 //!    renders beside the window ("the ledger covers this much");
 //! 4. the reset arm — a fresh window per report;
 //! 5. the §20 Prometheus exposition (`render_prometheus(n)`) — the
-//!    labeled `oxide_cache_plane_hot_key_total` counter family.
+//!    labeled `oxide_cache_plane_hot_key_total` counter family;
+//! 6. the F39 admission gate — a second, GATED ledger rides the same
+//!    fan (`HotKeyKindGate::only`), the deploy-watch shape: it tracks
+//!    the keys a deploy touched, never the hot-hit stream.
 //!
 //! Run with:
 //!
@@ -28,7 +31,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxide_fw_cache::{Entry, HotKeyObserver, Policy, TieredCache};
+use oxide_fw_cache::{
+    Entry, FanoutCacheObserver, HotKeyKindGate, HotKeyObserver, Policy, TieredCache,
+};
 
 fn entry(body: &[u8]) -> Entry {
     Entry {
@@ -57,8 +62,19 @@ fn main() {
         //    `Arc<dyn CacheObserver>` coercion). The bound is deliberately
         //    tiny for the demo (8 tracked keys) so the coverage story
         //    shows: a real boot sizes the bound to its route cardinality.
+        //    Beside it the F39 deploy-watch ledger shares the one fan —
+        //    the whole-plane ledger tracks every key, the gated one only
+        //    the keys a deploy touched.
         let hot = Arc::new(HotKeyObserver::bounded(8));
-        let cache = Arc::new(TieredCache::new(64 * 1024 * 1024).with_observer(hot.clone()));
+        let watch = HotKeyObserver::gated(
+            8,
+            Arc::new(HotKeyKindGate::only(&["invalidate", "coalesce"])),
+        );
+        let fan = FanoutCacheObserver::shared(vec![
+            hot.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+            watch.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+        ]);
+        let cache = Arc::new(TieredCache::new(64 * 1024 * 1024).with_observer(fan));
 
         // 2. Weighted traffic: /home dominates, /blog/a follows, the
         //    long tail spreads over ten more routes — past the bound,
@@ -111,5 +127,30 @@ fn main() {
         let _ = cache.get("/home").await.expect("the memory tier");
         println!("\nexporter scrape (the hot-key family):");
         print!("{}", hot.render_prometheus(3));
+
+        // 6. The F39 gate: the deploy-watch ledger heard the same stream
+        //    and kept nothing — every row was a hit/miss/set, refused by
+        //    the gate before the ledger lock (admission, not saturation:
+        //    the coverage score stays honest at zero). Drive the
+        //    deploy-visible rows and the window answers.
+        cache
+            .set("/posts/1", entry(b"<html>post one</html>"))
+            .await
+            .expect("the memory tier accepts the entry");
+        let _ = cache.get("/posts/1").await.expect("the memory tier");
+        cache
+            .invalidate_tag("content:posts", true)
+            .await
+            .expect("the memory tier invalidates");
+        cache.record_coalesced("/posts/1", 2);
+        println!("\ndeploy-watch ledger (gated to invalidate + coalesce):");
+        for row in watch.top(3) {
+            println!("  {:>12}  {}", row.count, row.key);
+        }
+        println!(
+            "tracked = {}   unattributed = {} (refused rows are never counted here)",
+            watch.len(),
+            watch.unattributed()
+        );
     });
 }
