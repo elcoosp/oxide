@@ -384,16 +384,23 @@ pub(crate) fn layout_chain<E: EntryLike>(entries: &[E], route_id: &str) -> Vec<R
 fn regex_for(pattern: &str) -> Option<Regex> {
     static CACHE: OnceLock<RwLock<HashMap<String, Regex>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
-    if let Ok(guard) = cache.read()
-        && let Some(re) = guard.get(pattern)
-    {
+    // The critical section is one plain map read/write — recover the
+    // poisoned lock via `into_inner` (the house shape, the F46/F48/F51
+    // repairs) instead of swallowing: a swallowed read permanently
+    // misses the cache and a swallowed write silently drops every
+    // compiled regex after the poisoning panic.
+    let guard = cache
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(re) = guard.get(pattern) {
         return Some(re.clone());
     }
     let full = format!("^(?:{pattern})$");
     let re = Regex::new(&full).ok()?;
-    if let Ok(mut guard) = cache.write() {
-        guard.insert(pattern.to_string(), re.clone());
-    }
+    let mut guard = cache
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard.insert(pattern.to_string(), re.clone());
     Some(re)
 }
 
