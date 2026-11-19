@@ -4993,13 +4993,12 @@ async fn l0_flight_without_the_typed_half_records_nothing() {
 // test target — compile-verified locally, riding the CI `nextest`
 // workspace job.
 
-/// The wired hot-key fixture: one typed `TieredCache` half carrying the
-/// §20 fan (exporter + hot-key ledger), the same tier erased under the
-/// L0 cache (the `coalesce_fixture` shape, the ledger as the fan's
-/// second child).
+/// The wired hot-key fixture: the tier erased under the L0 cache with the
+/// §20 fan (exporter + hot-key ledger) attached, the ledger and exporter
+/// carried typed so the pins drive the reads directly (the
+/// `coalesce_fixture` shape, the ledger as the fan's second child).
 struct HotWireFixture {
     dispatch: std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
-    typed: std::sync::Arc<oxide_fw_cache::TieredCache>,
     exporter: std::sync::Arc<oxide_fw_cache::MetricsCacheObserver>,
     hot: std::sync::Arc<oxide_fw_cache::HotKeyObserver>,
 }
@@ -5033,7 +5032,6 @@ fn hot_wire_fixture() -> HotWireFixture {
     );
     HotWireFixture {
         dispatch,
-        typed,
         exporter,
         hot,
     }
@@ -5195,6 +5193,9 @@ fn cache_hot_key_top_clamps_to_the_ledger_bound() {
 /// this pin's alone).
 #[test]
 fn cache_hot_key_top_reads_the_env_var() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
     // SAFETY: test process, single-threaded access to this key (the pure
     // pins above drive the parse core directly and never touch the env).
     unsafe {
@@ -5221,14 +5222,23 @@ async fn the_boot_window_shapes_the_composed_scrape() {
     .await;
     assert!(attributed, "the traffic reached the ledger");
 
-    // SAFETY: test process, single-threaded access to this key.
-    unsafe {
-        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "1");
-    }
-    let top = crate::observability::cache_hot_key_top();
-    // SAFETY: see above.
-    unsafe {
-        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    // The env key's serial lock covers the read only — the guard drops
+    // before the scrape below, and no await lives inside the block (the
+    // `await_holding_lock` posture).
+    let top;
+    {
+        let _state = HOT_KEY_TOP_STATE_LOCK
+            .lock()
+            .expect("the hot-key window state lock");
+        // SAFETY: test process, single-threaded access to this key.
+        unsafe {
+            std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "1");
+        }
+        top = crate::observability::cache_hot_key_top();
+        // SAFETY: see above.
+        unsafe {
+            std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+        }
     }
 
     let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), top);
@@ -5284,6 +5294,426 @@ async fn the_cache_plane_scrape_window_bounds_the_labeled_rows() {
             .count(),
         1,
         "window 1 renders exactly one labeled row"
+    );
+}
+
+// ------------------------------------------- V2-F42 hot-key top flag (§20)
+//
+// The F41 polish tail: `--cache-hot-key-top` beside the
+// `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var (the flag wins). The flag is a
+// command-level fact, decided once pre-runtime (`apply_startup_env` → the
+// override slot, the `FEED_LEVEL_OVERRIDE` shape); the env var remains the
+// shell user's spelling. The §20 scrape is a production surface, so the
+// flag rides the serve boot too (the `root`/`port` multi-command shape —
+// a `cache_hot_key_top_arg()` accessor over `Dev` and `Start`). The
+// boot-observable composition and the window's bounds stay the F41 pins'
+// job; these pins hold the flag's thread-through and the precedence.
+// V8-linked test target — compile-verified locally, riding the CI
+// `nextest` workspace job.
+
+/// The hot-key window resolver's process-state lock: the pins that touch
+/// `OXIDE_CACHE_PLANE_HOT_KEY_TOP` (edition-2024 `set_var` concurrent
+/// with a `get_var` is the data race the P1 readiness posture exists
+/// for) AND the override slot (one process-wide `Mutex<Option<usize>>`
+/// shared by every parallel test) serialize behind it — the
+/// `CAPTURE_LOCK` shape the warn-capture suites ride.
+static HOT_KEY_TOP_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The dev boot takes the flag: the parse lands the operator's window.
+#[test]
+fn dev_cache_hot_key_top_flag_parses() {
+    let cli = crate::Cli::parse_from(["oxide", "dev", "--cache-hot-key-top", "50"]);
+    match cli.command {
+        Command::Dev {
+            cache_hot_key_top, ..
+        } => {
+            assert_eq!(cache_hot_key_top, Some(50));
+        }
+        _ => panic!("expected the dev command"),
+    }
+}
+
+/// Absent on the dev boot, the slot stays `None` — the env var keeps its
+/// spelling (the F41 shape never moves behind a boot without the flag).
+#[test]
+fn dev_cache_hot_key_top_flag_defaults_to_none() {
+    let cli = crate::Cli::parse_from(["oxide", "dev"]);
+    match cli.command {
+        Command::Dev {
+            cache_hot_key_top, ..
+        } => {
+            assert_eq!(cache_hot_key_top, None);
+        }
+        _ => panic!("expected the dev command"),
+    }
+}
+
+/// The serve boot takes the flag too: the scrape is a production surface,
+/// so the window is operator-tunable on `oxide start` (the recorded
+/// `root`/`port` multi-command precedent).
+#[test]
+fn start_cache_hot_key_top_flag_parses() {
+    let cli = crate::Cli::parse_from(["oxide", "start", "--cache-hot-key-top", "50"]);
+    match cli.command {
+        Command::Start {
+            cache_hot_key_top, ..
+        } => {
+            assert_eq!(cache_hot_key_top, Some(50));
+        }
+        _ => panic!("expected the start command"),
+    }
+}
+
+#[test]
+fn start_cache_hot_key_top_flag_defaults_to_none() {
+    let cli = crate::Cli::parse_from(["oxide", "start"]);
+    match cli.command {
+        Command::Start {
+            cache_hot_key_top, ..
+        } => {
+            assert_eq!(cache_hot_key_top, None);
+        }
+        _ => panic!("expected the start command"),
+    }
+}
+
+/// The accessor: `cache_hot_key_top_arg()` reads the flag off whichever
+/// boot command carries it (the `root_arg` multi-command shape) and stays
+/// `None` for every other command.
+#[test]
+fn cache_hot_key_top_arg_reads_dev_and_start() {
+    let dev = crate::Cli::parse_from(["oxide", "dev", "--cache-hot-key-top", "7"]);
+    assert_eq!(dev.command.cache_hot_key_top_arg(), Some(7));
+    let start = crate::Cli::parse_from(["oxide", "start", "--cache-hot-key-top", "7"]);
+    assert_eq!(start.command.cache_hot_key_top_arg(), Some(7));
+    let other = crate::Cli::parse_from(["oxide", "build"]);
+    assert_eq!(other.command.cache_hot_key_top_arg(), None);
+}
+
+/// The flag wins: the override slot beats the env var the F41 gate reads
+/// (the `feed_level_override_wins_over_the_env_var` shape).
+#[test]
+fn cache_hot_key_top_override_wins_over_the_env_var() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    // SAFETY: test process, single-threaded access to this key (the pure
+    // pins drive the parse core directly and never touch the env).
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "25");
+    }
+    crate::observability::set_cache_hot_key_top_override(Some(50));
+    let top = crate::observability::cache_hot_key_top();
+    crate::observability::set_cache_hot_key_top_override(None);
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    assert_eq!(top, 50, "the flag wins over the env var");
+}
+
+/// The override slot rides the same resolver: garbage spelled through the
+/// env var still degrades to the default when the flag is absent — the
+/// slot's `None` is the flag-absent spelling, not a third knob.
+#[test]
+fn cache_hot_key_top_override_cleared_leaves_the_env_in_charge() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "25");
+    }
+    crate::observability::set_cache_hot_key_top_override(None);
+    let top = crate::observability::cache_hot_key_top();
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    assert_eq!(top, 25, "the env var remains the shell spelling");
+}
+
+/// `apply_startup_env` threads the dev flag into the override pre-runtime
+/// (the `apply_startup_env_threads_the_flag_into_the_override` shape).
+#[test]
+fn apply_startup_env_threads_the_cache_hot_key_top_flag_into_the_override() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    let cli = crate::Cli::parse_from(["oxide", "dev", "--cache-hot-key-top", "50"]);
+    crate::args::apply_startup_env(&cli);
+    let top = crate::observability::cache_hot_key_top();
+    crate::observability::set_cache_hot_key_top_override(None);
+    assert_eq!(top, 50, "the flag lands pre-runtime via apply_startup_env");
+}
+
+/// `apply_startup_env` threads the serve flag too — the production boot's
+/// window is decided by the same pre-runtime slot, not a mid-async env
+/// poll (the P1 readiness posture).
+#[test]
+fn apply_startup_env_threads_the_flag_on_the_serve_boot() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    let cli = crate::Cli::parse_from(["oxide", "start", "--cache-hot-key-top", "3"]);
+    crate::args::apply_startup_env(&cli);
+    let top = crate::observability::cache_hot_key_top();
+    crate::observability::set_cache_hot_key_top_override(None);
+    assert_eq!(top, 3, "the serve boot's flag lands pre-runtime");
+}
+
+/// Without the flag, `apply_startup_env` leaves the slot empty and the
+/// env var stays in charge (the F41 shape is the flag-absent default).
+#[test]
+fn apply_startup_env_without_the_flag_leaves_the_env_in_charge() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "25");
+    }
+    let cli = crate::Cli::parse_from(["oxide", "dev"]);
+    crate::args::apply_startup_env(&cli);
+    let top = crate::observability::cache_hot_key_top();
+    crate::observability::set_cache_hot_key_top_override(None);
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    assert_eq!(top, 25, "no flag keeps the F41 env shape");
+}
+
+/// The boot-observable composition with the flag: the override-resolved
+/// window shapes the §20 scrape's labeled rows — the same composition the
+/// F41 env pin drives, now fed from the flag's slot.
+#[tokio::test]
+async fn the_flag_window_shapes_the_composed_scrape() {
+    let f = hot_wire_fixture();
+    let resp = (f.dispatch)(test_request("GET", "/")).await;
+    let _ = drain_stream(resp).await;
+    let attributed = until(std::time::Duration::from_secs(2), || {
+        !f.hot.top(10).is_empty()
+    })
+    .await;
+    assert!(attributed, "the traffic reached the ledger");
+
+    // The override slot's serial lock covers the read only — the guard
+    // drops before the scrape below (the `await_holding_lock` posture).
+    let top;
+    {
+        let _state = HOT_KEY_TOP_STATE_LOCK
+            .lock()
+            .expect("the hot-key window state lock");
+        crate::observability::set_cache_hot_key_top_override(Some(1));
+        top = crate::observability::cache_hot_key_top();
+        crate::observability::set_cache_hot_key_top_override(None);
+    }
+
+    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), top);
+    let hot_family = &composed[composed
+        .find("# HELP oxide_cache_plane_hot_key_total")
+        .expect("the hot-key family renders")..];
+    let labeled_rows = hot_family
+        .matches("oxide_cache_plane_hot_key_total{key=")
+        .count();
+    assert_eq!(
+        labeled_rows, 1,
+        "the flag's window 1 renders exactly one labeled row"
+    );
+}
+
+// ------------------------------------------- V2-F43 hot-key top config (§20)
+//
+// The F41 deviations log's named "future consumer": the window's project
+// baseline (`cache.hotKeyTop`, the config crate's `CacheConfig::
+// hot_key_top`). The layered resolver takes the baseline at the boot wire
+// (serve/start.rs): the F42 flag wins, the F41 env spelling keeps the
+// operator's shell form, the baseline is the project's committed choice,
+// and with none set the F40 default answers — the boot shape is
+// byte-identical when no layer speaks. The baseline clamps at this wire
+// to the ledger's own bound (the config crate cannot see it); the falsy
+// env spellings stop the env layer only (a committed baseline is not
+// disabled by an operator's empty spelling); garbage degrades to the
+// DEFAULT — the notice names the source, and the baseline is never a
+// silent recovery for a typoed operator spelling. The config crate's own
+// parse pins ride `crates/config/tests/cache_hot_key_top_config.rs`.
+// V8-linked test target — compile-verified locally, riding the CI
+// `nextest` workspace job.
+
+/// The baseline answers when no flag and no env spelling is set — the
+/// project's committed window rides the boot wire.
+#[test]
+fn cache_hot_key_top_config_baseline_answers_without_flag_or_env() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    crate::observability::set_cache_hot_key_top_override(None);
+    let top = crate::observability::cache_hot_key_top_with_config(Some(50));
+    crate::observability::set_cache_hot_key_top_override(None);
+    assert_eq!(top, 50, "the project baseline answers the wire");
+}
+
+/// The flag wins over the baseline (the F42 shape is the first layer).
+#[test]
+fn cache_hot_key_top_flag_wins_over_the_config_baseline() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    // SAFETY: test process, single-threaded access to this key (the
+    // override pins read the override first and never this key).
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    crate::observability::set_cache_hot_key_top_override(Some(3));
+    let top = crate::observability::cache_hot_key_top_with_config(Some(50));
+    crate::observability::set_cache_hot_key_top_override(None);
+    assert_eq!(top, 3, "the flag wins over the committed baseline");
+}
+
+/// The env spelling wins over the baseline — the operator's shell form
+/// stays the second layer (the F41 shape unchanged).
+#[test]
+fn cache_hot_key_top_env_wins_over_the_config_baseline() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "25");
+    }
+    let top = crate::observability::cache_hot_key_top_with_config(Some(50));
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    assert_eq!(top, 25, "the env spelling beats the committed baseline");
+}
+
+/// The baseline clamps to the ledger's own bound — rows past the
+/// occupancy do not exist, so a committed window past the bound renders
+/// nothing extra (the F41 clamp posture, now at the config layer).
+#[test]
+fn cache_hot_key_top_config_baseline_clamps_to_the_ledger_bound() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    crate::observability::set_cache_hot_key_top_override(None);
+    let top = crate::observability::cache_hot_key_top_with_config(Some(999_999));
+    crate::observability::set_cache_hot_key_top_override(None);
+    assert_eq!(
+        top,
+        crate::framework_shim::CACHE_HOT_KEY_CAPACITY,
+        "the committed window never outgrows the ledger's bound"
+    );
+}
+
+/// The falsy env spellings stop the env layer only: a committed baseline
+/// below still answers (the documented decision — an operator's empty
+/// spelling is not the project's config being refused).
+#[test]
+fn cache_hot_key_top_falsy_env_stops_the_env_layer_only() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "off");
+    }
+    let top = crate::observability::cache_hot_key_top_with_config(Some(50));
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    assert_eq!(
+        top, 50,
+        "the falsy spelling hands the decision to the baseline"
+    );
+}
+
+/// Garbage degrades to the DEFAULT, never to the baseline: the F41
+/// notice names the source and the recorded degradation target — the
+/// project's config is not a silent recovery for a typoed operator
+/// spelling.
+#[test]
+fn cache_hot_key_top_garbage_env_degrades_to_the_default_not_the_config() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "ten");
+    }
+    let top = crate::observability::cache_hot_key_top_with_config(Some(50));
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    assert_eq!(
+        top,
+        crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+        "garbage degrades loudly to the F40 default"
+    );
+}
+
+/// With no layer speaking, the F40 default answers — the boot shape is
+/// byte-identical to the F41 resolver's (the config key absent changes
+/// nothing).
+#[test]
+fn cache_hot_key_top_without_any_layer_the_f40_default_answers() {
+    let _state = HOT_KEY_TOP_STATE_LOCK
+        .lock()
+        .expect("the hot-key window state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    let top = crate::observability::cache_hot_key_top_with_config(None);
+    assert_eq!(
+        top,
+        crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+        "the no-layer shape is the recorded default"
+    );
+}
+
+/// The boot-observable composition with the baseline: the layered
+/// resolver's answer shapes the §20 scrape's labeled rows — the same
+/// composition the F41/F42 pins drive, now fed from the config wire.
+#[tokio::test]
+async fn the_config_window_shapes_the_composed_scrape() {
+    let f = hot_wire_fixture();
+    let resp = (f.dispatch)(test_request("GET", "/")).await;
+    let _ = drain_stream(resp).await;
+    let attributed = until(std::time::Duration::from_secs(2), || {
+        !f.hot.top(10).is_empty()
+    })
+    .await;
+    assert!(attributed, "the traffic reached the ledger");
+
+    // The state lock covers the read only — the guard drops before the
+    // scrape below (the `await_holding_lock` posture).
+    let top;
+    {
+        let _state = HOT_KEY_TOP_STATE_LOCK
+            .lock()
+            .expect("the hot-key window state lock");
+        // SAFETY: test process, single-threaded access to this key.
+        unsafe {
+            std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+        }
+        top = crate::observability::cache_hot_key_top_with_config(Some(1));
+    }
+
+    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), top);
+    let hot_family = &composed[composed
+        .find("# HELP oxide_cache_plane_hot_key_total")
+        .expect("the hot-key family renders")..];
+    let labeled_rows = hot_family
+        .matches("oxide_cache_plane_hot_key_total{key=")
+        .count();
+    assert_eq!(
+        labeled_rows, 1,
+        "the baseline's window 1 renders exactly one labeled row"
     );
 }
 
