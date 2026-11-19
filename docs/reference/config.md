@@ -39,6 +39,7 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `build.writeBranches` — `string[]` — default —: §5.4 / SPEC-5D: git branches trusted to write the shared remote cache. Default main/master + release/* when remoteCache is set.
 ### `cache`
 
+- `cache.coverageMetrics` — `boolean` — default `false`: V2-F46: the §20 scrape's coverage arm — the hot-key ledger's coverage exposition (the unattributed score's counter, the occupancy and bound gauges) renders beside the labeled window family when the operator opts in. Precedence: the --cache-plane-coverage flag wins, the OXIDE_CACHE_PLANE_COVERAGE env var keeps the operator's spelling, this key is the project's baseline, and the default-off shape answers byte-identically with none set (the F40 doctrine).
 - `cache.handler.bucket` — `string` — default —: Bucket name for `type: "s3"`.
 - `cache.handler.type` — `enum: `"memory"` \| `"disk"` \| `"redis"` \| `"s3"` \| `"http"`` — default —: §5.3: the L2 cache-handler backend the build wires (memory/disk are local; redis/s3/http are remote).
 - `cache.handler.url` — `string` — default —: Remote base URL for `type: "http"` or `type: "redis"`.
