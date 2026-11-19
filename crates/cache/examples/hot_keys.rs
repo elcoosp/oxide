@@ -20,7 +20,10 @@
 //!    labeled `oxide_cache_plane_hot_key_total` counter family;
 //! 6. the F39 admission gate — a second, GATED ledger rides the same
 //!    fan (`HotKeyKindGate::only`), the deploy-watch shape: it tracks
-//!    the keys a deploy touched, never the hot-hit stream.
+//!    the keys a deploy touched, never the hot-hit stream;
+//! 7. the F41 operator window — the window the §20 scrape renders is
+//!    the boot's resolved `OXIDE_CACHE_PLANE_HOT_KEY_TOP` spelling, not
+//!    a compile-time constant: default, narrowed, widened-past-occupancy.
 //!
 //! Run with:
 //!
@@ -152,5 +155,34 @@ fn main() {
             watch.len(),
             watch.unattributed()
         );
+
+        // 7. The operator window (F41): the §20 scrape's top-n is not a
+        //    compile-time constant — the boot resolves the
+        //    `OXIDE_CACHE_PLANE_HOT_KEY_TOP` spelling once (the falsy
+        //    spellings `""`/`0`/`false`/`off` keep the default window,
+        //    garbage degrades loudly-but-honestly to it, and a parsed
+        //    value clamps to the ledger's own bound — rows past the
+        //    occupancy do not exist) and every scrape renders that
+        //    window. The reads below are the shapes the knob tunes: the
+        //    default window (10), an operator's narrowed window (2), an
+        //    operator's widened window past the demo ledger's occupancy
+        //    (64 — every tracked row renders, nothing extra exists) and
+        //    the exposition arm at the same scales.
+        println!("\noperator window (OXIDE_CACHE_PLANE_HOT_KEY_TOP, default 10):");
+        for (label, window) in [
+            ("default (10)", 10),
+            ("narrowed (2)", 2),
+            ("widened past occupancy (64)", 64),
+        ] {
+            let rows = hot.top(window);
+            println!("  top({window}) [{label}] → {} rows:", rows.len());
+            for row in &rows {
+                println!("    {:>12}  {}", row.count, row.key);
+            }
+        }
+        println!("\n  render_prometheus(2) — the scrape's labeled family:");
+        for line in hot.render_prometheus(2).lines().skip(2) {
+            println!("    {line}");
+        }
     });
 }
