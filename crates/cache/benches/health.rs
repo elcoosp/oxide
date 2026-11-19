@@ -101,6 +101,8 @@ fn bench_health_render(c: &mut Criterion) {
         tags_indexed: 3,
         keys_tracked: 64,
         observer_attached: true,
+        // F52: the populated arm prices the appended gauge's row too.
+        disk_evictions: 6,
     };
 
     let mut g = c.benchmark_group("cache_health_render");
