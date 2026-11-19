@@ -17,8 +17,8 @@
 //! [`fanout`] (the seam's composition arm: one event into every child
 //! observer), [`feed`] (the bounded lossy FIFO the host drains off the hot
 //! path), [`hot_keys`] (the seam's attribution arm: the bounded per-key
-//! event ledger), [`health`] (the §20 posture pull: the whole stack in one
-//! value).
+//! event ledger and its F39 admission gate), [`health`] (the §20 posture
+//! pull: the whole stack in one value).
 
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -42,7 +42,7 @@ pub use codec::{MAX_ENTRY_BYTES, decode_entry, encode_entry};
 pub use fanout::FanoutCacheObserver;
 pub use feed::{AdmitAll, EventFeed, FeedGate, FeedRow, KindGate};
 pub use health::CacheHealth;
-pub use hot_keys::{HotKeyObserver, HotKeyRow};
+pub use hot_keys::{AdmitAllKeys, HotKeyGate, HotKeyKindGate, HotKeyObserver, HotKeyRow};
 pub use http::{
     FetchMemo, cache_control, conditional_response, http_date, memo_key, parse_http_date,
 };
