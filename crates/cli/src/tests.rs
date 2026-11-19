@@ -4806,9 +4806,12 @@ impl oxide_fw_server::PageRenderer for SlowRenderer {
 /// Drain a streamed response to completion. The owner's tee runs the L0
 /// store + the flight publish at stream end, so the coalesce record can
 /// only land when the body is consumed — the shape a real client pays.
-async fn drain_stream(resp: oxide_fw_server::OxideResponse) -> oxide_fw_server::OxideResponse {
+async fn drain_stream(mut resp: oxide_fw_server::OxideResponse) -> oxide_fw_server::OxideResponse {
     use futures::StreamExt as _;
-    if let Some(mut stream) = resp.stream {
+    // Borrow the stream out of the response (the F36 pin's original
+    // `if let Some(mut stream) = resp.stream` shape moved the field and
+    // left `resp` partially moved — the helper never compiled).
+    if let Some(ref mut stream) = resp.stream {
         while let Some(item) = stream.next().await {
             let _ = item;
         }
@@ -4974,6 +4977,135 @@ async fn l0_flight_without_the_typed_half_records_nothing() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert_eq!(f.typed.stats().coalesced, 0, "no wire, no record");
     assert_eq!(f.exporter.snapshot().coalesce_events, 0, "no row emitted");
+}
+
+// ------------------------------------------- V2-F40 hot-key wire (§20)
+//
+// The F38 ledger's production wire pins. The boot attaches the hot-key
+// ledger beside the F30 exporter behind the F34 fan (`FrameworkStack::
+// cache_hot_keys`, the same construction the test-stack arm mirrors), and
+// the §20 cache-plane scrape the boot hands `Metrics::set_cache_plane`
+// renders the ledger's labeled family beside the exporter's. V8-linked
+// test target — compile-verified locally, riding the CI `nextest`
+// workspace job.
+
+/// The wired hot-key fixture: one typed `TieredCache` half carrying the
+/// §20 fan (exporter + hot-key ledger), the same tier erased under the
+/// L0 cache (the `coalesce_fixture` shape, the ledger as the fan's
+/// second child).
+struct HotWireFixture {
+    dispatch: std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
+    typed: std::sync::Arc<oxide_fw_cache::TieredCache>,
+    exporter: std::sync::Arc<oxide_fw_cache::MetricsCacheObserver>,
+    hot: std::sync::Arc<oxide_fw_cache::HotKeyObserver>,
+}
+
+fn hot_wire_fixture() -> HotWireFixture {
+    use std::sync::Arc;
+    let exporter = Arc::new(oxide_fw_cache::MetricsCacheObserver::new());
+    let hot = Arc::new(oxide_fw_cache::HotKeyObserver::bounded(1024));
+    let fan = oxide_fw_cache::FanoutCacheObserver::shared(vec![
+        exporter.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+        hot.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+    ]);
+    let typed = Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024).with_observer(fan));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        Arc::clone(&typed) as Arc<dyn oxide_fw_cache::CacheHandler>,
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            page_renderer: Some(Arc::new(SlowRenderer {
+                delay: std::time::Duration::from_millis(50),
+            })),
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            l0_tiered: Some(Arc::clone(&typed)),
+            ..Default::default()
+        },
+    );
+    HotWireFixture {
+        dispatch,
+        typed,
+        exporter,
+        hot,
+    }
+}
+
+/// The boot fan attributes real pipeline traffic to the ledger: one
+/// request's L0 set row lands keyed (the flight-key spelling), and the
+/// exporter's aggregate read describes the same events (the F38
+/// agreement shape over the pipeline).
+#[tokio::test]
+async fn the_boot_fan_attributes_real_traffic_to_the_hot_key_ledger() {
+    let f = hot_wire_fixture();
+    let resp = (f.dispatch)(test_request("GET", "/")).await;
+    assert_eq!(cache_label(&resp), Some("L0-miss"), "the owner renders");
+    // Drain the teed body: the store (and its set row) run at stream end.
+    let _ = drain_stream(resp).await;
+
+    let attributed = until(std::time::Duration::from_secs(2), || {
+        !f.hot.top(10).is_empty()
+    })
+    .await;
+    assert!(attributed, "the set row reached the ledger");
+
+    let rows = f.hot.top(10);
+    assert_eq!(rows.len(), 1, "one request, one attributed key");
+    // The agreement read (the F38 shape over the pipeline): the ledger's
+    // per-key count equals the exporter's completed-event total for the
+    // same traffic — the request's miss, its write-through set and the
+    // flight owner's zero-follower coalesce record all attribute ONE to
+    // the key they ran against.
+    let snap = f.exporter.snapshot();
+    assert_eq!(
+        rows[0].count,
+        snap.misses + snap.sets + snap.deletes + snap.invalidations + snap.coalesce_events,
+        "the ledger and the exporter describe the same completed events"
+    );
+}
+
+/// The §20 cache-plane scrape the boot composes: the exporter's families
+/// ride unchanged ahead of the ledger's labeled hot-key family, and the
+/// unattached arm is the bare exporter render byte-identical (the F37
+/// unattached posture).
+#[tokio::test]
+async fn the_cache_plane_scrape_renders_the_hot_key_family_beside_the_exporters() {
+    let f = hot_wire_fixture();
+    let resp = (f.dispatch)(test_request("GET", "/")).await;
+    let _ = drain_stream(resp).await;
+    let attributed = until(std::time::Duration::from_secs(2), || {
+        !f.hot.top(10).is_empty()
+    })
+    .await;
+    assert!(attributed, "the traffic reached the ledger");
+
+    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot));
+    let bare = crate::framework_shim::cache_plane_scrape(&f.exporter, None);
+
+    // The unattached arm IS the F37 render (byte-identical).
+    assert_eq!(
+        bare,
+        f.exporter.render_prometheus(),
+        "the unattached scrape stays the bare exporter render"
+    );
+    // The exporter's rows ride unchanged ahead of the hot-key family.
+    assert!(
+        composed.starts_with(&bare),
+        "the exporter families precede the hot-key family"
+    );
+    let hot_family = &composed[bare.len()..];
+    assert!(
+        hot_family.starts_with("# HELP oxide_cache_plane_hot_key_total"),
+        "the ledger's exposition appends its own family: {hot_family}"
+    );
+    assert!(
+        hot_family.contains("oxide_cache_plane_hot_key_total{key="),
+        "the attributed key renders as a labeled row"
+    );
 }
 
 // ------------------------------------------- V2-F04 experiments (§15.4)
