@@ -110,6 +110,16 @@ pub enum Command {
         /// shape stays byte-identical.
         #[arg(long)]
         cache_plane_health: bool,
+        /// V2-F50: the posture probe's path, beside the
+        /// `OXIDE_CACHE_POSTURE_PATH` env var (the flag wins). The F49
+        /// probe is a production surface (the F48 handoff's recorded
+        /// tail), so the flag rides the dev boot beside the serve boot
+        /// (the `cache_plane_health` shape). A `/`-led path relocates
+        /// the probe; the falsy spellings (`""`/`0`/`false`/`off`) spell
+        /// the surface OFF; garbage degrades loudly to the recorded
+        /// default (`/-/health`).
+        #[arg(long, value_name = "PATH")]
+        cache_posture_path: Option<String>,
     },
     /// Build for production (all environments + manifests, §6).
     Build {
@@ -172,6 +182,14 @@ pub enum Command {
         /// off: the scrape's shape stays byte-identical.
         #[arg(long)]
         cache_plane_health: bool,
+        /// V2-F50: the posture probe's path, beside the
+        /// `OXIDE_CACHE_POSTURE_PATH` env var (the flag wins). The probe
+        /// is a production surface, so the flag rides the serve boot too
+        /// (the `root`/`port` multi-command shape). A `/`-led path
+        /// relocates the probe; the falsy spellings spell the surface
+        /// OFF; garbage degrades loudly to the recorded default.
+        #[arg(long, value_name = "PATH")]
+        cache_posture_path: Option<String>,
     },
     /// Preview the production build locally.
     Preview {
@@ -576,6 +594,24 @@ impl Command {
             _ => false,
         }
     }
+
+    /// V2-F50: the `--cache-posture-path` argument, when this command
+    /// takes one. Read by [`apply_startup_env`] so the override slot is
+    /// written pre-runtime (the `cache_plane_health_arg` shape — the
+    /// probe is a production surface, so BOTH boots carry the flag).
+    pub fn cache_posture_path_arg(&self) -> Option<String> {
+        match self {
+            Command::Dev {
+                cache_posture_path,
+                ..
+            }
+            | Command::Start {
+                cache_posture_path,
+                ..
+            } => cache_posture_path.clone(),
+            _ => None,
+        }
+    }
 }
 
 /// P1 (readiness): ALL startup-time environment writes happen HERE, in the
@@ -658,6 +694,18 @@ pub fn apply_startup_env(cli: &Cli) {
     if cli.command.cache_plane_health_arg() {
         crate::observability::set_cache_plane_health_override(Some(true));
     }
+    // V2-F50: `--cache-posture-path` beside the `OXIDE_CACHE_POSTURE_PATH`
+    // env var (the flag wins). The override slot is the
+    // `CACHE_PLANE_HEALTH_OVERRIDE` shape — a command-level fact decided
+    // once pre-runtime; the env var remains the shell user's spelling.
+    // The probe is a production surface, so the arm rides BOTH boot
+    // commands, outside the dev-mode gate. A present flag relocates the
+    // probe (or spells it off through the falsy spellings — the flag CAN
+    // spell "off", the path knob's value rides verbatim); an absent flag
+    // leaves the slot empty and the env var in charge.
+    if let Some(path) = cli.command.cache_posture_path_arg() {
+        crate::observability::set_cache_posture_path_override(Some(path));
+    }
     // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
     // once by the warm-up block in `start_server_inner_full`.
     if let Command::Start {
@@ -735,6 +783,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F48: same posture — the health opt-in rode
             // `apply_startup_env` into its override slot pre-runtime.
             cache_plane_health: _,
+            cache_posture_path: _,
         } => {
             cmd_dev(
                 &root,
@@ -779,6 +828,7 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F48: same posture — the health opt-in rode
             // `apply_startup_env` into its override slot pre-runtime.
             cache_plane_health: _,
+            cache_posture_path: _,
         } => cmd_serve(&root, port, "oxide start", w).await,
         Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
