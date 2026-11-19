@@ -86,6 +86,48 @@
 //! behind the gate unchanged: admitted keys refuse past capacity
 //! exactly as before. The default is the gate spelled as a type
 //! ([`AdmitAllKeys`]) — the ungated ledger row for row.
+//!
+//! ## The typed snapshot and the coverage exposition (F44)
+//!
+//! The ledger's reads were the four separate lock passes — `top(n)`,
+//! `len()`, `capacity()`, `unattributed()` — a host composing them by
+//! hand gets a torn answer when a producer runs between the calls: rows
+//! from one instant, the coverage score from another. [`HotKeySnapshot`]
+//! is the exporter's [`CacheMetricsSnapshot`](crate::CacheMetricsSnapshot)
+//! posture transposed to the attribution arm: one `snapshot(window)`
+//! read takes ONE lock pass and hands back the top window's rows beside
+//! the whole-ledger aggregates (`tracked`, `capacity`, `unattributed`) —
+//! Clone + Eq, so a diff of two snapshots is a diff of the traffic, not
+//! of the read. [`HotKeyObserver::render_coverage_prometheus`] is the
+//! exposition arm the module docs always named but never shipped: the
+//! unattributed score renders as the counter a scrape diffs, the
+//! occupancy and the bound render as gauges (current posture — the
+//! [`crate::health::CacheHealth`] TYPE split), in the fixed family
+//! order, byte-stable, infallible — the F21 posture holds. The
+//! counter-family `render_prometheus` is untouched: the §20 scrape's
+//! shape is byte-identical (the F40 default-shape doctrine), the
+//! coverage arm composes beside it when a host wants it.
+//!
+//! ## The windowed hand-over (F45)
+//!
+//! [`HotKeyObserver::reset`]'s doc names the windowed-sampling shape: a
+//! host that reports per interval resets after each report. The read
+//! side of that shape was hand-rolled — `top(n)`, copy the rows,
+//! `reset()` — three calls, three lock passes, and every event between
+//! the first and the last is lost or double-counted (the torn hand-over
+//! the F44 snapshot's one-pass read already fixed for the pure read).
+//! [`HotKeyObserver::take`] composes the pair atomically: ONE lock pass
+//! clones the whole map into the hand-over value (every tracked row —
+//! the render bound is the caller's concern, the data is the ledger's)
+//! and clears the ledger in the same critical section, so a window is
+//! never both read and left. The fresh window stands alone exactly as
+//! `reset` promises: the map empty, the unattributed score zeroed, the
+//! sticky warn re-armed — the second window warns once more. A drained
+//! key is gone: its next event admits fresh (first sight over), the
+//! same posture a boot's first sight rides. The hand-over rides the
+//! [`HotKeySnapshot`] value — the shape the F44 read answers, so a
+//! host's report pipeline speaks one type for both the sample and the
+//! take.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -166,6 +208,37 @@ pub struct HotKeyRow {
     /// Completed events attributed to the key since the ledger attached
     /// (or since the last [`HotKeyObserver::reset`]).
     pub count: u64,
+}
+
+/// The whole-ledger answer in one value (F44, the
+/// [`CacheMetricsSnapshot`](crate::CacheMetricsSnapshot) posture
+/// transposed to the attribution arm): the top window's rows in the
+/// deterministic order beside the coverage aggregates. Taken under ONE
+/// lock pass, so a racing producer cannot tear the rows from the
+/// aggregates the way composing `top()` + `len()` + `capacity()` +
+/// `unattributed()` by hand can.
+///
+/// Value-shaped by design (`Clone` + `Eq` + `Default`): a host copies
+/// the snapshot before and after a window and diffs the values — a diff
+/// of two snapshots is a diff of the traffic, not of the sort; a test
+/// pins one; a dashboard ships one.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HotKeySnapshot {
+    /// The top window's rows in the [`HotKeyObserver::top`] order (count
+    /// desc, key asc on ties), at most the requested window's length.
+    /// Window `0` carries no rows; a window past the occupancy carries
+    /// every row.
+    pub rows: Vec<HotKeyRow>,
+    /// Distinct keys the ledger currently tracks (the bound's occupancy,
+    /// never above `capacity`) — a whole-ledger fact, independent of the
+    /// window that bounded `rows`.
+    pub tracked: usize,
+    /// The bound the ledger was built with ([`HotKeyObserver::capacity`]).
+    pub capacity: usize,
+    /// Events the bound refused since attach (or since the last reset) —
+    /// the honest coverage score ([`HotKeyObserver::unattributed`]),
+    /// riding beside the rows instead of a separate call.
+    pub unattributed: u64,
 }
 
 /// The bounded per-key ledger plus its sticky warn state — one lock
@@ -374,6 +447,63 @@ impl HotKeyObserver {
         ledger.warned = false;
     }
 
+    /// The F45 windowed hand-over: the whole window hands over as the
+    /// same value shape [`snapshot`](HotKeyObserver::snapshot) answers,
+    /// and the ledger starts a fresh one under the SAME lock pass —
+    /// the read-and-reset pair the `reset` doc's windowed-sampling host
+    /// hand-rolled, composed atomically. A window is never both read
+    /// and left: events a racing producer completes during the call
+    /// land in the FRESH window, never torn between the two.
+    ///
+    /// The hand-over carries every tracked row (at most `capacity` of
+    /// them — the occupancy bound is the ledger's own), the occupancy
+    /// and bound as they stood, and the unattributed score the window
+    /// accumulated. Rows ride the deterministic order — count desc, key
+    /// asc on ties — so the report pipeline renders without a sort.
+    /// The render bound (`top(n)`'s window) stays the caller's concern:
+    /// a report narrows the rows when it renders them, it does not
+    /// silently drop them at the hand-over.
+    ///
+    /// The fresh window stands alone exactly as [`HotKeyObserver::reset`]
+    /// promises: the map empty, the score zeroed, the sticky warn
+    /// re-armed (a saturated ledger warns once more in the next window),
+    /// and first-sight admission starts over — a drained key's next
+    /// event inserts fresh.
+    ///
+    /// # Panics
+    ///
+    /// Only if the ledger lock is poisoned (a prior holder panicked
+    /// mid-update).
+    #[must_use = "the window hands over as the value; dropping it loses the counts"]
+    pub fn take(&self) -> HotKeySnapshot {
+        let mut ledger = self.ledger.lock().expect("the hot-key ledger lock");
+        let mut rows: Vec<HotKeyRow> = ledger
+            .counts
+            .iter()
+            .map(|(key, count)| HotKeyRow {
+                key: key.to_string(),
+                count: *count,
+            })
+            .collect();
+        // Count desc, key asc on ties — the deterministic order the
+        // `top` and `snapshot` reads answer, so a host's report pipeline
+        // speaks one shape end to end.
+        rows.sort_unstable_by(|a, b| b.count.cmp(&a.count).then(a.key.cmp(&b.key)));
+        // The occupancy, bound and score are recorded BEFORE the clear —
+        // the hand-over describes the window that closed, not the fresh
+        // one opening.
+        let taken = HotKeySnapshot {
+            rows,
+            tracked: ledger.counts.len(),
+            capacity: ledger.capacity,
+            unattributed: ledger.unattributed,
+        };
+        ledger.counts.clear();
+        ledger.unattributed = 0;
+        ledger.warned = false;
+        taken
+    }
+
     /// The §20 Prometheus text exposition of the top window (the F30
     /// parity): one `# HELP`/`# TYPE` counter pair for the labeled
     /// `oxide_cache_plane_hot_key_total` family, at most `top` rows in
@@ -408,6 +538,109 @@ impl HotKeyObserver {
                 row.count
             );
         }
+        out
+    }
+
+    /// The F44 typed read: the whole ledger answers as ONE value under
+    /// ONE lock pass — the top window's rows beside the coverage
+    /// aggregates — the posture [`snapshot`](HotKeyObserver::snapshot)'s
+    /// doc holds. Hand-composing `top()` + `len()` + `capacity()` +
+    /// `unattributed()` takes four lock passes a racing producer can
+    /// tear between; this cannot be torn.
+    ///
+    /// `window` bounds only the rows: the aggregates are whole-ledger
+    /// facts independent of it (the F41 doctrine — rows past the
+    /// occupancy do not exist, so the honest cap keeps one read
+    /// bounded). `snapshot(capacity())` is the full mirror; window `0`
+    /// carries no rows and the aggregates still answer.
+    ///
+    /// # Panics
+    ///
+    /// Only if the ledger lock is poisoned (a prior holder panicked
+    /// mid-update).
+    #[must_use]
+    pub fn snapshot(&self, window: usize) -> HotKeySnapshot {
+        let ledger = self.ledger.lock().expect("the hot-key ledger lock");
+        let mut rows: Vec<HotKeyRow> = ledger
+            .counts
+            .iter()
+            .map(|(key, count)| HotKeyRow {
+                key: key.to_string(),
+                count: *count,
+            })
+            .collect();
+        // Count desc, key asc on ties — the same deterministic order
+        // `top` answers, so a snapshot's rows and a `top` read over the
+        // same state agree row for row.
+        rows.sort_unstable_by(|a, b| b.count.cmp(&a.count).then(a.key.cmp(&b.key)));
+        rows.truncate(window);
+        HotKeySnapshot {
+            rows,
+            tracked: ledger.counts.len(),
+            capacity: ledger.capacity,
+            unattributed: ledger.unattributed,
+        }
+    }
+
+    /// The F44 coverage exposition: the families the module docs always
+    /// said a dashboard renders beside the top window, shipped as the
+    /// §20 text-format arm a scrape composes beside
+    /// [`render_prometheus`](HotKeyObserver::render_prometheus). The
+    /// unattributed score is the **counter** a scrape diffs across
+    /// windows; the occupancy and the bound are **gauges** (current
+    /// posture, not deltas — the [`CacheHealth`](crate::health::CacheHealth)
+    /// TYPE split). Fixed family order (score, occupancy, bound), one
+    /// `# HELP`/`# TYPE` pair per family, a trailing newline — two
+    /// renders over the same state are byte-equal. Infallible, so the
+    /// scrape path carries no error shape (the F21 posture).
+    ///
+    /// The counter-family arm is untouched: the §20 scrape's existing
+    /// shape stays byte-identical (the F40 default-shape doctrine); a
+    /// host that wants the coverage families composes this beside it.
+    ///
+    /// # Panics
+    ///
+    /// Only if the ledger lock is poisoned (a prior holder panicked
+    /// mid-update).
+    #[must_use]
+    pub fn render_coverage_prometheus(&self) -> String {
+        // One lock pass for the three families; ~110 bytes of
+        // HELP/TYPE/row per family — one allocation for the arm.
+        let ledger = self.ledger.lock().expect("the hot-key ledger lock");
+        let mut out = String::with_capacity(384);
+        let _ = writeln!(
+            out,
+            "# HELP oxide_cache_plane_hot_key_unattributed_total Cache-plane completed events the hot-key ledger's bound refused (the coverage score)"
+        );
+        let _ = writeln!(
+            out,
+            "# TYPE oxide_cache_plane_hot_key_unattributed_total counter"
+        );
+        let _ = writeln!(
+            out,
+            "oxide_cache_plane_hot_key_unattributed_total {}",
+            ledger.unattributed
+        );
+        let _ = writeln!(
+            out,
+            "# HELP oxide_cache_plane_hot_key_keys Hot-key keys the ledger currently tracks (the bound's occupancy)"
+        );
+        let _ = writeln!(out, "# TYPE oxide_cache_plane_hot_key_keys gauge");
+        let _ = writeln!(
+            out,
+            "oxide_cache_plane_hot_key_keys {}",
+            ledger.counts.len()
+        );
+        let _ = writeln!(
+            out,
+            "# HELP oxide_cache_plane_hot_key_capacity The hot-key ledger's configured bound"
+        );
+        let _ = writeln!(out, "# TYPE oxide_cache_plane_hot_key_capacity gauge");
+        let _ = writeln!(
+            out,
+            "oxide_cache_plane_hot_key_capacity {}",
+            ledger.capacity
+        );
         out
     }
 }
