@@ -251,6 +251,8 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `SRV-BIND` | cannot bind {addr}: {e} | — |
 | `SRV-COMP` | gzip failed: {e} | — |
 | `SRV-CSRF` | cross-origin request rejected by Origin/Sec-Fetch-Site verification | — |
+| `SRV-GEN-DEPTH` | snapshot tree deeper than 24 at {} | A loader source tree nested past the snapshot's depth guard is a build artifact, not a source; keep the generations snapshot to real source trees |
+| `SRV-GEN-IO` | the generation source snapshot's file system step failed ({step} {path}: {e}); the generation downgrades to acceptance-only | — |
 | `SRV-NOENC` | unsupported content encoding `{other}` | — |
 | `SRV-PROXY` | build request failed: {e} | — |
 | `SRV-TLS` | cert parse failed: {e} | — |
