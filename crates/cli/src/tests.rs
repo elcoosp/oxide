@@ -5001,6 +5001,11 @@ struct HotWireFixture {
     dispatch: std::sync::Arc<dyn Fn(oxide_fw_server::OxideRequest) -> BoxedResponse + Send + Sync>,
     exporter: std::sync::Arc<oxide_fw_cache::MetricsCacheObserver>,
     hot: std::sync::Arc<oxide_fw_cache::HotKeyObserver>,
+    /// V2-F47: the tier TYPED, carried beside the exporter and the ledger
+    /// so the health-posture pins drive `TieredCache::health()` (the
+    /// posture pull the scrape's health arm composes) directly — the
+    /// erased handler cannot name the pull.
+    typed: std::sync::Arc<oxide_fw_cache::TieredCache>,
 }
 
 fn hot_wire_fixture() -> HotWireFixture {
@@ -5034,6 +5039,7 @@ fn hot_wire_fixture() -> HotWireFixture {
         dispatch,
         exporter,
         hot,
+        typed,
     }
 }
 
@@ -5090,11 +5096,15 @@ async fn the_cache_plane_scrape_renders_the_hot_key_family_beside_the_exporters(
         Some(&f.hot),
         crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
         false,
+        None,
+        false,
     );
     let bare = crate::framework_shim::cache_plane_scrape(
         &f.exporter,
         None,
         crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+        false,
+        None,
         false,
     );
 
@@ -5243,7 +5253,14 @@ async fn the_boot_window_shapes_the_composed_scrape() {
         }
     }
 
-    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), top, false);
+    let composed = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        top,
+        false,
+        None,
+        false,
+    );
     let hot_family = &composed[composed
         .find("# HELP oxide_cache_plane_hot_key_total")
         .expect("the hot-key family renders")..];
@@ -5270,7 +5287,8 @@ async fn the_cache_plane_scrape_window_bounds_the_labeled_rows() {
     .await;
     assert!(attributed, "the traffic reached the ledger");
 
-    let zero = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 0, false);
+    let zero =
+        crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 0, false, None, false);
     let hot_family_zero = &zero[zero
         .find("# HELP oxide_cache_plane_hot_key_total")
         .expect("the hot-key family renders")..];
@@ -5286,7 +5304,8 @@ async fn the_cache_plane_scrape_window_bounds_the_labeled_rows() {
         "the pair is complete: HELP and TYPE ride"
     );
 
-    let one = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 1, false);
+    let one =
+        crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 1, false, None, false);
     let hot_family_one = &one[one
         .find("# HELP oxide_cache_plane_hot_key_total")
         .expect("the hot-key family renders")..];
@@ -5512,7 +5531,14 @@ async fn the_flag_window_shapes_the_composed_scrape() {
         crate::observability::set_cache_hot_key_top_override(None);
     }
 
-    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), top, false);
+    let composed = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        top,
+        false,
+        None,
+        false,
+    );
     let hot_family = &composed[composed
         .find("# HELP oxide_cache_plane_hot_key_total")
         .expect("the hot-key family renders")..];
@@ -5706,7 +5732,14 @@ async fn the_config_window_shapes_the_composed_scrape() {
         top = crate::observability::cache_hot_key_top_with_config(Some(1));
     }
 
-    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), top, false);
+    let composed = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        top,
+        false,
+        None,
+        false,
+    );
     let hot_family = &composed[composed
         .find("# HELP oxide_cache_plane_hot_key_total")
         .expect("the hot-key family renders")..];
@@ -6066,7 +6099,8 @@ async fn the_coverage_opt_in_renders_the_coverage_families_beside_the_labeled_fa
     .await;
     assert!(attributed, "the traffic reached the ledger");
 
-    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 10, true);
+    let composed =
+        crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 10, true, None, false);
     let labeled_at = composed
         .find("# HELP oxide_cache_plane_hot_key_total")
         .expect("the labeled family renders");
@@ -6118,7 +6152,14 @@ async fn the_coverage_default_keeps_the_scrape_byte_identical() {
     })
     .await;
 
-    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 10, false);
+    let composed = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        10,
+        false,
+        None,
+        false,
+    );
     assert!(
         !composed.contains("oxide_cache_plane_hot_key_unattributed_total"),
         "the coverage score's counter stays off the default shape"
@@ -6132,6 +6173,492 @@ async fn the_coverage_default_keeps_the_scrape_byte_identical() {
         composed.contains("# HELP oxide_cache_plane_hot_key_total"),
         "the labeled family rides the default shape unchanged"
     );
+}
+
+// ------------------------------------------- V2-F47 cache-plane health scrape (§20)
+//
+// The F32 deviations log's named future consumer: the posture pull's
+// gauge exposition (`TieredCache::health` → `CacheHealth::
+// render_prometheus` — the nine `oxide_cache_plane_*` gauge families:
+// the memory tier's occupancy and cap, the disk/remote attachment flags,
+// the tag-index pressure, the observability seam's own state) reaches
+// the §20 production scrape behind the operator's opt-in. The default
+// shape is byte-identical (the F40 doctrine — a scrape without the
+// opt-in renders the exporter's families and the labeled window,
+// nothing else). The opt-in speaks through the layered resolver family
+// the F41/F42/F43/F46 sessions established: the
+// `OXIDE_CACHE_PLANE_HEALTH` env spelling over the pure parse core
+// (`1`/`true`/`on` answer on, the falsy spellings `""`/`0`/`false`/
+// `off` keep off, garbage degrades loudly-but-honestly to off), and —
+// V2-F48 — the `--cache-plane-health` boot flag on BOTH commands and
+// the `cache.healthMetrics` project baseline (the F42/F43 shape: flag >
+// env > config > default). The health arm composes BESIDE the coverage
+// arm, not instead of it: an operator can opt into both expositions at
+// once. The config crate's own parse pins ride
+// `crates/config/tests/cache_health_metrics_config.rs`.
+// V8-linked test target — compile-verified locally, riding the CI
+// `nextest` workspace job.
+
+/// The health state lock: the pins that touch `OXIDE_CACHE_PLANE_HEALTH`
+/// (edition-2024 `set_var` concurrent with a `get_var` is the data race
+/// the P1 readiness posture exists for) AND the health override slot
+/// (one process-wide `Mutex<Option<bool>>` shared by every parallel
+/// test) serialize behind it — the `COVERAGE_STATE_LOCK` shape.
+static HEALTH_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The parse core's unset spelling: health stays off — the default shape
+/// is the recorded posture (the F40 doctrine).
+#[test]
+fn cache_plane_health_from_none_is_the_default_off() {
+    assert!(
+        !crate::observability::cache_plane_health_from(None),
+        "the unset spelling keeps the default-off shape"
+    );
+}
+
+/// The truthy spellings answer on: the operator's opt-in rides verbatim.
+#[test]
+fn cache_plane_health_from_truthy_spellings_answer_on() {
+    for spelling in ["1", "true", "on"] {
+        assert!(
+            crate::observability::cache_plane_health_from(Some(spelling)),
+            "`{spelling}` is the on spelling"
+        );
+    }
+}
+
+/// The falsy spellings keep off: the `cache_plane_coverage_from` family's
+/// falsy contract transposed to the posture knob.
+#[test]
+fn cache_plane_health_from_falsy_spellings_keep_off() {
+    for spelling in ["", "0", "false", "off"] {
+        assert!(
+            !crate::observability::cache_plane_health_from(Some(spelling)),
+            "`{spelling}` is the off spelling"
+        );
+    }
+}
+
+/// Garbage degrades loudly-but-honestly to off (the
+/// `cache_plane_coverage_from` posture: one stderr notice naming the
+/// source, then the default) — a typoed operator spelling never silently
+/// flips the plane's shape.
+#[test]
+fn cache_plane_health_from_garbage_degrades_to_off() {
+    assert!(
+        !crate::observability::cache_plane_health_from(Some("sure")),
+        "garbage degrades to the default-off shape"
+    );
+}
+
+/// The posture families render the LIVE posture, not a zeroed stand-in:
+/// one write-through set lands a resident entry and the opt-in scrape
+/// renders `oxide_cache_plane_memory_entries 1` (the "nothing is
+/// fabricated" contract, read through the composed §20 scrape).
+#[tokio::test]
+async fn the_health_opt_in_renders_the_live_posture_families() {
+    let f = hot_wire_fixture();
+    let entry = oxide_fw_cache::Entry {
+        body: b"<html>v2-f47</html>".to_vec(),
+        status: 200,
+        headers: vec![("content-type".to_string(), "text/html".to_string())],
+        tags: vec!["blog".to_string()],
+        policy: oxide_fw_cache::Policy {
+            ttl: std::time::Duration::from_secs(60),
+            swr: None,
+            stale_if_error: None,
+            soft_tags: true,
+        },
+        stored_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the wall clock runs")
+            .as_millis() as u64,
+        etag: "\"v1\"".into(),
+    };
+    f.typed
+        .set("route:/health-pinned", entry)
+        .await
+        .expect("the tier takes the write");
+
+    let composed = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        10,
+        false,
+        Some(&f.typed),
+        true,
+    );
+    assert!(
+        composed.contains("oxide_cache_plane_memory_entries 1"),
+        "the posture's memory-entry gauge reads the live tier: {composed}"
+    );
+    assert!(
+        composed.contains("# TYPE oxide_cache_plane_memory_entries gauge"),
+        "the posture families are the gauge half (the F32 TYPE split)"
+    );
+    assert!(
+        composed.contains("# TYPE oxide_cache_plane_observer_attached gauge"),
+        "the observability seam's own posture renders"
+    );
+}
+
+/// The fixed composition order: exporter families first, the labeled
+/// window family, then the posture gauges LAST — a scraper diffs the
+/// families' offsets, and the posture answers after the traffic story
+/// (the F46 arm's shape, one arm further).
+#[tokio::test]
+async fn the_health_families_render_after_the_labeled_family() {
+    let f = hot_wire_fixture();
+    let composed = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        10,
+        true,
+        Some(&f.typed),
+        true,
+    );
+    let labeled_at = composed
+        .find("# HELP oxide_cache_plane_hot_key_total")
+        .expect("the labeled family renders");
+    let posture_at = composed
+        .find("# HELP oxide_cache_plane_memory_entries")
+        .expect("the posture's first family renders");
+    assert!(
+        labeled_at < posture_at,
+        "the posture gauges ride after the labeled family"
+    );
+    // Beside, not instead: the coverage opt-in composes too.
+    assert!(
+        composed.contains("# TYPE oxide_cache_plane_hot_key_unattributed_total counter"),
+        "the coverage arm composes beside the health arm"
+    );
+    // The posture's gauge families are complete: nine families, the F32
+    // exposition's fixed set, read through the TYPE rows.
+    for family in [
+        "oxide_cache_plane_memory_entries",
+        "oxide_cache_plane_memory_bytes",
+        "oxide_cache_plane_memory_capacity_bytes",
+        "oxide_cache_plane_disk_attached",
+        "oxide_cache_plane_disk_bytes",
+        "oxide_cache_plane_remote_attached",
+        "oxide_cache_plane_tags_indexed",
+        "oxide_cache_plane_keys_tracked",
+        "oxide_cache_plane_observer_attached",
+    ] {
+        assert!(
+            composed.contains(&format!("# TYPE {family} gauge")),
+            "the posture family {family} renders as a gauge"
+        );
+    }
+}
+
+/// The default shape stays byte-identical: without the opt-in the scrape
+/// renders the exporter's families and the labeled window — the posture
+/// gauges never appear (the F40 doctrine; the F32 arm composes only when
+/// the operator asks). The tier handle riding along changes nothing when
+/// the flag is off.
+#[tokio::test]
+async fn the_health_default_keeps_the_scrape_byte_identical() {
+    let f = hot_wire_fixture();
+    let without_tier = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        10,
+        false,
+        None,
+        false,
+    );
+    let with_tier = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        10,
+        false,
+        Some(&f.typed),
+        false,
+    );
+    assert_eq!(
+        without_tier, with_tier,
+        "the tier handle alone never changes the scrape's bytes"
+    );
+    assert!(
+        !with_tier.contains("oxide_cache_plane_memory_entries"),
+        "the posture gauges stay off the default shape"
+    );
+    assert!(
+        with_tier.contains("# HELP oxide_cache_plane_hot_key_total"),
+        "the labeled family rides the default shape unchanged"
+    );
+}
+
+// ------------------------------------------- V2-F48 health flag + config baseline (§20)
+//
+// The F47 deviations log's recorded tail: the health opt-in learns the
+// F42/F43 shape — the `--cache-plane-health` boot flag on BOTH commands
+// (the `apply_startup_env` thread-through writes the
+// `CACHE_PLANE_HEALTH_OVERRIDE` slot pre-runtime through the
+// `cache_plane_health_arg()` accessor) and the `cache.healthMetrics`
+// project baseline (`CacheConfig::health_metrics`, schema'd boolean
+// default false) joining at the boot wire through the layered
+// `cache_plane_health_with_config` resolver — flag > env > config >
+// default-off, the falsy spellings stop the env layer only, garbage
+// never silently recovers through the baseline. The config crate's own
+// parse pins ride `crates/config/tests/cache_health_metrics_config.rs`.
+
+/// The dev boot takes the flag: the opt-in lands the health arm.
+#[test]
+fn dev_cache_plane_health_flag_parses() {
+    let cli = crate::Cli::parse_from(["oxide", "dev", "--cache-plane-health"]);
+    match cli.command {
+        Command::Dev {
+            cache_plane_health, ..
+        } => {
+            assert!(cache_plane_health, "the dev boot's opt-in");
+        }
+        _ => panic!("expected the dev command"),
+    }
+}
+
+/// Absent on the dev boot, the flag is `false` — the env var keeps its
+/// spelling (the F46 shape never moves behind a boot without the flag).
+#[test]
+fn dev_cache_plane_health_flag_defaults_to_false() {
+    let cli = crate::Cli::parse_from(["oxide", "dev"]);
+    match cli.command {
+        Command::Dev {
+            cache_plane_health, ..
+        } => {
+            assert!(!cache_plane_health, "the flag-absent default");
+        }
+        _ => panic!("expected the dev command"),
+    }
+}
+
+/// The serve boot takes the flag too: the scrape is a production surface,
+/// so the health opt-in rides `oxide start` (the `root`/`port`
+/// multi-command precedent the coverage flag holds).
+#[test]
+fn start_cache_plane_health_flag_parses() {
+    let cli = crate::Cli::parse_from(["oxide", "start", "--cache-plane-health"]);
+    match cli.command {
+        Command::Start {
+            cache_plane_health, ..
+        } => {
+            assert!(cache_plane_health, "the serve boot's opt-in");
+        }
+        _ => panic!("expected the start command"),
+    }
+}
+
+#[test]
+fn start_cache_plane_health_flag_defaults_to_false() {
+    let cli = crate::Cli::parse_from(["oxide", "start"]);
+    match cli.command {
+        Command::Start {
+            cache_plane_health, ..
+        } => {
+            assert!(!cache_plane_health, "the flag-absent default");
+        }
+        _ => panic!("expected the start command"),
+    }
+}
+
+/// The accessor: `cache_plane_health_arg()` reads the flag off whichever
+/// boot command carries it and stays `false` for every other command.
+#[test]
+fn cache_plane_health_arg_reads_dev_and_start() {
+    let dev = crate::Cli::parse_from(["oxide", "dev", "--cache-plane-health"]);
+    assert!(dev.command.cache_plane_health_arg());
+    let start = crate::Cli::parse_from(["oxide", "start", "--cache-plane-health"]);
+    assert!(start.command.cache_plane_health_arg());
+    let other = crate::Cli::parse_from(["oxide", "build"]);
+    assert!(!other.command.cache_plane_health_arg());
+}
+
+/// The flag wins: the override slot beats the env spelling the env gate
+/// reads (the `cache_plane_coverage_override_wins_over_the_env_var`
+/// shape).
+#[test]
+fn cache_plane_health_override_wins_over_the_env_var() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    // SAFETY: test process, single-threaded access to this key (the pure
+    // pins drive the parse core directly and never touch the env).
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HEALTH", "0");
+    }
+    crate::observability::set_cache_plane_health_override(Some(true));
+    let on = crate::observability::cache_plane_health();
+    crate::observability::set_cache_plane_health_override(None);
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HEALTH");
+    }
+    assert!(on, "the flag wins over the env var");
+}
+
+/// The override slot cleared leaves the env spelling in charge — the
+/// slot's `None` is the flag-absent spelling, not a third knob.
+#[test]
+fn cache_plane_health_override_cleared_leaves_the_env_in_charge() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HEALTH", "on");
+    }
+    crate::observability::set_cache_plane_health_override(None);
+    let on = crate::observability::cache_plane_health();
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HEALTH");
+    }
+    assert!(on, "the env var remains the shell spelling");
+}
+
+/// `apply_startup_env` threads the dev flag into the override pre-runtime
+/// (the F46 pin's shape over the posture knob).
+#[test]
+fn apply_startup_env_threads_the_health_flag_into_the_override() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    let cli = crate::Cli::parse_from(["oxide", "dev", "--cache-plane-health"]);
+    crate::args::apply_startup_env(&cli);
+    let on = crate::observability::cache_plane_health();
+    crate::observability::set_cache_plane_health_override(None);
+    assert!(on, "the flag lands pre-runtime via apply_startup_env");
+}
+
+/// `apply_startup_env` threads the serve flag too — the production boot's
+/// health opt-in is decided by the same pre-runtime slot, not a
+/// mid-async env poll (the P1 readiness posture).
+#[test]
+fn apply_startup_env_threads_the_health_flag_on_the_serve_boot() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    let cli = crate::Cli::parse_from(["oxide", "start", "--cache-plane-health"]);
+    crate::args::apply_startup_env(&cli);
+    let on = crate::observability::cache_plane_health();
+    crate::observability::set_cache_plane_health_override(None);
+    assert!(on, "the serve boot's flag lands pre-runtime");
+}
+
+/// Without the flag, `apply_startup_env` leaves the slot empty and the
+/// env spelling stays in charge (the F46 shape is the flag-absent
+/// default).
+#[test]
+fn apply_startup_env_without_the_health_flag_leaves_the_env_in_charge() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HEALTH", "on");
+    }
+    let cli = crate::Cli::parse_from(["oxide", "dev"]);
+    crate::args::apply_startup_env(&cli);
+    let on = crate::observability::cache_plane_health();
+    crate::observability::set_cache_plane_health_override(None);
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HEALTH");
+    }
+    assert!(on, "no flag keeps the env shape");
+}
+
+/// The baseline answers when no flag and no env spelling is set — the
+/// project's committed opt-in rides the boot wire.
+#[test]
+fn cache_plane_health_config_baseline_answers_without_flag_or_env() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    crate::observability::set_cache_plane_health_override(None);
+    let on = crate::observability::cache_plane_health_with_config(Some(true));
+    assert!(on, "the project baseline answers the wire");
+}
+
+/// A committed `false` answers off too — the baseline is a real choice,
+/// not a one-way opt-in (the operator can pin the plane's posture off).
+#[test]
+fn cache_plane_health_config_baseline_false_answers_false() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    crate::observability::set_cache_plane_health_override(None);
+    let on = crate::observability::cache_plane_health_with_config(Some(false));
+    assert!(!on, "the project's committed-off shape");
+}
+
+/// The flag wins over the baseline (the F43 shape's first layer).
+#[test]
+fn cache_plane_health_flag_wins_over_the_config_baseline() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    // SAFETY: test process, single-threaded access to this key (the
+    // override pins read the override first and never this key).
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HEALTH");
+    }
+    crate::observability::set_cache_plane_health_override(Some(true));
+    let on = crate::observability::cache_plane_health_with_config(Some(false));
+    crate::observability::set_cache_plane_health_override(None);
+    assert!(on, "the flag wins over the committed-off baseline");
+}
+
+/// The env spelling wins over the baseline — the operator's shell form
+/// stays the second layer (the F46 shape unchanged).
+#[test]
+fn cache_plane_health_env_wins_over_the_config_baseline() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HEALTH", "on");
+    }
+    let on = crate::observability::cache_plane_health_with_config(Some(false));
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HEALTH");
+    }
+    assert!(on, "the env spelling beats the committed baseline");
+}
+
+/// The falsy env spellings stop the env layer only: a committed baseline
+/// below still answers (the F43 doctrine — an operator's empty spelling
+/// is not the project's config being refused).
+#[test]
+fn cache_plane_health_falsy_env_stops_the_env_layer_only() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HEALTH", "off");
+    }
+    let on = crate::observability::cache_plane_health_with_config(Some(true));
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HEALTH");
+    }
+    assert!(on, "the falsy spelling hands the decision to the baseline");
+}
+
+/// Garbage degrades to the DEFAULT, never to the baseline: the
+/// `cache_plane_coverage_with_config` doctrine transposed — the project's
+/// config is not a silent recovery for a typoed operator spelling.
+#[test]
+fn cache_plane_health_garbage_env_degrades_to_the_default_not_the_config() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HEALTH", "sure");
+    }
+    let on = crate::observability::cache_plane_health_with_config(Some(true));
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HEALTH");
+    }
+    assert!(!on, "garbage degrades loudly to the default-off shape");
+}
+
+/// With no layer speaking, the default answers off — the boot shape is
+/// byte-identical to the pre-F48 resolver's (the config key absent
+/// changes nothing).
+#[test]
+fn cache_plane_health_without_any_layer_the_default_off_answers() {
+    let _state = HEALTH_STATE_LOCK.lock().expect("the health state lock");
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HEALTH");
+    }
+    let on = crate::observability::cache_plane_health_with_config(None);
+    assert!(!on, "the no-layer shape is the recorded default");
 }
 
 // ------------------------------------------- V2-F04 experiments (§15.4)
