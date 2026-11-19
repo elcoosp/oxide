@@ -25,8 +25,8 @@ use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Current wall clock in unix milliseconds (the crate-wide time base for §11.3).
@@ -184,6 +184,21 @@ pub struct DiskTier {
     /// Bounded by the entry count (keys ~120 bytes) — acceptable next to the
     /// redb index itself.
     order: std::sync::Mutex<std::collections::BTreeMap<(u64, String), u64>>,
+    /// F51: evictions the S-08 prune completed (saturating — the F30
+    /// counter rule: a counter that reaches `u64::MAX` reads "at or past
+    /// the bound", never a silently-restarted total).
+    evictions: AtomicU64,
+    /// F51: the compressed blob bytes those evictions freed (saturating,
+    /// the same rule — the S-08 budget's own accounting unit).
+    evicted_bytes: AtomicU64,
+    /// F51: the eviction event's push half — the observer the F28 seam
+    /// attached. The tiered cache wires its own observer down here at
+    /// attach (both builder orders); a standalone tier attaches through
+    /// [`DiskTier::with_eviction_observer`]. `None` until attached: the
+    /// counters ALWAYS answer (the pull half is unconditional), the event
+    /// rides only when a listener exists — the seam's no-observer path is
+    /// one branch.
+    eviction_observer: OnceLock<Arc<dyn CacheObserver>>,
 }
 
 /// PERF-L1: blob v2 magic — `magic || u32 BE meta_len || meta_json || raw body`.
@@ -314,6 +329,9 @@ impl DiskTier {
             max_bytes,
             max_entry,
             order: std::sync::Mutex::new(order),
+            evictions: AtomicU64::new(0),
+            evicted_bytes: AtomicU64::new(0),
+            eviction_observer: OnceLock::new(),
         })
     }
 
@@ -461,19 +479,26 @@ impl DiskTier {
     /// the durable proxy the GC already tracks). PERF-L1: victims come from
     /// the in-memory order index (`first_key_value`), not a full redb scan
     /// with a JSON parse per row per eviction.
+    ///
+    /// F51: every completed victim is a first-class cache event — the
+    /// saturating counters answer unconditionally (the pull half), and
+    /// when the push half is attached the row rides the F28 seam as
+    /// [`CacheOp::Evict`] with the layer and the freed size.
     fn prune_oldest_until(&self, target: u64) {
         loop {
             if self.cur_bytes.load(Ordering::Relaxed) <= target {
                 return;
             }
+            // PERF-L1: the victim and its compressed size ride ONE lock
+            // pass (F51: the eviction row needs the size the store freed).
             let victim = self
                 .order
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .keys()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
                 .next()
-                .map(|(_, k)| k.clone());
-            let Some(key) = victim else {
+                .map(|((_, k), size)| (k.clone(), *size));
+            let Some((key, size)) = victim else {
                 return;
             };
             // `delete` decrements `cur_bytes` and forgets the order entry itself.
@@ -485,7 +510,54 @@ impl DiskTier {
                 }
                 return;
             }
+            // F51: the eviction is a completed operation. The counters
+            // saturate (the F30 rule); the event is delivered AFTER the
+            // victim's delete completed — the observer contract's
+            // "completed operations only".
+            crate::metrics::saturating_add(&self.evictions, 1);
+            crate::metrics::saturating_add(&self.evicted_bytes, size);
+            if let Some(observer) = self.eviction_observer.get() {
+                observer.on_event(&CacheEvent {
+                    key: &key,
+                    op: CacheOp::Evict {
+                        layer: Layer::L1,
+                        bytes: size,
+                    },
+                });
+            }
         }
+    }
+
+    /// F51: evictions the S-08 prune completed since the tier opened.
+    /// An explicit delete and a corrupt-miss self-heal are not here —
+    /// the caller asked for the first, the second is §17.2's documented
+    /// silent self-healing; only the tier's own budget prune counts.
+    #[must_use]
+    pub fn evictions(&self) -> u64 {
+        self.evictions.load(Ordering::Relaxed)
+    }
+
+    /// F51: the compressed blob bytes those evictions freed — the tier's
+    /// own accounting unit, the unit the S-08 budget itself speaks.
+    #[must_use]
+    pub fn evicted_bytes(&self) -> u64 {
+        self.evicted_bytes.load(Ordering::Relaxed)
+    }
+
+    /// F51: attach the eviction event's push half to a STANDALONE tier —
+    /// the composition arm for a tier the host opened with an explicit
+    /// budget and uses outside a [`TieredCache`]. The tiered cache wires
+    /// its own observer down through [`TieredCache::with_observer`]
+    /// (both builder orders); this builder is the tier's own arm.
+    /// Consuming, pre-`Arc` — the same shape every builder in the crate
+    /// rides.
+    #[must_use = "the observer attaches through the builder chain; dropping it loses the seam"]
+    pub fn with_eviction_observer(self, observer: Arc<dyn CacheObserver>) -> Self {
+        // A fresh tier attaches exactly once (the consuming builder runs
+        // pre-`Arc`, pre-share); the `Err` arm — "already set" — would
+        // mean the same Arc raced itself, so the first attach stands.
+        let _ = self.eviction_observer.set(observer);
+        self
     }
 
     /// Load an entry; corrupt/missing blobs are deleted and reported as a miss.
@@ -603,6 +675,14 @@ pub struct CacheStats {
     pub misses: u64,
     pub stale_served: u64,
     pub coalesced: u64,
+    /// F51: evictions the disk tier's S-08 prune completed — the push
+    /// seam's `Evict` rows, counted pull-side. An explicit delete and a
+    /// corrupt-miss self-heal are not here (the caller asked for the
+    /// first, §17.2 documents the second). The memory tier's moka
+    /// eviction is amortized maintenance (P-17) and is not counted: the
+    /// disk tier is the durable data-loss path this counter covers.
+    #[serde(default)]
+    pub evictions: u64,
     pub entries_memory: u64,
     pub bytes_memory: u64,
 }
@@ -699,8 +779,27 @@ impl TieredCache {
 
     /// Attach a local disk tier (L1).
     pub fn with_disk(mut self, root: std::path::PathBuf) -> Result<Self> {
-        self.disk = Some(std::sync::Arc::new(DiskTier::open(root)?));
+        let tier = Arc::new(DiskTier::open(root)?);
+        // F51: the observer-first builder order wires the eviction seam
+        // down here; `with_observer` first lands in `with_observer`.
+        if let Some(observer) = &self.observer {
+            let _ = tier.eviction_observer.set(Arc::clone(observer));
+        }
+        self.disk = Some(tier);
         Ok(self)
+    }
+
+    /// Attach a caller-built disk tier (F51) — the composition arm for a
+    /// tier the host opened with an explicit budget
+    /// ([`DiskTier::open_with_budget`]). Same contract as
+    /// [`TieredCache::with_disk`]; the tier the caller owns rides as-is.
+    #[must_use = "the tier attaches through the builder chain; dropping it loses the disk tier"]
+    pub fn with_disk_tier(mut self, tier: Arc<DiskTier>) -> Self {
+        if let Some(observer) = &self.observer {
+            let _ = tier.eviction_observer.set(Arc::clone(observer));
+        }
+        self.disk = Some(tier);
+        self
     }
 
     /// Attach a remote tier (L2) — a handler like `HttpCacheHandler` that
@@ -722,6 +821,15 @@ impl TieredCache {
     /// pull-only [`TieredCache::stats`] contract untouched.
     #[must_use = "the observer attaches through the builder chain; dropping it loses the seam"]
     pub fn with_observer(mut self, observer: Arc<dyn CacheObserver>) -> Self {
+        // F51: the eviction events ride the SAME one slot — the disk
+        // tier hears what the tiered cache hears (one event, every
+        // consumer). The observer-first builder order lands here;
+        // disk-first lands in `with_disk`/`with_disk_tier`. The `Err`
+        // arm would mean both orders attached — the same Arc, so the
+        // first attach stands.
+        if let Some(disk) = &self.disk {
+            let _ = disk.eviction_observer.set(Arc::clone(&observer));
+        }
         self.observer = Some(observer);
         self
     }
@@ -1080,6 +1188,9 @@ impl TieredCache {
             misses: self.misses.load(Ordering::Relaxed),
             stale_served: self.stale_served.load(Ordering::Relaxed),
             coalesced: self.coalesced.load(Ordering::Relaxed),
+            // F51: the disk tier's eviction counter (the honest zero
+            // without a disk tier — no tier, no counted eviction).
+            evictions: self.disk.as_ref().map_or(0, |disk| disk.evictions()),
             entries_memory: self.memory.len() as u64,
             bytes_memory: self.memory.total_bytes(),
         }
@@ -1108,6 +1219,10 @@ impl TieredCache {
             tags_indexed: self.tags.len() as u64,
             keys_tracked: self.key_tags.len() as u64,
             observer_attached: self.observer.is_some(),
+            // F52: the disk tier's eviction total rides the posture —
+            // the same counter `stats().evictions` and the push seam
+            // answer, honestly zero without a disk tier.
+            disk_evictions: self.disk.as_ref().map_or(0, |disk| disk.evictions()),
         }
     }
 
