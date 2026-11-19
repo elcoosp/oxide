@@ -1091,6 +1091,19 @@ pub struct CacheConfig {
     /// §14.1: `cache: { l0: { maxSize: "512mb" } }`.
     #[serde(default)]
     pub l0: L0CacheConfig,
+    /// V2-F43: `cache: { hotKeyTop: 50 }` — the project's committed
+    /// baseline for the §20 scrape's hot-key top window (how many
+    /// labeled `oxide_cache_plane_hot_key_total` rows one scrape renders
+    /// beside the exporter's families). The boot's precedence: the
+    /// `--cache-hot-key-top` flag wins, the
+    /// `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var keeps the operator's
+    /// shell spelling, this key is the project's baseline, and with none
+    /// set the F40 default window answers. `0` is legal (window 0
+    /// renders the bare family pair — the F41 posture); a value clamps
+    /// at the boot wire to the ledger's own bound, which this crate
+    /// deliberately cannot see.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hot_key_top: Option<u64>,
 }
 
 /// §14.1: `cache.l0` — the L0 response-cache settings.
