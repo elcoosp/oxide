@@ -117,6 +117,13 @@ pub const ENDPOINT_MAP: &[EndpointRow] = &[
         purpose: "Liveness and readiness (level reported)",
     },
     EndpointRow {
+        path: "/-/health",
+        method: "GET",
+        plane: EndpointPlane::Ops,
+        work_packages: "F49",
+        purpose: "Cache posture probe (the live CacheHealth JSON; provider-gated)",
+    },
+    EndpointRow {
         path: "/_oxide/{vitals,static,og,metrics,image,hmr}",
         method: "various",
         plane: EndpointPlane::Ops,
@@ -183,7 +190,11 @@ mod tests {
 
     /// Every row lands on its plane's URL family: data and dev ride the
     /// `/__` prefix (the build-header check and the dev-token guard), ops
-    /// rides `/_oxide`. The V2.J plane rule, held row by row.
+    /// rides `/_oxide` — and, since V2-F49, the `/-/` ops-probe
+    /// convention: the posture probe's recorded path (`/-/health`, the
+    /// F48 handoff's tail) sits deliberately beside — not under — the
+    /// framework's own `/_oxide` namespace, so a platform's uniform
+    /// probe-path config finds it. The V2.J plane rule, held row by row.
     #[test]
     fn every_row_lands_on_its_plane_family() {
         for row in ENDPOINT_MAP {
@@ -194,7 +205,7 @@ mod tests {
                     row.path
                 ),
                 EndpointPlane::Ops => assert!(
-                    row.path.starts_with("/_oxide"),
+                    row.path.starts_with("/_oxide") || row.path.starts_with("/-/"),
                     "{} is not an ops-plane path",
                     row.path
                 ),
@@ -211,7 +222,7 @@ mod tests {
     /// no blank cells for the docs-check gate to render.
     #[test]
     fn every_row_is_complete() {
-        assert_eq!(ENDPOINT_MAP.len(), 14, "the spec's map has 14 rows");
+        assert_eq!(ENDPOINT_MAP.len(), 15, "the spec's map has 15 rows");
         for row in ENDPOINT_MAP {
             assert!(!row.path.is_empty());
             assert!(!row.method.is_empty());
