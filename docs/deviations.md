@@ -6096,3 +6096,108 @@ pickup; the 17 recorded cli lib pins remain unchanged (the dedicated
 classify-and-repair session's job). The health-posture wire
 (`TieredCache::health()` → the scrape's gauge families — the F32 pull's
 own zero-production-consumer gap) is the recorded next seam.
+## The health posture learns its operator (F47 + F48, 2026-11-19)
+
+**Branch:** `feat/cache-plane-health-scrape` — the F46 handoff's recorded
+pickup (the health-posture wire: "the F32 pull's zero-production-consumer
+gap is the next seam, the F46 coverage wire is its shape") lands as F47 +
+F48 in one session.
+
+**Problem.** Since F32 the posture pull existed — `TieredCache::health()`
+answers "what is this cache stack right now" in one `CacheHealth` value
+(tier attachment and occupancy, tag-index pressure, the observability
+seam's own state, the remote driver's self-named kind) and
+`render_prometheus()` ships it as the nine `oxide_cache_plane_*` gauge
+families — but NO production surface composed it: a scrape of
+`/_oxide/metrics` rendered the exporter's counter families and (since
+F40) the labeled hot-key family and (since F46) the coverage arm, never
+the posture. Fabricating the posture from event counters means replaying
+every event since attach — the posture is a fact of the TIERS, not of
+the traffic. An operator's boot probe and health check had no wire to
+read it.
+
+**Solution.** F47 (M1) composes the posture exposition into the §20
+scrape behind the operator's opt-in: `cache_plane_scrape` takes the
+health arm as a parameter (the F46 coverage shape — `true` composes
+`tier.health().render_prometheus()` after the labeled and coverage
+families, an operator can opt into both arms at once; `false` — or no
+tier handle — keeps the pre-F47 shape byte-identical, the F40 doctrine;
+the tier handle alone never changes the scrape's bytes, the flag is what
+composes the arm). The opt-in speaks the layered resolver family's
+language: the `OXIDE_CACHE_PLANE_HEALTH` env spelling over the pure
+parse core `observability::cache_plane_health_from` (truthy
+`1`/`true`/`on`, falsy `""`/`0`/`false`/`off`, garbage degrades
+loudly-but-honestly to off — the `cache_plane_coverage_from` posture),
+the boot resolves it ONCE at the `set_cache_plane` wire (the
+`trace_file_path` posture) and passes the TYPED tier beside it
+(`cache_health_tier`, captured BEFORE the `is_dev` null-out — the
+null-out is about the L0 response plane, not about the tier the stack
+attached, so the posture answers on the dev scrape too). F48 (M2) adds
+the operator knobs: the `--cache-plane-health` boot flag on `Dev` AND
+`Start` (the F42 shape — `apply_startup_env` writes the
+`CACHE_PLANE_HEALTH_OVERRIDE` slot pre-runtime through the
+`cache_plane_health_arg()` accessor) and the `cache.healthMetrics`
+project baseline (`CacheConfig::health_metrics`, schema'd boolean
+default false — the F46 shape), joining at the boot wire through the
+layered `cache_plane_health_with_config` resolver — flag > env > config
+> default-off, the falsy spellings stop the env layer only, garbage
+never silently recovers through the baseline.
+
+**Pinned.** 7 red-first pins in `tests.rs` (the V2-F47 section: the
+parse core's four spellings, the live-posture composition — one
+write-through set renders `oxide_cache_plane_memory_entries 1`, the
+fixed family order after the labeled family, the beside-not-instead
+co-composition with the coverage arm, the nine-family gauge set, and
+the byte-identical default) and 17 pins in the V2-F48 section (the flag
+parses/defaults on both boots, the accessor, the flag-wins precedence,
+the env fallback, the dev and serve thread-throughs, the four-layer
+precedence with the falsy and garbage decisions, and the no-layer
+default) plus 5 pins in `crates/config/tests/
+cache_health_metrics_config.rs` (the parse, the default, both spellings
+legal, the schema declaration, the camelCase contract). The red states:
+the M1 pins failed with 8 errors (E0425 ×4 over the unresolved
+`cache_plane_health_from`, E0061 ×4 over the 4-arg `cache_plane_scrape`)
+recorded against the stashed impl; the M2 pins failed with 24 cli errors
+(E0026 ×4 over the missing `Dev`/`Start` fields, E0425 ×17, E0599 ×3)
+and 4 config errors (E0609 over the missing `health_metrics` field).
+
+**Benches + example.** The `hot_key_top` bench gains the
+`cache_plane_health_scrape` group (`off_default_shape` vs
+`on_health_arm` over a REAL TieredCache driven to 256 resident
+write-through entries — the posture pull's marginal cost measured, not
+assumed); the `hot_key_top` example gains the flag-parse walk
+(`--cache-plane-health` beside the two earlier flags, the F46 polish
+tail shape) and the health-arm section (the layered resolver under
+`cache.healthMetrics = true`, then the live posture of a tier with
+three resident entries — the run printed `memory_entries=3` and the
+nine-family gauge exposition).
+
+**Micro-debt cleaned.** Two poison-swallow `.ok()` lock reads repaired
+(the V2-F46 recovery shape extended beyond the observability family):
+`RecordCapture::tee` (`record_wire.rs` — the old `.ok().and_then` shape
+silently dropped the recorded metadata on a poisoned lock) and the
+render stage's shell-cache read (`dispatch/stages/render.rs` — the old
+shape silently missed a shell-cache hit). Both critical sections are
+one plain read/take — the `PoisonError::into_inner` recovery hands the
+guard back and the read lands.
+
+**Docs drift repaired.** The spec's WP table gains the F47/F48 landed
+rows; `docs/architecture.md`'s cache and cli rows name the health wire
+(the cache row's §-refs ended at V2-F46); `crates/cache/README.md`'s
+posture bullet names the F47 production consumer (the bullet previously
+named NO consumer — the F32 gap verbatim); `crates/cli/README.md`'s
+Observability section names the third resolver family; the regenerated
+schema JSON (`schemas/oxide-fw-config.schema.json`) carries the
+`healthMetrics` fragment; the reference pages re-rendered by the E11
+generator (`docs/reference/cli.md` gains the flag rows,
+`docs/reference/config.md` gains the `cache.healthMetrics` row); the
+README badge re-measured by `scripts/count-tests.sh`.
+
+**Deltas.** The 17 recorded cli lib pins remain the dedicated session's
+job (unchanged here — the suite ran 435 passed / 17 failed, the recorded
+pre-existing list verbatim: the migrate pins, the search pins, the
+brownout ceiling, `swr_window`, deploy/experiments/prerendered-nonce/
+redact-secrets). The posture's future polish tail: a `/-/health`-style
+endpoint reading `TieredCache::health()` directly (the pull is already
+the value shape a probe wants — the scrape arm was the recorded seam;
+the endpoint is the next one if the spec ever names it).
