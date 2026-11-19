@@ -53,6 +53,10 @@ OXIDE_CHECK_STRICT=1 oxide check
 
 Every command is also a public `cmd_*` function — tests and tooling can call them directly.
 
+## Observability
+
+The serve boot wires the §20 cache-plane exposition into `/_oxide/metrics`: the boot's `MetricsCacheObserver` renders the `oxide_cache_plane_*` counter families, the hot-key attribution ledger (`oxide_fw_cache::HotKeyObserver`) renders the labeled `oxide_cache_plane_hot_key_total` family over the resolved top window, and — behind the operator's opt-in — the ledger's coverage exposition (the unattributed score's counter, the occupancy and bound gauges). The window and the opt-in speak one layered precedence: the boot flag wins (`--cache-hot-key-top N`, `--cache-plane-coverage`), then the env spelling (`OXIDE_CACHE_PLANE_HOT_KEY_TOP`, `OXIDE_CACHE_PLANE_COVERAGE`), then the committed baseline (`cache.hotKeyTop`, `cache.coverageMetrics`), then the documented defaults (window 10, coverage off — the default scrape shape stays byte-identical). The resolvers (`observability::cache_hot_key_top_with_config`, `observability::cache_plane_coverage_with_config`) are public API with doctests; the parse cores are pure and the boot resolves them once, pre-runtime (the override slots `apply_startup_env` writes are command-level facts, never a mid-async env poll).
+
 ## How it fits in Oxide
 
 The CLI is the only crate that sees the whole framework stack. It builds the renderer, the loader, the action dispatcher, the endpoint dispatcher, and the middleware dispatcher — then hands them to `oxide-fw-server` as trait objects. Everything else is library code that the CLI wires together.
