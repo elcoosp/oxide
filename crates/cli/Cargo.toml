@@ -67,6 +67,17 @@ name = "docs"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F42: the hot-key window's bench — the F46 session found the target
+# NEVER declared (commit 94df30d6's message names "the hot_key_top bench
+# target" but its diff added a `[lints]` table), so the file rode
+# undeclared auto-discovery instead of the workspace's
+# `harness = false` + `required-features = ["bench-util"]` gate. Declared
+# here so the criterion target is gated like every other bench.
+[[bench]]
+name = "hot_key_top"
+harness = false
+required-features = ["bench-util"]
+
 [dependencies]
 chrono = { workspace = true }
 oxc_resolver = { workspace = true }
