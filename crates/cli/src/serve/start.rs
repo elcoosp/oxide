@@ -1058,13 +1058,25 @@ pub(crate) async fn start_server_inner_full(
     // F43: the window's project baseline joins the precedence — the
     // layered resolver takes the config's `cache.hotKeyTop` (flag wins,
     // then the env spelling, then this baseline, then the F40 default).
+    // F46: the coverage opt-in joins the same precedence — the layered
+    // resolver takes the config's `cache.coverageMetrics` (flag wins,
+    // then the env spelling, then this baseline, then default-off) and
+    // the closure composes the ledger's F44 coverage exposition when the
+    // boot opted in (the default shape stays byte-identical).
     if let Some(exporter) = cache_exporter.as_ref() {
         let exporter = std::sync::Arc::clone(exporter);
         let hot_keys = cache_hot_keys.clone();
         let hot_key_top =
             crate::observability::cache_hot_key_top_with_config(cfg.cache.hot_key_top);
+        let coverage =
+            crate::observability::cache_plane_coverage_with_config(cfg.cache.coverage_metrics);
         metrics.set_cache_plane(move || {
-            crate::framework_shim::cache_plane_scrape(&exporter, hot_keys.as_deref(), hot_key_top)
+            crate::framework_shim::cache_plane_scrape(
+                &exporter,
+                hot_keys.as_deref(),
+                hot_key_top,
+                coverage,
+            )
         });
     }
     let l0 = if is_dev {
