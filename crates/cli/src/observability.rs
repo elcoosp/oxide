@@ -282,6 +282,45 @@ pub(crate) fn trace_file_path() -> Option<std::path::PathBuf> {
     }
 }
 
+/// The §20 scrape's hot-key top window (`OXIDE_CACHE_PLANE_HOT_KEY_TOP`,
+/// V2-F41): the F40 scrape's top-n stops being a compile-time constant —
+/// the boot resolves the operator's spelling ONCE at the
+/// `set_cache_plane` wire (the `trace_file_path` posture: a boot-time
+/// read, not a per-scrape env poll) and every scrape renders that
+/// window. The falsy spellings (`""`/`0`/`false`/`off`) keep the F40
+/// default ([`crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP`]); a
+/// parsed value rides verbatim, clamped to the ledger's own bound
+/// (`CACHE_HOT_KEY_CAPACITY` — rows past the occupancy do not exist, so
+/// the honest cap keeps one scrape bounded); anything unparsable
+/// degrades loudly-but-honestly — one stderr notice naming the source,
+/// then the default (the `feed_floor_from` posture).
+pub(crate) fn cache_hot_key_top() -> usize {
+    let raw = std::env::var("OXIDE_CACHE_PLANE_HOT_KEY_TOP").ok();
+    cache_hot_key_top_from(raw.as_deref())
+}
+
+/// The parse core behind [`cache_hot_key_top`]: `None` is the unset
+/// spelling. Pure — the pins drive it without touching the process env;
+/// the one env-read pin covers the real spelling.
+pub(crate) fn cache_hot_key_top_from(raw: Option<&str>) -> usize {
+    let Some(raw) = raw else {
+        return crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP;
+    };
+    if matches!(raw, "" | "0" | "false" | "off") {
+        return crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP;
+    }
+    match raw.parse::<usize>() {
+        Ok(top) => top.min(crate::framework_shim::CACHE_HOT_KEY_CAPACITY),
+        Err(_) => {
+            eprintln!(
+                "oxide: OXIDE_CACHE_PLANE_HOT_KEY_TOP={raw} is not a window size; \
+                 the scrape keeps the default window"
+            );
+            crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP
+        }
+    }
+}
+
 /// Build the `tracing-opentelemetry` layer for the given OTLP endpoint.
 /// The returned layer is backed by a batch span processor whose lifetime is
 /// process-wide via a leaked `TracerProvider` — acceptable for a CLI that
