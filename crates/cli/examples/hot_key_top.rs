@@ -28,6 +28,12 @@
 //!    the unattributed score's counter, the occupancy and bound gauges —
 //!    composed beside the labeled family under the
 //!    `cache.coverageMetrics` opt-in.
+//! 7. (V2-F47) The health arm: the tier's F32 posture exposition —
+//!    `TieredCache::health()` → `render_prometheus()`'s nine
+//!    `oxide_cache_plane_*` gauge families — composed after the labeled
+//!    and coverage families under the `OXIDE_CACHE_PLANE_HEALTH`
+//!    opt-in, over a tier with real resident entries (the posture reads
+//!    the live stack, never a zeroed stand-in).
 //!
 //! Run with:
 //!
@@ -41,7 +47,7 @@ use oxide_fw_cache::{
 };
 use oxide_fw_cli::observability::{
     cache_hot_key_top, cache_hot_key_top_from, cache_plane_coverage,
-    cache_plane_coverage_with_config, set_cache_hot_key_top_override,
+    cache_plane_coverage_with_config, cache_plane_health_from, set_cache_hot_key_top_override,
 };
 
 fn main() {
@@ -111,17 +117,21 @@ fn main() {
         "--cache-hot-key-top",
         "50",
         "--cache-plane-coverage",
+        "--cache-plane-health",
     ]);
     oxide_fw_cli::apply_startup_env(&cli);
     println!(
-        "parse_from(start --cache-hot-key-top 50 --cache-plane-coverage): top={}, coverage={}",
+        "parse_from(start --cache-hot-key-top 50 --cache-plane-coverage \
+         --cache-plane-health): top={}, coverage={}, health={}",
         cache_hot_key_top(),
-        cache_plane_coverage()
+        cache_plane_coverage(),
+        oxide_fw_cli::observability::cache_plane_health()
     );
     // The hygiene the pins keep: the slots clear so the process-wide
     // state never outlives the walk.
     oxide_fw_cli::observability::set_cache_hot_key_top_override(None);
     oxide_fw_cli::observability::set_cache_plane_coverage_override(None);
+    oxide_fw_cli::observability::set_cache_plane_health_override(None);
 
     // 6. The V2-F46 coverage arm: the boot's composition with the
     //    opt-in ON — the ledger's F44 coverage exposition (the
@@ -139,4 +149,56 @@ fn main() {
         .expect("the coverage exposition renders under the opt-in");
     println!("--- the coverage arm (cache.coverageMetrics = true) ---");
     println!("{}", &full_scrape[cov..]);
+
+    // 7. The V2-F47 health arm: the tier's F32 posture exposition. The
+    //    parse core first (the same spellings family the coverage knob
+    //    speaks), then the composition the boot rides — a small tier
+    //    with real resident entries so the posture gauges render the
+    //    live stack (`memory_entries` counts the sets below), followed
+    //    by the exporter's families ahead of it (the fixed order:
+    //    exporter, labeled window, coverage, posture LAST).
+    for spelling in [Some("on"), Some("off"), Some("sure"), None] {
+        println!(
+            "cache_plane_health_from({spelling:?}) = {}",
+            cache_plane_health_from(spelling)
+        );
+    }
+    let health = oxide_fw_cli::observability::cache_plane_health_with_config(Some(true));
+    let tier = oxide_fw_cache::TieredCache::new(4 * 1024 * 1024);
+    let rt = tokio::runtime::Runtime::new().expect("the example's tokio runtime");
+    rt.block_on(async {
+        for key in ["/routes/index", "/routes/docs", "/routes/api"] {
+            tier.set(
+                key,
+                oxide_fw_cache::Entry {
+                    body: b"<html>hello</html>".to_vec(),
+                    status: 200,
+                    headers: vec![("content-type".into(), "text/html".into())],
+                    tags: vec!["demo".into()],
+                    policy: oxide_fw_cache::Policy {
+                        ttl: std::time::Duration::from_secs(60),
+                        swr: None,
+                        stale_if_error: None,
+                        soft_tags: true,
+                    },
+                    stored_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("the wall clock runs")
+                        .as_millis() as u64,
+                    etag: "\"v1\"".into(),
+                },
+            )
+            .await
+            .expect("the tier takes the write");
+        }
+    });
+    if health {
+        let posture = tier.health();
+        println!("--- the health arm (OXIDE_CACHE_PLANE_HEALTH = on) ---");
+        println!(
+            "memory_entries={} disk_attached={} remote_attached={}",
+            posture.memory_entries, posture.disk_attached, posture.remote_attached
+        );
+        println!("{}", posture.render_prometheus());
+    }
 }
