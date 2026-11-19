@@ -35,13 +35,14 @@
 //! 8. Over real cache traffic through the F28 builder the seam agrees
 //!    with the exporter: the fan of both counts the same events.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oxide_fw_cache::{
     CacheEvent, CacheObserver, CacheOp, Entry, EventFeed, FanoutCacheObserver, HotKeyObserver,
-    MetricsCacheObserver, Policy, TieredCache,
+    HotKeyRow, MetricsCacheObserver, Policy, TieredCache,
 };
+use tracing_subscriber::prelude::*;
 
 fn entry(body: &[u8], tags: &[&str]) -> Entry {
     Entry {
@@ -432,4 +433,341 @@ fn exposition_escapes_label_values_and_bounds_the_window() {
         .filter(|line| line.starts_with("oxide_cache_plane_hot_key_total{"))
         .count();
     assert_eq!(rows, 2, "the exposition rides the top(n) window");
+}
+
+// --------------------------------------------------------------- the snapshot pins (F44)
+
+/// The F44 typed read: the whole ledger answers as ONE value under ONE
+/// lock pass — the top window's rows in the deterministic order beside
+/// the coverage aggregates (`tracked`, `capacity`, `unattributed`) — the
+/// exporter's `CacheMetricsSnapshot` posture transposed to the
+/// attribution arm. Composing `top()` + `len()` + `capacity()` +
+/// `unattributed()` by hand takes four lock passes a racing producer can
+/// tear between; the snapshot cannot be torn. Two reads over the same
+/// state are equal, so a diff of two snapshots is a diff of the traffic,
+/// not of the read.
+#[test]
+fn snapshot_answers_the_whole_ledger_in_one_value() {
+    let hot = HotKeyObserver::bounded(8);
+    push(&hot, "route:/b", CacheOp::Miss);
+    push(&hot, "route:/a", CacheOp::Miss);
+    push(&hot, "route:/a", CacheOp::Set { bytes: 8 });
+
+    let snap = hot.snapshot(10);
+    assert_eq!(snap.rows.len(), 2, "the top window rides the value");
+    assert_eq!(
+        snap.rows[0],
+        HotKeyRow {
+            key: "route:/a".to_string(),
+            count: 2,
+        },
+        "count desc"
+    );
+    assert_eq!(
+        snap.rows[1],
+        HotKeyRow {
+            key: "route:/b".to_string(),
+            count: 1,
+        },
+        "key asc on ties"
+    );
+    assert_eq!(snap.tracked, 2, "distinct keys the ledger holds");
+    assert_eq!(snap.capacity, 8, "the bound the ledger was built with");
+    assert_eq!(snap.unattributed, 0);
+    assert_eq!(
+        snap,
+        hot.snapshot(10),
+        "re-reads over the same state are equal"
+    );
+}
+
+/// The window bounds the rows the value carries — and nothing else: the
+/// coverage aggregates are whole-ledger facts independent of the window
+/// (the F41 doctrine: rows past the occupancy do not exist, the honest
+/// cap keeps one read bounded; window `0` asks for no rows but the
+/// aggregates still answer).
+#[test]
+fn snapshot_window_bounds_the_rows_not_the_aggregates() {
+    let hot = HotKeyObserver::bounded(8);
+    for key in ["a", "b", "c"] {
+        push(&hot, key, CacheOp::Miss);
+    }
+    let narrow = hot.snapshot(1);
+    assert_eq!(narrow.rows.len(), 1, "the window bounds the rows");
+    assert_eq!(narrow.rows[0].key, "a", "count desc, key asc on ties");
+    assert_eq!(narrow.tracked, 3, "the aggregates are whole-ledger facts");
+    let wide = hot.snapshot(0);
+    assert!(wide.rows.is_empty(), "window 0 asks for no rows");
+    assert_eq!(wide.tracked, 3);
+    assert_eq!(wide.unattributed, 0);
+}
+
+/// The coverage score rides the value: refusals land in `unattributed`
+/// exactly as the direct read answers — beside the rows, in one lock
+/// pass (the F31 honest score, now part of the snapshot).
+#[test]
+fn snapshot_carries_the_unattributed_score() {
+    let hot = HotKeyObserver::bounded(1);
+    push(&hot, "route:/a", CacheOp::Miss);
+    push(&hot, "route:/b", CacheOp::Miss);
+    push(&hot, "route:/c", CacheOp::Miss);
+    let snap = hot.snapshot(10);
+    assert_eq!(snap.unattributed, 2, "two refused rows");
+    assert_eq!(snap.tracked, 1);
+    assert_eq!(snap.rows.len(), 1);
+}
+
+/// The zero-bound ledger (the `EventFeed` zero-bound posture): the value
+/// carries the empty shape honestly — no rows, everything unattributed,
+/// the bound rendered as built.
+#[test]
+fn snapshot_on_the_zero_bound_ledger() {
+    let hot = HotKeyObserver::bounded(0);
+    push(&hot, "route:/a", CacheOp::Miss);
+    let snap = hot.snapshot(10);
+    assert!(snap.rows.is_empty());
+    assert_eq!(snap.unattributed, 1);
+    assert_eq!(snap.tracked, 0);
+    assert_eq!(snap.capacity, 0);
+}
+
+// --------------------------------------------------------------- the coverage exposition pins (F44)
+
+/// `render_coverage_prometheus` is the coverage arm (the F32 gauge
+/// posture): the unattributed score renders as the counter a scrape
+/// diffs, the occupancy and the bound render as gauges (current
+/// posture, not deltas). These are the families the module docs have
+/// always said a dashboard renders beside the top window — shipped so
+/// an operator's scrape carries them instead of a hand-rolled reader
+/// over four separate calls. Fixed family order (`# HELP`/`# TYPE`
+/// pairs), a trailing newline, byte-stable re-renders.
+#[test]
+fn coverage_exposition_renders_the_families_deterministically() {
+    let hot = HotKeyObserver::bounded(1);
+    push(&hot, "route:/a", CacheOp::Miss);
+    push(&hot, "route:/b", CacheOp::Miss);
+    let out = hot.render_coverage_prometheus();
+    assert!(
+        out.starts_with("# HELP oxide_cache_plane_hot_key_unattributed_total "),
+        "{out}"
+    );
+    assert!(
+        out.contains("# TYPE oxide_cache_plane_hot_key_unattributed_total counter\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("oxide_cache_plane_hot_key_unattributed_total 1\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("# HELP oxide_cache_plane_hot_key_keys "),
+        "{out}"
+    );
+    assert!(
+        out.contains("# TYPE oxide_cache_plane_hot_key_keys gauge\n"),
+        "{out}"
+    );
+    assert!(out.contains("oxide_cache_plane_hot_key_keys 1\n"), "{out}");
+    assert!(
+        out.contains("# TYPE oxide_cache_plane_hot_key_capacity gauge\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("oxide_cache_plane_hot_key_capacity 1\n"),
+        "{out}"
+    );
+    // The fixed family order: score, occupancy, bound.
+    let score = out
+        .find("oxide_cache_plane_hot_key_unattributed_total 1")
+        .expect("the score family renders");
+    let keys = out
+        .find("oxide_cache_plane_hot_key_keys 1")
+        .expect("the occupancy family renders");
+    let bound = out
+        .find("oxide_cache_plane_hot_key_capacity 1")
+        .expect("the bound family renders");
+    assert!(score < keys && keys < bound, "{out}");
+    assert!(out.ends_with('\n'), "the trailing newline");
+    assert_eq!(
+        out,
+        hot.render_coverage_prometheus(),
+        "re-renders are byte-equal"
+    );
+}
+
+/// The arm tracks the live state: refusals land in the counter family,
+/// the occupancy gauge follows the map, and a reset zeroes both (the
+/// posture the gauge TYPE names — current state, not deltas).
+#[test]
+fn coverage_exposition_tracks_the_live_state() {
+    let hot = HotKeyObserver::bounded(2);
+    push(&hot, "a", CacheOp::Miss);
+    push(&hot, "b", CacheOp::Miss);
+    push(&hot, "c", CacheOp::Miss);
+    let out = hot.render_coverage_prometheus();
+    assert!(
+        out.contains("oxide_cache_plane_hot_key_unattributed_total 1\n"),
+        "{out}"
+    );
+    assert!(out.contains("oxide_cache_plane_hot_key_keys 2\n"), "{out}");
+    hot.reset();
+    let out = hot.render_coverage_prometheus();
+    assert!(
+        out.contains("oxide_cache_plane_hot_key_unattributed_total 0\n"),
+        "{out}"
+    );
+    assert!(out.contains("oxide_cache_plane_hot_key_keys 0\n"), "{out}");
+    assert!(
+        out.contains("oxide_cache_plane_hot_key_capacity 2\n"),
+        "{out}"
+    );
+}
+
+// --------------------------------------------------------------- the take pins (F45)
+
+/// The console sink the warn pins read: a `MakeWriter` over a shared
+/// byte buffer (the `hot_key_gate_tdd` shape — the helpers ride here
+/// because test targets do not share code).
+#[derive(Clone)]
+struct ConsoleWriter(Arc<Mutex<Vec<u8>>>);
+
+impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for ConsoleWriter {
+    type Writer = ConsoleSink;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        ConsoleSink(self.0.clone())
+    }
+}
+
+struct ConsoleSink(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for ConsoleSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("console buffer")
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Count the rendered warn rows the bound's sticky rule leaves.
+fn warn_rows(buffer: &ConsoleWriter) -> usize {
+    let bytes = buffer.0.lock().expect("console buffer");
+    std::str::from_utf8(&bytes)
+        .expect("the fmt render is utf-8")
+        .lines()
+        .filter(|line| line.contains("WARN") && line.contains("saturated"))
+        .count()
+}
+
+/// The capture pins' registration lock: two subscriber installs racing
+/// rebuild the tracing callsite cache, and a warn fired mid-rebuild is
+/// dropped — the sticky-warn pins register one at a time so each drive
+/// runs against a warm cache (the flake the parallel suite hit).
+static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+
+/// The F45 windowed hand-over: `take()` returns the whole window as the
+/// same value shape the read answers (every tracked row in the
+/// deterministic order — the hand-over is the DATA, the render bound is
+/// the caller's concern) and the ledger starts a fresh one under the
+/// SAME lock pass: the map clears, the unattributed score zeroes, and
+/// the counts are never both read and left (the torn hand-over
+/// hand-composing `top()` + `reset()` suffers: events between the two
+/// calls are lost or double-counted).
+#[test]
+fn take_hands_over_the_whole_window_and_starts_a_fresh_one() {
+    let hot = HotKeyObserver::bounded(2);
+    push(&hot, "route:/a", CacheOp::Miss);
+    push(&hot, "route:/a", CacheOp::Miss);
+    push(&hot, "route:/b", CacheOp::Miss);
+    push(&hot, "route:/c", CacheOp::Miss);
+
+    let taken = hot.take();
+    assert_eq!(
+        taken.rows,
+        vec![
+            HotKeyRow {
+                key: "route:/a".to_string(),
+                count: 2,
+            },
+            HotKeyRow {
+                key: "route:/b".to_string(),
+                count: 1,
+            },
+        ],
+        "every tracked row rides the hand-over, top order"
+    );
+    assert_eq!(taken.tracked, 2, "the occupancy the window drained");
+    assert_eq!(taken.capacity, 2, "the bound the window ran under");
+    assert_eq!(taken.unattributed, 1, "the score the window accumulated");
+
+    // The fresh window stands alone: nothing tracked, the score zeroed,
+    // the point lookup answers honestly.
+    assert!(hot.is_empty(), "the map cleared");
+    assert_eq!(hot.unattributed(), 0, "the score zeroed");
+    assert_eq!(hot.count("route:/a"), None);
+}
+
+/// The hand-over restarts FIRST-SIGHT admission: a resident key the
+/// window drained is gone — its next event inserts fresh (count 1), the
+/// same posture a boot's first sight rides. (`reset`'s documented
+/// windowed-sampling shape, now with the read-and-reset composed.)
+#[test]
+fn take_restarts_first_sight_admission() {
+    let hot = HotKeyObserver::bounded(8);
+    push(&hot, "route:/a", CacheOp::Miss);
+    push(&hot, "route:/a", CacheOp::Miss);
+    let _ = hot.take();
+    push(&hot, "route:/a", CacheOp::Miss);
+    assert_eq!(
+        hot.count("route:/a"),
+        Some(1),
+        "the drained key admits fresh, not resident"
+    );
+}
+
+/// The sticky warn re-arms with the fresh window (the `reset` rule):
+/// saturate → one warn; take; saturate again → the second window warns
+/// once more. A host that reports per interval keeps its honest signal.
+#[test]
+fn take_rearms_the_sticky_warn() {
+    let _capture = CAPTURE_LOCK.lock().expect("the capture lock");
+    let buffer = ConsoleWriter(Arc::new(Mutex::new(Vec::new())));
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(buffer.clone())
+        .with_target(false)
+        .without_time();
+    let hot = HotKeyObserver::bounded(1);
+
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+        push(&hot, "route:/a", CacheOp::Miss);
+        push(&hot, "route:/b", CacheOp::Miss);
+        assert_eq!(warn_rows(&buffer), 1, "the first window warns once");
+        let _ = hot.take();
+        // The fresh window has the bound's room back (the map cleared),
+        // so the re-arm drive refills it first: the second window's
+        // FIRST refusal is the re-armed warn.
+        push(&hot, "route:/c", CacheOp::Miss);
+        push(&hot, "route:/d", CacheOp::Miss);
+        assert_eq!(warn_rows(&buffer), 2, "the fresh window re-arms the warn");
+    });
+}
+
+/// The empty hand-over: an empty ledger hands an empty window (the
+/// zero-bound posture's honest shape — no fabricated rows, nothing to
+/// zero) and the ledger stays empty.
+#[test]
+fn take_on_an_empty_ledger_hands_an_empty_window() {
+    let hot = HotKeyObserver::bounded(8);
+    let taken = hot.take();
+    assert!(taken.rows.is_empty());
+    assert_eq!(taken.tracked, 0);
+    assert_eq!(taken.capacity, 8);
+    assert_eq!(taken.unattributed, 0);
+    assert!(hot.is_empty());
 }
