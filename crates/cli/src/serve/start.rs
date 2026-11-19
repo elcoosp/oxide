@@ -932,11 +932,13 @@ pub(crate) async fn start_server_inner_full(
     // config path. Memory/disk are the local tiers every handler gets.
     // F36/F37: the typed half + the §20 exporter handle travel beside the
     // erased handler (the stack carries both; this arm builds its own).
-    let (l0_tier, l0_tiered, cache_exporter) = match stack.cache_tier.clone() {
+    // F40: the hot-key ledger rides the same shape.
+    let (l0_tier, l0_tiered, cache_exporter, cache_hot_keys) = match stack.cache_tier.clone() {
         Some(tier) => (
             tier,
             stack.cache_tier_typed.clone(),
             stack.cache_exporter.clone(),
+            stack.cache_hot_keys.clone(),
         ),
         None => {
             let mut tier = oxide_fw_cache::TieredCache::new(l0_bytes);
@@ -1013,15 +1015,24 @@ pub(crate) async fn start_server_inner_full(
             }
             // F36/F37: the test-stack arm attaches the §20 exporter over
             // its own tier and keeps the typed half — the same wire the
-            // real stack carries.
+            // real stack carries. F40: the hot-key ledger joins behind
+            // the F34 fan (the same construction the real boot rides).
             let cache_exporter = std::sync::Arc::new(oxide_fw_cache::MetricsCacheObserver::new());
-            let typed =
-                std::sync::Arc::new(tier.with_observer(std::sync::Arc::clone(&cache_exporter)
-                    as std::sync::Arc<dyn oxide_fw_cache::CacheObserver>));
+            let cache_hot_keys = std::sync::Arc::new(oxide_fw_cache::HotKeyObserver::bounded(
+                crate::framework_shim::CACHE_HOT_KEY_CAPACITY,
+            ));
+            let cache_observer = oxide_fw_cache::FanoutCacheObserver::shared(vec![
+                std::sync::Arc::clone(&cache_exporter)
+                    as std::sync::Arc<dyn oxide_fw_cache::CacheObserver>,
+                std::sync::Arc::clone(&cache_hot_keys)
+                    as std::sync::Arc<dyn oxide_fw_cache::CacheObserver>,
+            ]);
+            let typed = std::sync::Arc::new(tier.with_observer(cache_observer));
             (
                 std::sync::Arc::clone(&typed) as std::sync::Arc<dyn oxide_fw_cache::CacheHandler>,
                 Some(std::sync::Arc::clone(&typed)),
                 Some(cache_exporter),
+                Some(cache_hot_keys),
             )
         }
     };
@@ -1037,9 +1048,15 @@ pub(crate) async fn start_server_inner_full(
     // F37: the §20 cache-plane exposition — the boot's exporter renders the
     // `oxide_cache_plane_*` families beside the request-plane rows (the
     // server crate stays cache-agnostic: the slot is an `Fn() -> String`).
+    // F40: the hot-key ledger's labeled family rides the same scrape —
+    // one run per pull renders both planes (the composition the F37 slot
+    // was shaped for: the CLI, which depends on both crates, composes).
     if let Some(exporter) = cache_exporter.as_ref() {
         let exporter = std::sync::Arc::clone(exporter);
-        metrics.set_cache_plane(move || exporter.render_prometheus());
+        let hot_keys = cache_hot_keys.clone();
+        metrics.set_cache_plane(move || {
+            crate::framework_shim::cache_plane_scrape(&exporter, hot_keys.as_deref())
+        });
     }
     let l0 = if is_dev {
         None
@@ -1209,6 +1226,11 @@ pub(crate) async fn start_server_inner_full(
         boot_script_url,
         boot_script_integrity,
         l0,
+        // F36: the boot wires the typed recording half beside the erased
+        // one — the render stage's flight owner records the publish count
+        // through it (the F33 emitter's live call site). `None` in dev
+        // (the `is_dev` arm above); the un-wired boot stays silent.
+        l0_tiered,
         actions,
         archived,
         pool: stack.pool.clone(),
