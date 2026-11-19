@@ -602,12 +602,10 @@ impl Command {
     pub fn cache_posture_path_arg(&self) -> Option<String> {
         match self {
             Command::Dev {
-                cache_posture_path,
-                ..
+                cache_posture_path, ..
             }
             | Command::Start {
-                cache_posture_path,
-                ..
+                cache_posture_path, ..
             } => cache_posture_path.clone(),
             _ => None,
         }
