@@ -406,6 +406,13 @@ pub struct FrameworkStack {
     /// `Metrics::set_cache_plane` so the `/_oxide/metrics` scrape renders
     /// the `oxide_cache_plane_*` families beside the request-plane rows.
     pub cache_exporter: Option<Arc<oxide_fw_cache::MetricsCacheObserver>>,
+    /// F40: the hot-key attribution ledger attached beside the exporter
+    /// behind the F34 fan — the same construction the exporter rides (the
+    /// tier's one `with_observer` slot carries the composite). The serve
+    /// boot composes the ledger's labeled `oxide_cache_plane_hot_key_total`
+    /// family into the §20 cache-plane scrape through
+    /// [`cache_plane_scrape`]; `Some` exactly when `cache_tier` is.
+    pub cache_hot_keys: Option<Arc<oxide_fw_cache::HotKeyObserver>>,
     /// §6.4: the component source handed to the worker's resolver. Dev fills
     /// `sources`; prod leaves it empty and the renderer derives the generated
     /// SSR entry from the project root.
@@ -423,6 +430,7 @@ impl FrameworkStack {
             cache_tier: None,
             cache_tier_typed: None,
             cache_exporter: None,
+            cache_hot_keys: None,
             component_source: Arc::new(std::sync::RwLock::new(
                 oxide_fw_jshost::ComponentSource::default(),
             )),
@@ -453,6 +461,36 @@ impl std::fmt::Debug for FrameworkStack {
             .field("has_pool", &self.pool.is_some())
             .finish()
     }
+}
+
+/// The F40 hot-key ledger's bound: the boot's whole-plane attribution
+/// window (first-sight admission, the F38 posture) sized above the route
+/// cardinality a site realistically serves — the dashboard-batcher's
+/// memory budget, not a correctness bound (refusals count in
+/// `HotKeyObserver::unattributed`, the honest coverage score).
+pub(crate) const CACHE_HOT_KEY_CAPACITY: usize = 2048;
+
+/// The F40 §20 scrape's hot-key window: how many labeled rows one scrape
+/// renders beside the exporter's families — the dashboard's top window,
+/// bounded so one scrape stays bounded.
+pub(crate) const CACHE_PLANE_HOT_KEY_TOP: usize = 10;
+
+/// The F40 §20 cache-plane exposition the boot hands
+/// `Metrics::set_cache_plane`: the exporter's `oxide_cache_plane_*`
+/// families ride unchanged ahead of the hot-key ledger's labeled
+/// `oxide_cache_plane_hot_key_total` family (appended last, one run per
+/// scrape — a pull reads the posture NOW). The unattached arm
+/// (`None`) is the bare exporter render byte-identical — the F37
+/// posture holds wherever the ledger does not ride.
+pub(crate) fn cache_plane_scrape(
+    exporter: &oxide_fw_cache::MetricsCacheObserver,
+    hot_keys: Option<&oxide_fw_cache::HotKeyObserver>,
+) -> String {
+    let mut rows = exporter.render_prometheus();
+    if let Some(hot_keys) = hot_keys {
+        rows.push_str(&hot_keys.render_prometheus(CACHE_PLANE_HOT_KEY_TOP));
+    }
+    rows
 }
 
 /// Build the framework stack for a project. `config_path` is the resolved
@@ -614,13 +652,14 @@ pub async fn build_framework_stack(
     // configures a disk root gets the L1 tier too; §11.2: a configured
     // `cache.handler=http` attaches an `HttpCacheHandler` REMOTE tier via
     // `with_remote` so `'use cache'` reads/writes through it. The block
-    // yields all three stack halves — the erased tier the pools consume,
-    // the TYPED tier the render stage records through, and the §20
-    // exporter the boot hands to `Metrics::set_cache_plane`.
-    let (cache_tier, cache_tier_typed, cache_exporter): (
+    // yields all four stack halves — the erased tier the pools consume,
+    // the TYPED tier the render stage records through, the §20 exporter
+    // and the F40 hot-key ledger the boot composes into the scrape.
+    let (cache_tier, cache_tier_typed, cache_exporter, cache_hot_keys): (
         Arc<dyn oxide_fw_cache::CacheHandler>,
         Arc<oxide_fw_cache::TieredCache>,
         Arc<oxide_fw_cache::MetricsCacheObserver>,
+        Arc<oxide_fw_cache::HotKeyObserver>,
     ) = {
         // B-19: only materialize the disk L1 when the configured handler is
         // disk-backed (disk/redis/s3/http). With the default `memory` handler
@@ -653,23 +692,34 @@ pub async fn build_framework_stack(
         // F36/F37: the concrete tier stays TYPED on the stack (the erased
         // handler cannot name `record_coalesced`) and the §20 exporter
         // attaches at construction — one tier, both halves.
+        // F40: the hot-key ledger attaches BESIDE the exporter behind the
+        // F34 fan — the tier's one `with_observer` slot carries the
+        // composite, the exporter stays directly reachable for the scrape,
+        // and the ledger accumulates per key what the exporter aggregates
+        // per op.
         let cache_exporter: Arc<oxide_fw_cache::MetricsCacheObserver> =
             Arc::new(oxide_fw_cache::MetricsCacheObserver::new());
+        let cache_hot_keys: Arc<oxide_fw_cache::HotKeyObserver> = Arc::new(
+            oxide_fw_cache::HotKeyObserver::bounded(CACHE_HOT_KEY_CAPACITY),
+        );
+        let cache_observer = oxide_fw_cache::FanoutCacheObserver::shared(vec![
+            Arc::clone(&cache_exporter) as Arc<dyn oxide_fw_cache::CacheObserver>,
+            Arc::clone(&cache_hot_keys) as Arc<dyn oxide_fw_cache::CacheObserver>,
+        ]);
         let cache_tier_typed: Arc<oxide_fw_cache::TieredCache> = {
             let tier = match remote_cache_handler(cache_handler).await {
                 Some(remote) => tier.with_remote(remote),
                 None => tier,
             };
-            Arc::new(tier.with_observer(
-                Arc::clone(&cache_exporter) as Arc<dyn oxide_fw_cache::CacheObserver>
-            ))
+            Arc::new(tier.with_observer(cache_observer))
         };
-        // The three halves ride out of the block together (the stack
+        // The four halves ride out of the block together (the stack
         // construction below clones each into its field).
         (
             Arc::clone(&cache_tier_typed) as Arc<dyn oxide_fw_cache::CacheHandler>,
             cache_tier_typed,
             cache_exporter,
+            cache_hot_keys,
         )
     };
     // PERF-05: the `fetch` op handler (SSRF-hardened, backed by oxide-fw-server).
@@ -879,6 +929,7 @@ pub async fn build_framework_stack(
         cache_tier: Some(Arc::clone(&cache_tier)),
         cache_tier_typed: Some(Arc::clone(&cache_tier_typed)),
         cache_exporter: Some(cache_exporter),
+        cache_hot_keys: Some(cache_hot_keys),
         component_source,
     }
 }
