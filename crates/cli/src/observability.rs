@@ -534,6 +534,121 @@ pub fn cache_plane_coverage_with_config(config_metrics: Option<bool>) -> bool {
     }
 }
 
+/// The §20 scrape's health opt-in (`OXIDE_CACHE_PLANE_HEALTH`, V2-F47):
+/// when the operator turns the spelling on, the boot's
+/// [`cache_plane_scrape`](crate::framework_shim::cache_plane_scrape)
+/// composes the posture pull's F32 gauge exposition —
+/// `TieredCache::health()` rendered as the nine `oxide_cache_plane_*`
+/// gauge families (the memory tier's occupancy and cap, the disk/remote
+/// attachment flags, the tag-index pressure, the observability seam's
+/// own state). Default off: the scrape's shape is byte-identical to the
+/// pre-F47 doctrine (the posture families compose only when an operator
+/// asks — the F32 pull's zero-production-consumer gap closes here, the
+/// F46 coverage wire is its shape). The truthy spellings
+/// (`1`/`true`/`on`) answer on, the falsy spellings
+/// (`""`/`0`/`false`/`off`) keep off, and garbage degrades
+/// loudly-but-honestly to off — one stderr notice naming the source,
+/// then the default (the [`cache_plane_coverage_from`] posture).
+///
+/// V2-F48: the `--cache-plane-health` boot flag wins when present — the
+/// [`CACHE_PLANE_HEALTH_OVERRIDE`] slot is a command-level fact written
+/// pre-runtime by `apply_startup_env`; absent, the env var keeps its
+/// shell spelling (the [`cache_plane_coverage`] shape).
+pub fn cache_plane_health() -> bool {
+    if let Some(on) = cache_plane_health_override() {
+        return on;
+    }
+    let raw = std::env::var("OXIDE_CACHE_PLANE_HEALTH").ok();
+    cache_plane_health_from(raw.as_deref())
+}
+
+/// The parse core behind [`cache_plane_health`]: `None` is the unset
+/// spelling. Pure — the pins drive it without touching the process env;
+/// the one env-read pin covers the real spelling.
+pub fn cache_plane_health_from(raw: Option<&str>) -> bool {
+    match raw {
+        None => false,
+        Some("1" | "true" | "on") => true,
+        Some("" | "0" | "false" | "off") => false,
+        Some(raw) => {
+            eprintln!(
+                "oxide: OXIDE_CACHE_PLANE_HEALTH={raw} is not a health spelling; \
+                 the scrape keeps the default shape"
+            );
+            false
+        }
+    }
+}
+
+/// The `--cache-plane-health` boot flag's override (V2-F48, the F46
+/// shape), written once pre-runtime by `apply_startup_env` — the
+/// [`CACHE_PLANE_COVERAGE_OVERRIDE`] shape: a command-level fact decided
+/// before the tokio runtime exists, so the read side never races a
+/// mid-async write. `None` (the flag was absent) leaves the
+/// `OXIDE_CACHE_PLANE_HEALTH` env var in charge.
+static CACHE_PLANE_HEALTH_OVERRIDE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+/// Install the boot flag's health override (see
+/// [`CACHE_PLANE_HEALTH_OVERRIDE`]). `None` clears it (the pins'
+/// hygiene).
+///
+/// # Examples
+///
+/// ```
+/// use oxide_fw_cli::observability::set_cache_plane_health_override;
+///
+/// set_cache_plane_health_override(Some(true));
+/// assert!(oxide_fw_cli::observability::cache_plane_health());
+/// set_cache_plane_health_override(None);
+/// ```
+pub fn set_cache_plane_health_override(value: Option<bool>) {
+    // Poison recovery: the `FEED_LEVEL_OVERRIDE` shape (the V2-F46
+    // micro-debt note there holds — the critical section cannot break an
+    // invariant, so the write lands instead of being swallowed).
+    let mut slot = CACHE_PLANE_HEALTH_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = value;
+}
+
+fn cache_plane_health_override() -> Option<bool> {
+    *CACHE_PLANE_HEALTH_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The V2-F48 layered resolver — the boot wire's entry point now that
+/// the health arm has a project baseline (`cache.healthMetrics`, the
+/// `CacheConfig::health_metrics` field) beside the F48 flag and the F47
+/// env spelling. The precedence mirrors the
+/// [`cache_plane_coverage_with_config`] family:
+///
+/// 1. the `--cache-plane-health` flag's override slot (the F46 shape —
+///    written pre-runtime by `apply_startup_env`),
+/// 2. the `OXIDE_CACHE_PLANE_HEALTH` env spelling (the truthy
+///    spellings answer on; garbage degrades loudly-but-honestly to the
+///    DEFAULT — the notice names the source, and the project baseline is
+///    never a silent recovery for a typoed operator spelling),
+/// 3. the `cache.healthMetrics` baseline — both spellings are real
+///    choices: `Some(true)` opts the plane in, `Some(false)` pins it off,
+/// 4. the default-off shape — the boot shape is byte-identical when no
+///    layer speaks (the F40 doctrine).
+///
+/// The env layer's falsy spellings (`""`/`0`/`false`/`off`) stop THAT
+/// layer only: a committed baseline below still answers — an operator's
+/// empty spelling is not the project's config being refused.
+pub fn cache_plane_health_with_config(config_metrics: Option<bool>) -> bool {
+    if let Some(on) = cache_plane_health_override() {
+        return on;
+    }
+    match std::env::var("OXIDE_CACHE_PLANE_HEALTH") {
+        Ok(raw) if !matches!(raw.as_str(), "" | "0" | "false" | "off") => {
+            cache_plane_health_from(Some(&raw))
+        }
+        _ => config_metrics.unwrap_or(false),
+    }
+}
+
 /// Build the `tracing-opentelemetry` layer for the given OTLP endpoint.
 /// The returned layer is backed by a batch span processor whose lifetime is
 /// process-wide via a leaked `TracerProvider` — acceptable for a CLI that
