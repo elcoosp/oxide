@@ -241,7 +241,16 @@ impl RequestRecording {
     /// the capture finishes when the stream ends, with the stamped status
     /// and headers the observer signals.
     pub fn tee(&self, inner: BodyStream, fallback_status: u16) -> BodyStream {
-        let meta_rx = self.meta_rx.lock().ok().and_then(|mut g| g.take());
+        // Poison recovery (micro-debt, V2-F47): the guard's critical
+        // section is one plain `Option::take` — no invariant can break
+        // inside it — so a poisoned lock hands the slot back and the
+        // metadata still reaches the tee. The old `.ok()` shape silently
+        // dropped the recorded metadata on a poisoned lock.
+        let meta_rx = self
+            .meta_rx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         Box::pin(RecordTee {
             inner,
             buf: Vec::new(),
