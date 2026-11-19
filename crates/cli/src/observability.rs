@@ -702,8 +702,7 @@ pub fn cache_posture_path_from(raw: Option<&str>) -> String {
 /// before the tokio runtime exists, so the read side never races a
 /// mid-async write. `None` (the flag was absent) leaves the
 /// `OXIDE_CACHE_POSTURE_PATH` env var in charge.
-static CACHE_POSTURE_PATH_OVERRIDE: std::sync::Mutex<Option<String>> =
-    std::sync::Mutex::new(None);
+static CACHE_POSTURE_PATH_OVERRIDE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Install the boot flag's path override (see
 /// [`CACHE_POSTURE_PATH_OVERRIDE`]). `None` clears it (the pins'
