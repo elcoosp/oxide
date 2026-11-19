@@ -296,6 +296,11 @@ fn cache_schema() -> Value {
                 "type": "boolean",
                 "default": false,
                 "description": "V2-F46: the §20 scrape's coverage arm — the hot-key ledger's coverage exposition (the unattributed score's counter, the occupancy and bound gauges) renders beside the labeled window family when the operator opts in. Precedence: the --cache-plane-coverage flag wins, the OXIDE_CACHE_PLANE_COVERAGE env var keeps the operator's spelling, this key is the project's baseline, and the default-off shape answers byte-identically with none set (the F40 doctrine)."
+            },
+            "healthMetrics": {
+                "type": "boolean",
+                "default": false,
+                "description": "V2-F48: the §20 scrape's health arm — the posture pull's F32 gauge exposition (TieredCache::health() rendered as the nine oxide_cache_plane_* gauge families: the memory tier's occupancy and cap, the disk/remote attachment flags, the tag-index pressure, the observability seam's own state) renders after the labeled window and coverage families when the operator opts in. Precedence: the --cache-plane-health flag wins, the OXIDE_CACHE_PLANE_HEALTH env var keeps the operator's spelling, this key is the project's baseline, and the default-off shape answers byte-identically with none set (the F40 doctrine)."
             }
         }
     })
