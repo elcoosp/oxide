@@ -182,16 +182,22 @@ static FEED_LEVEL_OVERRIDE: std::sync::Mutex<Option<String>> = std::sync::Mutex:
 /// Install the boot flag's feed-level override (see
 /// [`FEED_LEVEL_OVERRIDE`]). `None` clears it (the pins' hygiene).
 pub(crate) fn set_feed_level_override(value: Option<String>) {
-    if let Ok(mut slot) = FEED_LEVEL_OVERRIDE.lock() {
-        *slot = value;
-    }
+    // Poison recovery (micro-debt, V2-F46): the guard's critical section
+    // is one plain `Option` store — no invariant can break inside it —
+    // so a poisoned lock hands the slot back and the write lands. The
+    // old `if let Ok` shape silently swallowed the flag's pre-runtime
+    // write on a poisoned lock.
+    let mut slot = FEED_LEVEL_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = value;
 }
 
 fn feed_level_override() -> Option<String> {
     FEED_LEVEL_OVERRIDE
         .lock()
-        .ok()
-        .and_then(|slot| slot.clone())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
 }
 
 /// The log feed's own level floor (V2-F26/F28): when set — by the
@@ -263,13 +269,19 @@ static TRACE_LOG_OVERRIDE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::ne
 /// Install the boot flag's trace-export override (see
 /// [`TRACE_LOG_OVERRIDE`]). `None` clears it (the pins' hygiene).
 pub(crate) fn set_trace_log_override(value: Option<bool>) {
-    if let Ok(mut slot) = TRACE_LOG_OVERRIDE.lock() {
-        *slot = value;
-    }
+    // Poison recovery: the `FEED_LEVEL_OVERRIDE` shape (the V2-F46
+    // micro-debt note there holds — the critical section cannot break an
+    // invariant, so the write lands instead of being swallowed).
+    let mut slot = TRACE_LOG_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = value;
 }
 
 fn trace_log_override() -> Option<bool> {
-    TRACE_LOG_OVERRIDE.lock().ok().and_then(|slot| *slot)
+    *TRACE_LOG_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The trace rows' file-export gate (`OXIDE_TRACE_FILE`, V2-F25): when
@@ -310,16 +322,19 @@ static CACHE_HOT_KEY_TOP_OVERRIDE: std::sync::Mutex<Option<usize>> = std::sync::
 /// set_cache_hot_key_top_override(None);
 /// ```
 pub fn set_cache_hot_key_top_override(value: Option<usize>) {
-    if let Ok(mut slot) = CACHE_HOT_KEY_TOP_OVERRIDE.lock() {
-        *slot = value;
-    }
+    // Poison recovery: the `FEED_LEVEL_OVERRIDE` shape (the V2-F46
+    // micro-debt note there holds — the critical section cannot break an
+    // invariant, so the write lands instead of being swallowed).
+    let mut slot = CACHE_HOT_KEY_TOP_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = value;
 }
 
 fn cache_hot_key_top_override() -> Option<usize> {
-    CACHE_HOT_KEY_TOP_OVERRIDE
+    *CACHE_HOT_KEY_TOP_OVERRIDE
         .lock()
-        .ok()
-        .and_then(|slot| *slot)
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The §20 scrape's hot-key top window (`OXIDE_CACHE_PLANE_HOT_KEY_TOP`,
@@ -404,6 +419,118 @@ pub fn cache_hot_key_top_with_config(config_top: Option<u64>) -> usize {
                 .min(crate::framework_shim::CACHE_HOT_KEY_CAPACITY),
             None => crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
         },
+    }
+}
+
+/// The `--cache-plane-coverage` boot flag's override (V2-F46, the F42
+/// shape), written once pre-runtime by `apply_startup_env` — the
+/// [`CACHE_HOT_KEY_TOP_OVERRIDE`] shape: a command-level fact decided
+/// before the tokio runtime exists, so the read side never races a
+/// mid-async write. `None` (the flag was absent) leaves the
+/// `OXIDE_CACHE_PLANE_COVERAGE` env var in charge.
+static CACHE_PLANE_COVERAGE_OVERRIDE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+/// Install the boot flag's coverage override (see
+/// [`CACHE_PLANE_COVERAGE_OVERRIDE`]). `None` clears it (the pins'
+/// hygiene).
+///
+/// # Examples
+///
+/// ```
+/// use oxide_fw_cli::observability::set_cache_plane_coverage_override;
+///
+/// set_cache_plane_coverage_override(Some(true));
+/// assert!(oxide_fw_cli::observability::cache_plane_coverage());
+/// set_cache_plane_coverage_override(None);
+/// ```
+pub fn set_cache_plane_coverage_override(value: Option<bool>) {
+    // Poison recovery: the `FEED_LEVEL_OVERRIDE` shape (the V2-F46
+    // micro-debt note there holds — the critical section cannot break an
+    // invariant, so the write lands instead of being swallowed).
+    let mut slot = CACHE_PLANE_COVERAGE_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = value;
+}
+
+fn cache_plane_coverage_override() -> Option<bool> {
+    *CACHE_PLANE_COVERAGE_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The §20 scrape's coverage opt-in (`OXIDE_CACHE_PLANE_COVERAGE`,
+/// V2-F46): when the operator turns the spelling on, the boot's
+/// [`cache_plane_scrape`](crate::framework_shim::cache_plane_scrape)
+/// composes the hot-key ledger's F44 coverage exposition — the
+/// unattributed score's counter, the occupancy and bound gauges — beside
+/// the labeled window family. Default off: the scrape's shape is
+/// byte-identical to the F40 doctrine (the coverage families compose
+/// only when an operator asks). The truthy spellings (`1`/`true`/`on`)
+/// answer on, the falsy spellings (`""`/`0`/`false`/`off`) keep off, and
+/// garbage degrades loudly-but-honestly to off — one stderr notice
+/// naming the source, then the default (the
+/// [`cache_hot_key_top_from`] posture).
+///
+/// V2-F46: the `--cache-plane-coverage` boot flag wins when present —
+/// the [`CACHE_PLANE_COVERAGE_OVERRIDE`] slot is a command-level fact
+/// written pre-runtime by `apply_startup_env`; absent, the env var keeps
+/// its shell spelling (the `cache_hot_key_top` shape).
+pub fn cache_plane_coverage() -> bool {
+    if let Some(on) = cache_plane_coverage_override() {
+        return on;
+    }
+    let raw = std::env::var("OXIDE_CACHE_PLANE_COVERAGE").ok();
+    cache_plane_coverage_from(raw.as_deref())
+}
+
+/// The parse core behind [`cache_plane_coverage`]: `None` is the unset
+/// spelling. Pure — the pins drive it without touching the process env;
+/// the one env-read pin covers the real spelling.
+pub fn cache_plane_coverage_from(raw: Option<&str>) -> bool {
+    match raw {
+        None => false,
+        Some("1" | "true" | "on") => true,
+        Some("" | "0" | "false" | "off") => false,
+        Some(raw) => {
+            eprintln!(
+                "oxide: OXIDE_CACHE_PLANE_COVERAGE={raw} is not a coverage spelling; \
+                 the scrape keeps the default shape"
+            );
+            false
+        }
+    }
+}
+
+/// The V2-F46 layered resolver — the boot wire's entry point now that
+/// the coverage arm has a project baseline (`cache.coverageMetrics`, the
+/// `CacheConfig::coverage_metrics` field) beside the F46 flag and the
+/// F46 env spelling. The precedence mirrors the
+/// [`cache_hot_key_top_with_config`] family:
+///
+/// 1. the `--cache-plane-coverage` flag's override slot (the F42 shape —
+///    written pre-runtime by `apply_startup_env`),
+/// 2. the `OXIDE_CACHE_PLANE_COVERAGE` env spelling (the truthy
+///    spellings answer on; garbage degrades loudly-but-honestly to the
+///    DEFAULT — the notice names the source, and the project baseline is
+///    never a silent recovery for a typoed operator spelling),
+/// 3. the `cache.coverageMetrics` baseline — both spellings are real
+///    choices: `Some(true)` opts the plane in, `Some(false)` pins it off,
+/// 4. the default-off shape — the boot shape is byte-identical when no
+///    layer speaks (the F40 doctrine).
+///
+/// The env layer's falsy spellings (`""`/`0`/`false`/`off`) stop THAT
+/// layer only: a committed baseline below still answers — an operator's
+/// empty spelling is not the project's config being refused.
+pub fn cache_plane_coverage_with_config(config_metrics: Option<bool>) -> bool {
+    if let Some(on) = cache_plane_coverage_override() {
+        return on;
+    }
+    match std::env::var("OXIDE_CACHE_PLANE_COVERAGE") {
+        Ok(raw) if !matches!(raw.as_str(), "" | "0" | "false" | "off") => {
+            cache_plane_coverage_from(Some(&raw))
+        }
+        _ => config_metrics.unwrap_or(false),
     }
 }
 
