@@ -2080,6 +2080,18 @@ pub trait InspectorSnapshot: Send + Sync + std::fmt::Debug {
     }
 }
 
+/// V2-F49: the cache posture probe's provider (§20). The server crate
+/// never names the cache crate (the F39 doctrine): the host — the CLI,
+/// which depends on both crates — adapts its stack's posture value through
+/// this seam, and the `posture_path` arm serves the JSON verbatim. The
+/// shape mirrors the metrics slot's `Fn() -> String`: one pull, one body.
+pub trait CachePosture: Send + Sync {
+    /// The posture pull's JSON body: one serialized `CacheHealth`-shaped
+    /// value (the value shape a probe wants — a dashboard diffs two, a
+    /// probe serializes one, nothing holds a borrow on the cache).
+    fn posture_json(&self) -> String;
+}
+
 /// Forward a request to `url` and convert the upstream response into an
 /// `OxideResponse` (§13.5 dev proxy; also usable as a generic reverse-proxy
 /// helper). Uses `hyper-util`'s pooled client so repeated hits to the same
@@ -2300,6 +2312,18 @@ pub struct Pipeline {
     pub metrics_auth_token: Option<String>,
     /// Optional metrics registry. When `Some`, `/metrics_path` renders it.
     pub metrics: Option<Arc<Metrics>>,
+    /// V2-F49: the cache posture probe's path (the F48 handoff's recorded
+    /// tail — the posture pull's second production surface). The boots
+    /// register `/-/health`; the empty string disables the endpoint
+    /// (tests), the ready-path shape.
+    pub posture_path: String,
+    /// V2-F49: the probe's provider. When `Some`, `GET posture_path`
+    /// answers the posture pull's JSON (the value shape a probe wants);
+    /// when `None` the configured path 404s — the metrics endpoint's
+    /// "not configured" contract, and the F40 doctrine's default shape:
+    /// a boot that never opted in leaks nothing. Attached via
+    /// [`Pipeline::with_cache_posture`].
+    pub cache_posture: Option<Arc<dyn CachePosture>>,
     /// Optional inspector provider (§13.4). When `Some`, `/__oxide` and
     /// `/__oxide/state` return the inspector snapshot. Never set in production.
     pub inspector: Option<Arc<dyn InspectorSnapshot>>,
@@ -2993,6 +3017,8 @@ impl Default for Pipeline {
             metrics_path: String::new(),
             metrics_auth_token: None,
             metrics: None,
+            posture_path: String::new(),
+            cache_posture: None,
             inspector: None,
             open_editor: None,
             cost_endpoint: None,
@@ -4314,6 +4340,28 @@ impl Pipeline {
         self
     }
 
+    /// V2-F49: attach the cache posture probe's provider. When `Some`,
+    /// `GET posture_path` answers the posture pull's JSON (the F48
+    /// handoff's recorded tail — the posture value's second production
+    /// surface, beside the §20 scrape's opt-in arm); when `None` (the
+    /// default) the configured path 404s and production stays
+    /// byte-identical. Chainable.
+    #[must_use]
+    pub fn with_cache_posture(mut self, provider: Arc<dyn CachePosture>) -> Self {
+        self.cache_posture = Some(provider);
+        self
+    }
+
+    /// V2-F49: register the posture probe's path (the boots set
+    /// `/-/health`). The empty string disables the surface entirely —
+    /// the ready-path shape; a non-empty path without a provider 404s
+    /// "not configured" (the metrics shape). Chainable.
+    #[must_use]
+    pub fn with_posture_path(mut self, path: impl Into<String>) -> Self {
+        self.posture_path = path.into();
+        self
+    }
+
     /// Attach a page renderer (§7). When set, `serve_request` dispatches page
     /// renders to it. When `None` (default), the pipeline preserves the
     /// legacy neutral-IR behavior. Chainable.
@@ -5099,6 +5147,36 @@ impl Pipeline {
                 r = r.with_header("retry-after", "1");
             }
             return NativePrefix::Raw(r);
+        }
+
+        // (3b'') cache posture probe (V2-F49). The F48 handoff's recorded
+        // tail: the posture pull's second production surface. The pull is
+        // already the value shape a probe wants — `GET posture_path`
+        // hands the provider's JSON over the wire. The shape is the
+        // metrics endpoint's contract transposed to a JSON pull: an
+        // unconfigured probe 404s before anything else (it leaks nothing
+        // and keeps the "not configured" contract for dev tooling), the
+        // surface is GET-only, and the body is `no-store` — the posture
+        // is live, a cache between the probe and the node would answer a
+        // stale stack. Ungated like `/_oxide/health`: the body carries
+        // counts and sizes, never routes or keys, and the surface exists
+        // only where the host attached a provider (the CLI attaches it
+        // behind the operator's posture opt-in — the F40 doctrine).
+        if !self.posture_path.is_empty()
+            && req.method.eq_ignore_ascii_case("GET")
+            && path == self.posture_path
+        {
+            let Some(provider) = &self.cache_posture else {
+                return NativePrefix::Raw(
+                    OxideResponse::new(404, "posture probe not configured")
+                        .with_header("content-type", "text/plain; charset=utf-8"),
+                );
+            };
+            return NativePrefix::Raw(
+                OxideResponse::new(200, Bytes::from(provider.posture_json()))
+                    .with_header("content-type", "application/json; charset=utf-8")
+                    .with_header("cache-control", "no-store"),
+            );
         }
 
         // (3c) image endpoint (§16.1). GET/HEAD only. The transform runs
