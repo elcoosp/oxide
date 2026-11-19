@@ -531,6 +531,82 @@ pub(crate) fn cache_plane_scrape(
     rows
 }
 
+/// The V2-F49 posture probe's provider: the `/-/health` production
+/// surface's adapter from the typed tier to the server crate's
+/// cache-agnostic seam. The server never names the cache crate (the F39
+/// doctrine) — this type is the CLI-side half of the seam, the crate that
+/// depends on both. The pull rides [`oxide_fw_cache::TieredCache::health`]:
+/// the whole-stack posture as one value, rendered as the JSON a probe
+/// serializes (`CacheHealth` is serde-shaped in the cache crate — a
+/// dashboard diffs two, a probe takes one, nothing holds a borrow). A
+/// host composing its own pipeline wires exactly this shape.
+pub struct TierCachePosture {
+    tier: std::sync::Arc<oxide_fw_cache::TieredCache>,
+}
+
+impl TierCachePosture {
+    /// Adapt one typed tier handle — the boot's `cache_tier_typed` capture
+    /// (the F47 posture: the typed tier, not the L0 response plane).
+    pub fn new(tier: std::sync::Arc<oxide_fw_cache::TieredCache>) -> Self {
+        Self { tier }
+    }
+}
+
+impl oxide_fw_server::CachePosture for TierCachePosture {
+    fn posture_json(&self) -> String {
+        cache_posture_probe_json(&self.tier)
+    }
+}
+
+/// The V2-F49 posture probe's public render: the whole-stack posture pull
+/// (`TieredCache::health`) as the JSON a probe serializes — the wire body
+/// `GET /-/health` answers, and the shape a host reuses when it composes
+/// its own pipeline (the cache crate's value shape is serde-ready: a
+/// dashboard diffs two, a probe serializes one, nothing holds a borrow).
+pub fn cache_posture_probe_json(tier: &oxide_fw_cache::TieredCache) -> String {
+    // The `InspectorSnapshot::render_html` posture: serialization of a
+    // primitive-only value shape (u64/bool/Option<String> fields) has
+    // no failure input, so the impossible arm renders the empty JSON
+    // object instead of panicking in a request path.
+    serde_json::to_string(&tier.health()).unwrap_or_else(|_| "{}".into())
+}
+
+/// The V2-F49 posture probe's REGISTERED path and the V2-F50 resolver's
+/// recorded default: where the F48 handoff's tail put the posture pull's
+/// second production surface. The `/-/` prefix is the ops-probe
+/// convention — deliberately beside, not under, the framework's own
+/// `/_oxide` namespace (the endpoint map's plane-family carve-out), so a
+/// platform's uniform probe-path config finds it. Since V2-F50 the
+/// operator can relocate (`--cache-posture-path`, the
+/// `OXIDE_CACHE_POSTURE_PATH` spelling, the `cache.postureProbePath`
+/// baseline) or disable (the falsy spellings answer the empty path —
+/// the ready-path shape) the surface; garbage degrades loudly back HERE.
+pub(crate) const CACHE_POSTURE_PROBE_PATH: &str = "/-/health";
+
+/// The V2-F49 probe gate, the F40 doctrine on a surface: the provider
+/// attaches only when ALL THREE halves hold — the boot opted in (the
+/// `cache_plane_health` opt-in family: the `--cache-plane-health` flag,
+/// the `OXIDE_CACHE_PLANE_HEALTH` env spelling, the `cache.healthMetrics`
+/// baseline), the resolved path is non-empty (V2-F50: the falsy
+/// spellings relocate the surface to "absent" — the ready-path shape),
+/// AND a tier handle exists. A boot without any half attaches nothing:
+/// the probe path 404s, production is byte-identical to the pre-F49
+/// shape, nothing leaks.
+pub fn posture_probe_provider(
+    health: bool,
+    path: &str,
+    tier: Option<&std::sync::Arc<oxide_fw_cache::TieredCache>>,
+) -> Option<std::sync::Arc<dyn oxide_fw_server::CachePosture>> {
+    if path.is_empty() {
+        return None;
+    }
+    let tier = tier?;
+    health.then(|| {
+        std::sync::Arc::new(TierCachePosture::new(std::sync::Arc::clone(tier)))
+            as std::sync::Arc<dyn oxide_fw_server::CachePosture>
+    })
+}
+
 /// Build the framework stack for a project. `config_path` is the resolved
 /// `oxide.config.{ts,mjs,js}` (or `None` for projects without one).
 ///
