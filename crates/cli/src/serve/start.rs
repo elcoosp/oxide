@@ -1055,10 +1055,14 @@ pub(crate) async fn start_server_inner_full(
     // the `OXIDE_CACHE_PLANE_HOT_KEY_TOP` spelling ONCE here (the
     // `trace_file_path` posture: a boot-time read, not a per-scrape env
     // poll) and the closure renders the boot's window.
+    // F43: the window's project baseline joins the precedence — the
+    // layered resolver takes the config's `cache.hotKeyTop` (flag wins,
+    // then the env spelling, then this baseline, then the F40 default).
     if let Some(exporter) = cache_exporter.as_ref() {
         let exporter = std::sync::Arc::clone(exporter);
         let hot_keys = cache_hot_keys.clone();
-        let hot_key_top = crate::observability::cache_hot_key_top();
+        let hot_key_top =
+            crate::observability::cache_hot_key_top_with_config(cfg.cache.hot_key_top);
         metrics.set_cache_plane(move || {
             crate::framework_shim::cache_plane_scrape(&exporter, hot_keys.as_deref(), hot_key_top)
         });
