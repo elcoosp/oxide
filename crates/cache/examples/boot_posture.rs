@@ -1,15 +1,16 @@
 //! The cache plane's boot-posture walkthrough (`serve` boot shape, §20):
 //! what a host assembles when it boots the plane — the F34 fan over the
-//! F30 exporter and the F35-gated feed, the flight owner recording its
-//! F33 join count through the publish it used to drop, and BOTH §20
-//! expositions a scrape reads: the exporter's `oxide_cache_plane_*`
-//! counters and the F32 posture's gauges.
+//! F30 exporter, the F35-gated feed, the F40 hot-key attribution ledger,
+//! the flight owner recording its F33 join count through the publish it
+//! used to drop, and BOTH §20 expositions a scrape reads: the exporter's
+//! `oxide_cache_plane_*` counters and the F32 posture's gauges.
 //!
 //! This is the wire the CLI's serve boot runs
-//! (`crates/cli/src/serve/start.rs` attaches the exporter over the
-//! project's `TieredCache`, and the render stage's owner site records
-//! the publish count) — replayed here against one in-process cache so
-//! the whole posture is visible in one run: attach, fly, record, scrape.
+//! (`crates/cli/src/serve/start.rs` attaches the exporter AND the ledger
+//! behind the F34 fan over the project's `TieredCache`, and the render
+//! stage's owner site records the publish count) — replayed here against
+//! one in-process cache so the whole posture is visible in one run:
+//! attach, fly, record, scrape.
 //!
 //! Run with:
 //!
@@ -22,8 +23,8 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use oxide_fw_cache::{
-    CacheEvent, Entry, EventFeed, FanoutCacheObserver, FlightSlot, KindGate, MetricsCacheObserver,
-    Policy, SingleFlight, TieredCache,
+    CacheEvent, Entry, EventFeed, FanoutCacheObserver, FlightSlot, HotKeyObserver, KindGate,
+    MetricsCacheObserver, Policy, SingleFlight, TieredCache,
 };
 
 fn entry(body: &[u8]) -> Entry {
@@ -51,19 +52,22 @@ fn entry(body: &[u8]) -> Entry {
 fn main() {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     rt.block_on(async {
-        // 1. The boot posture: one `with_observer` slot, three consumers
+        // 1. The boot posture: one `with_observer` slot, four consumers
         //    behind the fan — the exporter for the scrape, the bounded
         //    feed narrowed by a deploy-watch gate (only invalidations and
-        //    coalesce rows ride it; hot-path rows stay off the wire), and
-        //    the tracing arm for the subscriber.
+        //    coalesce rows ride it; hot-path rows stay off the wire), the
+        //    F40 hot-key ledger for the per-key read, and the tracing arm
+        //    for the subscriber.
         let metrics = Arc::new(MetricsCacheObserver::new());
         // `gated` already returns the shared `Arc<EventFeed>` — the attach
         // cast wants that Arc, not one wrapped again.
         let feed = EventFeed::gated(64, Arc::new(KindGate::only(&["invalidate", "coalesce"])));
+        let hot = HotKeyObserver::shared(1024);
         let cache = Arc::new(TieredCache::new(4 * 1024 * 1024).with_observer(
             FanoutCacheObserver::shared(vec![
                 metrics.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
                 feed.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
+                hot.clone() as Arc<dyn oxide_fw_cache::CacheObserver>,
                 Arc::new(oxide_fw_cache::TracingCacheObserver::new())
                     as Arc<dyn oxide_fw_cache::CacheObserver>,
             ]),
@@ -135,6 +139,14 @@ fn main() {
         println!("feed dropped (saturation)       = {}", feed.dropped());
         println!("\nexporter scrape (the oxide_cache_plane_* families):");
         print!("{}", metrics.render_prometheus());
+        println!("\nthe hot-key ledger (the F40 half the boot composes into the same scrape):");
+        for row in hot.top(3) {
+            println!("  {:>12}  {}", row.count, row.key);
+        }
+        // The F40 composition (`cache_plane_scrape` in the CLI's
+        // framework shim): the exporter's families ride unchanged, the
+        // ledger's labeled family appends. The appended rows:
+        print!("{}", hot.render_prometheus(3));
         println!("\nposture scrape (the gauges, one boot sample):");
         println!("{}", cache.health().render_prometheus());
     });
