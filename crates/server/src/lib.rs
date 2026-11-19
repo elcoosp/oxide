@@ -5800,7 +5800,7 @@ pub fn next_request_id() -> String {
     let n = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!(
         "req-c{:016x}",
-        n.wrapping_mul(0x9E3779B97F4A7C15) ^ 0xA5A5_0000_0000_0000
+        n.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xA5A5_0000_0000_0000
     )
 }
 
@@ -6785,7 +6785,13 @@ mod sha1_shim {
     impl Sha1 {
         pub fn new() -> Self {
             Self {
-                h: [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0],
+                h: [
+                    0x6745_2301,
+                    0xEFCD_AB89,
+                    0x98BA_DCFE,
+                    0x1032_5476,
+                    0xC3D2_E1F0,
+                ],
                 buf: Vec::new(),
                 len: 0,
             }
@@ -6829,10 +6835,10 @@ mod sha1_shim {
                     (self.h[0], self.h[1], self.h[2], self.h[3], self.h[4]);
                 for (i, w_i) in w.iter().enumerate() {
                     let (f, k) = match i {
-                        0..=19 => ((b & c) | ((!b) & d), 0x5A827999),
-                        20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
-                        40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
-                        _ => (b ^ c ^ d, 0xCA62C1D6),
+                        0..=19 => ((b & c) | ((!b) & d), 0x5A82_7999),
+                        20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+                        40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                        _ => (b ^ c ^ d, 0xCA62_C1D6),
                     };
                     let temp = a
                         .rotate_left(5)
@@ -6889,7 +6895,7 @@ pub mod ws {
     /// Deterministic client mask key (counter PRNG — predictable for tests).
     pub fn next_mask_key() -> [u8; 4] {
         let n = MASK_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let s = n.wrapping_mul(0x9E3779B97F4A7C15) ^ 0xB5B5_B5B5_9E37_79B9;
+        let s = n.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xB5B5_B5B5_9E37_79B9;
         [(s >> 24) as u8, (s >> 16) as u8, (s >> 8) as u8, s as u8]
     }
 
