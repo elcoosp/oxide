@@ -244,6 +244,8 @@ fn snapshot_is_a_value_type() {
             invalidated_keys: 0,
             coalesce_events: 0,
             coalesced_followers: 0,
+            evictions: 0,
+            evicted_bytes: 0,
         }
     );
 
