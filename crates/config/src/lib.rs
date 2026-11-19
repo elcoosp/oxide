@@ -1118,6 +1118,23 @@ pub struct CacheConfig {
     /// `false` pins it off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage_metrics: Option<bool>,
+    /// V2-F48: `cache: { healthMetrics: true }` — the project's
+    /// committed opt-in for the §20 scrape's health arm (the posture
+    /// pull's F32 gauge exposition — `TieredCache::health()` rendered as
+    /// the nine `oxide_cache_plane_*` gauge families: the memory tier's
+    /// occupancy and cap, the disk/remote attachment flags, the
+    /// tag-index pressure, the observability seam's own state — rendered
+    /// after the labeled window and coverage families). The boot's
+    /// precedence mirrors the `coverageMetrics` family: the
+    /// `--cache-plane-health` flag wins, the
+    /// `OXIDE_CACHE_PLANE_HEALTH` env var keeps the operator's shell
+    /// spelling, this key is the project's baseline, and with none set
+    /// the default-off shape answers byte-identically (the F40
+    /// doctrine — the posture families compose only when an operator
+    /// asks). Both spellings are legal: `true` opts the plane in,
+    /// `false` pins it off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_metrics: Option<bool>,
 }
 
 /// §14.1: `cache.l0` — the L0 response-cache settings.
