@@ -1,6 +1,8 @@
 //! SPEC-12 / §11.2: an HTTP `CacheHandler` for multi-node deployments.
 //!
-//! One node runs the cache service (or a plain HTTP store fronts it); every
+//! One node runs the cache service (`crate::HttpCacheService`, F53 — the
+//! protocol's server half, any [`CacheHandler`] hosted behind these shapes;
+//! a plain HTTP store fronting it works too); every
 //! node points `cache.handler = { type: 'http', url }` at it. The protocol is
 //! small and JSON:
 //!
