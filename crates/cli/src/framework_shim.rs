@@ -470,9 +470,15 @@ impl std::fmt::Debug for FrameworkStack {
 /// `HotKeyObserver::unattributed`, the honest coverage score).
 pub(crate) const CACHE_HOT_KEY_CAPACITY: usize = 2048;
 
-/// The F40 §20 scrape's hot-key window: how many labeled rows one scrape
-/// renders beside the exporter's families — the dashboard's top window,
-/// bounded so one scrape stays bounded.
+/// The F40 §20 scrape's DEFAULT hot-key window: how many labeled rows one
+/// scrape renders beside the exporter's families — the dashboard's top
+/// window, bounded so one scrape stays bounded. Since F41 the window is
+/// operator-tunable: the boot resolves the
+/// `OXIDE_CACHE_PLANE_HOT_KEY_TOP` spelling through
+/// `observability::cache_hot_key_top` (the falsy spellings land HERE —
+/// the default is this const; garbage degrades to it; a parsed value
+/// clamps to [`CACHE_HOT_KEY_CAPACITY`]) and this const is the answer
+/// the resolver gives when nothing is set.
 pub(crate) const CACHE_PLANE_HOT_KEY_TOP: usize = 10;
 
 /// The F40 §20 cache-plane exposition the boot hands
@@ -481,14 +487,18 @@ pub(crate) const CACHE_PLANE_HOT_KEY_TOP: usize = 10;
 /// `oxide_cache_plane_hot_key_total` family (appended last, one run per
 /// scrape — a pull reads the posture NOW). The unattached arm
 /// (`None`) is the bare exporter render byte-identical — the F37
-/// posture holds wherever the ledger does not ride.
+/// posture holds wherever the ledger does not ride. F41: the hot-key
+/// window rides the caller — the boot resolves the operator spelling
+/// once and passes it here; `top = 0` renders the bare family pair
+/// (the family stays answerable, zero labeled rows).
 pub(crate) fn cache_plane_scrape(
     exporter: &oxide_fw_cache::MetricsCacheObserver,
     hot_keys: Option<&oxide_fw_cache::HotKeyObserver>,
+    top: usize,
 ) -> String {
     let mut rows = exporter.render_prometheus();
     if let Some(hot_keys) = hot_keys {
-        rows.push_str(&hot_keys.render_prometheus(CACHE_PLANE_HOT_KEY_TOP));
+        rows.push_str(&hot_keys.render_prometheus(top));
     }
     rows
 }
