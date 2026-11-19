@@ -60,8 +60,10 @@ use crate::observer::{CacheEvent, CacheObserver, CacheOp};
 /// One relaxed saturating add (the exporter's only counter op): a counter
 /// that reaches `u64::MAX` CLAMPS there instead of wrapping — a scrape
 /// that reads a saturated counter knows the value is "at or past the
-/// bound", never a silently-restarted total.
-fn saturating_add(counter: &AtomicU64, value: u64) {
+/// bound", never a silently-restarted total. `pub(crate)` since F51: the
+/// disk tier's eviction counters ride the same rule (one rule, one
+/// shape — the F30 saturation doctrine has a single implementation).
+pub(crate) fn saturating_add(counter: &AtomicU64, value: u64) {
     let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
         Some(cur.saturating_add(value))
     });
@@ -105,6 +107,13 @@ pub struct CacheMetricsSnapshot {
     /// Followers that coalesced onto those flights' owners (the join
     /// count the push twin of `stats().coalesced` sums).
     pub coalesced_followers: u64,
+    /// Completed S-08 evictions (F51): entries a tier freed to stay
+    /// under its budget — the tier's own decision, not a caller's
+    /// delete (that is the `deletes` counter's traffic).
+    pub evictions: u64,
+    /// Sizes the evictions freed, in the evicting tier's own accounting
+    /// unit (the disk tier: the compressed blob bytes it released).
+    pub evicted_bytes: u64,
 }
 
 /// The metrics exporter: the F28 seam's named structured consumer. Every
@@ -143,6 +152,8 @@ pub struct MetricsCacheObserver {
     invalidated_keys: AtomicU64,
     coalesce_events: AtomicU64,
     coalesced_followers: AtomicU64,
+    evictions: AtomicU64,
+    evicted_bytes: AtomicU64,
 }
 
 impl MetricsCacheObserver {
@@ -163,6 +174,8 @@ impl MetricsCacheObserver {
             invalidated_keys: AtomicU64::new(0),
             coalesce_events: AtomicU64::new(0),
             coalesced_followers: AtomicU64::new(0),
+            evictions: AtomicU64::new(0),
+            evicted_bytes: AtomicU64::new(0),
         }
     }
 
@@ -185,6 +198,8 @@ impl MetricsCacheObserver {
             invalidated_keys: load(&self.invalidated_keys),
             coalesce_events: load(&self.coalesce_events),
             coalesced_followers: load(&self.coalesced_followers),
+            evictions: load(&self.evictions),
+            evicted_bytes: load(&self.evicted_bytes),
         }
     }
 
@@ -199,7 +214,7 @@ impl MetricsCacheObserver {
     #[must_use]
     pub fn render_prometheus(&self) -> String {
         let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
-        // Capacity: 9 families × ~100 bytes of HELP/TYPE/rows + the three
+        // Capacity: 11 families × ~100 bytes of HELP/TYPE/rows + the three
         // labeled hit rows — one allocation for a full scrape.
         let mut out = String::with_capacity(1024);
 
@@ -287,6 +302,21 @@ impl MetricsCacheObserver {
             "Cache-plane followers that coalesced onto flight owners",
             load(&self.coalesced_followers),
         );
+        // F51: the eviction families APPEND — the F33 order rule keeps
+        // every family added after the last one, so a scraper's offsets
+        // for the existing families never move.
+        family(
+            &mut out,
+            "oxide_cache_plane_evictions_total",
+            "Cache-plane entries a tier evicted to stay under its budget (S-08)",
+            load(&self.evictions),
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_evicted_bytes_total",
+            "Cache-plane bytes the evictions freed (the tier's own accounting unit)",
+            load(&self.evicted_bytes),
+        );
 
         out
     }
@@ -338,6 +368,14 @@ impl CacheObserver for MetricsCacheObserver {
             CacheOp::Coalesce { followers } => {
                 saturating_add(&self.coalesce_events, 1);
                 saturating_add(&self.coalesced_followers, followers);
+            }
+            CacheOp::Evict { bytes, .. } => {
+                // F51: the eviction counters — the freed size rides the
+                // evicting tier's own accounting unit (the disk tier's
+                // compressed blob bytes), so the byte story is the S-08
+                // budget's own story, never a re-weighting.
+                saturating_add(&self.evictions, 1);
+                saturating_add(&self.evicted_bytes, bytes);
             }
         }
     }
