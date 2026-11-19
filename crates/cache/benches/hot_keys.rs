@@ -107,9 +107,53 @@ fn bench_top_window(c: &mut Criterion) {
     g.finish();
 }
 
+fn bench_gate_delta(c: &mut Criterion) {
+    // The F39 gate's delta (the F35 gate group's shape): the predicate
+    // runs before the ledger lock, so the admitted arm pays the consult
+    // plus the resident update and the rejected arm pays the consult
+    // alone — the reject floor a narrow dashboard's gate rides.
+    let mut g = c.benchmark_group("cache_hot_key_gate");
+    g.sample_size(30);
+    g.measurement_time(Duration::from_secs(3));
+    let keys = key_pool(1024);
+
+    // Admitted behind the default-as-a-type gate: the consult plus the
+    // resident update (the delta over the ungated resident arm above).
+    let admitting =
+        HotKeyObserver::bounded(1024).with_gate(std::sync::Arc::new(oxide_fw_cache::AdmitAllKeys));
+    let event = CacheEvent {
+        key: "route:/a",
+        op: CacheOp::Set { bytes: 512 },
+    };
+    admitting.on_event(&event);
+    g.bench_function("on-event/gated/admitted", |b| {
+        b.iter(|| admitting.on_event(black_box(&event)));
+    });
+
+    // Rejected behind the kind gate: every row refused before the lock —
+    // the predicate consult is the whole cost, no map touch.
+    let refusing = HotKeyObserver::bounded(1024).with_gate(std::sync::Arc::new(
+        oxide_fw_cache::HotKeyKindGate::only(&["invalidate"]),
+    ));
+    let rotating = AtomicUsize::new(0);
+    g.bench_function("on-event/gated/rejected", |b| {
+        b.iter(|| {
+            let i = rotating.fetch_add(1, Ordering::Relaxed) & 1023;
+            let event = CacheEvent {
+                key: keys[i].as_str(),
+                op: CacheOp::Set { bytes: 512 },
+            };
+            refusing.on_event(black_box(&event));
+        });
+    });
+
+    g.finish();
+}
+
 criterion_group!(
     cache_hot_key_attribution,
     bench_attribution_delta,
     bench_top_window
 );
-criterion_main!(cache_hot_key_attribution);
+criterion_group!(cache_hot_key_gate, bench_gate_delta);
+criterion_main!(cache_hot_key_attribution, cache_hot_key_gate);
