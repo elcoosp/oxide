@@ -42,6 +42,7 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `cache.handler.bucket` — `string` — default —: Bucket name for `type: "s3"`.
 - `cache.handler.type` — `enum: `"memory"` \| `"disk"` \| `"redis"` \| `"s3"` \| `"http"`` — default —: §5.3: the L2 cache-handler backend the build wires (memory/disk are local; redis/s3/http are remote).
 - `cache.handler.url` — `string` — default —: Remote base URL for `type: "http"` or `type: "redis"`.
+- `cache.hotKeyTop` — `integer` — default —: V2-F43: the §20 scrape's hot-key top window — how many labeled oxide_cache_plane_hot_key_total rows one scrape renders beside the exporter's families. Precedence: the --cache-hot-key-top flag wins, the OXIDE_CACHE_PLANE_HOT_KEY_TOP env var keeps the operator's spelling, this key is the project's baseline, the F40 default (10) answers with none set. 0 renders the bare family pair.
 - `cache.l0.maxSize` — `string` — default `"512mb"`: §5.3: the L0 in-process cache budget (`kb`/`mb`/`gb`); over-cap entries are GC'd (SPEC-5D).
 - `cache.l0.ttlSecs` — `integer` — default —: P-05: L0 freshness window in seconds (default 300).
 - `cache.l0.vary` — `string[]` — default —: Request headers the L0 fingerprint varies on. The primary language tag of accept-language is normalized automatically.
