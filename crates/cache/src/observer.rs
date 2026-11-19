@@ -42,6 +42,12 @@
 //!   and the lazy delete is not a `delete` event.
 //! - An oversized `set` (over the memory cap, refused before every
 //!   tier — the S-08 rule) stores nothing, so it emits nothing.
+//! - An S-08 eviction (§11.3, F51) is a completed operation: the tier
+//!   freed an entry to stay under its budget, one `Evict` row per
+//!   victim, delivered after the victim's delete completed. An explicit
+//!   delete is a `delete` row, never an eviction; the memory tier's
+//!   moka eviction is amortized maintenance (P-17) and never emits
+//!   here.
 //!
 //! [`TracingCacheObserver`] is the production impl: every row leaves as
 //! one `tracing` event under the `oxide::cache` target (the same
@@ -110,6 +116,23 @@ pub enum CacheOp {
         /// The number of followers that joined the owner's result.
         followers: u64,
     },
+    /// One row per completed S-08 eviction (§11.3, F51): a tier freed an
+    /// entry on its own decision — the budget prune — not because a
+    /// caller asked. `layer` names the tier that evicted; `bytes` is the
+    /// size it freed in the tier's own accounting unit (the disk tier
+    /// counts the compressed blob size it released). The memory tier's
+    /// moka eviction is amortized maintenance (P-17) and never emits
+    /// here: the disk tier is the durable data-loss path the operator
+    /// must see. An explicit delete is a [`CacheOp::Delete`], never an
+    /// eviction.
+    Evict {
+        /// The tier that freed the entry (the disk tier's S-08 prune
+        /// today — the only tier whose eviction loses durable data).
+        layer: Layer,
+        /// The size the tier freed, in the tier's own accounting unit
+        /// (the disk tier: the compressed blob size the store released).
+        bytes: u64,
+    },
 }
 
 /// One cache event: the borrowed key plus the op payload. The borrow is
@@ -126,7 +149,8 @@ pub struct CacheEvent<'a> {
 
 impl CacheEvent<'_> {
     /// The stable row name a filter or exporter keys on: `"hit"`,
-    /// `"miss"`, `"set"`, `"delete"`, `"invalidate"`, `"coalesce"`.
+    /// `"miss"`, `"set"`, `"delete"`, `"invalidate"`, `"coalesce"`,
+    /// `"evict"`.
     #[must_use]
     pub fn kind(&self) -> &'static str {
         match self.op {
@@ -136,6 +160,7 @@ impl CacheEvent<'_> {
             CacheOp::Delete => "delete",
             CacheOp::Invalidate { .. } => "invalidate",
             CacheOp::Coalesce { .. } => "coalesce",
+            CacheOp::Evict { .. } => "evict",
         }
     }
 }
@@ -218,6 +243,13 @@ impl CacheObserver for TracingCacheObserver {
                 key = %event.key,
                 followers = *followers,
                 "cache flight coalesced"
+            ),
+            CacheOp::Evict { layer, bytes } => tracing::debug!(
+                target: "oxide::cache",
+                key = %event.key,
+                layer = layer.as_str(),
+                bytes = *bytes,
+                "cache evicted (the S-08 budget prune)"
             ),
         }
     }
