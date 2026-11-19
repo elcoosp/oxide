@@ -90,6 +90,16 @@ pub enum Command {
         /// clamp contracts, and every scrape renders the boot's window.
         #[arg(long, value_name = "N")]
         cache_hot_key_top: Option<usize>,
+        /// V2-F46: the §20 scrape's coverage arm opt-in, beside the
+        /// `OXIDE_CACHE_PLANE_COVERAGE` env var (the flag wins). The
+        /// hot-key ledger's F44 coverage exposition — the unattributed
+        /// score's counter, the occupancy and bound gauges — renders
+        /// beside the labeled window family when the boot opts in; the
+        /// value rides pre-runtime into the override slot (the
+        /// `cache_hot_key_top` shape). Default off: the scrape's shape
+        /// stays byte-identical.
+        #[arg(long)]
+        cache_plane_coverage: bool,
     },
     /// Build for production (all environments + manifests, §6).
     Build {
@@ -138,6 +148,13 @@ pub enum Command {
         /// boot too (the `root`/`port` multi-command shape).
         #[arg(long, value_name = "N")]
         cache_hot_key_top: Option<usize>,
+        /// V2-F46: the §20 scrape's coverage arm opt-in, beside the
+        /// `OXIDE_CACHE_PLANE_COVERAGE` env var (the flag wins). The
+        /// scrape is a production surface, so the flag rides the serve
+        /// boot too (the `root`/`port` multi-command shape). Default
+        /// off: the scrape's shape stays byte-identical.
+        #[arg(long)]
+        cache_plane_coverage: bool,
     },
     /// Preview the production build locally.
     Preview {
@@ -506,6 +523,25 @@ impl Command {
             _ => None,
         }
     }
+
+    /// V2-F46: the `--cache-plane-coverage` argument, when this command
+    /// takes one. Read by [`apply_startup_env`] so the override slot is
+    /// written pre-runtime. The §20 scrape is a production surface, so
+    /// the flag rides the serve boot beside the dev boot (the
+    /// `cache_hot_key_top_arg` multi-command shape).
+    pub fn cache_plane_coverage_arg(&self) -> bool {
+        match self {
+            Command::Dev {
+                cache_plane_coverage,
+                ..
+            }
+            | Command::Start {
+                cache_plane_coverage,
+                ..
+            } => *cache_plane_coverage,
+            _ => false,
+        }
+    }
 }
 
 /// P1 (readiness): ALL startup-time environment writes happen HERE, in the
@@ -563,6 +599,18 @@ pub fn apply_startup_env(cli: &Cli) {
     // multi-command shape), outside the dev-mode gate.
     if let Some(top) = cli.command.cache_hot_key_top_arg() {
         crate::observability::set_cache_hot_key_top_override(Some(top));
+    }
+    // V2-F46: `--cache-plane-coverage` beside the
+    // `OXIDE_CACHE_PLANE_COVERAGE` env var (the flag wins). The override
+    // slot is the `FEED_LEVEL_OVERRIDE` shape — a command-level fact
+    // decided once pre-runtime; the env var remains the shell user's
+    // spelling. The §20 scrape is a production surface, so the arm rides
+    // BOTH boot commands (the accessor's multi-command shape), outside
+    // the dev-mode gate. A present flag opts the plane's coverage arm
+    // in; an absent flag leaves the slot empty and the env var in charge
+    // (the flag cannot spell "off" — the falsy spellings do).
+    if cli.command.cache_plane_coverage_arg() {
+        crate::observability::set_cache_plane_coverage_override(Some(true));
     }
     // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
     // once by the warm-up block in `start_server_inner_full`.
@@ -635,6 +683,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F42: the flag rode `apply_startup_env` into the override
             // slot pre-runtime; the boot reads it there.
             cache_hot_key_top: _,
+            // V2-F46: same posture — the coverage opt-in rode
+            // `apply_startup_env` into its override slot pre-runtime.
+            cache_plane_coverage: _,
         } => {
             cmd_dev(
                 &root,
@@ -673,6 +724,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F42: the flag rode `apply_startup_env` into the override
             // slot pre-runtime; the boot reads it there.
             cache_hot_key_top: _,
+            // V2-F46: same posture — the coverage opt-in rode
+            // `apply_startup_env` into its override slot pre-runtime.
+            cache_plane_coverage: _,
         } => cmd_serve(&root, port, "oxide start", w).await,
         Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
