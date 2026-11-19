@@ -30,6 +30,12 @@ Concurrent misses for the same key run one render — the rest await the result 
 - **Stale-while-revalidate and stale-if-error** — configurable policy windows
 - **Nonce sentinel handling** — a cached body serves any request without leaking another request's CSP nonce
 - **Observability seams** (F28, F30, F31, F34, F35) — the push channel beside the `stats()` pull channel: one infallible callback per completed cache event (`CacheObserver`), with the in-crate consumers the §20 doc names — `TracingCacheObserver` (rows under the `oxide::cache` target), `MetricsCacheObserver` (the `oxide_cache_plane_*` Prometheus exposition), and `EventFeed` (a bounded lossy FIFO the host drains off the hot path, with the F35 admission gate — `FeedGate`/`AdmitAll`/`KindGate` narrow the intake before the owned row is built, rejections counted as admission, never as drops). The consumers compose behind the one `with_observer` slot through `FanoutCacheObserver` (F34 — one event into every child, construction order, the borrowed event re-shared). The seams have a production consumer since F36/F37: the CLI's serve boot attaches the exporter over the boot's tier and the render stage's flight owner records the publish count through `record_coalesced`, so the `oxide_cache_plane_*` families join the `/_oxide/metrics` scrape and the coalesce counter carries real L0 traffic (`crates/cache/examples/boot_posture.rs` walks the whole wire in one run)
+- **The ledger's admission gate** (F39) — `HotKeyGate` + `AdmitAllKeys` +
+  `HotKeyKindGate::only` + `with_gate`/`gated`: the F35 filter-surface shape
+  transposed from the feed to the attribution ledger — the gate sees the
+  borrowed event before the ledger lock, a rejected row allocates nothing
+  and never counts in `unattributed()`, and the bound composes behind the
+  gate unchanged
 - **Hot-key attribution** (F38) — `HotKeyObserver` (`hot_keys.rs`) — the bounded per-key event ledger the dashboard-batcher shape names: every completed event attributes one count to its key whatever the op, admission is first-sight (resident keys count past the bound; arriving past-bound rows are unattributed and scored in `unattributed()` — the first refusal one sticky warn), `top(n)` is the deterministic read (count desc, key asc on ties), `reset()` starts a fresh window, and `render_prometheus(n)` renders the labeled `oxide_cache_plane_hot_key_total` counter family over the top window
 - **Posture pull** (F32) — `TieredCache::health()` answers "what is this cache stack right now" in one value (`CacheHealth`): tier attachment and occupancy, tag-index pressure, the observability seam's own state, and the remote driver's self-named kind (`CacheHandler::handler_kind`) — rendered as the §20 `oxide_cache_plane_*` gauge exposition
 
@@ -44,7 +50,7 @@ cache.set("route:/blog", entry).await?;
 cache.invalidate_tag("route:/blog", false).await?;
 ```
 
-> **Tip:** Enable the `redis`, `s3`, or `http` features to attach a remote L2 tier. `cache.handler` in `oxide.config.ts` selects which driver to build.
+> **Tip:** Enable the `redis` or `s3` features (the HTTP handler compiles unconditionally) to attach a remote L2 tier. `cache.handler` in `oxide.config.ts` selects which driver to build.
 
 ## How it fits in Oxide
 
