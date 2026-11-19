@@ -14850,3 +14850,348 @@ fn generations_snapshot_refusal_names_the_srv_code() {
         "the refusal carries the coded diagnostic: {err}"
     );
 }
+
+// ------------------------------------------- V2-F49 cache posture probe (§20)
+//
+// The F48 handoff's recorded tail: the posture pull's second production
+// surface. The F32 pull (`TieredCache::health` → `CacheHealth`) is already
+// the value shape a probe wants — the probe endpoint hands it over the
+// wire as JSON at `/-/health`. The server crate stays cache-agnostic (the
+// F39 doctrine): the surface speaks through the server's `CachePosture`
+// provider trait, and the CLI — the crate that depends on BOTH crates —
+// adapts the tier through `TierCachePosture`. The gate is the F40/F47
+// doctrine transposed to a surface: the provider attaches only when the
+// boot opted in (the same `cache_plane_health` opt-in family: the
+// `--cache-plane-health` flag, the `OXIDE_CACHE_PLANE_HEALTH` env
+// spelling, the `cache.healthMetrics` baseline) AND a tier handle exists —
+// a boot without either keeps the pre-F49 shape (404, nothing leaks).
+
+/// The tier adapter renders the LIVE posture, not a zeroed stand-in: one
+/// write-through set lands a resident entry and the probe's JSON carries
+/// `"memory_entries":1` beside the fixture's 8 MiB cap (the "nothing is
+/// fabricated" contract, read through the wire shape).
+#[tokio::test]
+async fn the_tier_posture_probe_renders_the_cache_health_json() {
+    let f = hot_wire_fixture();
+    let entry = oxide_fw_cache::Entry {
+        body: b"<html>v2-f49</html>".to_vec(),
+        status: 200,
+        headers: vec![("content-type".to_string(), "text/html".to_string())],
+        tags: vec!["blog".to_string()],
+        policy: oxide_fw_cache::Policy {
+            ttl: std::time::Duration::from_secs(60),
+            swr: None,
+            stale_if_error: None,
+            soft_tags: true,
+        },
+        stored_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the wall clock runs")
+            .as_millis() as u64,
+        etag: "\"v1\"".into(),
+    };
+    f.typed
+        .set("route:/probe-pinned", entry)
+        .await
+        .expect("the tier takes the write");
+
+    let probe = crate::framework_shim::TierCachePosture::new(std::sync::Arc::clone(&f.typed));
+    let json = oxide_fw_server::CachePosture::posture_json(&probe);
+    let parsed: oxide_fw_cache::CacheHealth =
+        serde_json::from_str(&json).expect("the probe answers the value shape");
+    assert_eq!(parsed.memory_entries, 1, "the live entry counts: {json}");
+    assert_eq!(
+        parsed.memory_capacity_bytes,
+        8 * 1024 * 1024,
+        "the fixture's cap rides the posture: {json}"
+    );
+}
+
+/// The gate asks for BOTH halves — the F40 doctrine on a surface: no tier
+/// handle (or no opt-in) attaches nothing, so a boot that never opted in
+/// keeps the pre-F49 shape (the probe path 404s, nothing leaks).
+/// V2-F50: the gate grows its third half — the resolved path — and the
+/// pins below carry it (the falsy spellings relocate the contract to
+/// "absent").
+#[test]
+fn the_posture_probe_gate_asks_for_the_opt_in_the_path_and_the_tier() {
+    let f = hot_wire_fixture();
+    assert!(
+        crate::framework_shim::posture_probe_provider(true, "/-/health", None).is_none(),
+        "no tier handle, no probe — even opted in on a real path"
+    );
+    assert!(
+        crate::framework_shim::posture_probe_provider(false, "/-/health", Some(&f.typed))
+            .is_none(),
+        "no opt-in, no probe — the default shape stays absent"
+    );
+    assert!(
+        crate::framework_shim::posture_probe_provider(true, "/-/health", Some(&f.typed)).is_some(),
+        "the opt-in over a live tier on the recorded path attaches the probe"
+    );
+    assert!(
+        crate::framework_shim::posture_probe_provider(true, "", Some(&f.typed)).is_none(),
+        "an empty resolved path keeps the surface absent — even opted in with a tier"
+    );
+}
+
+// ------------------------------------------- V2-F50 posture probe path knob (§20)
+//
+// The F49 probe's surface location joins the layered resolver family (the
+// F42/F43/F48 shape over a String value): the `--cache-posture-path` boot
+// flag on BOTH commands (the override slot `apply_startup_env` writes
+// pre-runtime through the `cache_posture_path_arg()` accessor), the
+// `OXIDE_CACHE_POSTURE_PATH` env spelling over the pure parse core
+// `cache_posture_path_from` (a `/`-led path rides verbatim, the falsy
+// spellings `""`/`0`/`false`/`off` spell the surface OFF — the empty path
+// is the ready-path shape — and garbage degrades loudly-but-honestly to
+// the recorded default `/-/health`), and the `cache.postureProbePath`
+// project baseline (schema'd string default `/-/health`) through the
+// layered `cache_posture_path_with_config` resolver — flag > env >
+// config > default. The config crate's own parse pins ride
+// `crates/config/tests/cache_posture_path_config.rs`.
+
+/// The path state lock: the pins that touch `OXIDE_CACHE_POSTURE_PATH`
+/// AND the path override slot serialize behind it (the
+/// `HEALTH_STATE_LOCK` shape — edition-2024 `set_var` concurrent with a
+/// `get_var` is the data race the P1 readiness posture exists for).
+static POSTURE_PATH_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The parse core's unset spelling: the recorded default path answers —
+/// the F49 surface stays where the handoff registered it.
+#[test]
+fn cache_posture_path_from_none_is_the_default() {
+    assert_eq!(
+        crate::observability::cache_posture_path_from(None),
+        "/-/health",
+        "the unset spelling keeps the recorded default path"
+    );
+}
+
+/// A `/`-led path rides verbatim: the operator relocates the probe
+/// (a reserved prefix, a per-env path) and the same contract follows it.
+#[test]
+fn cache_posture_path_from_truthy_paths_ride_verbatim() {
+    for path in ["/-/health", "/-/cache-posture", "/internal/ox-posture"] {
+        assert_eq!(
+            crate::observability::cache_posture_path_from(Some(path)),
+            path,
+            "`{path}` rides verbatim"
+        );
+    }
+}
+
+/// The falsy spellings spell the surface OFF: the empty path is the
+/// ready-path shape (empty disables the endpoint entirely), so the falsy
+/// spellings answer it — the `cache_plane_health_from` falsy contract
+/// transposed to a String knob.
+#[test]
+fn cache_posture_path_from_falsy_spellings_answer_off() {
+    for spelling in ["", "0", "false", "off"] {
+        assert_eq!(
+            crate::observability::cache_posture_path_from(Some(spelling)),
+            "",
+            "`{spelling}` is the surface-off spelling"
+        );
+    }
+}
+
+/// Garbage degrades loudly-but-honestly to the recorded default: a
+/// non-empty spelling that is not a path (no leading `/`) never silently
+/// relocates or disables the surface.
+#[test]
+fn cache_posture_path_from_garbage_degrades_to_the_default() {
+    for spelling in ["sure", "health", "-/health"] {
+        assert_eq!(
+            crate::observability::cache_posture_path_from(Some(spelling)),
+            "/-/health",
+            "`{spelling}` degrades to the default path"
+        );
+    }
+}
+
+/// The layered resolver's no-layer shape: with no flag, no env and no
+/// config, the recorded default path answers.
+#[test]
+fn cache_posture_path_without_any_layer_the_default_answers() {
+    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    crate::observability::set_cache_posture_path_override(None);
+    assert_eq!(
+        crate::observability::cache_posture_path_with_config(None),
+        "/-/health",
+        "no layer speaks, the default path answers"
+    );
+}
+
+/// The flag's override slot wins over the env var (the
+/// `CACHE_PLANE_HEALTH_OVERRIDE` shape), and a cleared slot leaves the
+/// env var in charge.
+#[test]
+fn cache_posture_path_override_wins_over_the_env_var() {
+    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: pre-runtime in the boot; the pin serializes behind the
+    // state lock (the HEALTH_STATE_LOCK posture).
+    unsafe { std::env::set_var("OXIDE_CACHE_POSTURE_PATH", "/-/env-path") };
+    crate::observability::set_cache_posture_path_override(Some("/-/flag-path".into()));
+    assert_eq!(
+        crate::observability::cache_posture_path(),
+        "/-/flag-path",
+        "the flag's slot wins over the env spelling"
+    );
+    crate::observability::set_cache_posture_path_override(None);
+    assert_eq!(
+        crate::observability::cache_posture_path(),
+        "/-/env-path",
+        "the slot cleared leaves the env var in charge"
+    );
+    // SAFETY: the pin owns the spelling for its locked section.
+    unsafe { std::env::remove_var("OXIDE_CACHE_POSTURE_PATH") };
+}
+
+/// The flag threads through `apply_startup_env` on the dev boot (the
+/// F48 arm's shape, outside the dev-mode gate).
+#[test]
+fn apply_startup_env_threads_the_posture_path_flag_into_the_override() {
+    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let cli = Cli::parse_from(["oxide", "dev", "--cache-posture-path", "/-/probe"]);
+    apply_startup_env(&cli);
+    assert_eq!(
+        crate::observability::cache_posture_path(),
+        "/-/probe",
+        "the dev boot's flag lands pre-runtime via apply_startup_env"
+    );
+    crate::observability::set_cache_posture_path_override(None);
+}
+
+/// The flag threads through `apply_startup_env` on the serve boot (the
+/// probe is a production surface — the `root`/`port` multi-command
+/// shape) — and a falsy spelling lands verbatim (the surface goes off).
+#[test]
+fn apply_startup_env_threads_the_posture_path_flag_on_the_serve_boot() {
+    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let cli = Cli::parse_from(["oxide", "start", "--cache-posture-path", "off"]);
+    apply_startup_env(&cli);
+    assert_eq!(
+        crate::observability::cache_posture_path(),
+        "",
+        "the serve boot's falsy spelling lands verbatim (the surface goes off)"
+    );
+    crate::observability::set_cache_posture_path_override(None);
+}
+
+/// The config baseline answers when no flag and no env speak, and both
+/// spellings are real choices: a path relocates the surface, the empty
+/// string pins it off (the `cache.healthMetrics` both-spellings shape).
+#[test]
+fn cache_posture_path_config_baseline_answers_without_flag_or_env() {
+    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    crate::observability::set_cache_posture_path_override(None);
+    // SAFETY: the pin owns the spelling for its locked section.
+    unsafe { std::env::remove_var("OXIDE_CACHE_POSTURE_PATH") };
+    assert_eq!(
+        crate::observability::cache_posture_path_with_config(Some("/-/baseline")),
+        "/-/baseline",
+        "the committed baseline relocates the surface"
+    );
+    assert_eq!(
+        crate::observability::cache_posture_path_with_config(Some("")),
+        "",
+        "the committed baseline pins the surface off"
+    );
+    assert_eq!(
+        crate::observability::cache_posture_path_with_config(None),
+        "/-/health",
+        "no baseline, the default path answers"
+    );
+}
+
+/// The precedence: the flag wins over the config baseline, the env
+/// spelling wins over the config baseline, the falsy env spellings stop
+/// the env layer ONLY (the committed baseline below still answers), and
+/// garbage degrades to the DEFAULT — never silently through the
+/// baseline (the F41 contract verbatim).
+#[test]
+fn cache_posture_path_precedence_flag_then_env_then_config() {
+    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    crate::observability::set_cache_posture_path_override(None);
+    // The flag wins over the baseline.
+    crate::observability::set_cache_posture_path_override(Some("/-/flag".into()));
+    assert_eq!(
+        crate::observability::cache_posture_path_with_config(Some("/-/baseline")),
+        "/-/flag",
+        "the flag wins over the config baseline"
+    );
+    crate::observability::set_cache_posture_path_override(None);
+    // The env spelling wins over the baseline.
+    // SAFETY: the pin owns the spelling for its locked section.
+    unsafe { std::env::set_var("OXIDE_CACHE_POSTURE_PATH", "/-/env") };
+    assert_eq!(
+        crate::observability::cache_posture_path_with_config(Some("/-/baseline")),
+        "/-/env",
+        "the env spelling wins over the config baseline"
+    );
+    // The falsy env spellings stop the env layer only.
+    unsafe { std::env::set_var("OXIDE_CACHE_POSTURE_PATH", "off") };
+    assert_eq!(
+        crate::observability::cache_posture_path_with_config(Some("/-/baseline")),
+        "/-/baseline",
+        "the falsy env spelling stops the env layer only — the baseline answers"
+    );
+    // Garbage degrades to the DEFAULT, never through the baseline.
+    unsafe { std::env::set_var("OXIDE_CACHE_POSTURE_PATH", "sure") };
+    assert_eq!(
+        crate::observability::cache_posture_path_with_config(Some("/-/baseline")),
+        "/-/health",
+        "garbage degrades to the default — the baseline is never a silent recovery"
+    );
+    unsafe { std::env::remove_var("OXIDE_CACHE_POSTURE_PATH") };
+}
+
+/// The boot flag parses on the dev boot (the
+/// `dev_cache_plane_health_flag_parses` shape).
+#[test]
+fn dev_cache_posture_path_flag_parses() {
+    let cli = Cli::parse_from(["oxide", "dev", "--cache-posture-path", "/-/cache-posture"]);
+    assert_eq!(
+        cli.command.cache_posture_path_arg().as_deref(),
+        Some("/-/cache-posture"),
+        "the dev boot's path flag parses"
+    );
+}
+
+/// The boot flag parses on the serve boot, the falsy spelling included.
+#[test]
+fn start_cache_posture_path_flag_parses() {
+    let cli = Cli::parse_from(["oxide", "start", "--cache-posture-path", "off"]);
+    assert_eq!(
+        cli.command.cache_posture_path_arg().as_deref(),
+        Some("off"),
+        "the serve boot's path flag parses verbatim (the falsy spelling included)"
+    );
+}
+
+/// The absent flag leaves the slot empty: the env var and the config
+/// baseline stay in charge.
+#[test]
+fn dev_cache_posture_path_flag_defaults_to_absent() {
+    let cli = Cli::parse_from(["oxide", "dev"]);
+    assert!(
+        cli.command.cache_posture_path_arg().is_none(),
+        "no flag, the slot stays absent (the env var and config stay in charge)"
+    );
+}
+
+/// The accessor reads BOTH boots and nothing else (the
+/// `cache_plane_health_arg_reads_dev_and_start` shape).
+#[test]
+fn cache_posture_path_arg_reads_dev_and_start() {
+    let dev = Cli::parse_from(["oxide", "dev", "--cache-posture-path", "/a"]);
+    let start = Cli::parse_from(["oxide", "start", "--cache-posture-path", "/b"]);
+    let build = Cli::parse_from(["oxide", "build"]);
+    assert!(dev.command.cache_posture_path_arg().is_some());
+    assert!(start.command.cache_posture_path_arg().is_some());
+    assert!(
+        build.command.cache_posture_path_arg().is_none(),
+        "the build boot takes no posture path"
+    );
+}
