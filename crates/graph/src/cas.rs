@@ -101,7 +101,14 @@ impl ContentStore {
             {
                 let mut f = std::fs::File::create(&tmp).map_err(ioerr)?;
                 f.write_all(&compressed).map_err(ioerr)?;
-                f.sync_all().ok();
+                // The fsync-before-rename is the CAS write's crash
+                // consistency point: a failing fsync (ENOSPC, EIO)
+                // refuses the write with the crate's coded CAS-IO error
+                // instead of renaming an unsynced blob into place. (The
+                // weak-error cleanup: the old `.ok()` made the
+                // durability contract best-effort while every sibling
+                // step in this block refuses loudly.)
+                f.sync_all().map_err(ioerr)?;
             }
             std::fs::rename(&tmp, &path).map_err(ioerr)?;
         }
