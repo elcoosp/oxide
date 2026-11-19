@@ -43,6 +43,9 @@ Start the dev server (on-demand ESM, HMR, §13)
 | `--cache-plane-coverage <CACHE_PLANE_COVERAGE>` | V2-F46: the §20 scrape's coverage arm opt-in, beside the `OXIDE_CACHE_PLANE_COVERAGE` env var (the flag wins). The hot-key ledger's F44 coverage exposition — the unattributed score's counter, the occupancy and bound gauges — renders beside the labeled window family when the boot opts in; the value rides pre-runtime into the override slot (the `cache_hot_key_top` shape). Default off: the scrape's shape stays byte-identical |
 | `cache_plane_coverage = true` |  |
 | `cache_plane_coverage = false` |  |
+| `--cache-plane-health <CACHE_PLANE_HEALTH>` | V2-F48: the §20 scrape's health arm opt-in, beside the `OXIDE_CACHE_PLANE_HEALTH` env var (the flag wins). The tier's F32 posture exposition — the nine `oxide_cache_plane_*` gauge families the `TieredCache::health()` pull samples — renders after the labeled and coverage families when the boot opts in; the value rides pre-runtime into the override slot (the `cache_plane_coverage` shape). Default off: the scrape's shape stays byte-identical |
+| `cache_plane_health = true` |  |
+| `cache_plane_health = false` |  |
 
 ### `oxide build`
 
@@ -81,6 +84,9 @@ Start the production server (binary target, §12)
 | `--cache-plane-coverage <CACHE_PLANE_COVERAGE>` | V2-F46: the §20 scrape's coverage arm opt-in, beside the `OXIDE_CACHE_PLANE_COVERAGE` env var (the flag wins). The scrape is a production surface, so the flag rides the serve boot too (the `root`/`port` multi-command shape). Default off: the scrape's shape stays byte-identical |
 | `cache_plane_coverage = true` |  |
 | `cache_plane_coverage = false` |  |
+| `--cache-plane-health <CACHE_PLANE_HEALTH>` | V2-F48: the §20 scrape's health arm opt-in, beside the `OXIDE_CACHE_PLANE_HEALTH` env var (the flag wins). The scrape is a production surface, so the flag rides the serve boot too (the `root`/`port` multi-command shape). Default off: the scrape's shape stays byte-identical |
+| `cache_plane_health = true` |  |
+| `cache_plane_health = false` |  |
 
 ### `oxide preview`
 
