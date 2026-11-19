@@ -301,6 +301,11 @@ fn cache_schema() -> Value {
                 "type": "boolean",
                 "default": false,
                 "description": "V2-F48: the §20 scrape's health arm — the posture pull's F32 gauge exposition (TieredCache::health() rendered as the nine oxide_cache_plane_* gauge families: the memory tier's occupancy and cap, the disk/remote attachment flags, the tag-index pressure, the observability seam's own state) renders after the labeled window and coverage families when the operator opts in. Precedence: the --cache-plane-health flag wins, the OXIDE_CACHE_PLANE_HEALTH env var keeps the operator's spelling, this key is the project's baseline, and the default-off shape answers byte-identically with none set (the F40 doctrine)."
+            },
+            "postureProbePath": {
+                "type": "string",
+                "default": "/-/health",
+                "description": "V2-F50: the F49 posture probe's surface location — the GET /-/health JSON pull (the live CacheHealth value, the F48 handoff's recorded tail). Precedence: the --cache-posture-path flag wins, the OXIDE_CACHE_POSTURE_PATH env var keeps the operator's spelling, this key is the project's baseline, and the recorded default (/-/health) answers with none set. A /-led path relocates the probe; the empty string pins the surface off (the ready-path shape); garbage degrades loudly to the recorded default."
             }
         }
     })
