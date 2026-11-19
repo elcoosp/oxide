@@ -150,10 +150,55 @@ fn bench_gate_delta(c: &mut Criterion) {
     g.finish();
 }
 
+fn bench_operator_window(c: &mut Criterion) {
+    // The F41 operator-tunable top window (§20): the boot resolves the
+    // `OXIDE_CACHE_PLANE_HOT_KEY_TOP` spelling once and every scrape
+    // renders that window — the arms measure what a widened window puts
+    // on one scrape over a FULL-CAPACITY ledger (2048 keys, the boot's
+    // own bound): the read (`top`) and the labeled render the §20
+    // endpoint composes, at the F40 default (10), an operator's widened
+    // window (50) and the honest cap (the ledger's bound — rows past the
+    // occupancy do not exist, the clamp keeps one scrape bounded).
+    let mut g = c.benchmark_group("cache_hot_key_top_window");
+    g.sample_size(30);
+    g.measurement_time(Duration::from_secs(3));
+    let keys = key_pool(2048);
+    let hot = HotKeyObserver::bounded(2048);
+    for key in &keys {
+        hot.on_event(&CacheEvent {
+            key,
+            op: CacheOp::Set { bytes: 8 },
+        });
+    }
+
+    g.bench_function("top/10-default", |b| {
+        b.iter(|| hot.top(black_box(10)));
+    });
+    g.bench_function("top/50-operator", |b| {
+        b.iter(|| hot.top(black_box(50)));
+    });
+    g.bench_function("top/2048-cap", |b| {
+        b.iter(|| hot.top(black_box(2048)));
+    });
+    g.bench_function("render/10-default", |b| {
+        b.iter(|| hot.render_prometheus(black_box(10)));
+    });
+    g.bench_function("render/2048-cap", |b| {
+        b.iter(|| hot.render_prometheus(black_box(2048)));
+    });
+
+    g.finish();
+}
+
 criterion_group!(
     cache_hot_key_attribution,
     bench_attribution_delta,
     bench_top_window
 );
 criterion_group!(cache_hot_key_gate, bench_gate_delta);
-criterion_main!(cache_hot_key_attribution, cache_hot_key_gate);
+criterion_group!(cache_hot_key_top_window, bench_operator_window);
+criterion_main!(
+    cache_hot_key_attribution,
+    cache_hot_key_gate,
+    cache_hot_key_top_window
+);
