@@ -1187,8 +1187,11 @@ pub enum CacheHandlerConfig {
     S3 {
         bucket: String,
     },
-    /// §11.2 / SPEC-12: a remote HTTP cache (`HttpCacheHandler`). The build
-    /// driver serves `GET/PUT/DELETE /cache/<key>` + `POST /cache/invalidate`.
+    /// §11.2 / SPEC-12: a remote HTTP cache (`HttpCacheHandler`). The
+    /// service side (`oxide-fw-cache`'s `HttpCacheService`, F53 — the
+    /// protocol's server half) serves `GET/PUT/DELETE /entry/{key}`,
+    /// `GET /tag/{tag}` and `POST /invalidate/{tag}`; the client seals
+    /// every entry before it leaves and opens every entry it reads.
     Http {
         url: String,
     },
