@@ -5923,3 +5923,83 @@ session's spelling so `apply_startup_env` carries ONE arm over both commands
 env layer's falsy spellings fall through to the baseline) is a recorded
 decision, not a spec ask — the F41 core's falsy contract stays byte-identical
 at every layer that uses it.
+
+
+## The ledger answers as one value and hands over its window (F44 + F45, 2026-11-19)
+
+**Branch:** `feat/cache-hot-key-snapshot-and-window-take` — the F43 handoff's
+"the layered resolver is the wire to extend" tail stays recorded for the CLI
+session (the resolver's four-layer precedence is complete; no fifth spelling
+was asked for), and the pickup this session landed is the attribution arm's
+own gap: the ledger's reads were the four separate lock passes (`top`,
+`len`, `capacity`, `unattributed`) a racing producer can tear between, and
+the coverage score the module docs always said "a dashboard renders beside
+the top window" was in NO exposition — an operator scraping `/_oxide/metrics`
+could not compute coverage from the scrape.
+
+**F44 — the typed snapshot + the coverage exposition (`cache`).**
+`crates/cache/src/hot_keys.rs`: `HotKeySnapshot` (`rows` + `tracked` +
+`capacity` + `unattributed`, Clone + Eq + Default — the
+`CacheMetricsSnapshot` diff posture transposed to the attribution arm) and
+`HotKeyObserver::snapshot(window)` — ONE lock pass, the window bounds only
+the rows (the aggregates are whole-ledger facts, the F41 doctrine), window
+`0` asks for no rows and the aggregates still answer;
+`HotKeyObserver::render_coverage_prometheus()` — the unattributed score as
+the **counter** a scrape diffs, the occupancy and the bound as **gauges**
+(the `CacheHealth` TYPE split), fixed family order (score, occupancy,
+bound), byte-stable, infallible. The counter-family `render_prometheus` is
+UNTOUCHED — the §20 scrape's shape stays byte-identical (the F40
+default-shape doctrine); the coverage arm composes beside it when a host
+wants it. Re-export rides `lib.rs`.
+
+**F45 — the windowed hand-over (`cache`).** `take()` hands the WHOLE window
+over as the same `HotKeySnapshot` value (every tracked row, at most the
+ledger's own bound — the render bound stays the caller's concern, the data
+is the ledger's) and starts a fresh one under the SAME lock pass: the
+read-and-reset pair the per-interval reporter hand-rolled, composed
+atomically — a window is never both read and left (the torn hand-over
+composing `top()` + `reset()` loses or double-counts every event between
+the calls). The fresh window stands alone exactly as `reset` promises: the
+map empty, the score zeroed, the sticky warn re-armed (the second window
+warns once more), and first-sight admission starts over — a drained key's
+next event inserts fresh.
+
+**TDD red-first, one cycle per milestone.** The 6 F44 pins failed with
+E0432 over the `HotKeySnapshot`/`HotKeyRow` import and E0599 over
+`snapshot`/`render_coverage_prometheus` (11 errors) before the impl
+existed; the 4 F45 pins failed with E0599 over `take` (the compiler probed
+`Iterator::take` — 4 errors) before theirs. Two pin-side corrections during
+the first green pass, both fixture-side, not impl-side: the coverage pin's
+fixture used `bounded(8)` where nothing refuses (the impl honestly rendered
+0/2/8 — the drive moved to `bounded(1)`), and the warn re-arm pin's second
+refusal never happened (after the take the bound's room is back — the map
+cleared — so the re-arm drive refills before refusing; the isolation run
+proved the callsite cache was never the variable).
+
+**Benches.** `cargo test -p oxide-fw-cache --features bench-util --bench
+hot_keys` green: the `cache_hot_key_snapshot` group joins
+(`snapshot/10-default` vs `snapshot/2048-cap` vs
+`render-coverage/2048-occupied` over the FULL-capacity 2048-key ledger the
+operator-window group rides) and the `cache_hot_key_take` group joins
+(`take/full-capacity` rides `iter_batched` — the destructive read's honest
+shape, the setup refills unmeasured; `take/empty` the fresh-window floor).
+
+**Examples.** `cargo run -p oxide-fw-cache --example hot_keys` executed
+green end to end: the walkthrough gains the snapshot + coverage section
+(the one-value read beside the four-call shape it replaces, the coverage
+families rendered) and the hand-over section (two windows back to back —
+each take carries the window's rows and its accumulated score, the fresh
+window starts from zero).
+
+**Docs drift repaired.** `README.md`'s Project-status row re-measured by
+`scripts/count-tests.sh` (the table said 2988 while the badge said 3021 —
+the F40-F43 pins landed after the row's last re-measure; now both carry the
+current count); `crates/cache/README.md`'s hot-key bullet names the
+snapshot, the coverage arm and the take; `docs/architecture.md`'s cache row
+names the F44/F45 read shapes and the WP table gains the F44/F45 landed
+rows.
+
+**Deltas.** The F43 handoff's recorded polish tail (the `hot_key_top`
+example walking the flag through `Cli::parse_from`) stays the CLI session's
+pickup — this session's sandbox has no libclang/nasm, so the V8-linked
+build was not attempted; the 17 recorded cli lib pins remain unchanged.
