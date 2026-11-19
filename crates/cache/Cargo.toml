@@ -100,7 +100,7 @@ required-features = ["bench-util"]
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
-# V2-B09: exposes the bench fixtures helper (`benches support module`).
+# V2-B09: exposes the bench fixtures helper (`bench targets' opt-in gate`).
 bench-util = []
 
 [package.metadata.docs.rs]
