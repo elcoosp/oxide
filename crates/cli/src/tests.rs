@@ -3016,6 +3016,9 @@ async fn mcp_errors_tool_reads_diagnostics_file() {
 fn mcp_registry_lists_the_spec_tools() {
     // tools/list renders the REGISTRY: the spec's names in its stable
     // order, each carrying a description and a JSON Schema input.
+    // (Micro-debt, 2026-11-19: the pin predates V2-F15's `replay.run`
+    // registration and drifted — the registry's stable order is the
+    // expected list below, the replay tool last.)
     let server = crate::mcp::OxideMcp::new(std::env::temp_dir());
     let tools = server.registry_tools();
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
@@ -3029,6 +3032,7 @@ fn mcp_registry_lists_the_spec_tools() {
             "graph.why",
             "config.get",
             "state.recent",
+            "replay.run",
             "build.run"
         ],
         "the registry order is the tools/list order"
@@ -5083,8 +5087,16 @@ async fn the_cache_plane_scrape_renders_the_hot_key_family_beside_the_exporters(
     .await;
     assert!(attributed, "the traffic reached the ledger");
 
-    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot));
-    let bare = crate::framework_shim::cache_plane_scrape(&f.exporter, None);
+    let composed = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        Some(&f.hot),
+        crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+    );
+    let bare = crate::framework_shim::cache_plane_scrape(
+        &f.exporter,
+        None,
+        crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+    );
 
     // The unattached arm IS the F37 render (byte-identical).
     assert_eq!(
@@ -5105,6 +5117,173 @@ async fn the_cache_plane_scrape_renders_the_hot_key_family_beside_the_exporters(
     assert!(
         hot_family.contains("oxide_cache_plane_hot_key_total{key="),
         "the attributed key renders as a labeled row"
+    );
+}
+
+// ------------------------------------------- V2-F41 hot-key top window (§20)
+//
+// The F40 scrape's operator-tunable window (`OXIDE_CACHE_PLANE_HOT_KEY_TOP`):
+// the §20 top-n stops being a compile-time const and becomes a boot-resolved
+// knob — the falsy spellings keep the F40 default, an operator value widens
+// or narrows the labeled window, garbage degrades loudly-but-honestly to the
+// default, and the window clamps to the ledger's own bound (rows past the
+// occupancy do not exist). The resolver follows the `feed_filter_level`
+// shape: a pure parse core the pins drive without touching the process env,
+// plus the one env-read pin over the real spelling. V8-linked test target —
+// compile-verified locally, riding the CI `nextest` workspace job.
+
+/// The resolver's default IS the F40 const: unset stays the recorded shape,
+/// byte-identical to the const-rendered scrape.
+#[test]
+fn cache_hot_key_top_unset_takes_the_f40_default() {
+    assert_eq!(
+        crate::observability::cache_hot_key_top_from(None),
+        crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+        "unset keeps the F40 window"
+    );
+}
+
+/// The operator's spelling lands: a parsed value rides the window verbatim.
+#[test]
+fn cache_hot_key_top_parses_operator_values() {
+    assert_eq!(crate::observability::cache_hot_key_top_from(Some("25")), 25);
+    assert_eq!(crate::observability::cache_hot_key_top_from(Some("1")), 1);
+}
+
+/// The falsy spellings (the shared gate's `""`/`0`/`false`/`off`) keep the
+/// default — the knob is opt-in, the F40 shape never moves behind a typo.
+#[test]
+fn cache_hot_key_top_falsy_spellings_take_the_default() {
+    for spelling in ["", "0", "false", "off"] {
+        assert_eq!(
+            crate::observability::cache_hot_key_top_from(Some(spelling)),
+            crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+            "the falsy spelling {spelling:?} keeps the F40 window"
+        );
+    }
+}
+
+/// Garbage degrades loudly-but-honestly to the default (the
+/// `feed_floor_from` posture: one stderr notice naming the source, then the
+/// recorded shape) — a typoed value never zeroes or explodes the scrape.
+#[test]
+fn cache_hot_key_top_garbage_degrades_to_the_default() {
+    for garbage in ["ten", "-5", "1O0", "2.5", "999999999999999999999999"] {
+        assert_eq!(
+            crate::observability::cache_hot_key_top_from(Some(garbage)),
+            crate::framework_shim::CACHE_PLANE_HOT_KEY_TOP,
+            "the garbage spelling {garbage:?} degrades to the F40 window"
+        );
+    }
+}
+
+/// The window clamps to the ledger's own bound (`CACHE_HOT_KEY_CAPACITY`):
+/// rows past the ledger's occupancy do not exist, so a window past the
+/// bound renders nothing extra — the honest cap keeps one scrape bounded.
+#[test]
+fn cache_hot_key_top_clamps_to_the_ledger_bound() {
+    assert_eq!(
+        crate::observability::cache_hot_key_top_from(Some("999999")),
+        crate::framework_shim::CACHE_HOT_KEY_CAPACITY,
+        "the window never outgrows the ledger's bound"
+    );
+}
+
+/// The one env-read pin: the real spelling lands through the resolver (the
+/// `feed_filter_level_still_reads_the_env_var_without_a_flag` shape — the
+/// override pins read the override first and never this key, so this key is
+/// this pin's alone).
+#[test]
+fn cache_hot_key_top_reads_the_env_var() {
+    // SAFETY: test process, single-threaded access to this key (the pure
+    // pins above drive the parse core directly and never touch the env).
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "25");
+    }
+    let top = crate::observability::cache_hot_key_top();
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+    assert_eq!(top, 25, "the env var remains the shell spelling");
+}
+
+/// The boot-observable composition: the env-resolved window shapes the
+/// §20 scrape's labeled rows — one operator row over one attributed key.
+#[tokio::test]
+async fn the_boot_window_shapes_the_composed_scrape() {
+    let f = hot_wire_fixture();
+    let resp = (f.dispatch)(test_request("GET", "/")).await;
+    let _ = drain_stream(resp).await;
+    let attributed = until(std::time::Duration::from_secs(2), || {
+        !f.hot.top(10).is_empty()
+    })
+    .await;
+    assert!(attributed, "the traffic reached the ledger");
+
+    // SAFETY: test process, single-threaded access to this key.
+    unsafe {
+        std::env::set_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP", "1");
+    }
+    let top = crate::observability::cache_hot_key_top();
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var("OXIDE_CACHE_PLANE_HOT_KEY_TOP");
+    }
+
+    let composed = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), top);
+    let hot_family = &composed[composed
+        .find("# HELP oxide_cache_plane_hot_key_total")
+        .expect("the hot-key family renders")..];
+    let labeled_rows = hot_family
+        .matches("oxide_cache_plane_hot_key_total{key=")
+        .count();
+    assert_eq!(
+        labeled_rows, 1,
+        "the operator window 1 renders exactly one labeled row"
+    );
+}
+
+/// The window parameter bounds the scrape both ways: `0` asks for the bare
+/// family pair (the family stays answerable, zero rows) and `1` renders at
+/// most one labeled row over the fixture's single attributed key.
+#[tokio::test]
+async fn the_cache_plane_scrape_window_bounds_the_labeled_rows() {
+    let f = hot_wire_fixture();
+    let resp = (f.dispatch)(test_request("GET", "/")).await;
+    let _ = drain_stream(resp).await;
+    let attributed = until(std::time::Duration::from_secs(2), || {
+        !f.hot.top(10).is_empty()
+    })
+    .await;
+    assert!(attributed, "the traffic reached the ledger");
+
+    let zero = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 0);
+    let hot_family_zero = &zero[zero
+        .find("# HELP oxide_cache_plane_hot_key_total")
+        .expect("the hot-key family renders")..];
+    assert_eq!(
+        hot_family_zero
+            .matches("oxide_cache_plane_hot_key_total{key=")
+            .count(),
+        0,
+        "window 0 renders the bare family pair"
+    );
+    assert!(
+        hot_family_zero.contains("# TYPE oxide_cache_plane_hot_key_total counter"),
+        "the pair is complete: HELP and TYPE ride"
+    );
+
+    let one = crate::framework_shim::cache_plane_scrape(&f.exporter, Some(&f.hot), 1);
+    let hot_family_one = &one[one
+        .find("# HELP oxide_cache_plane_hot_key_total")
+        .expect("the hot-key family renders")..];
+    assert_eq!(
+        hot_family_one
+            .matches("oxide_cache_plane_hot_key_total{key=")
+            .count(),
+        1,
+        "window 1 renders exactly one labeled row"
     );
 }
 
