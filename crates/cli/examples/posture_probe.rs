@@ -25,8 +25,8 @@
 //!    `posture_path` set and the provider attached, driven through
 //!    `serve_request` — `GET /-/health` answers 200 + `application/json`
 //!    + `cache-control: no-store`, the unattached path 404s "not
-//!    configured", the default (empty) path falls through to the
-//!    dispatch.
+//!      configured", the default (empty) path falls through to the
+//!      dispatch.
 //!
 //! Run with:
 //!
@@ -76,24 +76,32 @@ fn main() {
         }
     });
 
-    // 1. The gate: BOTH halves hold, or the provider attaches nothing.
-    //    The opt-in is the same family the §20 scrape arm reads — the
-    //    `cache.healthMetrics` baseline here stands in for the flag/env
-    //    layers the boot composes ahead of it.
+    // 1. The gate: ALL THREE halves hold (the V2-F50 shape — the opt-in,
+    //    the resolved path, the tier handle), or the provider attaches
+    //    nothing. The opt-in is the same family the §20 scrape arm reads
+    //    — the `cache.healthMetrics` baseline here stands in for the
+    //    flag/env layers the boot composes ahead of it; the path rides
+    //    the layered resolver the flag/env/config family speaks.
     let opted_in = oxide_fw_cli::observability::cache_plane_health_with_config(Some(true));
+    let resolved_path = oxide_fw_cli::observability::cache_posture_path_with_config(None);
     println!("opted in (cache.healthMetrics = true): {opted_in}");
+    println!("resolved path: {resolved_path}");
     println!(
-        "gate(no opt-in, tier)    attaches: {:?}",
-        posture_probe_provider(false, Some(&tier)).is_some()
+        "gate(no opt-in, path, tier) attaches: {:?}",
+        posture_probe_provider(false, "/-/health", Some(&tier)).is_some()
     );
     println!(
-        "gate(opt-in, no tier)    attaches: {:?}",
-        posture_probe_provider(true, None).is_some()
+        "gate(opt-in, empty path, tier) attaches: {:?}",
+        posture_probe_provider(true, "", Some(&tier)).is_some()
     );
-    let provider = posture_probe_provider(opted_in, Some(&tier))
-        .expect("the opt-in over a live tier attaches");
     println!(
-        "gate(opt-in, tier)       attaches: {}",
+        "gate(opt-in, path, no tier) attaches: {:?}",
+        posture_probe_provider(true, "/-/health", None).is_some()
+    );
+    let provider = posture_probe_provider(opted_in, &resolved_path, Some(&tier))
+        .expect("the opt-in over a live tier on a real path attaches");
+    println!(
+        "gate(opt-in, path, tier)    attaches: {}",
         provider_is_attached(&provider)
     );
 
