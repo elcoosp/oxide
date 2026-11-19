@@ -14921,8 +14921,7 @@ fn the_posture_probe_gate_asks_for_the_opt_in_the_path_and_the_tier() {
         "no tier handle, no probe — even opted in on a real path"
     );
     assert!(
-        crate::framework_shim::posture_probe_provider(false, "/-/health", Some(&f.typed))
-            .is_none(),
+        crate::framework_shim::posture_probe_provider(false, "/-/health", Some(&f.typed)).is_none(),
         "no opt-in, no probe — the default shape stays absent"
     );
     assert!(
@@ -15014,7 +15013,9 @@ fn cache_posture_path_from_garbage_degrades_to_the_default() {
 /// config, the recorded default path answers.
 #[test]
 fn cache_posture_path_without_any_layer_the_default_answers() {
-    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = POSTURE_PATH_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     crate::observability::set_cache_posture_path_override(None);
     assert_eq!(
         crate::observability::cache_posture_path_with_config(None),
@@ -15028,7 +15029,9 @@ fn cache_posture_path_without_any_layer_the_default_answers() {
 /// env var in charge.
 #[test]
 fn cache_posture_path_override_wins_over_the_env_var() {
-    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = POSTURE_PATH_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     // SAFETY: pre-runtime in the boot; the pin serializes behind the
     // state lock (the HEALTH_STATE_LOCK posture).
     unsafe { std::env::set_var("OXIDE_CACHE_POSTURE_PATH", "/-/env-path") };
@@ -15052,7 +15055,9 @@ fn cache_posture_path_override_wins_over_the_env_var() {
 /// F48 arm's shape, outside the dev-mode gate).
 #[test]
 fn apply_startup_env_threads_the_posture_path_flag_into_the_override() {
-    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = POSTURE_PATH_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let cli = Cli::parse_from(["oxide", "dev", "--cache-posture-path", "/-/probe"]);
     apply_startup_env(&cli);
     assert_eq!(
@@ -15068,7 +15073,9 @@ fn apply_startup_env_threads_the_posture_path_flag_into_the_override() {
 /// shape) — and a falsy spelling lands verbatim (the surface goes off).
 #[test]
 fn apply_startup_env_threads_the_posture_path_flag_on_the_serve_boot() {
-    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = POSTURE_PATH_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let cli = Cli::parse_from(["oxide", "start", "--cache-posture-path", "off"]);
     apply_startup_env(&cli);
     assert_eq!(
@@ -15084,7 +15091,9 @@ fn apply_startup_env_threads_the_posture_path_flag_on_the_serve_boot() {
 /// string pins it off (the `cache.healthMetrics` both-spellings shape).
 #[test]
 fn cache_posture_path_config_baseline_answers_without_flag_or_env() {
-    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = POSTURE_PATH_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     crate::observability::set_cache_posture_path_override(None);
     // SAFETY: the pin owns the spelling for its locked section.
     unsafe { std::env::remove_var("OXIDE_CACHE_POSTURE_PATH") };
@@ -15112,7 +15121,9 @@ fn cache_posture_path_config_baseline_answers_without_flag_or_env() {
 /// baseline (the F41 contract verbatim).
 #[test]
 fn cache_posture_path_precedence_flag_then_env_then_config() {
-    let _g = POSTURE_PATH_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = POSTURE_PATH_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     crate::observability::set_cache_posture_path_override(None);
     // The flag wins over the baseline.
     crate::observability::set_cache_posture_path_override(Some("/-/flag".into()));
