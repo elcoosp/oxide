@@ -302,6 +302,10 @@ async fn health_snapshot_round_trips_through_json() {
             "tags_indexed": 1,
             "keys_tracked": 1,
             "observer_attached": false,
+            // F52: the disk tier's eviction total rides the posture (the
+            // one-line pin drift the field's shape asked for — no disk
+            // tier here, so the honest zero).
+            "disk_evictions": 0,
         })
     );
     let back: oxide_fw_cache::CacheHealth = serde_json::from_value(v).unwrap();
