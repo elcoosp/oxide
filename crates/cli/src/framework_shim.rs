@@ -490,15 +490,25 @@ pub(crate) const CACHE_PLANE_HOT_KEY_TOP: usize = 10;
 /// posture holds wherever the ledger does not ride. F41: the hot-key
 /// window rides the caller — the boot resolves the operator spelling
 /// once and passes it here; `top = 0` renders the bare family pair
-/// (the family stays answerable, zero labeled rows).
+/// (the family stays answerable, zero labeled rows). F46: the coverage
+/// arm rides the caller too — the boot resolves the
+/// `OXIDE_CACHE_PLANE_COVERAGE` opt-in once and passes it here; `true`
+/// appends the ledger's F44 coverage exposition (the unattributed
+/// score's counter, the occupancy and bound gauges — the fixed family
+/// order the F44 render ships) after the labeled family, `false` keeps
+/// the pre-F46 shape byte-identical (the F40 doctrine).
 pub(crate) fn cache_plane_scrape(
     exporter: &oxide_fw_cache::MetricsCacheObserver,
     hot_keys: Option<&oxide_fw_cache::HotKeyObserver>,
     top: usize,
+    coverage: bool,
 ) -> String {
     let mut rows = exporter.render_prometheus();
     if let Some(hot_keys) = hot_keys {
         rows.push_str(&hot_keys.render_prometheus(top));
+        if coverage {
+            rows.push_str(&hot_keys.render_coverage_prometheus());
+        }
     }
     rows
 }
