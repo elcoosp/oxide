@@ -2610,3 +2610,131 @@ async fn wait_for_listener(addr: std::net::SocketAddr) {
     }
     panic!("listener at {addr} never came up within 10s");
 }
+
+// ------------------------------------------------------- F49 cache posture probe (/-/health)
+//
+// The F48 handoff's recorded tail: the posture pull's second production
+// surface. The pull (`TieredCache::health` → `CacheHealth`) is already the
+// value shape a probe wants — the probe endpoint hands it over the wire as
+// JSON. The server crate stays cache-agnostic (the F39 doctrine): the
+// surface speaks through the `CachePosture` provider trait, the host (the
+// CLI, which depends on both crates) adapts its tier through it. The shape
+// is the metrics endpoint's contract transposed to a JSON pull: a path
+// field (`posture_path`, empty disables), an unconfigured 404 that leaks
+// nothing, GET-only, and a `no-store` body — the posture is live, a cache
+// between the probe and the node would answer a stale stack.
+
+/// The probe's fixed test double. The server crate never names the cache
+/// crate — the host's posture value crosses this seam as JSON text.
+struct FixedPosture;
+impl CachePosture for FixedPosture {
+    fn posture_json(&self) -> String {
+        r#"{"memory_entries":7}"#.to_string()
+    }
+}
+
+/// A pipeline wired for the probe pins: the helper's defaults plus the
+/// probe path and (optionally) the provider under test.
+fn posture_pipeline(provider: Option<Arc<dyn CachePosture>>) -> Pipeline {
+    let mut p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    p.posture_path = "/-/health".into();
+    p.cache_posture = provider;
+    p
+}
+
+/// An unconfigured probe 404s before anything else: the metrics endpoint's
+/// "not configured" contract (the 404 leaks nothing and keeps the contract
+/// for dev tooling) — a boot that never attached a provider answers 404 on
+/// the configured path.
+#[tokio::test]
+async fn the_posture_probe_answers_404_without_a_provider() {
+    let p = posture_pipeline(None);
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("GET", "/-/health", &[]), d).await;
+    assert_eq!(resp.status, 404);
+    assert_eq!(resp.body.as_ref(), b"posture probe not configured");
+}
+
+/// A wired probe answers the provider's JSON verbatim, as
+/// `application/json` — the pull is the value shape a probe wants.
+#[tokio::test]
+async fn the_posture_probe_answers_the_provider_json() {
+    let p = posture_pipeline(Some(Arc::new(FixedPosture) as Arc<dyn CachePosture>));
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("GET", "/-/health", &[]), d).await;
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.body.as_ref(), br#"{"memory_entries":7}"#);
+    assert!(
+        resp.headers
+            .iter()
+            .any(|(k, v)| k == "content-type" && v.starts_with("application/json")),
+        "the probe answers JSON: {:?}",
+        resp.headers
+    );
+    assert!(
+        resp.headers
+            .iter()
+            .any(|(k, v)| k == "cache-control" && v == "no-store"),
+        "the live posture is never cacheable: {:?}",
+        resp.headers
+    );
+}
+
+/// The default posture path is the empty string: the surface is absent and
+/// the request falls through to the normal dispatch — the F40 doctrine
+/// (the default shape is the recorded posture, byte-identical).
+#[tokio::test]
+async fn the_posture_probe_default_path_leaves_the_surface_absent() {
+    let p = pipeline(
+        RulesEngine::default(),
+        None,
+        Limits::default(),
+        SecuritySettings::default(),
+    );
+    assert!(
+        p.posture_path.is_empty(),
+        "the default pipeline ships no probe path"
+    );
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("GET", "/-/health", &[]), d).await;
+    assert_eq!(resp.status, 200);
+    assert!(
+        String::from_utf8_lossy(&resp.body).contains("dispatched GET"),
+        "an absent probe falls through to the dispatch: {}",
+        String::from_utf8_lossy(&resp.body)
+    );
+}
+
+/// The probe is a GET surface: a POST falls through to the dispatch — the
+/// health/ready arm shape (the method rides the gate).
+#[tokio::test]
+async fn the_posture_probe_is_a_get_surface() {
+    let p = posture_pipeline(Some(Arc::new(FixedPosture) as Arc<dyn CachePosture>));
+    let d = &echo_dispatch();
+    let resp = p.serve_request(req("POST", "/-/health", &[]), d).await;
+    assert_eq!(resp.status, 200);
+    assert!(
+        String::from_utf8_lossy(&resp.body).contains("dispatched POST"),
+        "a POST never reaches the probe: {}",
+        String::from_utf8_lossy(&resp.body)
+    );
+}
+
+/// The path rides the field: a host that relocates the probe (a reserved
+/// prefix, a per-env path) gets the same contract on the path it chose.
+#[tokio::test]
+async fn the_posture_probe_path_is_configurable() {
+    let mut p = posture_pipeline(Some(Arc::new(FixedPosture) as Arc<dyn CachePosture>));
+    p.posture_path = "/-/cache-posture".into();
+    let d = &echo_dispatch();
+    let resp = p
+        .serve_request(req("GET", "/-/cache-posture", &[]), d)
+        .await;
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.body.as_ref(), br#"{"memory_entries":7}"#);
+}
