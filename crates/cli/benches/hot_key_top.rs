@@ -166,11 +166,65 @@ fn bench_cache_plane_health_scrape(c: &mut Criterion) {
     group.finish();
 }
 
+/// The V2-F49 posture probe's marginal cost over the same populated tier
+/// the health-arm group drives: the probe surface's per-pull body —
+/// `cache_posture_probe_json` (the JSON wire body `GET /-/health` answers,
+/// one `TieredCache::health` sampling pass plus the serde render) — beside
+/// the §20 scrape's posture render (the comparator a reviewer diffs: the
+/// same pull, the Prometheus exposition's shape).
+fn bench_cache_posture_probe(c: &mut Criterion) {
+    use oxide_fw_cache::{Entry, Policy, TieredCache};
+
+    // The boot's tier shape: a real TieredCache driven to resident
+    // occupancy (write-through sets) so the probe's pull reads a live
+    // memory tier, not the zeroed default — the honest cost is the one
+    // a populated stack pays (the health-arm group's shape verbatim).
+    const BENCH_TIER_BYTES: u64 = 16 * 1024 * 1024;
+    const BENCH_TIER_ENTRIES: usize = 256;
+    let rt = tokio::runtime::Runtime::new().expect("the bench's tokio runtime");
+    let tier = rt.block_on(async {
+        let tier = TieredCache::new(BENCH_TIER_BYTES);
+        let entry = Entry {
+            body: vec![0u8; 512],
+            status: 200,
+            headers: vec![("content-type".into(), "text/html".into())],
+            tags: vec!["bench".into()],
+            policy: Policy {
+                ttl: std::time::Duration::from_secs(60),
+                swr: None,
+                stale_if_error: None,
+                soft_tags: true,
+            },
+            stored_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("the wall clock runs")
+                .as_millis() as u64,
+            etag: "\"bench\"".into(),
+        };
+        for i in 0..BENCH_TIER_ENTRIES {
+            tier.set(&format!("route:/{i:04}"), entry.clone())
+                .await
+                .expect("the tier takes the write");
+        }
+        tier
+    });
+
+    let mut group = c.benchmark_group("cache_posture_probe");
+    group.bench_function("probe_json_arm", |b| {
+        b.iter(|| black_box(oxide_fw_cli::cache_posture_probe_json(black_box(&tier))))
+    });
+    group.bench_function("prometheus_scrape_arm", |b| {
+        b.iter(|| black_box(black_box(&tier).health().render_prometheus()))
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_cache_hot_key_top_parse,
     bench_cache_hot_key_top_override,
     bench_cache_plane_coverage_scrape,
-    bench_cache_plane_health_scrape
+    bench_cache_plane_health_scrape,
+    bench_cache_posture_probe
 );
 criterion_main!(benches);
