@@ -75,6 +75,12 @@ mod build_cache;
 mod build_graph;
 mod esm_dev;
 mod framework_shim;
+// V2-F49: the posture probe's public seam — the wire body the `/-/health`
+// surface answers, the typed-tier adapter behind the server crate's
+// `CachePosture` trait, and the boot's two-halves gate (the bench group
+// and the walkthrough reuse them; the rest of the shim stays
+// crate-internal, the `mod args; pub use args::*` shape).
+pub use framework_shim::{TierCachePosture, cache_posture_probe_json, posture_probe_provider};
 mod l0_cache;
 pub mod loader_shim;
 mod modules_loader;
