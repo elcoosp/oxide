@@ -43,8 +43,10 @@ fn config_json(cache: &str) -> String {
 /// boot wire.
 #[test]
 fn cache_posture_path_parses_from_the_config() {
-    let loaded = load_config(&config_json(r#"{ "postureProbePath": "/-/cache-posture" }"#))
-        .expect("a cache section with postureProbePath loads");
+    let loaded = load_config(&config_json(
+        r#"{ "postureProbePath": "/-/cache-posture" }"#,
+    ))
+    .expect("a cache section with postureProbePath loads");
     assert_eq!(
         loaded.config.cache.posture_probe_path.as_deref(),
         Some("/-/cache-posture"),
