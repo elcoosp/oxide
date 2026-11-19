@@ -131,6 +131,7 @@ async fn feed_is_a_cache_observer_over_real_traffic() {
             CacheOp::Delete => "delete",
             CacheOp::Invalidate { .. } => "invalidate",
             CacheOp::Coalesce { .. } => "coalesce",
+            CacheOp::Evict { .. } => "evict",
         })
         .collect();
     assert_eq!(kinds, vec!["set", "hit", "miss"], "FIFO over the traffic");
