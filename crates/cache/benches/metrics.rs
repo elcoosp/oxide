@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxide_fw_cache::{
-    CacheEvent, CacheOp, Entry, Layer, MetricsCacheObserver, Policy, TieredCache,
+    CacheEvent, CacheOp, Entry, HotKeyObserver, Layer, MetricsCacheObserver, Policy, TieredCache,
 };
 
 fn now_ms() -> u64 {
@@ -178,10 +178,63 @@ fn bench_render_scrape(c: &mut Criterion) {
     g.finish();
 }
 
+/// The F40 composed §20 scrape: the boot's `set_cache_plane` closure
+/// renders the exporter's families and appends the hot-key ledger's
+/// labeled family — one run per pull. The arms price each half and the
+/// composition (the delta over the bare scrape is the ledger's render at
+/// the boot's top window).
+fn bench_composed_scrape(c: &mut Criterion) {
+    let exporter = MetricsCacheObserver::new();
+    let observer: &dyn oxide_fw_cache::CacheObserver = &exporter;
+    for i in 0..64 {
+        observer.on_event(&CacheEvent {
+            key: "route:/x",
+            op: if i % 2 == 0 {
+                CacheOp::Hit {
+                    layer: Layer::L0,
+                    stale: false,
+                    bytes: 512,
+                }
+            } else {
+                CacheOp::Miss
+            },
+        });
+    }
+    let hot = HotKeyObserver::shared(64);
+    let hot_observer: &dyn oxide_fw_cache::CacheObserver = hot.as_ref();
+    for i in 0..32 {
+        hot_observer.on_event(&CacheEvent {
+            key: &format!("route:/{i}"),
+            op: CacheOp::Set { bytes: 64 },
+        });
+    }
+
+    let mut g = c.benchmark_group("cache_plane_composed_scrape");
+    g.sample_size(30);
+    g.measurement_time(Duration::from_secs(3));
+
+    g.bench_function("scrape/exporter-only", |b| {
+        b.iter(|| {
+            let text = exporter.render_prometheus();
+            black_box(text.len());
+        });
+    });
+    g.bench_function("scrape/composed", |b| {
+        b.iter(|| {
+            let mut text = exporter.render_prometheus();
+            text.push_str(&hot.render_prometheus(black_box(10)));
+            black_box(text.len());
+        });
+    });
+
+    g.finish();
+}
+
 criterion_group!(
     bench_metrics,
     bench_exporter_hot_path,
     bench_render_scrape,
-    bench_record_coalesced
+    bench_record_coalesced,
+    bench_composed_scrape
 );
 criterion_main!(bench_metrics);
