@@ -496,12 +496,22 @@ pub(crate) const CACHE_PLANE_HOT_KEY_TOP: usize = 10;
 /// appends the ledger's F44 coverage exposition (the unattributed
 /// score's counter, the occupancy and bound gauges — the fixed family
 /// order the F44 render ships) after the labeled family, `false` keeps
-/// the pre-F46 shape byte-identical (the F40 doctrine).
+/// the pre-F46 shape byte-identical (the F40 doctrine). F47: the
+/// health arm rides the caller the same way — the boot resolves the
+/// `OXIDE_CACHE_PLANE_HEALTH` opt-in once and passes the TYPED tier
+/// beside it; `true` appends the posture pull's F32 gauge exposition
+/// (`TieredCache::health` rendered as the nine `oxide_cache_plane_*`
+/// gauge families — the live posture, nothing fabricated) after the
+/// coverage families, `false` (or no tier handle) keeps the pre-F47
+/// shape byte-identical: the tier handle alone never changes the
+/// scrape's bytes, the flag is what composes the arm.
 pub(crate) fn cache_plane_scrape(
     exporter: &oxide_fw_cache::MetricsCacheObserver,
     hot_keys: Option<&oxide_fw_cache::HotKeyObserver>,
     top: usize,
     coverage: bool,
+    tier: Option<&oxide_fw_cache::TieredCache>,
+    health: bool,
 ) -> String {
     let mut rows = exporter.render_prometheus();
     if let Some(hot_keys) = hot_keys {
@@ -509,6 +519,14 @@ pub(crate) fn cache_plane_scrape(
         if coverage {
             rows.push_str(&hot_keys.render_coverage_prometheus());
         }
+    }
+    // The let-chain shape (the `apply_startup_env` posture): the tier
+    // handle alone never composes the arm — the flag is the second half
+    // of the gate.
+    if let Some(tier) = tier
+        && health
+    {
+        rows.push_str(&tier.health().render_prometheus());
     }
     rows
 }
