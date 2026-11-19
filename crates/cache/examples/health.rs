@@ -106,6 +106,10 @@ fn main() {
             "disk bytes  : {}, observer attached: {}",
             h.disk_bytes, h.observer_attached
         );
+        println!(
+            "disk evictions (F52): {} — the disk tier's own S-08 prune total riding the posture",
+            h.disk_evictions
+        );
         print!("{}", h.render_prometheus());
     });
 }
