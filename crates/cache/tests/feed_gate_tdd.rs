@@ -100,6 +100,12 @@ fn warn_rows(buffer: &ConsoleWriter) -> usize {
         .count()
 }
 
+/// The capture pins' registration lock: two subscriber installs racing
+/// rebuild the tracing callsite cache, and a warn fired mid-rebuild is
+/// dropped — the sticky-warn pins register one at a time so each drive
+/// runs against a warm cache (the flake the parallel suite hit).
+static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
+
 // --------------------------------------------------------------- the trait pins
 
 /// `with_gate(Arc::new(AdmitAll))` matches the ungated feed row for row:
@@ -196,6 +202,7 @@ fn kind_gate_admits_only_the_named_kinds() {
 /// and the sticky warn never fires for a configured filter.
 #[test]
 fn rejections_are_not_drops_and_never_warn() {
+    let _capture = CAPTURE_LOCK.lock().expect("the capture lock");
     let buffer = ConsoleWriter(Arc::new(Mutex::new(Vec::new())));
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(buffer.clone())
@@ -223,6 +230,7 @@ fn rejections_are_not_drops_and_never_warn() {
 /// the warn-once rule holding (the gate and the bound compose).
 #[test]
 fn the_bound_composes_behind_the_gate() {
+    let _capture = CAPTURE_LOCK.lock().expect("the capture lock");
     let buffer = ConsoleWriter(Arc::new(Mutex::new(Vec::new())));
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(buffer.clone())
