@@ -1104,6 +1104,20 @@ pub struct CacheConfig {
     /// deliberately cannot see.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hot_key_top: Option<u64>,
+    /// V2-F46: `cache: { coverageMetrics: true }` — the project's
+    /// committed opt-in for the §20 scrape's coverage arm (the hot-key
+    /// ledger's coverage exposition — the unattributed score's counter
+    /// and the occupancy/bound gauge pair — rendered beside the labeled
+    /// window family). The boot's precedence mirrors the `hotKeyTop`
+    /// family: the `--cache-plane-coverage` flag wins, the
+    /// `OXIDE_CACHE_PLANE_COVERAGE` env var keeps the operator's shell
+    /// spelling, this key is the project's baseline, and with none set
+    /// the default-off shape answers byte-identically (the F40
+    /// doctrine — the coverage families compose only when an operator
+    /// asks). Both spellings are legal: `true` opts the plane in,
+    /// `false` pins it off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_metrics: Option<bool>,
 }
 
 /// §14.1: `cache.l0` — the L0 response-cache settings.
