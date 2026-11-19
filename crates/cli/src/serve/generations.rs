@@ -93,7 +93,16 @@ pub fn promote_handle_from_dist(
 ) -> Option<String> {
     let id = oxide_fw_cache::read_build_id(dist)?;
     let now = Instant::now();
-    let mut pool = pool.write().ok()?;
+    // Poison recovery, not a silent bail (the house shape the F47/F48
+    // session applied to the render stage's shell-cache read): a poisoned
+    // write lock used to make every SIGHUP promote after a panicking
+    // holder quietly return `None` — "nothing changed" — so a real deploy
+    // was dropped while the server kept advertising the stale generation.
+    // The promote is the pool's own contract; recovering the guard hands
+    // the deploy through.
+    let mut pool = pool
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if pool.current() == id {
         return None;
     }
@@ -145,9 +154,18 @@ impl ServingPools {
     }
 
     /// The id every data-plane response advertises.
+    ///
+    /// The read recovers a poisoned lock (the house shape — a pure read
+    /// has no invariant to tear), so an advertise after a panicking
+    /// holder answers the honest current id instead of `None`.
     #[must_use]
     pub fn current(&self) -> Option<String> {
-        self.pools.read().ok().map(|p| p.current().to_string())
+        self.pools
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .current()
+            .to_string()
+            .into()
     }
 
     /// Install a freshly-booted generation as current (the reload deploy:
@@ -169,14 +187,20 @@ impl ServingPools {
     /// serve a request advertising `id`? `None` id (HTML navigations,
     /// header-less data-plane requests) → current; a demoted id inside
     /// ITS window → THAT generation's handles. The caller falls back to
-    /// the boot handles when the pools are unavailable (a poisoned lock)
-    /// — the stage's 409 already answered unknown ids.
+    /// the boot handles when the pools answer no generation (the stage's
+    /// 409 already answered unknown ids). The read recovers a poisoned
+    /// lock (the house shape — a pure routing read has no invariant to
+    /// tear), so a panicking holder no longer silently degrades every
+    /// later request to the fallback.
     #[must_use]
     pub fn route_for(
         &self,
         id: Option<&str>,
     ) -> Option<(Arc<GenServing>, oxide_fw_dispatch::build::Gen)> {
-        let p = self.pools.read().ok()?;
+        let p = self
+            .pools
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (generation, which) = p.route(id, Instant::now())?;
         Some((Arc::clone(generation), which))
     }
