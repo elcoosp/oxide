@@ -384,7 +384,10 @@ mod endpoints;
 pub(crate) use endpoints::*;
 mod hooks;
 pub(crate) use hooks::*;
-mod observability;
+// V2-F42: the observability module is public — the boot flag's override
+// slot and the §20 resolver's parse core are the window's consumer API
+// (the criterion bench and the walkthrough example ride them).
+pub mod observability;
 pub(crate) use observability::*;
 mod prerender;
 pub use prerender::*;
