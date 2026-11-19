@@ -68,12 +68,91 @@
 //! `Arc<dyn CacheObserver>` the tiers' field stores — and compose
 //! beside the exporter and the feed behind one
 //! [`FanoutCacheObserver`](crate::FanoutCacheObserver).
+//!
+//! ## The admission gate (F39)
+//!
+//! The ledger tracks EVERY key it sees — right for a whole-plane
+//! dashboard, wrong for a narrow one: a deploy-watch ledger
+//! (`invalidate` + `coalesce` keys only) spends its capacity on the
+//! hot-hit stream it would have counted and discarded, and a hot stream
+//! fills the bound before the deploy keys it actually wants arrive. The
+//! gate is the attribution-side narrowing (the F35 filter-surface shape
+//! transposed — [`FeedGate`](crate::feed::FeedGate) narrowed the feed's
+//! retention, this narrows the ledger's first-sight admission):
+//! [`HotKeyGate`] sees the borrowed event BEFORE the ledger lock, so a
+//! rejected row allocates nothing, never joins the map, never counts in
+//! `unattributed()` and never fires the sticky warn — admission is the
+//! ledger's configured shape, not a degradation. The bound applies
+//! behind the gate unchanged: admitted keys refuse past capacity
+//! exactly as before. The default is the gate spelled as a type
+//! ([`AdmitAllKeys`]) — the ungated ledger row for row.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
 use crate::observer::{CacheEvent, CacheObserver};
+
+/// The ledger's admission predicate (F39, the F35 filter-surface shape
+/// transposed): the fanout and the exporters widen who hears an event,
+/// the gate narrows which keys the ledger tracks.
+///
+/// The gate sees the BORROWED event — [`on_event`](CacheObserver::on_event)
+/// consults it before the ledger lock, so a rejected row allocates
+/// nothing and never joins the map. A rejection is admission, not
+/// saturation: it never counts in [`HotKeyObserver::unattributed`] and
+/// never fires the sticky warn (the warn is the bound's signal).
+///
+/// `Send + Sync + 'static` so the gate rides the `Arc`-shared ledger
+/// across the cache's tasks. Implementations must be cheap and never
+/// panic — the predicate runs ON the cache's call path, the same
+/// contract the [`CacheObserver`](CacheObserver) callback carries.
+pub trait HotKeyGate: Send + Sync + 'static {
+    /// Whether the event's key joins the ledger. The `event` borrow
+    /// lives only for the call.
+    fn admits(&self, event: &CacheEvent<'_>) -> bool;
+}
+
+/// The default gate spelled as a type: every key joins the ledger. The
+/// ungated ledger (`bounded`) is this predicate — `with_gate(Arc::new(
+/// AdmitAllKeys))` matches it row for row (the F24 posture: the default
+/// shape never moves; the type exists so a host can NAME the default).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AdmitAllKeys;
+
+impl HotKeyGate for AdmitAllKeys {
+    fn admits(&self, _event: &CacheEvent<'_>) -> bool {
+        true
+    }
+}
+
+/// The domain gate: attributes the row kinds named at construction and
+/// refuses the rest, keyed on [`CacheEvent::kind`]'s stable names
+/// (`"hit"`, `"miss"`, `"set"`, `"delete"`, `"invalidate"`,
+/// `"coalesce"`). The deploy-watch ledger — `HotKeyKindGate::only(&[
+/// "invalidate", "coalesce"])` tracks the keys a deploy touched, not
+/// the hot-hit stream a narrow dashboard would have counted and
+/// discarded.
+#[derive(Debug, Clone)]
+pub struct HotKeyKindGate {
+    admitted: &'static [&'static str],
+}
+
+impl HotKeyKindGate {
+    /// A gate attributing only the named kinds. The slice is held by
+    /// reference (`&'static str` names are constants), so construction
+    /// allocates nothing.
+    #[must_use]
+    pub fn only(admitted: &'static [&'static str]) -> Self {
+        Self { admitted }
+    }
+}
+
+impl HotKeyGate for HotKeyKindGate {
+    fn admits(&self, event: &CacheEvent<'_>) -> bool {
+        self.admitted.contains(&event.kind())
+    }
+}
 
 /// One attributed row of the ledger: the key plus the completed-event
 /// count it accumulated (value-shaped — `Clone` + `Eq` — so a host
@@ -120,18 +199,23 @@ struct Ledger {
 /// ```
 pub struct HotKeyObserver {
     ledger: Mutex<Ledger>,
+    /// The F39 admission gate: `None` is the [`AdmitAllKeys`] default
+    /// (the ungated shape, byte-identical), `Some` narrows the
+    /// attribution before the ledger lock.
+    gate: Option<Arc<dyn HotKeyGate>>,
 }
 
 impl std::fmt::Debug for HotKeyObserver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // The ledger's occupancy and coverage score ARE the shape (the
         // `EventFeed` debug posture: name the shape, not the map's
-        // internals).
+        // internals); the gate is the attach shape.
         let ledger = self.ledger.lock().expect("the hot-key ledger lock");
         f.debug_struct("HotKeyObserver")
             .field("tracked", &ledger.counts.len())
             .field("capacity", &ledger.capacity)
             .field("unattributed", &ledger.unattributed)
+            .field("gated", &self.gate.is_some())
             .finish()
     }
 }
@@ -140,7 +224,8 @@ impl HotKeyObserver {
     /// A ledger tracking at most `capacity` distinct keys. A zero
     /// capacity retains nothing — every row is unattributed (the
     /// `EventFeed` zero-bound posture), and the sticky warn still fires
-    /// once.
+    /// once. The gate is the untyped default ([`AdmitAllKeys`]); narrow
+    /// the attribution with [`HotKeyObserver::with_gate`].
     #[must_use]
     pub fn bounded(capacity: usize) -> Self {
         Self {
@@ -150,7 +235,21 @@ impl HotKeyObserver {
                 unattributed: 0,
                 warned: false,
             }),
+            gate: None,
         }
+    }
+
+    /// Narrow the ledger's attribution (F39): only events the gate
+    /// admits join the map. The gate runs BEFORE the ledger lock, so a
+    /// rejected row allocates nothing, never counts in
+    /// [`HotKeyObserver::unattributed`] and never fires the sticky warn
+    /// — admission is the ledger's configured shape, not a degradation.
+    /// The bound applies behind the gate unchanged; the builder consumes
+    /// and returns the ledger so the attach chain stays one expression.
+    #[must_use = "the gate attaches through the builder chain; dropping it loses the narrowing"]
+    pub fn with_gate(mut self, gate: Arc<dyn HotKeyGate>) -> Self {
+        self.gate = Some(gate);
+        self
     }
 
     /// The bound the ledger was built with.
@@ -331,6 +430,17 @@ fn escape_label_value(value: &str) -> String {
 
 impl CacheObserver for HotKeyObserver {
     fn on_event(&self, event: &CacheEvent<'_>) {
+        // The F39 gate first, on the BORROWED event: a rejected row
+        // allocates nothing, never joins the map, never counts in
+        // `unattributed()` and never fires the warn — admission is the
+        // ledger's configured shape, not a degradation. `None` (the
+        // default) is the `AdmitAllKeys` shape — one `Option` branch,
+        // the ungated path byte-identical.
+        if let Some(gate) = &self.gate
+            && !gate.admits(event)
+        {
+            return;
+        }
         // One mutex-protected update: the callback runs ON the cache's
         // call path (a hot L0 hit pays one lock, one lookup), the
         // observer contract's "cheap and never panics" rule. The warn
@@ -378,13 +488,23 @@ impl CacheObserver for HotKeyObserver {
 /// hands back the attached-and-readable half already split (the
 /// `EventFeed::shared` shape). `with_observer` takes the
 /// `Arc<dyn CacheObserver>` coercion; the host keeps the typed half for
-/// the reads.
+/// the reads. A gated ledger rides the same constructor —
+/// `HotKeyObserver::gated(capacity, gate)` is
+/// `Arc::new(HotKeyObserver::bounded(capacity).with_gate(gate))` with
+/// the shapes spelled.
 impl HotKeyObserver {
     /// `Arc::new(HotKeyObserver::bounded(capacity))` with the types
     /// spelled — the attach-and-read shape the module doc shows.
     #[must_use]
     pub fn shared(capacity: usize) -> Arc<Self> {
         Arc::new(Self::bounded(capacity))
+    }
+
+    /// The gated ledger's shared shape: the F39 narrowing over the
+    /// attach-and-read constructor, one expression.
+    #[must_use]
+    pub fn gated(capacity: usize, gate: Arc<dyn HotKeyGate>) -> Arc<Self> {
+        Arc::new(Self::bounded(capacity).with_gate(gate))
     }
 }
 
