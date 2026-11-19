@@ -97,6 +97,15 @@ name = "hot_keys"
 harness = false
 required-features = ["bench-util"]
 
+# F51: the eviction story's cost (§20): the steady-state S-08 prune a
+# zero-budget write pays per set (victim pick + delete + the counter
+# adds + observer delivery, with and without an exporter attached) and
+# the pull reads' share (`stats()` / `health()` sampling the total).
+[[bench]]
+name = "eviction"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
