@@ -687,7 +687,10 @@ impl ReferenceGenerator for EndpointsPage {
              from the `oxide_fw_server::ENDPOINT_MAP` data the server crate ships. \
              The plane rule is structural: `/__oxide/*` is the **data plane** (the \
              build-header check guards it, A04), `/_oxide/*` is the **ops plane**, \
-             and the dev-only surfaces are dev-token guarded (D41)."
+             the dev-only surfaces are dev-token guarded (D41), and the V2-F49 \
+             posture probe rides the `/-/` ops-probe convention (`/-/health` — \
+             deliberately beside, not under, the framework's own `/_oxide` \
+             namespace, so a platform's uniform probe-path config finds it)."
         );
         out.push_str("\n## Endpoints\n\n");
         out.push_str(&oxide_fw_server::endpoint_markdown_table());
