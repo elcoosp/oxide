@@ -380,7 +380,18 @@ pub(crate) async fn stage_render(
                                 ppr_build_id,
                             );
                             let ppr_tags = vec![l0_route.clone(), format!("path:{l0_path}")];
-                            let cached = shells.lock().ok().and_then(|s| s.get(&pkey).cloned());
+                            // Poison recovery (micro-debt, V2-F47): the
+                            // guard's critical section is one plain map
+                            // read — no invariant can break inside it —
+                            // so a poisoned lock hands the guard back
+                            // and the shell-cache hit still lands. The
+                            // old `.ok()` shape silently missed the hit
+                            // on a poisoned lock.
+                            let cached = shells
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .get(&pkey)
+                                .cloned();
                             match cached {
                                 Some(shell) => ppr_filter_stream(
                                     shell.replace(l0_cache::NONCE_SENTINEL, &nonce),
