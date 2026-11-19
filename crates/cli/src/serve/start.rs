@@ -678,6 +678,30 @@ pub(crate) async fn start_server_inner_full(
         let _sampler = crate::serve::brownout::BrownoutWiring::spawn_sampler(bw, &cfg.brownout);
         let _probe = crate::serve::brownout::BrownoutWiring::spawn_loop_lag_probe(bw);
     }
+    // V2-F49: the posture probe's wire — the F48 handoff's recorded tail
+    // (the posture pull's second production surface). The opt-in resolves
+    // ONCE here (the `trace_file_path` posture: a boot-time read, not a
+    // per-request poll) and the provider attaches only when BOTH halves
+    // hold — the resolved opt-in AND the typed tier handle (the F40
+    // doctrine on a surface: a boot that never opted in keeps the
+    // pre-F49 shape, the probe path 404s, nothing leaks). The `/-/health`
+    // path rides the register-always shape (the metrics endpoint's): an
+    // UNCONFIGURED probe 404s "not configured", the dev-tooling contract
+    // the 404-leaks-nothing arm established.
+    let cache_health_opt_in =
+        crate::observability::cache_plane_health_with_config(cfg.cache.health_metrics);
+    // V2-F50: the probe's path resolves ONCE through the layered
+    // resolver (the `cache.postureProbePath` baseline beside the F50
+    // flag and the `OXIDE_CACHE_POSTURE_PATH` env spelling) and the gate
+    // grows its third half — the surface exists only where the resolved
+    // path is non-empty AND the boot opted in AND a tier handle exists.
+    let cache_posture_path =
+        crate::observability::cache_posture_path_with_config(cfg.cache.posture_probe_path.as_deref());
+    let cache_posture = crate::framework_shim::posture_probe_provider(
+        cache_health_opt_in,
+        &cache_posture_path,
+        stack.cache_tier_typed.as_ref(),
+    );
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -781,6 +805,14 @@ pub(crate) async fn start_server_inner_full(
         render_ready: std::sync::Arc::clone(&render_ready),
         metrics_path: "/_oxide/metrics".to_string(),
         metrics: Some(std::sync::Arc::clone(&metrics)),
+        // V2-F49/V2-F50: the posture probe's surface. The path is the
+        // resolved probe location (the F50 layered resolver — the
+        // recorded `/-/health` default); the provider rides the wire
+        // above — the boot's opt-in over the typed tier on a non-empty
+        // path, `None` keeps the path 404ing "not configured" (the F40
+        // doctrine: the default shape leaks nothing).
+        posture_path: cache_posture_path,
+        cache_posture,
         inspector: if with_inspector {
             // §20: with a recorder wired, the inspector's waterfall table
             // reflects the live per-request timings instead of staying empty.
@@ -1089,7 +1121,12 @@ pub(crate) async fn start_server_inner_full(
             crate::observability::cache_hot_key_top_with_config(cfg.cache.hot_key_top);
         let coverage =
             crate::observability::cache_plane_coverage_with_config(cfg.cache.coverage_metrics);
-        let health = crate::observability::cache_plane_health_with_config(cfg.cache.health_metrics);
+        // V2-F49: the opt-in resolves ONCE per boot — the probe's wire
+        // (above the pipeline literal) hoisted the resolution to
+        // `cache_health_opt_in`, so the scrape arm and the probe surface
+        // read the SAME fact (the `trace_file_path` posture: one
+        // boot-time read, two consumers).
+        let health = cache_health_opt_in;
         metrics.set_cache_plane(move || {
             crate::framework_shim::cache_plane_scrape(
                 &exporter,
