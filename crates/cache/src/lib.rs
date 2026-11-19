@@ -13,12 +13,14 @@
 //!
 //! Submodules: [`tiers`] (memory/disk/tiered store, §11.2), [`single_flight`]
 //! (coalescing, §11.3), [`http`] (Cache-Control/ETag/304 + fetch memo),
-//! [`observer`] (the §20 push seam: one callback per completed cache event),
-//! [`fanout`] (the seam's composition arm: one event into every child
-//! observer), [`feed`] (the bounded lossy FIFO the host drains off the hot
-//! path), [`hot_keys`] (the seam's attribution arm: the bounded per-key
-//! event ledger and its F39 admission gate), [`health`] (the §20 posture
-//! pull: the whole stack in one value).
+//! [`http_handler`] (the §11.2 HTTP cache client) and [`http_service`] (the
+//! protocol's server half — any [`CacheHandler`] hosted behind the client's
+//! exchange shapes), [`observer`] (the §20 push seam: one callback per
+//! completed cache event), [`fanout`] (the seam's composition arm: one event
+//! into every child observer), [`feed`] (the bounded lossy FIFO the host
+//! drains off the hot path), [`hot_keys`] (the seam's attribution arm: the
+//! bounded per-key event ledger and its F39 admission gate), [`health`] (the
+//! §20 posture pull: the whole stack in one value).
 
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -31,6 +33,7 @@ pub mod health;
 pub mod hot_keys;
 pub mod http;
 pub mod http_handler;
+pub mod http_service;
 pub mod keyhash;
 pub mod metrics;
 pub mod observer;
@@ -46,9 +49,11 @@ pub use hot_keys::{
     AdmitAllKeys, HotKeyGate, HotKeyKindGate, HotKeyObserver, HotKeyRow, HotKeySnapshot,
 };
 pub use http::{
-    FetchMemo, cache_control, conditional_response, http_date, memo_key, parse_http_date,
+    FetchMemo, ServeOutcome, cache_control, conditional_response, http_date, memo_key,
+    parse_http_date, serve_entry,
 };
 pub use http_handler::HttpCacheHandler;
+pub use http_service::{HttpCacheService, PlaneRequest, PlaneResponse};
 pub use keyhash::{KeyStr, key_of};
 pub use metrics::{CacheMetricsSnapshot, MetricsCacheObserver};
 pub use observer::{CacheEvent, CacheObserver, CacheOp, TracingCacheObserver};
