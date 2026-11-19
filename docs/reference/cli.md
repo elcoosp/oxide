@@ -40,6 +40,9 @@ Start the dev server (on-demand ESM, HMR, §13)
 | `trace_log = true` |  |
 | `trace_log = false` |  |
 | `--cache-hot-key-top <N>` | V2-F42: the §20 scrape's hot-key top window, beside the `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var (the flag wins). The scrape's top-n is operator-tunable at the boot — the value rides pre-runtime into the override slot (the `log_feed_level` shape), the F41 resolver keeps its falsy and clamp contracts, and every scrape renders the boot's window |
+| `--cache-plane-coverage <CACHE_PLANE_COVERAGE>` | V2-F46: the §20 scrape's coverage arm opt-in, beside the `OXIDE_CACHE_PLANE_COVERAGE` env var (the flag wins). The hot-key ledger's F44 coverage exposition — the unattributed score's counter, the occupancy and bound gauges — renders beside the labeled window family when the boot opts in; the value rides pre-runtime into the override slot (the `cache_hot_key_top` shape). Default off: the scrape's shape stays byte-identical |
+| `cache_plane_coverage = true` |  |
+| `cache_plane_coverage = false` |  |
 
 ### `oxide build`
 
@@ -75,6 +78,9 @@ Start the production server (binary target, §12)
 | `no_warmup = true` |  |
 | `no_warmup = false` |  |
 | `--cache-hot-key-top <N>` | V2-F42: the §20 scrape's hot-key top window, beside the `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var (the flag wins). The scrape is a production surface, so the flag rides the serve boot too (the `root`/`port` multi-command shape) |
+| `--cache-plane-coverage <CACHE_PLANE_COVERAGE>` | V2-F46: the §20 scrape's coverage arm opt-in, beside the `OXIDE_CACHE_PLANE_COVERAGE` env var (the flag wins). The scrape is a production surface, so the flag rides the serve boot too (the `root`/`port` multi-command shape). Default off: the scrape's shape stays byte-identical |
+| `cache_plane_coverage = true` |  |
+| `cache_plane_coverage = false` |  |
 
 ### `oxide preview`
 
