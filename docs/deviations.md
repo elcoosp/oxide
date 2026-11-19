@@ -5827,3 +5827,99 @@ the impl existed, then went green. Benches: the `cache_hot_key_top_window`
 criterion group (`crates/cache/benches/hot_keys.rs`) — the read and render
 delta across default/operator/cap scales over a full-capacity ledger. The
 `hot_keys` example gains the operator-window section.
+
+## The hot-key window learns its flag and its project baseline (F42 + F43, 2026-11-19)
+
+**What the spec asks.** The F41 handoff's recorded pickup ("land the
+`--cache-hot-key-top` boot flag — the recorded F22/F28 flag-wins shape") and
+the F41 deviations record's named future consumer ("a flag, a config key
+re-resolves at its own wire without touching the cache crate"). Both are the
+same knob's remaining spellings; they land as one session (F42 the flag, F43
+the config key) so the window's precedence arrives complete.
+
+**What lands (F42).** `crates/cli/src/args.rs`: `--cache-hot-key-top <N>` on
+`Command::Dev` AND `Command::Start` (the §20 scrape is a production surface —
+the `root`/`port` multi-command precedent) plus the `cache_hot_key_top_arg()`
+accessor; `apply_startup_env` writes the value into the new
+`CACHE_HOT_KEY_TOP_OVERRIDE` slot (`crates/cli/src/observability.rs`, the
+`FEED_LEVEL_OVERRIDE` shape: a command-level fact decided pre-runtime, the
+read side never races a mid-async write). The resolver
+`cache_hot_key_top()` reads the override ahead of the F41 env spelling; the
+parse core's falsy/clamp/garbage contracts ride unchanged. The module and the
+two resolver fns become public API (`oxide_fw_cli::observability::…`) — the
+criterion bench and the consumer example ride them (the F18 example/bench
+shape).
+
+**What lands (F43).** `crates/config/src/lib.rs`:
+`CacheConfig::hot_key_top: Option<u64>` (`cache.hotKeyTop`, camelCase,
+`skip_serializing_if` so the serialized default shape never moves); the
+schema fragment declares `hotKeyTop` (integer, minimum 0 — `0` is the legal
+bare-family window) and `schemas/oxide-fw-config.schema.json` is regenerated
+through `oxide-schema`. `crates/cli/src/serve/start.rs`'s `set_cache_plane`
+wire switches to the layered resolver
+`observability::cache_hot_key_top_with_config(cfg.cache.hot_key_top)`.
+
+**The precedence design (the recorded decision).** Flag > env > config >
+default. The env layer's falsy spellings (`""`/`0`/`false`/`off`) stop THAT
+layer only — a committed baseline below still answers, because an operator's
+empty spelling is not the project's config being refused. Garbage degrades
+loudly-but-honestly to the DEFAULT (the F41 contract verbatim: the notice
+names the source, and the project baseline is never a silent recovery for a
+typoed operator spelling). The config value clamps at the boot wire to
+`CACHE_HOT_KEY_CAPACITY` — the config crate deliberately cannot see the
+ledger's bound (`usize::try_from(top).unwrap_or(usize::MAX).min(cap)`: a
+value past the bound renders nothing extra, the honest cap keeps one scrape
+bounded). With no layer speaking the F40 default answers — the boot shape is
+byte-identical to the F41 resolver's.
+
+**Pinned.** TDD red-first, one cycle per milestone: the 11 F42 pins failed
+with 15 errors (E0026 over the missing `Dev`/`Start` fields, E0425 over
+`set_cache_hot_key_top_override`, E0599 over `cache_hot_key_top_arg`) before
+the impl existed; the 6 config pins failed with 5 errors (E0609 over the
+missing `hot_key_top` field) and the 8 F43 wire pins failed with 23 E0425s —
+then all went green. The env-touching and override-touching pins serialize
+behind one `HOT_KEY_TOP_STATE_LOCK` per file (the recorded `CAPTURE_LOCK`
+shape — edition-2024 `set_var` concurrent with a `get_var` is the race the P1
+readiness posture exists for). Config side:
+`crates/config/tests/cache_hot_key_top_config.rs` (parse, default, the `0`
+window, the negative refusal, the schema declaration, the camelCase
+deserialize). Benches: the `cache_hot_key_top` criterion group in
+`crates/cli/benches/hot_key_top.rs` (the parse core's four spellings + the
+override's hit and miss arms — the bench-util opt-in, the F18 pattern). The
+`hot_key_top` example (`crates/cli/examples/hot_key_top.rs`) walks the public
+resolver end to end: the default read, the parse core's spellings (the
+garbage notice included), the flag's override slot, and the ledger's labeled
+family rendered under the resolved window.
+
+**Micro-debt cleaned.** `HotWireFixture::typed` — the F40 fixture field the
+F40 pins never read (a dead_code warning under any test-profile build since
+that session; the clippy `--lib` gate never saw it because `#[cfg(test)]`
+code does not compile under `clippy --lib`) — removed; the fixture carries
+the typed ledger and exporter the pins drive. The ten V8-free manifests
+without a `[lints]` table (`graph`, `cli`, `dev`, `server`, `jshost`,
+`bundler`, `plugin`, `core-wasm`, `assets`, `cache`) gain a bare `[lints]`
+table — the declared not-yet-inheriting intent (the V2-A02 note's recorded
+hygiene pass is still the real adoption), silencing the newer cargo
+`missing_lints_inheritance` notice the gate output printed ten times.
+
+**Docs drift repaired.** `docs/reference/cli.md` was stale against the
+running binary since F22/F28 (the `--trace-log` and `--log-feed-level` flags
+never rode a regeneration) AND F42 — regenerated with the running binary, so
+all three flags render; `docs/reference/config.md` gains the `cache.hotKeyTop`
+row; `docs/reference/errors.md` was stale since the `SRV-GEN-DEPTH` /
+`SRV-GEN-IO` codes landed without a regeneration — regenerated;
+`docs/reference/endpoints.md` re-written byte-identical (the deterministic
+render's confirmation); `docs/spec-v0.2-draft.md`'s WP table gains the F42
+and F43 landed rows; `docs/architecture.md`'s cache and cli rows name the
+flag and the baseline (they named only the env spelling — drift);
+`crates/cache/README.md`'s hot-key bullet names the F42/F43 precedence; the
+README badge re-measured by `scripts/count-tests.sh` (2996 → 3021: the 19
+new cli pins + the 6 new config pins).
+
+**Deltas.** The F41 handoff's `--cache-hot-key-top` sketch named only the
+`Dev`/`Start` arms; the accessor shape (`cache_hot_key_top_arg()`) is this
+session's spelling so `apply_startup_env` carries ONE arm over both commands
+(the `root_arg()` precedent). The config knob's falsy-env interaction (the
+env layer's falsy spellings fall through to the baseline) is a recorded
+decision, not a spec ask — the F41 core's falsy contract stays byte-identical
+at every layer that uses it.
