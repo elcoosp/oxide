@@ -82,6 +82,14 @@ pub enum Command {
         /// Default off either way: the console output stays byte-identical.
         #[arg(long)]
         trace_log: bool,
+        /// V2-F42: the §20 scrape's hot-key top window, beside the
+        /// `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var (the flag wins). The
+        /// scrape's top-n is operator-tunable at the boot — the value
+        /// rides pre-runtime into the override slot (the
+        /// `log_feed_level` shape), the F41 resolver keeps its falsy and
+        /// clamp contracts, and every scrape renders the boot's window.
+        #[arg(long, value_name = "N")]
+        cache_hot_key_top: Option<usize>,
     },
     /// Build for production (all environments + manifests, §6).
     Build {
@@ -124,6 +132,12 @@ pub enum Command {
         /// pre-scaled fleets use this to boot instantly.
         #[arg(long = "no-warmup")]
         no_warmup: bool,
+        /// V2-F42: the §20 scrape's hot-key top window, beside the
+        /// `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var (the flag wins). The
+        /// scrape is a production surface, so the flag rides the serve
+        /// boot too (the `root`/`port` multi-command shape).
+        #[arg(long, value_name = "N")]
+        cache_hot_key_top: Option<usize>,
     },
     /// Preview the production build locally.
     Preview {
@@ -475,6 +489,23 @@ impl Command {
     pub fn is_dev_command(&self) -> bool {
         matches!(self, Command::Dev { .. })
     }
+
+    /// V2-F42: the `--cache-hot-key-top` argument, when this command
+    /// takes one. Read by [`apply_startup_env`] so the override slot is
+    /// written pre-runtime. The §20 scrape is a production surface, so
+    /// the flag rides the serve boot beside the dev boot (the
+    /// `root_arg` multi-command shape).
+    pub fn cache_hot_key_top_arg(&self) -> Option<usize> {
+        match self {
+            Command::Dev {
+                cache_hot_key_top, ..
+            }
+            | Command::Start {
+                cache_hot_key_top, ..
+            } => *cache_hot_key_top,
+            _ => None,
+        }
+    }
 }
 
 /// P1 (readiness): ALL startup-time environment writes happen HERE, in the
@@ -523,6 +554,15 @@ pub fn apply_startup_env(cli: &Cli) {
         {
             crate::observability::set_trace_log_override(Some(true));
         }
+    }
+    // V2-F42: `--cache-hot-key-top` beside the `OXIDE_CACHE_PLANE_HOT_KEY_TOP`
+    // env var (the flag wins). The override slot is the `FEED_LEVEL_OVERRIDE`
+    // shape — a command-level fact decided once pre-runtime; the env var
+    // remains the shell user's spelling. The §20 scrape is a production
+    // surface, so the arm rides BOTH boot commands (the accessor's
+    // multi-command shape), outside the dev-mode gate.
+    if let Some(top) = cli.command.cache_hot_key_top_arg() {
+        crate::observability::set_cache_hot_key_top_override(Some(top));
     }
     // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
     // once by the warm-up block in `start_server_inner_full`.
@@ -592,6 +632,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F22 polish tail: the flag rode `apply_startup_env` into
             // the override slot pre-runtime; the boot reads it there.
             trace_log: _,
+            // V2-F42: the flag rode `apply_startup_env` into the override
+            // slot pre-runtime; the boot reads it there.
+            cache_hot_key_top: _,
         } => {
             cmd_dev(
                 &root,
@@ -627,6 +670,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             root,
             port,
             no_warmup: _,
+            // V2-F42: the flag rode `apply_startup_env` into the override
+            // slot pre-runtime; the boot reads it there.
+            cache_hot_key_top: _,
         } => cmd_serve(&root, port, "oxide start", w).await,
         Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
