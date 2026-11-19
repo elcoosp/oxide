@@ -286,6 +286,11 @@ fn cache_schema() -> Value {
                         "description": "P-05: L0 freshness window in seconds (default 300)."
                     }
                 }
+            },
+            "hotKeyTop": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "V2-F43: the §20 scrape's hot-key top window — how many labeled oxide_cache_plane_hot_key_total rows one scrape renders beside the exporter's families. Precedence: the --cache-hot-key-top flag wins, the OXIDE_CACHE_PLANE_HOT_KEY_TOP env var keeps the operator's spelling, this key is the project's baseline, the F40 default (10) answers with none set. 0 renders the bare family pair."
             }
         }
     })
