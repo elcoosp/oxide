@@ -6356,3 +6356,94 @@ zero-consumer status (`conditional_response`, `FetchMemo`, the
 auth/codec re-exports — complete works no host composes), and the
 server crate's example-less surfaces (`Governor`, the page_renderer
 re-exports, `LiveHub`).
+
+## The cache plane's service half lands, the serving half composes (F53 + F54, 2026-11-19)
+
+The handoff's recorded pickups land as F53 + F54: the audit's polish-tail
+note named the cache `http` module's zero-consumer status, and the SPEC-12
+/ §11.2 protocol turned out to have TWO missing halves — the client's own
+doc block says "one node runs the cache service" and nothing did (M1/F53),
+and the §11.3 serving helpers were complete works no host composed (M2/F54).
+
+**F53 — the HTTP service.** `crates/cache/src/http_service.rs`:
+`HttpCacheService` composes any `CacheHandler` (a `TieredCache` is one)
+behind the exact exchange shapes the `HttpCacheHandler` client speaks —
+`GET/PUT/DELETE /entry/{key}`, `GET /tag/{tag}`, `POST /invalidate/{tag}` —
+split the house way (the F46-family posture): `respond` is the pure routing
+core (`PlaneRequest` in, `PlaneResponse` out, no sockets; tests and the
+`cache_plane` bench drive it directly) and `serve(listener)` the minimal
+HTTP/1.1 shell (one exchange per connection, the client's own
+`Connection: close` posture, a header cap against hostile clients). The
+trust boundary holds on BOTH sides of the wire: a PUT body that does not
+open (`auth::open_entry`) or decode (`codec::decode_entry`) is a 400 and
+NEVER enters the backing store — the client's read-side miss rule enforced
+where the payload lands. Handler failures answer 5xx loudly (a miss caches;
+an error is loud) under the `CACHE-HTTP` code; the plane emits no observer
+rows (the tiers remain the observation point — a service arm would
+double-count).
+
+**F54 — the serving half.** `crates/cache/src/http.rs`:
+`serve_entry(entry, req_headers, now_secs)` is the ONE call a host makes to
+serve a stored entry — the canonical conditional comparison
+(`conditional_response`) and the §11.3 header set (`cache_control`, the
+entry's ETag, `http_date`'s `Date`) composed into one `ServeOutcome`
+(`NotModified` carries the validator set per RFC 9110 §15.4.5; `Full`
+carries the stored headers verbatim with the generated set filling only the
+gaps, one header per name). The capability upgrade the hand-rolled matches
+never had: an `If-Modified-Since`-only re-check against an unchanged
+`Last-Modified` answers 304 instead of re-downloading. The recorded
+production consumer is the L0 lookup stage's 304 arm (the CLI crate — see
+Deltas).
+
+**Test-design finding the pins caught (fixture → contract).** The first
+route cut refused a name containing `/` (a "single-segment" rule this
+agent invented from the blake3-hex key shape). The wire pin failed: the
+client writes keys verbatim into the URL
+(`format!("{base}/entry/{key}")`, no percent-encoding) and real keys in
+this workspace carry slashes (`route:/evict-1` — the eviction bench's own
+shape). The route now takes the FULL remainder after the family prefix as
+the name, and the pin (`keys_and_tags_with_slashes_route_verbatim`) holds
+the contract instead of the invention.
+
+**Gates this session ran green:** `cargo test -p oxide-fw-cache
+--all-features` (every binary 0 failed — the lib, the 13 integration
+files, the doc-tests; 14 F53 pins + 6 F54 pins among them), the
+`cache_plane` and `serve` benches in test mode under `--features
+bench-util`, both examples executed end to end (`cache_plane` prints the
+two-node story: store → cross-node read → forged PUT 400 → tag list →
+cross-node hard invalidation → coherent miss; `conditional` serves one
+entry three ways), `cargo test -p oxide-fw-router` after the poison
+repairs, fmt + clippy + the zero-`allow` grep (see the handoff for the
+recorded commands).
+
+**Micro-debt cleaned.** The router crate's six poison-swallow lock reads/
+writes recovered with the house `PoisonError::into_inner` shape (the
+F46/F48/F51 repairs, fourth site family): `matcher.rs`'s regex cache
+(read + write — a swallowed read permanently missed the cache, a swallowed
+write silently dropped every compiled regex after the poisoning panic) and
+`lib.rs`'s three index caches (`candidate_index`, `layout_chain_cached`,
+`dispatch_index` — a swallowed read silently rebuilt the index on EVERY
+request after a poisoning panic). The `prelude.rs` documented deliberate
+fallback stays, as its comment declares.
+
+**Docs drift repaired.** `crates/config/src/lib.rs`'s `CacheHandlerConfig::Http`
+doc named a wire protocol that matches no implementation
+(`GET/PUT/DELETE /cache/<key>` + `POST /cache/invalidate` — the client and
+now the service speak `/entry/{key}`, `/tag/{tag}`, `/invalidate/{tag}`);
+`crates/cache/src/http_handler.rs`'s "one node runs the cache service" line
+cross-references the `HttpCacheService` referent it earned; the cache
+README gains the F53/F54 bullets; `docs/architecture.md`'s cache row names
+both seams; the spec's WP table gains the F53/F54 rows; the README badge
+re-measured by `scripts/count-tests.sh`.
+
+**Deltas.** The reference pages need no regeneration (no config key, no
+CLI flag, no endpoint in the server crate's map, no error code changed —
+the service's `CACHE-HTTP` code already exists in the client). The
+V8-linked cli suite did not run (the recorded libclang/nasm wall — this
+sandbox has no root for apt; the recorded user-prefix recipe extracted
+nasm, the libclang set was incomplete at session end), so the L0
+lookup-stage wire for `serve_entry` is the recorded next pickup, not
+landed: the stage's 304 arm still rides its hand-rolled match (its pins
+stay green by construction — the canonical comparison is a superset —
+but the IMS upgrade stays unlanded until that session). Standing pickups:
+the 17 cli lib pins, the server crate's example-less surfaces.
