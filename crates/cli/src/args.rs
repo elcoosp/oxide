@@ -100,6 +100,16 @@ pub enum Command {
         /// stays byte-identical.
         #[arg(long)]
         cache_plane_coverage: bool,
+        /// V2-F48: the §20 scrape's health arm opt-in, beside the
+        /// `OXIDE_CACHE_PLANE_HEALTH` env var (the flag wins). The
+        /// tier's F32 posture exposition — the nine `oxide_cache_plane_*`
+        /// gauge families the `TieredCache::health()` pull samples —
+        /// renders after the labeled and coverage families when the boot
+        /// opts in; the value rides pre-runtime into the override slot
+        /// (the `cache_plane_coverage` shape). Default off: the scrape's
+        /// shape stays byte-identical.
+        #[arg(long)]
+        cache_plane_health: bool,
     },
     /// Build for production (all environments + manifests, §6).
     Build {
@@ -155,6 +165,13 @@ pub enum Command {
         /// off: the scrape's shape stays byte-identical.
         #[arg(long)]
         cache_plane_coverage: bool,
+        /// V2-F48: the §20 scrape's health arm opt-in, beside the
+        /// `OXIDE_CACHE_PLANE_HEALTH` env var (the flag wins). The
+        /// scrape is a production surface, so the flag rides the serve
+        /// boot too (the `root`/`port` multi-command shape). Default
+        /// off: the scrape's shape stays byte-identical.
+        #[arg(long)]
+        cache_plane_health: bool,
     },
     /// Preview the production build locally.
     Preview {
@@ -542,6 +559,23 @@ impl Command {
             _ => false,
         }
     }
+
+    /// V2-F48: the `--cache-plane-health` argument, when this command
+    /// takes one. Read by [`apply_startup_env`] so the override slot is
+    /// written pre-runtime. The §20 scrape is a production surface, so
+    /// the flag rides the serve boot beside the dev boot (the
+    /// `cache_plane_coverage_arg` multi-command shape).
+    pub fn cache_plane_health_arg(&self) -> bool {
+        match self {
+            Command::Dev {
+                cache_plane_health, ..
+            }
+            | Command::Start {
+                cache_plane_health, ..
+            } => *cache_plane_health,
+            _ => false,
+        }
+    }
 }
 
 /// P1 (readiness): ALL startup-time environment writes happen HERE, in the
@@ -611,6 +645,18 @@ pub fn apply_startup_env(cli: &Cli) {
     // (the flag cannot spell "off" — the falsy spellings do).
     if cli.command.cache_plane_coverage_arg() {
         crate::observability::set_cache_plane_coverage_override(Some(true));
+    }
+    // V2-F48: `--cache-plane-health` beside the `OXIDE_CACHE_PLANE_HEALTH`
+    // env var (the flag wins). The override slot is the
+    // `CACHE_PLANE_COVERAGE_OVERRIDE` shape — a command-level fact
+    // decided once pre-runtime; the env var remains the shell user's
+    // spelling. The §20 scrape is a production surface, so the arm rides
+    // BOTH boot commands (the accessor's multi-command shape), outside
+    // the dev-mode gate. A present flag opts the plane's health arm in;
+    // an absent flag leaves the slot empty and the env var in charge
+    // (the flag cannot spell "off" — the falsy spellings do).
+    if cli.command.cache_plane_health_arg() {
+        crate::observability::set_cache_plane_health_override(Some(true));
     }
     // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
     // once by the warm-up block in `start_server_inner_full`.
@@ -686,6 +732,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F46: same posture — the coverage opt-in rode
             // `apply_startup_env` into its override slot pre-runtime.
             cache_plane_coverage: _,
+            // V2-F48: same posture — the health opt-in rode
+            // `apply_startup_env` into its override slot pre-runtime.
+            cache_plane_health: _,
         } => {
             cmd_dev(
                 &root,
@@ -727,6 +776,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F46: same posture — the coverage opt-in rode
             // `apply_startup_env` into its override slot pre-runtime.
             cache_plane_coverage: _,
+            // V2-F48: same posture — the health opt-in rode
+            // `apply_startup_env` into its override slot pre-runtime.
+            cache_plane_health: _,
         } => cmd_serve(&root, port, "oxide start", w).await,
         Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
