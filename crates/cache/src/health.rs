@@ -78,6 +78,13 @@ pub struct CacheHealth {
     /// Whether the §20 observability seam has an observer attached
     /// (`with_observer`) — the posture of the seam itself.
     pub observer_attached: bool,
+    /// F52: evictions the disk tier's S-08 prune completed since the
+    /// tier opened — the same counter `stats().evictions` and the push
+    /// seam's `Evict` rows answer, sampled into the posture. Honestly
+    /// zero without a disk tier (no tier, no counted eviction); the
+    /// serde default keeps pre-F52 probe payloads decoding.
+    #[serde(default)]
+    pub disk_evictions: u64,
 }
 
 impl CacheHealth {
@@ -104,7 +111,7 @@ impl CacheHealth {
     /// seam that cannot refuse).
     #[must_use]
     pub fn render_prometheus(&self) -> String {
-        // Nine families × ~110 bytes of HELP/TYPE/row — one allocation
+        // Ten families × ~110 bytes of HELP/TYPE/row — one allocation
         // for a full posture scrape.
         let mut out = String::with_capacity(1200);
 
@@ -171,6 +178,17 @@ impl CacheHealth {
             "1 when the §20 observability seam has an observer attached",
             self.observer_attached,
         );
+        // F52: the eviction gauge APPENDS after the flags — the F33
+        // order rule (new families render after the last one, so a
+        // scraper's offsets for the existing families never move). A
+        // gauge, not the exporter's counter: the posture reads the disk
+        // tier's current eviction total, the exporter counts the events.
+        family(
+            &mut out,
+            "oxide_cache_plane_disk_evictions",
+            "Entries the L1 disk tier's S-08 budget prune evicted since it opened",
+            self.disk_evictions,
+        );
         out
     }
 }
@@ -209,6 +227,7 @@ mod tests {
             tags_indexed: 3,
             keys_tracked: 5,
             observer_attached: true,
+            disk_evictions: 0,
         };
         let text = h.render_prometheus();
         assert!(text.contains("oxide_cache_plane_memory_entries 2"));
