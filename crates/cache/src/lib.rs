@@ -42,7 +42,9 @@ pub use codec::{MAX_ENTRY_BYTES, decode_entry, encode_entry};
 pub use fanout::FanoutCacheObserver;
 pub use feed::{AdmitAll, EventFeed, FeedGate, FeedRow, KindGate};
 pub use health::CacheHealth;
-pub use hot_keys::{AdmitAllKeys, HotKeyGate, HotKeyKindGate, HotKeyObserver, HotKeyRow};
+pub use hot_keys::{
+    AdmitAllKeys, HotKeyGate, HotKeyKindGate, HotKeyObserver, HotKeyRow, HotKeySnapshot,
+};
 pub use http::{
     FetchMemo, cache_control, conditional_response, http_date, memo_key, parse_http_date,
 };
