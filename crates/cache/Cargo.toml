@@ -106,3 +106,8 @@ bench-util = []
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# V2-A02: this crate does not inherit the workspace lints yet (the recorded
+# dedicated hygiene pass adopts pedantic) — declared so the newer cargo
+# `missing_lints_inheritance` notice stays silent about the intent.
+[lints]
