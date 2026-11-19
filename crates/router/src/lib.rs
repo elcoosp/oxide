@@ -300,38 +300,56 @@ impl RouteTree {
 
     /// V2-B02: build (once) the candidate index over the current entries.
     pub(crate) fn candidate_index(&self) -> std::sync::Arc<index::CandidateIndex> {
-        if let Ok(c) = self.index.read()
-            && let Some(idx) = c.as_ref()
-        {
+        // Poison recovery over the swallow (the house shape — the
+        // F46/F48/F51 repairs): a swallowed read silently rebuilt the
+        // index on EVERY request after a poisoning panic, a swallowed
+        // write silently dropped it.
+        let c = self
+            .index
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(idx) = c.as_ref() {
             return std::sync::Arc::clone(idx);
         }
         let idx = std::sync::Arc::new(index::CandidateIndex::build(&self.entries));
-        if let Ok(mut c) = self.index.write() {
-            *c = Some(std::sync::Arc::clone(&idx));
-        }
+        let mut c = self
+            .index
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *c = Some(std::sync::Arc::clone(&idx));
         idx
     }
 
     /// P-02: cached layout chain for `route_id` (outermost first). Computed
     /// once per id, then cloned per match — no O(entries) re-scan.
     pub(crate) fn layout_chain_cached(&self, route_id: &str) -> Vec<RouteId> {
-        if let Ok(c) = self.layout_chains.read()
-            && let Some(v) = c.get(route_id)
-        {
+        // Poison recovery over the swallow (the house shape): a poisoned
+        // lock must not silently re-scan the route table per request.
+        let c = self
+            .layout_chains
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(v) = c.get(route_id) {
             return v.clone();
         }
         let chain = matcher::layout_chain(&self.entries, route_id);
-        if let Ok(mut c) = self.layout_chains.write() {
-            c.insert(route_id.to_string(), chain.clone());
-        }
+        let mut c = self
+            .layout_chains
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        c.insert(route_id.to_string(), chain.clone());
         chain
     }
 
     /// P-06: build (once) the middleware/error/not-found prefix indexes.
     fn dispatch_index(&self) -> std::sync::Arc<DispatchIndex> {
-        if let Ok(c) = self.dispatch.read()
-            && let Some(idx) = c.as_ref()
-        {
+        // Poison recovery over the swallow (the house shape), same as the
+        // candidate index above.
+        let c = self
+            .dispatch
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(idx) = c.as_ref() {
             return std::sync::Arc::clone(idx);
         }
         let mut middleware: Vec<(String, std::path::PathBuf, usize)> = Vec::new();
@@ -383,9 +401,11 @@ impl RouteTree {
             }),
         };
         let idx = std::sync::Arc::new(idx);
-        if let Ok(mut c) = self.dispatch.write() {
-            *c = Some(std::sync::Arc::clone(&idx));
-        }
+        let mut c = self
+            .dispatch
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *c = Some(std::sync::Arc::clone(&idx));
         idx
     }
 
