@@ -106,6 +106,22 @@ name = "eviction"
 harness = false
 required-features = ["bench-util"]
 
+# F53: the HTTP service's per-exchange cost (§20): the pure core's
+# route + codec/MAC round per exchange (GET hit, PUT, GET miss) over a
+# real in-memory backing store.
+[[bench]]
+name = "cache_plane"
+harness = false
+required-features = ["bench-util"]
+
+# F54: the §11.3 serving half's cost (§20): the ONE serve call's three
+# shapes — the 304 arm, the full arm with a conditional miss, and the
+# no-conditional floor.
+[[bench]]
+name = "serve"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
