@@ -23,7 +23,19 @@
 //!    the keys a deploy touched, never the hot-hit stream;
 //! 7. the F41 operator window — the window the §20 scrape renders is
 //!    the boot's resolved `OXIDE_CACHE_PLANE_HOT_KEY_TOP` spelling, not
-//!    a compile-time constant: default, narrowed, widened-past-occupancy.
+//!    a compile-time constant: default, narrowed, widened-past-occupancy;
+//! 8. the F44 typed snapshot and coverage exposition — the whole ledger
+//!    answers as ONE value under one lock pass (`snapshot(window)`: the
+//!    top window's rows beside the coverage aggregates), and the
+//!    coverage families (`render_coverage_prometheus`) render the
+//!    unattributed score as the counter a scrape diffs, the occupancy
+//!    and the bound as gauges — beside the labeled counter family, not
+//!    inside it;
+//! 9. the F45 windowed hand-over — `take()` hands the whole window over
+//!    as the same value shape the read answers and starts a fresh one
+//!    under the same lock pass (the read-and-reset pair the per-interval
+//!    reporter hand-rolled, composed atomically: the fresh window stands
+//!    alone, the sticky warn re-arms, first sight starts over).
 //!
 //! Run with:
 //!
@@ -184,5 +196,57 @@ fn main() {
         for line in hot.render_prometheus(2).lines().skip(2) {
             println!("    {line}");
         }
+
+        // 8. The typed snapshot and the coverage exposition (F44): the
+        //    whole ledger answers as ONE value under one lock pass — the
+        //    top window's rows beside the coverage aggregates — where
+        //    hand-composing `top()` + `len()` + `capacity()` +
+        //    `unattributed()` takes four lock passes a racing producer
+        //    can tear between. The coverage arm renders the families the
+        //    dashboard always needed beside the labeled counter family:
+        //    the unattributed score as the counter a scrape diffs, the
+        //    occupancy and the bound as gauges.
+        let snap = hot.snapshot(3);
+        println!("\nsnapshot(3) — the one-value read:");
+        for row in &snap.rows {
+            println!("    {:>12}  {}", row.count, row.key);
+        }
+        println!(
+            "    tracked = {}   capacity = {}   unattributed = {} (one lock pass, not four)",
+            snap.tracked, snap.capacity, snap.unattributed
+        );
+        println!("\n  render_coverage_prometheus() — the coverage families:");
+        print!("{}", hot.render_coverage_prometheus());
+
+        // 9. The windowed hand-over (F45): the per-interval reporter's
+        //    read-and-reset pair, composed atomically — the whole window
+        //    hands over as the same value shape the read answers and the
+        //    fresh window stands alone in the same lock pass. Two windows
+        //    back to back show the shape: each take carries the window's
+        //    rows and its accumulated score, and the next window starts
+        //    from zero.
+        let _ = cache.get("/home").await.expect("the memory tier");
+        let first_window = hot.take();
+        println!("\ntake() — window one hands over:");
+        for row in &first_window.rows {
+            println!("    {:>12}  {}", row.count, row.key);
+        }
+        println!(
+            "    tracked = {}   unattributed = {} → the ledger after: tracked = {}   unattributed = {}",
+            first_window.tracked,
+            first_window.unattributed,
+            hot.len(),
+            hot.unattributed()
+        );
+        let _ = cache.get("/blog/a").await.expect("the memory tier");
+        let second_window = hot.take();
+        println!("take() — window two (fresh, stands alone):");
+        for row in &second_window.rows {
+            println!("    {:>12}  {}", row.count, row.key);
+        }
+        println!(
+            "    tracked = {}   unattributed = {} (the fresh window's own traffic)",
+            second_window.tracked, second_window.unattributed
+        );
     });
 }
