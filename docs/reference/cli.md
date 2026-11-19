@@ -35,6 +35,11 @@ Start the dev server (on-demand ESM, HMR, §13)
 | `--include-secrets <INCLUDE_SECRETS>` | V2-F15: when `record:` is on, keep the secret header trio (`authorization`, `cookie`, `set-cookie`) verbatim in the records instead of the `sha256:<12 hex>` redaction — a replay can then exercise authenticated paths. Dev-only; the production stack never reads it |
 | `include_secrets = true` |  |
 | `include_secrets = false` |  |
+| `--log-feed-level <LEVEL>` | V2-F28: the dev-plane log feed's level floor, beside the `OXIDE_LOG_FEED_LEVEL` env var (the flag wins). One of the five `tracing` level names; the console stays byte-identical while `GET /__oxide/logs` captures the events the console never renders (V2-F26's widening composition, opted in from the boot flag) |
+| `--trace-log <TRACE_LOG>` | V2-F22 polish tail: the dev-plane trace rows' export arm, beside the `OXIDE_TRACE_LOG` env var (the flag wins when present). Set, the boot attaches the `TracingTraceSink` beside the ring — every completed request's row ALSO leaves as one `tracing::info!` event (console, `OXIDE_LOG=json`, and with `OTEL_EXPORTER_OTLP_ENDPOINT` the OTLP stream), while the endpoint keeps serving the ring. Absent, the env var keeps its spelling (the falsy spellings `""`/`0`/`false`/`off` stay off). Default off either way: the console output stays byte-identical |
+| `trace_log = true` |  |
+| `trace_log = false` |  |
+| `--cache-hot-key-top <N>` | V2-F42: the §20 scrape's hot-key top window, beside the `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var (the flag wins). The scrape's top-n is operator-tunable at the boot — the value rides pre-runtime into the override slot (the `log_feed_level` shape), the F41 resolver keeps its falsy and clamp contracts, and every scrape renders the boot's window |
 
 ### `oxide build`
 
@@ -69,6 +74,7 @@ Start the production server (binary target, §12)
 | `--no-warmup <NO_WARMUP>` | PERF-23 (readiness): skip the renderer warm-up. Warm-up costs ~1 s of startup (a synthetic render) so the first REAL request never pays the cold path; short-lived benchmark/CI runs and pre-scaled fleets use this to boot instantly |
 | `no_warmup = true` |  |
 | `no_warmup = false` |  |
+| `--cache-hot-key-top <N>` | V2-F42: the §20 scrape's hot-key top window, beside the `OXIDE_CACHE_PLANE_HOT_KEY_TOP` env var (the flag wins). The scrape is a production surface, so the flag rides the serve boot too (the `root`/`port` multi-command shape) |
 
 ### `oxide preview`
 
