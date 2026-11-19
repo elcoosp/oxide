@@ -50,6 +50,7 @@ fn kind(op: &CacheOp) -> &'static str {
         CacheOp::Delete => "delete",
         CacheOp::Invalidate { .. } => "invalidate",
         CacheOp::Coalesce { .. } => "coalesce",
+        CacheOp::Evict { .. } => "evict",
     }
 }
 
