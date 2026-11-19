@@ -695,8 +695,9 @@ pub(crate) async fn start_server_inner_full(
     // flag and the `OXIDE_CACHE_POSTURE_PATH` env spelling) and the gate
     // grows its third half — the surface exists only where the resolved
     // path is non-empty AND the boot opted in AND a tier handle exists.
-    let cache_posture_path =
-        crate::observability::cache_posture_path_with_config(cfg.cache.posture_probe_path.as_deref());
+    let cache_posture_path = crate::observability::cache_posture_path_with_config(
+        cfg.cache.posture_probe_path.as_deref(),
+    );
     let cache_posture = crate::framework_shim::posture_probe_provider(
         cache_health_opt_in,
         &cache_posture_path,
