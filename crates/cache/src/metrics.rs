@@ -116,6 +116,131 @@ pub struct CacheMetricsSnapshot {
     pub evicted_bytes: u64,
 }
 
+impl CacheMetricsSnapshot {
+    /// The §20 Prometheus text exposition FROM THE PULL (V2-F61): the
+    /// plane's metrics arm serves this — the provider hands the snapshot,
+    /// the arm renders it. One `# HELP`/`# TYPE` counter pair per family,
+    /// the hits family split per serving layer over the fixed `L0`/`L1`/
+    /// `L2` label set, a deterministic row order, a trailing newline.
+    ///
+    /// Infallible — the `String` building cannot fail — so the scrape
+    /// path carries no error shape (the F21 posture: no registry rows for
+    /// a seam that cannot refuse). Deterministic: the fixed family order,
+    /// one allocation — two renders over the same counters are
+    /// byte-equal, so a snapshot diff of two scrapes is a diff of the
+    /// traffic, not of the renderer.
+    #[must_use]
+    pub fn render_prometheus(&self) -> String {
+        // Capacity: 13 families × ~130 bytes of HELP/TYPE/row + the three
+        // labeled hit rows and the hits HELP/TYPE pair — one allocation
+        // for a full scrape. (The F51 eviction pair appended two families
+        // after the comment's original count — the count rides the F33
+        // order rule, not a constant.)
+        let mut out = String::with_capacity(2048);
+
+        let family = |out: &mut String, name: &str, help: &str, value: u64| {
+            let _ = writeln!(out, "# HELP {name} {help}");
+            let _ = writeln!(out, "# TYPE {name} counter");
+            let _ = writeln!(out, "{name} {value}");
+        };
+        // The hits family has no bare row — it is fully labeled (the
+        // fixed L0/L1/L2 serving-tier set), so only the HELP/TYPE pair
+        // precedes the rows.
+        let _ = writeln!(
+            out,
+            "# HELP oxide_cache_plane_hits_total Cache-plane lookups served, by serving tier (§11.2)"
+        );
+        let _ = writeln!(out, "# TYPE oxide_cache_plane_hits_total counter");
+        for (layer, value) in [
+            ("L0", self.hits_l0),
+            ("L1", self.hits_l1),
+            ("L2", self.hits_l2),
+        ] {
+            let _ = writeln!(
+                out,
+                "oxide_cache_plane_hits_total{{layer=\"{layer}\"}} {value}"
+            );
+        }
+        family(
+            &mut out,
+            "oxide_cache_plane_stale_hits_total",
+            "Cache-plane hits served stale (the SWR window, §11.3)",
+            self.stale_hits,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_misses_total",
+            "Cache-plane lookups that exhausted every attached tier",
+            self.misses,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_sets_total",
+            "Cache-plane write-through completions",
+            self.sets,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_served_bytes_total",
+            "Cache-plane entry body bytes served on hits",
+            self.served_bytes,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_stored_bytes_total",
+            "Cache-plane entry body bytes stored by write-through",
+            self.stored_bytes,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_deletes_total",
+            "Cache-plane deletes completed across every attached tier",
+            self.deletes,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_invalidations_total",
+            "Cache-plane tag invalidations completed (one row per call)",
+            self.invalidations,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_invalidated_keys_total",
+            "Cache-plane keys affected by tag invalidations",
+            self.invalidated_keys,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_coalesce_events_total",
+            "Cache-plane single-flight flights the host recorded",
+            self.coalesce_events,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_coalesced_followers_total",
+            "Cache-plane followers that coalesced onto flight owners",
+            self.coalesced_followers,
+        );
+        // F51: the eviction families APPEND — the F33 order rule keeps
+        // every family added after the last one, so a scraper's offsets
+        // for the existing families never move.
+        family(
+            &mut out,
+            "oxide_cache_plane_evictions_total",
+            "Cache-plane entries a tier evicted to stay under its budget (S-08)",
+            self.evictions,
+        );
+        family(
+            &mut out,
+            "oxide_cache_plane_evicted_bytes_total",
+            "Cache-plane bytes the evictions freed (the tier's own accounting unit)",
+            self.evicted_bytes,
+        );
+
+        out
+    }
+}
+
 /// The metrics exporter: the F28 seam's named structured consumer. Every
 /// completed cache event lands in one relaxed atomic add; the scrape
 /// reads the counters out as either the value mirror
@@ -211,114 +336,15 @@ impl MetricsCacheObserver {
     /// `String` building cannot fail — so the scrape path carries no
     /// error shape (the F21 posture: no registry rows for a seam that
     /// cannot refuse).
+    ///
+    /// The render rides the value mirror (V2-F61): one `snapshot()` pull,
+    /// then the snapshot's own render — ONE renderer, so the F33 family
+    /// order lives in a single place and the plane's metrics arm (the
+    /// pull shape a host serves over the wire) renders byte-identically
+    /// to this scrape.
     #[must_use]
     pub fn render_prometheus(&self) -> String {
-        let load = |c: &AtomicU64| c.load(Ordering::Relaxed);
-        // Capacity: 11 families × ~100 bytes of HELP/TYPE/rows + the three
-        // labeled hit rows — one allocation for a full scrape.
-        let mut out = String::with_capacity(1024);
-
-        let family = |out: &mut String, name: &str, help: &str, value: u64| {
-            let _ = writeln!(out, "# HELP {name} {help}");
-            let _ = writeln!(out, "# TYPE {name} counter");
-            let _ = writeln!(out, "{name} {value}");
-        };
-        // The hits family has no bare row — it is fully labeled (the
-        // fixed L0/L1/L2 serving-tier set), so only the HELP/TYPE pair
-        // precedes the rows.
-        let _ = writeln!(
-            out,
-            "# HELP oxide_cache_plane_hits_total Cache-plane lookups served, by serving tier (§11.2)"
-        );
-        let _ = writeln!(out, "# TYPE oxide_cache_plane_hits_total counter");
-        for (layer, counter) in [
-            ("L0", &self.hits_l0),
-            ("L1", &self.hits_l1),
-            ("L2", &self.hits_l2),
-        ] {
-            let _ = writeln!(
-                out,
-                "oxide_cache_plane_hits_total{{layer=\"{layer}\"}} {}",
-                load(counter)
-            );
-        }
-        family(
-            &mut out,
-            "oxide_cache_plane_stale_hits_total",
-            "Cache-plane hits served stale (the SWR window, §11.3)",
-            load(&self.stale_hits),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_misses_total",
-            "Cache-plane lookups that exhausted every attached tier",
-            load(&self.misses),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_sets_total",
-            "Cache-plane write-through completions",
-            load(&self.sets),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_served_bytes_total",
-            "Cache-plane entry body bytes served on hits",
-            load(&self.served_bytes),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_stored_bytes_total",
-            "Cache-plane entry body bytes stored by write-through",
-            load(&self.stored_bytes),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_deletes_total",
-            "Cache-plane deletes completed across every attached tier",
-            load(&self.deletes),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_invalidations_total",
-            "Cache-plane tag invalidations completed (one row per call)",
-            load(&self.invalidations),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_invalidated_keys_total",
-            "Cache-plane keys affected by tag invalidations",
-            load(&self.invalidated_keys),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_coalesce_events_total",
-            "Cache-plane single-flight flights the host recorded",
-            load(&self.coalesce_events),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_coalesced_followers_total",
-            "Cache-plane followers that coalesced onto flight owners",
-            load(&self.coalesced_followers),
-        );
-        // F51: the eviction families APPEND — the F33 order rule keeps
-        // every family added after the last one, so a scraper's offsets
-        // for the existing families never move.
-        family(
-            &mut out,
-            "oxide_cache_plane_evictions_total",
-            "Cache-plane entries a tier evicted to stay under its budget (S-08)",
-            load(&self.evictions),
-        );
-        family(
-            &mut out,
-            "oxide_cache_plane_evicted_bytes_total",
-            "Cache-plane bytes the evictions freed (the tier's own accounting unit)",
-            load(&self.evicted_bytes),
-        );
-
-        out
+        self.snapshot().render_prometheus()
     }
 }
 
