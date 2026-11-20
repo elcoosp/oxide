@@ -209,6 +209,10 @@ message = "disk tier: {e}"
 [CAC-JSON]
 message = "index codec: {e}"
 
+[CAC-SHARD]
+message = "the shard set is empty: a sharded client must point at least one plane"
+fix = "Compose the sharded client over one or more CacheHandler shards"
+
 [CAC-ZSTD]
 message = "compress: {e}"
 
