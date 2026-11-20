@@ -146,6 +146,24 @@ name = "plane_metrics"
 harness = false
 required-features = ["bench-util"]
 
+# F63: the client's peer-posture probes — the wired node's posture
+# question over the wire (the health pull's exchange + JSON decode, the
+# metrics pull's exchange + text read) against a real plane service on a
+# local socket, beside the refused-dial degrade floor.
+[[bench]]
+name = "peer_probe"
+harness = false
+required-features = ["bench-util"]
+
+# F64: the shell's exchange bounds — the legit PUT under the default cap
+# (the bound's cost: one comparison), the over-cap 413 refusal floor
+# (before the first body byte lands) and the unbounded drain's codec 400
+# the escape hatch restores.
+[[bench]]
+name = "exchange_bounds"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
