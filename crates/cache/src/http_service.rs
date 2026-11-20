@@ -39,8 +39,34 @@
 //! itself emits no observer rows — the tiers remain the observation point
 //! (the exporter counts stay one-per-op; a service arm would double-count).
 
-use crate::{CacheHandler, Result, auth, codec, err};
+use crate::{CacheHandler, Result, auth, codec, err, health::CacheHealth, tiers::TieredCache};
 use std::sync::Arc;
+
+// ------------------------------------------------------------------- the health provider
+
+/// The plane's health provider (V2-F58): the source `GET /health` pulls
+/// from. The F52 posture pull (`TieredCache::health()` → `CacheHealth`)
+/// already had two production surfaces — the §20 scrape and the server
+/// crate's `/-/health` probe — both behind the CLI's opt-ins; the plane
+/// itself had NO health story. The provider is the seam: a host roots the
+/// plane at a tier (the natural provider), or injects its own posture.
+///
+/// The pull shape is the F49 probe's contract, verbatim: a PULL — one
+/// `CacheHealth` snapshot as it stands NOW, never a value frozen at attach
+/// time; a scrape diffs two pulls, a dashboard holds none.
+pub trait PlaneHealth: Send + Sync {
+    /// The posture pull: one [`CacheHealth`] snapshot, live.
+    fn plane_health(&self) -> CacheHealth;
+}
+
+/// The plane's natural provider: the tiered cache's own F52 pull,
+/// unchanged — a plane rooted at a tier reports the same posture the app
+/// server's probe reports.
+impl PlaneHealth for TieredCache {
+    fn plane_health(&self) -> CacheHealth {
+        self.health()
+    }
+}
 
 // ------------------------------------------------------------------- exchange types
 
@@ -175,6 +201,11 @@ fn reason(status: u16) -> &'static str {
 /// whatever TLS/proxy layer the operator already runs.
 pub struct HttpCacheService {
     handler: Arc<dyn CacheHandler>,
+    /// V2-F58: the optional health provider. `None` (the default) keeps
+    /// `/health` answering the pre-F58 shape — route's `Unknown` 404, the
+    /// F40 doctrine (a boot that never attached a provider leaks nothing).
+    /// Attached via [`HttpCacheService::with_health`].
+    health: Option<Arc<dyn PlaneHealth>>,
 }
 
 /// A wire-capped exchange: the header block refuses past this bound so a
@@ -187,7 +218,22 @@ impl HttpCacheService {
     /// Compose the service over a backing handler (a `TieredCache`, a
     /// feature-gated driver, or a host's own [`CacheHandler`]).
     pub fn new(handler: Arc<dyn CacheHandler>) -> Self {
-        Self { handler }
+        Self {
+            handler,
+            health: None,
+        }
+    }
+
+    /// Attach the health provider (V2-F58): `GET /health` answers the
+    /// provider's pull as JSON — the F49 probe's contract transposed onto
+    /// the plane's own wire (unconfigured stays a plain 404, the surface
+    /// is GET-only, the body is the live pull). Chainable; a
+    /// `TieredCache` IS a provider, so the common attach is
+    /// `service.with_health(Arc::clone(&tier))`.
+    #[must_use]
+    pub fn with_health(mut self, provider: Arc<dyn PlaneHealth>) -> Self {
+        self.health = Some(provider);
+        self
     }
 
     /// The backing handler's self-named kind (the F32 introspection
@@ -221,14 +267,6 @@ impl HttpCacheService {
     ///   `405`.
     pub async fn respond(&self, req: &PlaneRequest) -> PlaneResponse {
         let method = req.method.to_ascii_uppercase();
-        let (segment, name) = route(&req.path);
-
-        let Some(name) = name else {
-            return PlaneResponse {
-                status: 404,
-                body: Vec::new(),
-            };
-        };
 
         // The method table per family: the protocol is a handful of verbs,
         // and a wrong verb on a known family is a 405 (loud), not a 404.
@@ -244,6 +282,37 @@ impl HttpCacheService {
                 status: 405,
                 body: Vec::new(),
             }
+        };
+
+        // V2-F58: the plane's own health arm. The F49 probe's contract,
+        // verbatim: the unconfigured path 404s BEFORE anything else (it
+        // leaks nothing, not even a method table), the surface is
+        // GET-only, the body is the provider's LIVE pull — a PULL, never a
+        // frozen snapshot. Not a protocol family: a plane without a
+        // provider answers the pre-F58 shape (route's `Unknown` 404).
+        if req.path == "/health" {
+            let Some(provider) = &self.health else {
+                return PlaneResponse {
+                    status: 404,
+                    body: Vec::new(),
+                };
+            };
+            if method != "GET" {
+                return wrong_method("GET");
+            }
+            return PlaneResponse {
+                status: 200,
+                body: serde_json::to_vec(&provider.plane_health()).unwrap_or_default(),
+            };
+        }
+
+        let (segment, name) = route(&req.path);
+
+        let Some(name) = name else {
+            return PlaneResponse {
+                status: 404,
+                body: Vec::new(),
+            };
         };
 
         match segment {
