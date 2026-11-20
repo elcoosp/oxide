@@ -814,6 +814,11 @@ pub(crate) async fn start_server_inner_full(
         // doctrine: the default shape leaks nothing).
         posture_path: cache_posture_path,
         cache_posture,
+        // V2-F57: the cache plane's mount. The recorded boot wire is the
+        // next pickup (it needs the V8-linked build to verify); `None`
+        // keeps the boot's shape byte-identical (the F40 doctrine) — the
+        // plane answers only where a host attaches `HttpCacheService`.
+        cache_plane: None,
         inspector: if with_inspector {
             // §20: with a recorder wired, the inspector's waterfall table
             // reflects the live per-request timings instead of staying empty.
