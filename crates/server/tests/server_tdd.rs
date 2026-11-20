@@ -2738,3 +2738,106 @@ async fn the_posture_probe_path_is_configurable() {
     assert_eq!(resp.status, 200);
     assert_eq!(resp.body.as_ref(), br#"{"memory_entries":7}"#);
 }
+
+// ------------------------- V2-F56: the static plane rides the canonical seam
+//
+// The F54 serving half's doc names the asset server's hand-rolled
+// `If-None-Match` match as the duplication's second evidence; the F56
+// wire composes the decision through `oxide_fw_cache::conditional_response`
+// (the RFC 9110 §13 comparison) instead of re-rolling it, and the mtime
+// rides as the `Last-Modified` referent — so the `If-Modified-Since`-only
+// re-check, the arm the hand-rolled match never had, answers 304.
+
+/// The asset server's 304 set carries the validator the decision compared
+/// against: the mtime rides as the `Last-Modified` (RFC 9110 §15.4.5),
+/// beside the served `ETag` and the CACHE-SPLIT `Cache-Control`.
+#[test]
+fn serve_ims_only_recheck_answers_304_with_the_validator_set() {
+    let assets = test_assets();
+    let entry = assets.index.get("/app.js").expect("the fixture indexed");
+    assert!(entry.mtime > 0, "the fixture carries an mtime");
+    let lm = oxide_fw_cache::http_date(entry.mtime);
+
+    // The IMS-only re-check against the served Last-Modified: 304.
+    let r = req("GET", "/app.js", &[("if-modified-since", lm.as_str())]);
+    let resp = assets.serve(&r, "/app.js").unwrap();
+    assert_eq!(
+        resp.status, 304,
+        "an unchanged-entity IMS re-check answers 304"
+    );
+    assert!(resp.body.is_empty());
+    assert_eq!(resp.header("last-modified"), Some(lm.as_str()));
+    assert_eq!(
+        resp.header("cache-control"),
+        Some("public, max-age=3600, must-revalidate")
+    );
+    assert_eq!(resp.header("vary"), Some("Accept-Encoding"));
+}
+
+/// The full asset response carries the `Last-Modified` the 304 echoes —
+/// the referent that makes the IMS-only re-check possible at all (a
+/// client never seen the validator cannot send it).
+#[test]
+fn serve_full_asset_response_carries_last_modified() {
+    let assets = test_assets();
+    let entry = assets.index.get("/app.js").expect("the fixture indexed");
+    let lm = oxide_fw_cache::http_date(entry.mtime);
+    let resp = assets
+        .serve(&req("GET", "/app.js", &[]), "/app.js")
+        .unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.header("last-modified"), Some(lm.as_str()));
+    // The precompressed variant path reports the same validator.
+    let resp = assets
+        .serve(
+            &req("GET", "/app.js", &[("accept-encoding", "zstd")]),
+            "/app.js",
+        )
+        .unwrap();
+    assert_eq!(resp.header("last-modified"), Some(lm.as_str()));
+}
+
+/// An `If-Modified-Since` older than the served `Last-Modified` serves the
+/// asset in full — the file changed after the client's copy.
+#[test]
+fn serve_ims_older_than_last_modified_serves_full() {
+    let assets = test_assets();
+    let entry = assets.index.get("/app.js").expect("the fixture indexed");
+    let older = oxide_fw_cache::http_date(entry.mtime.saturating_sub(3600));
+    let resp = assets
+        .serve(
+            &req("GET", "/app.js", &[("if-modified-since", older.as_str())]),
+            "/app.js",
+        )
+        .unwrap();
+    assert_eq!(resp.status, 200, "an older IMS serves the asset in full");
+    assert_eq!(resp.header("content-type"), Some("text/javascript"));
+}
+
+/// `If-None-Match` decides and `If-Modified-Since` never runs (RFC 9110
+/// §13.2.2): a present-but-matching-none validator list serves in full
+/// even when the IMS date would have answered 304.
+#[test]
+fn serve_inm_precedence_over_ims() {
+    let assets = test_assets();
+    let etag = assets.index.get("/app.js").unwrap().etag.clone();
+    let lm = oxide_fw_cache::http_date(assets.index.get("/app.js").unwrap().mtime);
+    let r = req(
+        "GET",
+        "/app.js",
+        &[
+            ("if-none-match", "\"nope\""),
+            ("if-modified-since", lm.as_str()),
+        ],
+    );
+    let resp = assets.serve(&r, "/app.js").unwrap();
+    assert_eq!(
+        resp.status, 200,
+        "the INM decides; the IMS comparison never runs"
+    );
+    assert_eq!(
+        resp.header("etag"),
+        Some(format!("\"{etag}\"").as_str()),
+        "the full response carries the served validator"
+    );
+}
