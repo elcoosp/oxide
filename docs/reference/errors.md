@@ -67,6 +67,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CAC-DISK` | entry {raw_len} exceeds per-entry cap {} | — |
 | `CAC-IO` | disk tier: {e} | — |
 | `CAC-JSON` | index codec: {e} | — |
+| `CAC-SHARD` | the shard set is empty: a sharded client must point at least one plane | Compose the sharded client over one or more CacheHandler shards |
 | `CAC-ZSTD` | compress: {e} | — |
 | `CACHE-CODEC` | zstd: {e} | — |
 | `CACHE-HTTP` | entry decode: {e} | — |
