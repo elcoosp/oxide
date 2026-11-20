@@ -16,6 +16,11 @@ oxide-fw-diagnostics = { workspace = true }
 oxide-fw-router = { workspace = true }
 oxide-fw-render = { workspace = true }
 oxide-fw-config = { workspace = true }
+# V2-F56: the static plane's conditional decision rides the cache crate's
+# canonical comparison (`conditional_response`, RFC 9110 §13) — the seam
+# the F54 serving half's doc names the asset server as the second
+# evidence of duplicating.
+oxide-fw-cache = { workspace = true }
 # V2-F09: the built-in search engine — optional so the default build
 # stays lean (the spec's `search` feature, default off in dev builds).
 oxide-fw-search = { workspace = true, optional = true }
