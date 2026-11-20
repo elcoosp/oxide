@@ -617,6 +617,17 @@ pub fn posture_probe_provider(
 /// mounted plane's `GET /health` answers the boot tier's live pull (the
 /// balancer surface the F58 record promised) with zero extra state.
 ///
+/// V2-F61: the boot's §20 exporter joins the composition when it exists —
+/// the same tier the plane roots in already fans every cache event onto
+/// the exporter (F36/F37's construction), so
+/// [`oxide_fw_cache::MetricsPlaneSource::new`] composes the boot's two
+/// observability halves behind one provider and the mounted plane's
+/// `GET /metrics` answers the live §20 exposition (the scrape the F61
+/// record promises a collector). `None` (the test-stack shape or a boot
+/// without an exporter) attaches no metrics provider — the mount's
+/// `/metrics` stays out of its path families (the F40 doctrine: the
+/// surface exists only where a provider rides).
+///
 /// A gate that fails either half attaches nothing: the plane paths fall
 /// through to dispatch byte-identically (the F40 doctrine — the §11.2
 /// plane answers only where the boot opts in; a boot without a tier has
@@ -625,17 +636,25 @@ pub fn posture_probe_provider(
 pub fn cache_plane_mount_provider(
     mount: bool,
     tier: Option<&std::sync::Arc<oxide_fw_cache::TieredCache>>,
+    exporter: Option<&std::sync::Arc<oxide_fw_cache::MetricsCacheObserver>>,
 ) -> Option<std::sync::Arc<oxide_fw_cache::HttpCacheService>> {
     let tier = tier?;
     mount.then(|| {
-        std::sync::Arc::new(
+        let mut service =
             oxide_fw_cache::HttpCacheService::new(
                 std::sync::Arc::clone(tier) as std::sync::Arc<dyn oxide_fw_cache::CacheHandler>
             )
             .with_health(
                 std::sync::Arc::clone(tier) as std::sync::Arc<dyn oxide_fw_cache::PlaneHealth>
-            ),
-        )
+            );
+        if let Some(exporter) = exporter {
+            service = service.with_metrics(Arc::new(oxide_fw_cache::MetricsPlaneSource::new(
+                std::sync::Arc::clone(exporter),
+                std::sync::Arc::clone(tier) as std::sync::Arc<dyn oxide_fw_cache::PlaneHealth>,
+            ))
+                as std::sync::Arc<dyn oxide_fw_cache::PlaneMetrics>);
+        }
+        std::sync::Arc::new(service)
     })
 }
 
