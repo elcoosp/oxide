@@ -78,6 +78,14 @@ name = "hot_key_top"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F55: the L0 conditional seam's decision-cost bench (the
+# `serve_conditional` arms: the echoed INM, the IMS-only re-check, the
+# mismatching full serve), behind the same `bench-util` opt-in.
+[[bench]]
+name = "l0_conditional"
+harness = false
+required-features = ["bench-util"]
+
 [dependencies]
 chrono = { workspace = true }
 oxc_resolver = { workspace = true }
