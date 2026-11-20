@@ -46,6 +46,10 @@ Start the dev server (on-demand ESM, HMR, §13)
 | `--cache-plane-health <CACHE_PLANE_HEALTH>` | V2-F48: the §20 scrape's health arm opt-in, beside the `OXIDE_CACHE_PLANE_HEALTH` env var (the flag wins). The tier's F32 posture exposition — the nine `oxide_cache_plane_*` gauge families the `TieredCache::health()` pull samples — renders after the labeled and coverage families when the boot opts in; the value rides pre-runtime into the override slot (the `cache_plane_coverage` shape). Default off: the scrape's shape stays byte-identical |
 | `cache_plane_health = true` |  |
 | `cache_plane_health = false` |  |
+| `--cache-posture-path <PATH>` | V2-F50: the posture probe's path, beside the `OXIDE_CACHE_POSTURE_PATH` env var (the flag wins). The F49 probe is a production surface (the F48 handoff's recorded tail), so the flag rides the dev boot beside the serve boot (the `cache_plane_health` shape). A `/`-led path relocates the probe; the falsy spellings (`""`/`0`/`false`/`off`) spell the surface OFF; garbage degrades loudly to the recorded default (`/-/health`) |
+| `--cache-plane-mount <CACHE_PLANE_MOUNT>` | V2-F59: the F57 cache plane's mount opt-in, beside the `OXIDE_CACHE_PLANE_MOUNT` env var (the flag wins). The boot composes `HttpCacheService` over its own tier — the §11.2 shared plane answers `/entry/`, `/tag/`, `/invalidate/` and (the tier doubling as the F58 provider) `GET /health` on the site's own socket; the value rides pre-runtime into the override slot (the `cache_plane_coverage` shape). Default off: the boot's shape stays byte-identical |
+| `cache_plane_mount = true` |  |
+| `cache_plane_mount = false` |  |
 
 ### `oxide build`
 
@@ -87,6 +91,10 @@ Start the production server (binary target, §12)
 | `--cache-plane-health <CACHE_PLANE_HEALTH>` | V2-F48: the §20 scrape's health arm opt-in, beside the `OXIDE_CACHE_PLANE_HEALTH` env var (the flag wins). The scrape is a production surface, so the flag rides the serve boot too (the `root`/`port` multi-command shape). Default off: the scrape's shape stays byte-identical |
 | `cache_plane_health = true` |  |
 | `cache_plane_health = false` |  |
+| `--cache-posture-path <PATH>` | V2-F50: the posture probe's path, beside the `OXIDE_CACHE_POSTURE_PATH` env var (the flag wins). The probe is a production surface, so the flag rides the serve boot too (the `root`/`port` multi-command shape). A `/`-led path relocates the probe; the falsy spellings spell the surface OFF; garbage degrades loudly to the recorded default |
+| `--cache-plane-mount <CACHE_PLANE_MOUNT>` | V2-F59: the F57 cache plane's mount opt-in, beside the `OXIDE_CACHE_PLANE_MOUNT` env var (the flag wins). The mount is a production surface (the site AND the shared plane on one node), so the flag rides the serve boot too (the `root`/`port` multi-command shape). Default off: the boot's shape stays byte-identical |
+| `cache_plane_mount = true` |  |
+| `cache_plane_mount = false` |  |
 
 ### `oxide preview`
 
