@@ -15206,3 +15206,276 @@ fn cache_posture_path_arg_reads_dev_and_start() {
         "the build boot takes no posture path"
     );
 }
+
+// ------------------------- V2-F55: the L0 conditional arm rides the canonical seam
+//
+// The F54 serving half's doc names the L0 stage's hand-rolled
+// `If-None-Match` match as the duplication's evidence; the F55 wire
+// composes the decision through `oxide_fw_cache::serve_entry` (the RFC
+// 9110 §13 comparison + the §15.4.5 validator set) instead of re-rolling
+// it. The pins drive a real dispatch: the first request renders and
+// stores, the conditional shapes answer off the stored entry.
+
+/// The stored entry behind `/` in the static-page fixture — read the same
+/// entry the stage serves, so the pins ride the real etag and
+/// last-modified instead of re-deriving them.
+async fn stored_static_page_entry(
+    tier: &std::sync::Arc<dyn oxide_fw_cache::CacheHandler>,
+) -> std::sync::Arc<oxide_fw_cache::Entry> {
+    let key = l0_cache::L0Cache::key_for("routes/index", "", "", "test-build");
+    tier.get_arc(&key)
+        .await
+        .expect("the tier read succeeds")
+        .expect("the static page stored under the canonical key")
+}
+
+/// The `If-None-Match` re-check echoes the served validator: the answer
+/// is the 304 with the §15.4.5 validator set (what the 200 would have
+/// carried), the L0 label, and this request's middleware headers.
+#[tokio::test]
+async fn l0_conditional_inm_echo_answers_304_with_the_validator_set() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        Arc::clone(&tier),
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            middleware_dispatcher: Some(Arc::new(ScriptedMiddleware {
+                headers: vec![("x-oxide-mw".to_string(), "on".to_string())],
+                locals: None,
+                short_status: None,
+                location: None,
+            })),
+            ..Default::default()
+        },
+    );
+
+    // The first request renders and stores; the stream is drained so the
+    // store completes (the flight pins' rule: the store runs at stream end).
+    let first = dispatch(test_request("GET", "/")).await;
+    assert_eq!(first.status, 200, "the first request renders");
+    let _ = drain_stream(first).await;
+    let entry = stored_static_page_entry(&tier).await;
+    assert!(!entry.etag.is_empty(), "the store carries an etag");
+
+    // The conforming re-check echoes the served ETag header shape verbatim.
+    let second = dispatch(test_request_with_header(
+        "GET",
+        "/",
+        "if-none-match",
+        &entry.etag,
+    ))
+    .await;
+    assert_eq!(
+        second.status, 304,
+        "the echoed validator matches: {:?}",
+        entry.etag
+    );
+    assert_eq!(cache_label(&second), Some("L0-hit"));
+    // The §15.4.5 validator set: what the 200 would have carried.
+    for name in ["etag", "cache-control", "date", "last-modified"] {
+        assert!(
+            second
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(name)),
+            "the 304 carries {name}: {:?}",
+            second.headers
+        );
+    }
+    assert_eq!(
+        second.header("etag"),
+        Some(entry.etag.as_str()),
+        "the 304 echoes the stored validator verbatim"
+    );
+    // P0-5: the middleware headers still reflect THIS request.
+    assert_eq!(second.header("x-oxide-mw"), Some("on"));
+}
+
+/// The IMS-only re-check — the capability the hand-rolled arm never had:
+/// a client validating against the stored `Last-Modified` alone downloads
+/// nothing when the entry is unchanged (RFC 9110 §13.2.2).
+#[tokio::test]
+async fn l0_conditional_ims_only_recheck_answers_304() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        Arc::clone(&tier),
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            ..Default::default()
+        },
+    );
+
+    let first = dispatch(test_request("GET", "/")).await;
+    assert_eq!(first.status, 200, "the first request renders");
+    let _ = drain_stream(first).await;
+    let entry = stored_static_page_entry(&tier).await;
+    let lm = entry
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+        .map(|(_, v)| v.clone())
+        .expect("the stored entry carries a Last-Modified");
+
+    let second = dispatch(test_request_with_header(
+        "GET",
+        "/",
+        "if-modified-since",
+        &lm,
+    ))
+    .await;
+    assert_eq!(
+        second.status, 304,
+        "an IMS-only re-check against the unchanged Last-Modified answers 304"
+    );
+    assert_eq!(cache_label(&second), Some("L0-hit"));
+    assert_eq!(
+        second.header("last-modified"),
+        Some(lm.as_str()),
+        "the 304 carries the validator the decision compared against"
+    );
+}
+
+/// An `If-Modified-Since` older than the stored `Last-Modified` serves the
+/// entry in full (the entity changed after the client's copy).
+#[tokio::test]
+async fn l0_conditional_ims_older_than_last_modified_serves_full() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        Arc::clone(&tier),
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            ..Default::default()
+        },
+    );
+
+    let first = dispatch(test_request("GET", "/")).await;
+    let _ = drain_stream(first).await;
+    let entry = stored_static_page_entry(&tier).await;
+    let lm = entry
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+        .map(|(_, v)| v.clone())
+        .expect("the stored entry carries a Last-Modified");
+    let secs = oxide_fw_cache::parse_http_date(&lm).expect("the generated date parses");
+    let older = oxide_fw_cache::http_date(secs.saturating_sub(3600));
+
+    let second = dispatch(test_request_with_header(
+        "GET",
+        "/",
+        "if-modified-since",
+        &older,
+    ))
+    .await;
+    assert_eq!(
+        second.status, 200,
+        "an IMS older than the Last-Modified serves the entry in full"
+    );
+    assert_eq!(cache_label(&second), Some("L0-hit"));
+}
+
+/// `If-None-Match` decides and `If-Modified-Since` never runs (RFC 9110
+/// §13.2.2): a present-but-matching-none validator list serves the entry
+/// in full even when the IMS date would have answered 304.
+#[tokio::test]
+async fn l0_conditional_inm_precedes_ims() {
+    use std::sync::Arc;
+
+    let tier: Arc<dyn oxide_fw_cache::CacheHandler> =
+        Arc::new(oxide_fw_cache::TieredCache::new(8 * 1024 * 1024));
+    let l0 = Arc::new(l0_cache::L0Cache::new(
+        Arc::clone(&tier),
+        "test-build",
+        std::time::Duration::from_secs(300),
+    ));
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            page_renderer: Some(Arc::new(DataCapturingRenderer::new())),
+            routes_root: routes_root(),
+            l0: Some(Arc::clone(&l0)),
+            ..Default::default()
+        },
+    );
+
+    let first = dispatch(test_request("GET", "/")).await;
+    let _ = drain_stream(first).await;
+    let entry = stored_static_page_entry(&tier).await;
+    let lm = entry
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+        .map(|(_, v)| v.clone())
+        .expect("the stored entry carries a Last-Modified");
+
+    let mismatch = dispatch(test_request_with_header(
+        "GET",
+        "/",
+        "if-none-match",
+        "\"nope\"",
+    ))
+    .await;
+    assert_eq!(
+        mismatch.status, 200,
+        "a present-but-matching-none If-None-Match serves in full"
+    );
+    assert_eq!(cache_label(&mismatch), Some("L0-hit"));
+
+    // Both validators, the INM one not matching: the IMS comparison never
+    // runs, so the answer is the full entry and not a 304.
+    let req = oxide_fw_server::OxideRequest {
+        method: "GET".into(),
+        url: "/".into(),
+        headers: std::sync::Arc::new(vec![
+            ("if-none-match".to_string(), "\"nope\"".to_string()),
+            ("if-modified-since".to_string(), lm),
+        ]),
+        header_index: Default::default(),
+        body: bytes::Bytes::new(),
+        request_id: "dispatch-test-f55".into(),
+        trace: None,
+        peer: None,
+        rewrite_hops: 0,
+        mw_resume_after: None,
+    };
+    let both = dispatch(req).await;
+    assert_eq!(
+        both.status, 200,
+        "the If-None-Match decides; the IMS comparison never runs"
+    );
+    assert_eq!(cache_label(&both), Some("L0-hit"));
+}
