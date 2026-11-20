@@ -1146,6 +1146,21 @@ pub struct CacheConfig {
     /// ready-path shape — the knob is not a one-way opt-in).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub posture_probe_path: Option<String>,
+    /// V2-F59: `cache: { planeMount: true }` — the project's committed
+    /// opt-in for the F57 cache plane's MOUNT (the boot composes
+    /// `HttpCacheService` over its own tier, so the §11.2 shared plane
+    /// answers `/entry/`, `/tag/`, `/invalidate/` — and, with the tier
+    /// doubling as the F58 provider, `GET /health` — on the site's own
+    /// socket; a second node's `cache.handler = { type: 'http', url }`
+    /// points at the mount). The boot's precedence mirrors the
+    /// `coverageMetrics` family: the `--cache-plane-mount` flag wins, the
+    /// `OXIDE_CACHE_PLANE_MOUNT` env var keeps the operator's shell
+    /// spelling, this key is the project's baseline, and with none set
+    /// the default-off shape answers byte-identically (the F40 doctrine
+    /// — the plane answers only where the boot opts in). Both spellings
+    /// are legal: `true` mounts the plane, `false` pins it off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane_mount: Option<bool>,
 }
 
 /// §14.1: `cache.l0` — the L0 response-cache settings.
