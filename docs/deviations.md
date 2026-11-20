@@ -6513,3 +6513,108 @@ against the pre-F55 behavior; the F56 pins failed with E0433/E0432 over the
 server crate's absent `oxide_fw_cache` edge. Then green: the full cli lib
 suite, the server suite, both benches in test mode, both examples executed
 end to end; fmt/clippy/the zero-allow grep over the touched regions clean.
+
+## Session record — the plane's host and its health arm (feat/server-cache-plane-mount, 2026-11-20)
+
+The F53/F54 handoff's recorded pickup ("run the two-node serve with
+`HttpCacheService` hosting the shared plane") lands as F57 + F58: the plane's
+HTTP service gains its production HOST — the app server itself — and its own
+health arm on the plane's wire.
+
+**F57 — the plane's mount (the service's production host).**
+`crates/server/src/lib.rs`: `Pipeline::with_cache_plane(Arc<HttpCacheService>)`
+answers the plane's three path families (`/entry/{key}`, `/tag/{tag}`,
+`/invalidate/{tag}`) through the service's pure routing core on the app
+server's OWN socket — one port, one TLS/firewall surface, the site and the
+shared plane on one node; a second node's
+`cache.handler = { type: 'http', url }` points at the mount. The sync prefix
+captures the transport-free `PlaneRequest` from the already-buffered body and
+the core runs in a `NativePrefix::CachePlane` async arm — the
+`ServerFn`/`LocalImage` split verbatim. The §20 shape rides (one `_native`
+observation + one request trace per exchange); the plane's own `CACHE-HTTP`
+arms fire inside `respond`; the trust boundary holds through the mount (a
+forged PUT is a 400 that never stores); the F40 doctrine holds (no mount →
+the plane paths fall through to dispatch byte-identically; mounted, the plane
+owns its families ahead of the static store). The CLI boot's literal gains
+`cache_plane: None` (the recorded boot wire — attaching the mount behind a
+`cache.plane` config surface — is the next pickup and needs the V8-linked
+build to verify).
+
+**F58 — the plane's health arm.** `crates/cache/src/http_service.rs`:
+`PlaneHealth` (`plane_health() -> CacheHealth`) + `HttpCacheService::with_health`
++ `GET /health` answer the F52 posture pull's JSON on the plane's own wire —
+the F49 probe's contract transposed verbatim: the unconfigured path 404s
+BEFORE the method check (the F40 floor), the surface is GET-only (405), the
+body is the LIVE pull (a scrape diffs two polls). `TieredCache` IS a provider
+(its pull is the F52 `health()` value unchanged). The re-export rides
+`lib.rs` (alphabetized).
+
+**TDD red-first, one cycle per milestone.** The 7 M1 pins failed with E0599 ×6
+over the unresolved `with_cache_plane` (recorded against the stashed impl)
+then went green; two pin-side fixture corrections in the first green pass —
+the asset-precedence pin's fixture missed its `create_dir_all`, and the
+example/bench entries had copied the F54 bench's fixed `stored_at` stamp
+(that bench drives `serve_entry` with an explicit `now` in SECONDS; the
+plane's tier classifies freshness against the REAL clock in unix ms, so a
+fixed stamp is born expired — the entries now stamp `now_ms()` and the TTL
+doubles in the bench). The 6 M2 pins failed with E0405 ×2 over the missing
+`PlaneHealth` trait, then went green after three pin-side corrections (the
+2-arg `set` arity, the double-`Arc` wrap, the move-then-use of the tier
+handle).
+
+**Micro-debt cleaned.** The F55/F56 record's IDENTIFIED class lands: the
+render crate's four streaming-sink `.lock().unwrap()` sites
+(`crates/render/src/lib.rs` — the sink closure, the two `push` takes, the
+`finish` take) recovered with the house
+`PoisonError::into_inner` shape; the three `# Panics` doc blocks that named
+the poison panic as the contract now document the recovery instead. Three stale
+pins repaired: `crates/server/tests/log_feed_tdd.rs`'s endpoint-map pin still
+counted 14 rows while the in-lib pin (`endpoints.rs`) had moved to 15 — the
+pre-existing `endpoint_map_has_the_log_feed_row` failure the baseline suite
+carried, now green; `crates/server/tests/metrics_cache_plane_tdd.rs`'s
+`observe_and_render_with_an_attached_plane_coexist` read the render ONCE
+while the observing thread raced it — on a 2-core box the render beat the
+thread's first landing 4/4 (verified against the stashed tree, so
+pre-existing), and the pin now polls the raced route up to a 5 s deadline
+instead of betting on the scheduler, both assertions keeping their intent;
+and `crates/server/tests/server_tdd.rs`'s `serve_ims_older_than_last_modified_
+serves_full` expected the bare `text/javascript` where the asset server's
+canonical composer serves `text/javascript; charset=utf-8` (three sibling
+pins in the same file already expected the suffixed shape; verified
+pre-existing against the stashed tree). One clippy-gate repair: the metrics
+bench's `//!` block had a lazy doc continuation (the
+`doc_lazy_continuation` finding that broke the `-D warnings` CI shape) —
+the paragraph break lands.
+
+**Example-less surfaces closed.** The server crate's two recorded zero-example
+surfaces gain walkthroughs: `crates/server/examples/governor.rs` (the
+V2-F12 brownout ladder end to end — the breach rungs, the hysteresis tail,
+the enforcement seam, the shed answer, the readiness flip, the Governor's
+publish/read split) and `crates/server/examples/live_hub.rs` (the V2-F05
+live substrate — the hub capacity, the subscribe/Guard shape, the fan-out
+query with the wildcard riding the SUBSCRIBER's side, the snapshot push, the
+`live_stream` first frame, the unsubscribe).
+
+**Docs drift repaired.** The spec's WP table gains the F57/F58 rows;
+`docs/architecture.md`'s cache row names the mount + the health arm (refs
+through V2-F58) and the server row names the mount; the cache README gains
+the F57/F58 bullet; the server README gains the mount bullet (the crate
+README had carried NO cache-plane content since F49 — the mount bullet is
+its first); this session's HANDOFF record prepends (the F55/F56 session
+appended its deviations record but never prepended its HANDOFF section —
+the chain was one handoff behind; this record notes it and covers the gap).
+The README badge re-measured by `scripts/count-tests.sh`.
+
+**Verified.** `cargo test -p oxide-fw-cache --all-features` (the lib, the
+15 integration files incl. the 6 new F58 pins, doc-tests — 0 failed),
+`cargo test -p oxide-fw-server --all-features` (the lib + 26 integration
+files incl. the 7 new F57 pins — 0 failed, both repaired pins green),
+`cargo test -p oxide-fw-render`
+(after the poison repairs — 0 failed), the `plane_mount` and `plane_health`
+benches in test mode under `--features bench-util`, and all four examples
+executed end to end (`plane_mount`, `plane_health`, `governor`,
+`live_hub`). fmt + clippy + the zero-`allow` grep clean (see the handoff
+for the recorded commands). The V8-linked cli suite did NOT run (the
+recorded libclang/nasm wall — this sandbox has no clang); the cli-side edit
+is the one exhaustive-literal field (`cache_plane: None`) whose shape is
+pinned by the compiler on a V8-capable host.
