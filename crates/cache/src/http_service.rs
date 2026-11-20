@@ -880,10 +880,21 @@ impl HttpCacheService {
 
         // Content-Length drives the body drain (the client's own shape:
         // unread data + close = a TCP RST the peer reports as an error).
+        // A value that does not parse rides 0 (the pre-F65 behavior — a
+        // garbage length drains nothing), but the gap is LOUD now: a
+        // silent `unwrap_or(0)` hid a malformed exchange from every log.
         let mut clen = 0usize;
         for line in lines {
             if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                clen = v.trim().parse().unwrap_or(0);
+                match v.trim().parse() {
+                    Ok(parsed) => clen = parsed,
+                    Err(e) => tracing::warn!(
+                        code = "CACHE-HTTP",
+                        value = %v.trim(),
+                        error = %e,
+                        "the Content-Length did not parse; draining none"
+                    ),
+                }
             }
         }
         // V2-F64: the drain's bound. A length past the cap answers 413
