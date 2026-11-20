@@ -15,7 +15,9 @@
 //! (coalescing, §11.3), [`http`] (Cache-Control/ETag/304 + fetch memo),
 //! [`http_handler`] (the §11.2 HTTP cache client) and [`http_service`] (the
 //! protocol's server half — any [`CacheHandler`] hosted behind the client's
-//! exchange shapes), [`observer`] (the §20 push seam: one callback per
+//! exchange shapes), [`shard`] (the §11.2 multi-plane client — one
+//! [`CacheHandler`] over many planes, entry verbs routed by consistent
+//! hashing, tag verbs fanned out), [`observer`] (the §20 push seam: one callback per
 //! completed cache event), [`fanout`] (the seam's composition arm: one event
 //! into every child observer), [`feed`] (the bounded lossy FIFO the host
 //! drains off the hot path), [`hot_keys`] (the seam's attribution arm: the
@@ -37,6 +39,7 @@ pub mod http_service;
 pub mod keyhash;
 pub mod metrics;
 pub mod observer;
+pub mod shard;
 pub mod single_flight;
 pub mod tiers;
 
@@ -60,6 +63,7 @@ pub use http_service::{
 pub use keyhash::{KeyStr, key_of};
 pub use metrics::{CacheMetricsSnapshot, MetricsCacheObserver};
 pub use observer::{CacheEvent, CacheObserver, CacheOp, TracingCacheObserver};
+pub use shard::{ShardRing, ShardedCacheHandler};
 pub use single_flight::{FlightOwnerGuard, FlightSlot, SingleFlight};
 pub use tiers::{CacheStats, DiskTier, MemoryTier, TieredCache};
 
