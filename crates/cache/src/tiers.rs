@@ -626,7 +626,25 @@ impl DiskTier {
                 .map_err(dberr)?
                 .map(|g| g.value().to_vec())
         };
-        let idx: Option<DiskIndexEntry> = removed.and_then(|b| serde_json::from_slice(&b).ok());
+        let idx: Option<DiskIndexEntry> = removed.and_then(|b| match serde_json::from_slice(&b) {
+            Ok(parsed) => Some(parsed),
+            Err(e) => {
+                // V2-F70 session micro-debt: the corrupt index row was a
+                // SILENT `None` (the F58-session repair's class): the
+                // delete still commits (the row is gone either way, the
+                // index self-heals on the next write) but the S-08 byte
+                // budget never decrements and the blob file orphans — the
+                // gap must be VISIBLE. Behavior unchanged; the SILENCE is
+                // the repair.
+                tracing::warn!(
+                    code = "CACHE-CODEC",
+                    key = %key,
+                    error = %e,
+                    "the disk index row did not parse; the delete proceeds, the byte budget may drift and the blob orphan"
+                );
+                None
+            }
+        });
         if let Some(idx) = &idx {
             // V2-B06: one multimap remove per membership (was a JSON
             // read-filter-write of the whole list per tag).
@@ -931,7 +949,29 @@ impl TieredCache {
                     Freshness::Expired => {
                         let disk = Arc::clone(disk);
                         let k = key.to_string();
-                        let _ = tokio::task::spawn_blocking(move || disk.delete(&k)).await;
+                        // V2-F70 session micro-debt: the expired entry's
+                        // delete task was a silent `let _ =` swallow (the
+                        // F65-session repair's class): a panicked task or a
+                        // failed blob removal left an ORPHANED blob while
+                        // the S-08 budget had already released it — the
+                        // operator must see the gap. Behavior unchanged
+                        // (the L0 answer already served the delete); the
+                        // SILENCE is the repair.
+                        match tokio::task::spawn_blocking(move || disk.delete(&k)).await {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(e)) => tracing::warn!(
+                                code = "CAC-DISK",
+                                key = %key,
+                                error = %e.0.message,
+                                "the expired entry's blob removal failed; the blob may be orphaned on disk"
+                            ),
+                            Err(join_err) => tracing::warn!(
+                                code = "CAC-DISK",
+                                key = %key,
+                                error = %join_err,
+                                "the expired entry's delete task panicked; the blob may be orphaned on disk"
+                            ),
+                        }
                     }
                 }
             }
