@@ -73,12 +73,22 @@
 //! [`PlanePeer`](crate::PlanePeer) probes over `HttpCacheHandler`'s
 //! request core — so the plane's posture and exposition answer the wired
 //! node, not only a direct socket caller.
+//!
+//! Since V2-F67 the accept loop carries the last unbounded shell
+//! resource's bound: `with_max_connections` gates the loop on a permit
+//! per concurrent exchange — the F60 deadline bounds an exchange's TIME,
+//! the F64/F65 bounds bound its MEMORY, the F67 bound bounds HOW MANY
+//! run at once. The bound is a WAIT, never a refusal (a queued
+//! connection's bytes sit unread until a permit frees; no new status, no
+//! legit answer changes), the default stays the pre-F67 unbounded shape
+//! (the F60 posture), and the pure core never touches the gate.
 
 use crate::{
     CacheHandler, MAC_LEN, MAX_ENTRY_BYTES, Result, auth, codec, err, health::CacheHealth,
     tiers::TieredCache,
 };
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 // ------------------------------------------------------------------- the health provider
 
@@ -365,6 +375,15 @@ pub struct HttpCacheService {
     /// [`HttpCacheService::with_limits`], read back via
     /// [`HttpCacheService::limits`].
     limits: ExchangeLimits,
+    /// V2-F67: the accept loop's concurrency bound — `None` (the default)
+    /// for the pre-F67 unbounded shape (the F60 posture: the operator
+    /// opts in, the choice is greppable), `Some(n)` for the permit-per-
+    /// concurrent-exchange gate. Attached via
+    /// [`HttpCacheService::with_max_connections`], read back via
+    /// [`HttpCacheService::max_connections`]; the gate itself is
+    /// materialized in [`HttpCacheService::serve`], the only consumer —
+    /// the pure core (`respond`) never touches it.
+    max_connections: Option<usize>,
 }
 
 /// A wire-capped exchange: the header block refuses past this bound so a
@@ -383,6 +402,7 @@ impl HttpCacheService {
             health: None,
             metrics: None,
             limits: ExchangeLimits::default(),
+            max_connections: None,
         }
     }
 
@@ -461,6 +481,45 @@ impl HttpCacheService {
     #[must_use]
     pub fn limits(&self) -> ExchangeLimits {
         self.limits
+    }
+
+    /// Bound the accept loop's concurrency (V2-F67): at most `max`
+    /// exchanges run at once; a connection accepted past the cap waits
+    /// (the socket is accepted, the bytes unread) until a running
+    /// exchange finishes and frees its permit.
+    ///
+    /// The F53 shell bounded each exchange's SHAPE (`HEADER_CAP`) and —
+    /// since F64 — its BODY ([`ExchangeLimits`]); the loop itself spawned
+    /// one task per accepted connection with NO cap, so a thousand
+    /// concurrent connections ran a thousand concurrent handler pulls
+    /// against the same backing tier. The F60 deadline bounds an
+    /// exchange's TIME and the F64 bounds bound its MEMORY; this is the
+    /// shell's last unbounded resource: HOW MANY run at once. The bound
+    /// is a WAIT, never a refusal — a queued connection's bytes sit in
+    /// its socket (the peer sees a slow answer, never a new status) and
+    /// the exchange runs untouched once a permit frees, so no legit
+    /// answer changes and no protocol surface grows. The pure core
+    /// ([`HttpCacheService::respond`]) never touches the gate — the F64
+    /// doctrine: the bounds are the shell's concern.
+    ///
+    /// Chainable; `None` (the default) stays the pre-F67 unbounded shape
+    /// — byte-identical for every existing deployment, the F60 posture:
+    /// the operator opts in, the choice is greppable. A fronting
+    /// load-balancer that already caps concurrency can leave the default
+    /// or size the knob to match its own.
+    #[must_use]
+    pub fn with_max_connections(mut self, max: usize) -> Self {
+        self.max_connections = Some(max);
+        self
+    }
+
+    /// The attached concurrency bound, `None` when the shell is
+    /// unbounded (the default) — the introspection seam the F60
+    /// `deadline()` accessor established: tests and hosts pin the state
+    /// instead of guessing it.
+    #[must_use]
+    pub fn max_connections(&self) -> Option<usize> {
+        self.max_connections
     }
 
     /// The backing handler's self-named kind (the F32 introspection
@@ -807,23 +866,51 @@ impl HttpCacheService {
     /// Host the service on a bound listener: one minimal HTTP/1.1 exchange
     /// per connection (`Connection: close`, the client's own posture),
     /// parsed into a [`PlaneRequest`] and answered with the core's
-    /// [`PlaneResponse`]. Connections run concurrently; a malformed
-    /// exchange answers 400 and closes without touching the accept loop.
+    /// [`PlaneResponse`]. Connections run concurrently, bounded by the
+    /// attached concurrency knob ([`HttpCacheService::with_max_connections`],
+    /// V2-F67): the excess connections wait with their bytes unread until
+    /// a running exchange frees its permit — a wait, never a refusal. A
+    /// malformed exchange answers 400 and closes without touching the
+    /// accept loop.
     ///
     /// # Errors
     ///
     /// [`OxideError`] with code `CACHE-HTTP` when the listener itself
-    /// fails (`accept`) — the only fatal arm; per-connection failures are
+    /// fails (`accept`) or the connection gate is closed (impossible —
+    /// nothing in this file closes it, the loud arm is the house
+    /// posture) — the only fatal arms; per-connection failures are
     /// statuses, never loop failures.
     pub async fn serve(self, listener: tokio::net::TcpListener) -> Result<()> {
         let this = Arc::new(self);
+        // V2-F67: the concurrency gate, materialized here — the only
+        // consumer. `None` (the default) is the pre-F67 unbounded shape,
+        // byte-identical.
+        let gate = this
+            .max_connections
+            .map(|max| Arc::new(Semaphore::new(max)));
         loop {
             let (stream, _peer) = listener
                 .accept()
                 .await
                 .map_err(|e| err("CACHE-HTTP", format!("accept: {e}")))?;
+            // V2-F67: the permit rides the connection's whole exchange
+            // life — acquired BEFORE the spawn (an over-cap connection
+            // waits here, its bytes unread in the socket, instead of
+            // running an unbounded concurrent exchange), released when
+            // the task ends. With no cap attached there is no gate and
+            // no wait — the pre-F67 shape.
+            let permit = match &gate {
+                Some(g) => Some(
+                    Arc::clone(g)
+                        .acquire_owned()
+                        .await
+                        .map_err(|e| err("CACHE-HTTP", format!("connection gate: {e}")))?,
+                ),
+                None => None,
+            };
             let this = Arc::clone(&this);
             tokio::spawn(async move {
+                let _permit = permit;
                 if let Err(e) = this.handle_conn(stream).await {
                     // `handle_conn`'s Err is the transport arm (a read or
                     // write failed mid-exchange) — the exchange dies with
@@ -856,6 +943,17 @@ impl HttpCacheService {
             }
             buf.extend_from_slice(&tmp[..n]);
             if buf.len() > HEADER_CAP {
+                // V2-F68 session micro-debt: the hostile-header refusal
+                // was the shell's last SILENT arm (the F65-session repair's
+                // class). Behavior unchanged — the 400 + close is the
+                // refusal — the SILENCE is the repair: the cap is named,
+                // so an operator watching the logs sees the flood.
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    cap = HEADER_CAP,
+                    buffered = buf.len(),
+                    "the exchange's header block exceeds the parser's cap; answering 400 without reading further"
+                );
                 Self::answer(
                     &mut stream,
                     &PlaneResponse {
