@@ -53,7 +53,9 @@ pub use http::{
     parse_http_date, serve_entry,
 };
 pub use http_handler::HttpCacheHandler;
-pub use http_service::{HttpCacheService, PlaneHealth, PlaneRequest, PlaneResponse};
+pub use http_service::{
+    HttpCacheService, MetricsPlaneSource, PlaneHealth, PlaneMetrics, PlaneRequest, PlaneResponse,
+};
 pub use keyhash::{KeyStr, key_of};
 pub use metrics::{CacheMetricsSnapshot, MetricsCacheObserver};
 pub use observer::{CacheEvent, CacheObserver, CacheOp, TracingCacheObserver};
