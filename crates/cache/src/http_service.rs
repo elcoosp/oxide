@@ -38,6 +38,16 @@
 //! answers 400 and closes without poisoning the accept loop. The plane
 //! itself emits no observer rows — the tiers remain the observation point
 //! (the exporter counts stay one-per-op; a service arm would double-count).
+//!
+//! Since V2-F57 the plane's production HOST is the app server itself:
+//! `oxide-fw-server`'s `Pipeline::with_cache_plane` mounts a service and
+//! answers the three families through this same core on the site's own
+//! socket — one port, one TLS/firewall surface, the site and the shared
+//! plane on one node. Since V2-F59 the mount also routes `/health` when
+//! the service carries a provider ([`HttpCacheService::has_health_provider`]
+//! is the mount's routing seam): a provider-attached mount is the
+//! balancer probe the F58 record promised, and a provider-less mount
+//! never shadows an application's own `/health` route.
 
 use crate::{CacheHandler, Result, auth, codec, err, health::CacheHealth, tiers::TieredCache};
 use std::sync::Arc;
@@ -236,6 +246,19 @@ impl HttpCacheService {
         self
     }
 
+    /// Whether a health provider rides the service (V2-F59, the F57
+    /// mount's routing seam): a mount that answers `/health` into a
+    /// provider-less service would shadow an application's own `/health`
+    /// route with a bare 404, so the app server asks instead of guessing —
+    /// a provider-attached mount routes the surface (the balancer probe
+    /// the F58 record promised), a provider-less mount leaves it to the
+    /// app. The plain `respond` contract is unchanged: the unconfigured
+    /// path still 404s inside the core whoever asks.
+    #[must_use]
+    pub fn has_health_provider(&self) -> bool {
+        self.health.is_some()
+    }
+
     /// The backing handler's self-named kind (the F32 introspection
     /// seam) — what the posture of a plane rooted here would report.
     #[must_use]
@@ -300,9 +323,23 @@ impl HttpCacheService {
             if method != "GET" {
                 return wrong_method("GET");
             }
-            return PlaneResponse {
-                status: 200,
-                body: serde_json::to_vec(&provider.plane_health()).unwrap_or_default(),
+            // The house posture for the impossible path (`serve_get`'s
+            // re-encode arm): a primitive-only value shape cannot fail
+            // serde, but the impossible arm is LOUD — a warn under the
+            // code and a 500, never a silent empty-200 body.
+            return match serde_json::to_vec(&provider.plane_health()) {
+                Ok(body) => PlaneResponse { status: 200, body },
+                Err(e) => {
+                    tracing::warn!(
+                        code = "CACHE-HTTP",
+                        error = %e,
+                        "the health pull did not serialize; answering 500"
+                    );
+                    PlaneResponse {
+                        status: 500,
+                        body: Vec::new(),
+                    }
+                }
             };
         }
 
@@ -444,12 +481,26 @@ impl HttpCacheService {
         }
     }
 
-    /// `GET /tag/{t}`: the JSON key list.
+    /// `GET /tag/{t}`: the JSON key list. The list cannot fail serde (a
+    /// plain string vector), but the impossible arm is LOUD (`serve_get`'s
+    /// posture): a warn under the code and a 500, never a silent
+    /// empty-200 body.
     async fn serve_tag(&self, tag: &str) -> PlaneResponse {
         match self.handler.tag_keys(tag).await {
-            Ok(keys) => PlaneResponse {
-                status: 200,
-                body: serde_json::to_vec(&keys).unwrap_or_default(),
+            Ok(keys) => match serde_json::to_vec(&keys) {
+                Ok(body) => PlaneResponse { status: 200, body },
+                Err(e) => {
+                    tracing::warn!(
+                        code = "CACHE-HTTP",
+                        tag = %tag,
+                        error = %e,
+                        "the tag-key list did not serialize; answering 500"
+                    );
+                    PlaneResponse {
+                        status: 500,
+                        body: Vec::new(),
+                    }
+                }
             },
             Err(e) => Self::handler_error("tag_keys", tag, &e.0.message),
         }
@@ -482,11 +533,26 @@ impl HttpCacheService {
             }
         };
         match self.handler.invalidate_tag(tag, soft).await {
-            Ok(count) => PlaneResponse {
-                status: 200,
-                body: serde_json::to_vec(&serde_json::json!({ "count": count }))
-                    .unwrap_or_default(),
-            },
+            Ok(count) => {
+                // The map-of-bool cannot fail serde — but the impossible
+                // arm is LOUD (`serve_get`'s posture): a warn under the
+                // code and a 500, never a silent empty-200 body.
+                match serde_json::to_vec(&serde_json::json!({ "count": count })) {
+                    Ok(body) => PlaneResponse { status: 200, body },
+                    Err(e) => {
+                        tracing::warn!(
+                            code = "CACHE-HTTP",
+                            tag = %tag,
+                            error = %e,
+                            "the invalidate count did not serialize; answering 500"
+                        );
+                        PlaneResponse {
+                            status: 500,
+                            body: Vec::new(),
+                        }
+                    }
+                }
+            }
             Err(e) => Self::handler_error("invalidate", tag, &e.0.message),
         }
     }
