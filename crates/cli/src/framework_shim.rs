@@ -607,6 +607,38 @@ pub fn posture_probe_provider(
     })
 }
 
+/// The V2-F59 mount gate — the boot wire for the F57 cache plane's
+/// mount, the [`posture_probe_provider`] shape over the §11.2 service:
+/// the boot opts in (`cache_plane_mount_with_config`'s layered verdict),
+/// AND a tier handle exists, and the mounted plane composes over the
+/// boot's OWN tier — the same `Arc<TieredCache>` rides both seams, as
+/// the backing store (a `TieredCache` IS a `CacheHandler`) and as the
+/// F58 health provider (a `TieredCache` IS a `PlaneHealth`), so the
+/// mounted plane's `GET /health` answers the boot tier's live pull (the
+/// balancer surface the F58 record promised) with zero extra state.
+///
+/// A gate that fails either half attaches nothing: the plane paths fall
+/// through to dispatch byte-identically (the F40 doctrine — the §11.2
+/// plane answers only where the boot opts in; a boot without a tier has
+/// nothing to root the plane in). `None` (mount off) is the default
+/// shape every pre-F59 boot keeps.
+pub fn cache_plane_mount_provider(
+    mount: bool,
+    tier: Option<&std::sync::Arc<oxide_fw_cache::TieredCache>>,
+) -> Option<std::sync::Arc<oxide_fw_cache::HttpCacheService>> {
+    let tier = tier?;
+    mount.then(|| {
+        std::sync::Arc::new(
+            oxide_fw_cache::HttpCacheService::new(
+                std::sync::Arc::clone(tier) as std::sync::Arc<dyn oxide_fw_cache::CacheHandler>
+            )
+            .with_health(
+                std::sync::Arc::clone(tier) as std::sync::Arc<dyn oxide_fw_cache::PlaneHealth>
+            ),
+        )
+    })
+}
+
 /// Build the framework stack for a project. `config_path` is the resolved
 /// `oxide.config.{ts,mjs,js}` (or `None` for projects without one).
 ///
