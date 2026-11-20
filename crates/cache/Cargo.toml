@@ -164,6 +164,25 @@ name = "exchange_bounds"
 harness = false
 required-features = ["bench-util"]
 
+# F65: the client's read bound — the legit read under a generous cap (the
+# bound's cost: one length comparison per chunk), the over-cap answer's
+# refusal floor (the exchange stops at the cap, the bytes past it never
+# land) and the pre-F65 unbounded drain of the same answer (the memory
+# the cap buys down, measured).
+[[bench]]
+name = "client_read_limit"
+harness = false
+required-features = ["bench-util"]
+
+# F66: the client's request-line trust boundary — the guard's per-name
+# scan (the pass arm over a canonical route key, the refuse arm stopping
+# at the offending byte) beside the full guarded `set` exchange, where
+# the scan rides the verb's real cost.
+[[bench]]
+name = "client_name_guard"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
