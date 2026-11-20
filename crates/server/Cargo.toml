@@ -185,6 +185,14 @@ name = "search"
 harness = false
 required-features = ["bench-util", "search"]
 
+# V2-F57: criterion bench for the §11.2 cache plane's mount — the full
+# `serve_request` exchange through the mount versus the service's pure core
+# alone, plus the unmounted fall-through floor (the F40 None-check cost).
+[[bench]]
+name = "plane_mount"
+harness = false
+required-features = ["bench-util"]
+
 # V2-A02: this crate does not inherit the workspace lints yet (the recorded
 # dedicated hygiene pass adopts pedantic) — declared so the newer cargo
 # `missing_lints_inheritance` notice stays silent about the intent.
