@@ -222,9 +222,9 @@ impl FetchMemo {
 /// cached entry — the canonical 304 comparison ([`conditional_response`],
 /// RFC 9110 §13) and the §11.3 header set ([`cache_control`] from the
 /// entry's policy, the entry's ETag, the `Date` via [`http_date`])
-/// composed, so no host re-rolls the semantics (the L0 stage's
-/// hand-rolled `If-None-Match` match and the static-asset server's own
-/// are the evidence it happened twice).
+/// composed, so no host re-rolls the semantics (the L0 stage's and the
+/// static-asset server's hand-rolled matches were the evidence it
+/// happened twice; both compose through this seam since V2-F55/F56).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServeOutcome {
     /// The request's validators matched: answer 304 with the validator
@@ -261,6 +261,12 @@ pub enum ServeOutcome {
 ///
 /// `now_secs` is unix seconds — the `Date` header's value, passed in so
 /// the decision stays deterministic for tests.
+///
+/// The wire's consumers: the L0 lookup stage answers its conditional
+/// requests through the hit envelope's `serve_conditional` adapter
+/// (V2-F55), and the static-asset server composes the same comparison
+/// over an entry view of the asset (V2-F56) — the two hand-rolled
+/// matches this doc once named as the duplication's evidence.
 ///
 /// # Examples
 ///
