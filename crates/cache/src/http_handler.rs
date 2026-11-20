@@ -23,6 +23,19 @@
 //! passed through byte-verbatim — riding the same [`HttpCacheHandler::request`]
 //! core the entry verbs ride, so the F60 deadline and the `CACHE-HTTP`
 //! error context come with the probes for free.
+//!
+//! Since V2-F65 the client's read half carries the bound the F64 shell's
+//! write half always had: `with_read_limit` caps what one exchange may
+//! buffer (a peer answering past the cap — hostile or misrouted, the F63
+//! record's captive-portal shape — is refused LOUD under `CACHE-HTTP`
+//! before its bytes finish landing; the default stays the pre-F65
+//! unbounded shape, byte-identical for every existing deployment, the
+//! F60 posture for the client half). Since V2-F66 the client also refuses
+//! to SPEAK a key or tag the request line cannot carry
+//! ([`HttpCacheHandler::plane_name`]): the URLs are built by
+//! interpolation and the wire has no escaping, so a name with a CR, LF or
+//! space corrupted the exchange — every verb checks the name before a
+//! single wire byte leaves and fails loud instead.
 
 use crate::{Entry, Result, auth, codec, err, health::CacheHealth};
 use async_trait::async_trait;
@@ -35,6 +48,10 @@ pub struct HttpCacheHandler {
     /// default) for the pre-F60 unbounded shape — an existing deployment
     /// keeps its byte behavior until it opts in.
     deadline: Option<Duration>,
+    /// V2-F65: the per-exchange read bound (`with_read_limit`), `None`
+    /// (the default) for the pre-F65 unbounded read — the F60 posture for
+    /// the client half: the operator opts in, the choice is greppable.
+    read_limit: Option<usize>,
 }
 
 impl HttpCacheHandler {
@@ -42,6 +59,81 @@ impl HttpCacheHandler {
         Self {
             base: base.into().trim_end_matches('/').to_string(),
             deadline: None,
+            read_limit: None,
+        }
+    }
+
+    /// Bound one exchange's READ — headers and body share the cap
+    /// (V2-F65): the client half of the F64 bounds story. The shell
+    /// refuses an oversized `Content-Length` before the first body byte
+    /// lands, but the CLIENT drained whatever the peer sent —
+    /// `read_to_end` grew the buffer without bound, so a hostile or
+    /// misrouted peer (the F63 record's captive-portal shape) answering
+    /// an endless or gigantic body cost the caller node its memory one
+    /// header line later. The F60 deadline bounds the exchange's TIME;
+    /// nothing bounded its MEMORY. With a cap attached, the read loop
+    /// refuses the byte that would exceed it: the exchange fails LOUD
+    /// under the file's stable `CACHE-HTTP` code naming the cap, and the
+    /// failure flows through this file's existing degradation arms —
+    /// `get` to a miss, `set` to a loud `Err`, the probes to a loud
+    /// `Err` — exactly like every other transport-class failure. The
+    /// header terminator rides the same budget, so a
+    /// terminatorless flood stops at the cap too. Chainable; `None` (the
+    /// default) stays the pre-F65 unbounded read — byte-identical for
+    /// every existing deployment until the operator opts in.
+    #[must_use]
+    pub fn with_read_limit(mut self, read_limit: usize) -> Self {
+        self.read_limit = Some(read_limit);
+        self
+    }
+
+    /// The attached read bound, `None` when the client is unbounded (the
+    /// default) — the introspection seam the F60 `deadline()` accessor
+    /// established: tests and hosts pin the state instead of guessing it.
+    #[must_use]
+    pub fn read_limit(&self) -> Option<usize> {
+        self.read_limit
+    }
+
+    /// The request-line trust boundary (V2-F66): the public predicate a
+    /// host can pre-validate names with, and the check every verb runs
+    /// BEFORE a single wire byte leaves.
+    ///
+    /// The client builds its URLs by interpolation — `format!(
+    /// "{base}/entry/{key}")` — and the wire has no escaping: the
+    /// service's `route` contract is "everything after the family prefix
+    /// IS the name" (keys and tags written verbatim, real keys carry
+    /// slashes). A name carrying an ASCII control byte, a space or DEL
+    /// did not fail — it CORRUPTED the exchange: a space split the
+    /// request line (`split_whitespace`, the plane stored the key's head
+    /// and dropped the tail), a CR or LF injected a second exchange into
+    /// the connection stream. Keys are app-facing (`route:` keys embed
+    /// request paths; a slug is user input), so the boundary is real.
+    /// The refusal is LOUD (the house convention) under the file's
+    /// stable `CACHE-HTTP` code, naming the offending byte — a silent
+    /// miss would hide the caller bug; a corrupt exchange would poison
+    /// the plane. Everything the line speaks verbatim passes: route
+    /// keys, query punctuation, percent escapes, UTF-8 multi-byte (a
+    /// continuation byte is never an ASCII control).
+    ///
+    /// # Errors
+    ///
+    /// [`OxideError`](crate::OxideError) with code `CACHE-HTTP` when the
+    /// name carries a byte the request line cannot speak — the message
+    /// names the offending byte so the caller can rename.
+    pub fn plane_name(name: &str) -> Result<()> {
+        let offender = name
+            .bytes()
+            .find(|b| matches!(b, 0x00..=0x1f | 0x20 | 0x7f));
+        match offender {
+            None => Ok(()),
+            Some(b) => Err(err(
+                "CACHE-HTTP",
+                format!(
+                    "the name carries a byte the request line cannot speak \
+                     (byte {b:#04x}); refusing before the exchange"
+                ),
+            )),
         }
     }
 
@@ -138,11 +230,46 @@ impl HttpCacheHandler {
                 .await
                 .map_err(|e| err("CACHE-HTTP", format!("write body: {e}")))?;
         }
+        // V2-F65: the read's bound. Without a cap this is the pre-F65
+        // shape verbatim (`read_to_end`); with one, the buffer only ever
+        // holds bytes that fit — the byte that would exceed the cap
+        // refuses the exchange LOUD (the stable code, the cap named)
+        // instead of landing. The header terminator rides the same
+        // budget, so a terminatorless flood stops at the cap too — the
+        // F64 shell's own posture, transposed onto the client half.
         let mut buf = Vec::new();
-        stream
-            .read_to_end(&mut buf)
-            .await
-            .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
+        let mut tmp = [0u8; 4096];
+        match self.read_limit {
+            Some(limit) => loop {
+                let n = stream
+                    .read(&mut tmp)
+                    .await
+                    .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
+                if n == 0 {
+                    break;
+                }
+                if buf.len() + n > limit {
+                    tracing::warn!(
+                        code = "CACHE-HTTP",
+                        url = %url,
+                        limit = limit,
+                        "the peer's answer exceeded the client's read limit; \
+                         refusing the exchange"
+                    );
+                    return Err(err(
+                        "CACHE-HTTP",
+                        format!("the peer's answer exceeded the read limit ({limit} bytes)"),
+                    ));
+                }
+                buf.extend_from_slice(&tmp[..n]);
+            },
+            None => {
+                stream
+                    .read_to_end(&mut buf)
+                    .await
+                    .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
+            }
+        }
         let split = buf
             .windows(4)
             .position(|w| w == b"\r\n\r\n")
@@ -160,6 +287,10 @@ impl HttpCacheHandler {
 #[async_trait]
 impl crate::CacheHandler for HttpCacheHandler {
     async fn get(&self, key: &str) -> Result<Option<Entry>> {
+        // V2-F66: the request-line trust boundary — a name the line
+        // cannot speak is a LOUD caller error, never a corrupt exchange
+        // (the arms below degrade TRANSPORT failures; this is not one).
+        Self::plane_name(key)?;
         let url = format!("{}/entry/{key}", self.base);
         match self.request("GET", &url, None).await {
             Ok((200, body)) => {
@@ -182,6 +313,9 @@ impl crate::CacheHandler for HttpCacheHandler {
     }
 
     async fn set(&self, key: &str, entry: Entry) -> Result<()> {
+        // V2-F66: the guard runs before the seal — a corrupt exchange is
+        // never spoken regardless of the payload.
+        Self::plane_name(key)?;
         let url = format!("{}/entry/{key}", self.base);
         // §11.3 / P0-8: seal the envelope. Mirrors redis_handler.rs and
         // s3_handler.rs — a forged entry (an attacker with L2 write
@@ -196,6 +330,9 @@ impl crate::CacheHandler for HttpCacheHandler {
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
+        // V2-F66: a bad name is a caller error, not a transport failure
+        // — loud `Err`, never the degrade arms below.
+        Self::plane_name(key)?;
         let url = format!("{}/entry/{key}", self.base);
         match self.request("DELETE", &url, None).await {
             Ok((s, _)) if (200..300).contains(&s) || s == 404 => Ok(()),
@@ -227,6 +364,9 @@ impl crate::CacheHandler for HttpCacheHandler {
     }
 
     async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
+        // V2-F66: the tag names the request line verbatim — the same
+        // boundary, loud before the exchange.
+        Self::plane_name(tag)?;
         let url = format!("{}/tag/{tag}", self.base);
         match self.request("GET", &url, None).await {
             Ok((200, body)) => match serde_json::from_slice(&body) {
@@ -244,11 +384,36 @@ impl crate::CacheHandler for HttpCacheHandler {
                     Ok(Vec::new())
                 }
             },
-            _ => Ok(Vec::new()),
+            // V2-F65 session: the degrade arms name the gap now (the
+            // house convention this file's sibling arms already carry) —
+            // the §11.2 contract is unchanged (an empty list degrades,
+            // the local tier keeps serving), the SILENCE is the repair.
+            Ok((status, _)) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    tag = %tag,
+                    status,
+                    "the remote tag listing answered a non-200; treating as empty"
+                );
+                Ok(Vec::new())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    tag = %tag,
+                    error = %e,
+                    "the remote tag listing failed; treating as empty"
+                );
+                Ok(Vec::new())
+            }
         }
     }
 
     async fn invalidate_tag(&self, tag: &str, soft: bool) -> Result<usize> {
+        // V2-F66: the publish IS this POST — the boundary runs before the
+        // body is built, and `publish_invalidation`'s best-effort arm
+        // carries the loud warn.
+        Self::plane_name(tag)?;
         let url = format!("{}/invalidate/{tag}", self.base);
         // The serialization of a bool map cannot fail, so the shape stays
         // infallible — but the impossible path is LOUD, not silent (the
@@ -280,7 +445,28 @@ impl crate::CacheHandler for HttpCacheHandler {
                     Ok(0)
                 }
             }
-            _ => Ok(0),
+            // V2-F65 session: the degrade arms name the gap (the house
+            // convention) — the §11.2 contract is unchanged (0 reports,
+            // the local tiers already served the invalidation), the
+            // SILENCE is the repair.
+            Ok((status, _)) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    tag = %tag,
+                    status,
+                    "the remote invalidate answered a non-200; reporting 0"
+                );
+                Ok(0)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    tag = %tag,
+                    error = %e,
+                    "the remote invalidate failed; reporting 0"
+                );
+                Ok(0)
+            }
         }
     }
 
@@ -509,7 +695,7 @@ mod tests {
             status: 200,
             headers: vec![],
             tags: vec!["t".into()],
-            policy: Default::default(),
+            policy: crate::Policy::default(),
             stored_at: 0,
             etag: "e".into(),
         };
@@ -612,7 +798,7 @@ mod tests {
             status: 200,
             headers: vec![],
             tags: vec![],
-            policy: Default::default(),
+            policy: crate::Policy::default(),
             stored_at: 0,
             etag: "e1".into(),
         };
@@ -630,7 +816,7 @@ mod tests {
             status: 200,
             headers: vec![],
             tags: vec![],
-            policy: Default::default(),
+            policy: crate::Policy::default(),
             stored_at: 0,
             etag: "e2".into(),
         })
