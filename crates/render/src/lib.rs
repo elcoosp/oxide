@@ -1080,10 +1080,9 @@ impl Injector {
     /// prologue reveals a `<head>`/`<body>` open tag (or `HEAD_DECISION_LIMIT` bytes
     /// have arrived), so shells must start their head within that window.
     ///
-    /// # Panics
-    ///
-    /// Panics if the output sink mutex is poisoned (a prior writer panicked
-    /// mid-chunk).
+    /// A poisoned sink lock recovers through `PoisonError::into_inner` (the
+    /// house shape, V2-F57's hygiene pass) — the streamed bytes survive a
+    /// poisoning panic, no panic rides the sink itself.
     #[must_use]
     pub fn streaming(self) -> InjectStream {
         let (head_inject, body_inject) = self.injection_fragments();
@@ -1097,8 +1096,16 @@ impl Injector {
         };
         let sink: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
         let out = Arc::clone(&sink);
-        let sink_fn: RewriterFn =
-            Box::new(move |c: &[u8]| out.lock().unwrap().extend_from_slice(c));
+        // The critical section is one plain buffer append — recover the
+        // poisoned lock via `into_inner` (the house shape, the
+        // F46/F48/F51/F55 repairs) instead of unwrapping: a poison on the
+        // streaming sink used to panic the rewrite mid-chunk on every
+        // later chunk, when the buffer state itself is perfectly usable.
+        let sink_fn: RewriterFn = Box::new(move |c: &[u8]| {
+            out.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(c);
+        });
         let rewriter = HtmlRewriter::new(settings, sink_fn);
         InjectStream {
             rewriter: Some(rewriter),
@@ -1168,10 +1175,6 @@ impl InjectStream {
     ///
     /// Returns `RND-INJECT` when the streaming rewrite fails on this chunk,
     /// or when the stream was already finished.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the output sink mutex is poisoned.
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<u8>> {
         let rewriter = self
             .rewriter
@@ -1198,12 +1201,25 @@ impl InjectStream {
                 .write(&decided)
                 .map_err(|e| err("RND-INJECT", format!("streaming injection failed: {e}")))?;
             self.pending.clear();
-            return Ok(std::mem::take(&mut *self.sink.lock().unwrap()));
+            // Poison recovery, house shape (the F46/F48/F51/F55 repairs):
+            // the sink is one plain buffer, the streamed bytes stay
+            // usable after a poisoning panic.
+            return Ok(std::mem::take(
+                &mut *self
+                    .sink
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            ));
         }
         rewriter
             .write(chunk)
             .map_err(|e| err("RND-INJECT", format!("streaming injection failed: {e}")))?;
-        Ok(std::mem::take(&mut *self.sink.lock().unwrap()))
+        Ok(std::mem::take(
+            &mut *self
+                .sink
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        ))
     }
 
     /// Flush the tail and finish the rewrite.
@@ -1211,10 +1227,6 @@ impl InjectStream {
     /// # Errors
     ///
     /// Returns `RND-INJECT` when the final rewrite bytes cannot be flushed.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the output sink mutex is poisoned.
     pub fn finish(mut self) -> Result<Vec<u8>> {
         // Take the rewriter out up front: the `Option` IS the finished
         // state (the `stream already finished` error below), so the tail
@@ -1243,7 +1255,15 @@ impl InjectStream {
                 format!("streaming injection failed on finish: {e}"),
             )
         })?;
-        let mut out = std::mem::take(&mut *self.sink.lock().unwrap());
+        // Poison recovery, house shape (the F46/F48/F51/F55 repairs): the
+        // sink is one plain buffer, the finished bytes stay usable after a
+        // poisoning panic.
+        let mut out = std::mem::take(
+            &mut *self
+                .sink
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         if !self.body_seen.load(Ordering::Acquire)
             && let Some(b) = &self.body_inject
         {
