@@ -59,6 +59,8 @@ The serve boot wires the §20 cache-plane exposition into `/_oxide/metrics`: the
 
 Since F49 the same opt-in feeds the posture pull's second production surface: `GET /-/health` answers the posture as JSON — the server crate's cache-agnostic `CachePosture` seam (`crates/server/src/lib.rs`) adapted by the CLI's `TierCachePosture` over the boot's captured typed tier, wired through `posture_probe_provider` when BOTH halves hold (the resolved opt-in and the tier handle; the default boot 404s "not configured", nothing leaks). The public wire body is `cache_posture_probe_json`; `crates/cli/examples/posture_probe.rs` walks the gate, the adapter, the wire body and the server arm in one run.
 
+Since F55 the L0 hit path answers conditional requests through the cache crate's canonical seam: the lookup stage composes `CachedResponse::serve_conditional` (the RFC 9110 §13 comparison — weak `If-None-Match` lists and `*`, then `If-Modified-Since` against the stored `Last-Modified`) and serves the §15.4.5 validator set on the 304, so an `If-Modified-Since`-only re-check answers 304 off the `Last-Modified` the store generates (the arm the hand-rolled match never had). `make_entry` stores the RFC-shaped weak etag (`W/"<hash>"`) the responses echo; `crates/cli/examples/l0_conditional.rs` walks the store, the three re-check shapes and the precedence rule in one run.
+
 ## How it fits in Oxide
 
 The CLI is the only crate that sees the whole framework stack. It builds the renderer, the loader, the action dispatcher, the endpoint dispatcher, and the middleware dispatcher — then hands them to `oxide-fw-server` as trait objects. Everything else is library code that the CLI wires together.
