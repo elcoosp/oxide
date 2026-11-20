@@ -18,17 +18,46 @@
 
 use crate::{Entry, Result, auth, codec, err};
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// An HTTP-backed `CacheHandler`.
 pub struct HttpCacheHandler {
     base: String,
+    /// V2-F60: the whole-exchange deadline (`with_timeout`), `None` (the
+    /// default) for the pre-F60 unbounded shape — an existing deployment
+    /// keeps its byte behavior until it opts in.
+    deadline: Option<Duration>,
 }
 
 impl HttpCacheHandler {
     pub fn new(base: impl Into<String>) -> Self {
         Self {
             base: base.into().trim_end_matches('/').to_string(),
+            deadline: None,
         }
+    }
+
+    /// Bound the whole exchange — connect through the response read — to
+    /// `deadline` (V2-F60): the §11.2 "a remote cache is an optimization"
+    /// contract's teeth. Without a deadline the client degrades only on a
+    /// REFUSED connection; a peer that hangs (a firewall dropping SYNs, a
+    /// wedged service, a half-open socket) held every request it touched
+    /// forever. With one, an exchange that outlives the deadline fails
+    /// under `CACHE-HTTP` and flows through this file's existing
+    /// degradation arms — `get` to a miss (the local tier keeps serving),
+    /// `set` to a loud `Err` — exactly like every other transport
+    /// failure. Chainable; `None` (the default) stays unbounded.
+    #[must_use]
+    pub fn with_timeout(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// The attached deadline, `None` when the client is unbounded (the
+    /// default) — the introspection seam tests and hosts pin.
+    #[must_use]
+    pub fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 
     /// `(status, body)` for one HTTP/1.1 exchange. A minimal client — the
@@ -37,8 +66,42 @@ impl HttpCacheHandler {
     /// The transport failures carry the stable `CACHE-HTTP` code (the
     /// house error-context convention — every arm below degrades on
     /// `Err`, and a degraded arm that logs the error now names the code
-    /// it degraded under), never a bare `String`.
+    /// it degraded under), never a bare `String`. The V2-F60 deadline
+    /// wraps the WHOLE exchange: connect, write and read share one
+    /// budget, so a peer that accepts and never answers degrades on the
+    /// same clock a refused connection already rode.
     async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<&[u8]>,
+    ) -> Result<(u16, Vec<u8>)> {
+        let exchange = self.exchange(method, url, body);
+        if let Some(deadline) = self.deadline {
+            match tokio::time::timeout(deadline, exchange).await {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!(
+                        code = "CACHE-HTTP",
+                        url = %url,
+                        deadline = ?deadline,
+                        "the remote cache did not answer within the deadline; \
+                         degrading (§11.2: a remote cache is an optimization)"
+                    );
+                    Err(err(
+                        "CACHE-HTTP",
+                        format!("the exchange exceeded its {deadline:?} deadline"),
+                    ))
+                }
+            }
+        } else {
+            exchange.await
+        }
+    }
+
+    /// The unbounded exchange `request` schedules — the pre-F60 shape,
+    /// byte-identical when no deadline rides the client.
+    async fn exchange(
         &self,
         method: &str,
         url: &str,
