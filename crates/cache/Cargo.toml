@@ -199,6 +199,23 @@ name = "client_inflight"
 harness = false
 required-features = ["bench-util"]
 
+# F69: the sharded multi-plane client — the routing hop's price (the
+# composite's routed GET vs a direct client's GET against the same
+# plane) and the tag fan-out's price (N exchanges, by design) beside the
+# single-plane list.
+[[bench]]
+name = "sharded_client"
+harness = false
+required-features = ["bench-util"]
+
+# F70: the client's keep-alive reuse — the dial tax the pool removes
+# (the pooled client's GET vs the pre-F70 close client's GET against the
+# same honored shell; the delta IS the TCP handshake).
+[[bench]]
+name = "client_keepalive"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
