@@ -44,9 +44,22 @@
 //! interpolation and the wire has no escaping, so a name with a CR, LF or
 //! space corrupted the exchange — every verb checks the name before a
 //! single wire byte leaves and fails loud instead.
+//!
+//! Since V2-F70 the client stops paying a fresh dial per exchange:
+//! `with_keep_alive(max_idle)` speaks `Connection: keep-alive`, reads the
+//! Content-Length-driven body (the plane always names its answer's
+//! length, so the exact body end is knowable on the wire), and parks the
+//! socket in a per-host idle pool bounded at `max_idle` — the next
+//! exchange to the same host pops it instead of dialing. A REUSED socket
+//! that died before its first response byte (the peer's idle close won
+//! the race) gets ONE fresh-dial retry — the stale-pool remedy, so
+//! keep-alive never turns a working deployment flaky. The default stays
+//! the pre-F70 `Connection: close` shape — byte-identical, the F60
+//! posture: the operator opts in, the choice is greppable.
 
 use crate::{Entry, Result, auth, codec, err, health::CacheHealth};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -74,6 +87,15 @@ pub struct HttpCacheHandler {
     /// [`HttpCacheHandler::gated`]), so a saturated cap degrades within
     /// the F60 clock, never past it.
     inflight_gate: Option<Arc<Semaphore>>,
+    /// V2-F70: the keep-alive idle-pool bound (`with_keep_alive`), `None`
+    /// (the default) for the pre-F70 close-per-exchange shape — the F60
+    /// posture again. Read back via [`HttpCacheHandler::keep_alive`].
+    keep_alive: Option<usize>,
+    /// V2-F70: the per-host idle-socket pool the reused exchanges pop
+    /// from and the completed exchanges park into (bounded per host by
+    /// the `keep_alive` bound). Built once and always present — the
+    /// pre-F70 shape never touches it (an empty map costs nothing).
+    pool: Arc<std::sync::Mutex<HashMap<String, Vec<tokio::net::TcpStream>>>>,
 }
 
 impl HttpCacheHandler {
@@ -84,6 +106,8 @@ impl HttpCacheHandler {
             read_limit: None,
             inflight_cap: None,
             inflight_gate: None,
+            keep_alive: None,
+            pool: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -155,6 +179,43 @@ impl HttpCacheHandler {
     #[must_use]
     pub fn inflight_cap(&self) -> Option<usize> {
         self.inflight_cap
+    }
+
+    /// Reuse connections across exchanges (V2-F70): the client speaks
+    /// `Connection: keep-alive`, reads the Content-Length-driven body,
+    /// and parks each finished socket in a per-host idle pool bounded at
+    /// `max_idle` — the next exchange to the same host pops it instead of
+    /// paying the dial.
+    ///
+    /// The §11.2 client opened ONE fresh socket per exchange
+    /// (`Connection: close`) and the plane answered the same posture —
+    /// every exchange cost a TCP handshake. The bounds arc fenced the
+    /// exchange's TIME (F60), MEMORY (F64/F65), NAMES (F66) and COUNT
+    /// (F67/F68); the DIAL is the last per-exchange tax, and the plane's
+    /// answers always carry `Content-Length`, so the body's exact end is
+    /// knowable on the wire. A reused socket that died before its first
+    /// response byte (the peer's idle close won the race) gets ONE
+    /// fresh-dial retry — the stale-pool remedy, so keep-alive never
+    /// turns a working deployment flaky. A peer that answers without a
+    /// `Content-Length` (not the plane's shape) is answered
+    /// close-delimited and parked nowhere. Chainable; `max_idle = 0`
+    /// parks nothing (the wire speaks keep-alive, every socket still
+    /// closes after its exchange — the honest kill switch). `None` (the
+    /// default) stays the pre-F70 close shape — byte-identical for every
+    /// existing deployment, the F60 posture.
+    #[must_use]
+    pub fn with_keep_alive(mut self, max_idle: usize) -> Self {
+        self.keep_alive = Some(max_idle);
+        self
+    }
+
+    /// The attached idle-pool bound, `None` when the client dials per
+    /// exchange (the default) — the introspection seam the F60
+    /// `deadline()` accessor established: tests and hosts pin the state
+    /// instead of guessing it.
+    #[must_use]
+    pub fn keep_alive(&self) -> Option<usize> {
+        self.keep_alive
     }
 
     /// The request-line trust boundary (V2-F66): the public predicate a
@@ -282,9 +343,23 @@ impl HttpCacheHandler {
         }
     }
 
-    /// The unbounded exchange `request` schedules — the pre-F60 shape,
-    /// byte-identical when no deadline rides the client.
+    /// The exchange `request` schedules — the pre-F70 shape when no pool
+    /// rides (byte-identical), the keep-alive reuse path when one does.
     async fn exchange(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<&[u8]>,
+    ) -> Result<(u16, Vec<u8>)> {
+        match self.keep_alive {
+            Some(max_idle) => self.reusable_exchange(method, url, body, max_idle).await,
+            None => self.close_exchange(method, url, body).await,
+        }
+    }
+
+    /// The pre-F70 exchange, byte-identical: dial, write
+    /// `Connection: close`, `read_to_end` until the peer's close, parse.
+    async fn close_exchange(
         &self,
         method: &str,
         url: &str,
@@ -295,9 +370,7 @@ impl HttpCacheHandler {
             .strip_prefix("http://")
             .ok_or_else(|| err("CACHE-HTTP", format!("http-only: {url}")))?;
         let (host_port, path) = rest.split_once('/').unwrap_or((rest, ""));
-        let mut stream = tokio::net::TcpStream::connect(host_port)
-            .await
-            .map_err(|e| err("CACHE-HTTP", format!("connect: {e}")))?;
+        let mut stream = Self::dial(host_port).await?;
         let b = body.unwrap_or(&[]);
         let req = format!(
             "{method} /{path} HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
@@ -364,6 +437,221 @@ impl HttpCacheHandler {
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| err("CACHE-HTTP", "no status"))?;
         Ok((status, buf[split + 4..].to_vec()))
+    }
+
+    /// The keep-alive exchange (V2-F70): pop the host's idle socket (else
+    /// dial), write `Connection: keep-alive`, read the Content-Length-
+    /// driven answer, park the socket back (bounded) when the answer is
+    /// reusable. A REUSED socket that died before its first response byte
+    /// gets ONE fresh-dial retry — the stale-pool remedy (the peer's idle
+    /// close won the race; a fresh dial's failure is the transport arm's
+    /// answer). The F65 read limit bounds the buffered answer here too,
+    /// the terminator riding the same budget (the `close_exchange` shape).
+    async fn reusable_exchange(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<&[u8]>,
+        max_idle: usize,
+    ) -> Result<(u16, Vec<u8>)> {
+        let rest = url
+            .strip_prefix("http://")
+            .ok_or_else(|| err("CACHE-HTTP", format!("http-only: {url}")))?;
+        let (host_port, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let b = body.unwrap_or(&[]);
+        let req = format!(
+            "{method} /{path} HTTP/1.1\r\nHost: {host_port}\r\nConnection: keep-alive\r\nContent-Length: {}\r\n\r\n",
+            b.len()
+        );
+        let (mut stream, was_pooled) = match self.pop_pooled(host_port) {
+            Some(s) => (s, true),
+            None => (Self::dial(host_port).await?, false),
+        };
+        match Self::keep_alive_round(&mut stream, &req, body, url, self.read_limit).await {
+            Ok((status, bytes, reusable)) => {
+                if reusable && max_idle > 0 {
+                    self.park_pooled(host_port, stream, max_idle);
+                }
+                Ok((status, bytes))
+            }
+            // The stale-pool remedy: only a REUSED socket's early death
+            // retries — once, on a fresh dial.
+            Err(e) if was_pooled => {
+                tracing::debug!(
+                    code = "CACHE-HTTP",
+                    url = %url,
+                    error = %e.0.message,
+                    "the pooled socket went stale; one fresh dial"
+                );
+                let mut fresh = Self::dial(host_port).await?;
+                let (status, bytes, reusable) =
+                    Self::keep_alive_round(&mut fresh, &req, body, url, self.read_limit).await?;
+                if reusable && max_idle > 0 {
+                    self.park_pooled(host_port, fresh, max_idle);
+                }
+                Ok((status, bytes))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// One keep-alive round on an open socket: write the request head
+    /// (plus the body when one rides), read the answer Content-Length-
+    /// driven. Returns the `(status, body, reusable)` triple — `reusable`
+    /// false when the answer carries no `Content-Length` (close-delimited:
+    /// drained to EOF, parked nowhere) or speaks `Connection: close`.
+    /// The F65 read limit bounds every buffered byte, the terminator and
+    /// the body riding the same budget.
+    async fn keep_alive_round(
+        stream: &mut tokio::net::TcpStream,
+        req: &str,
+        body: Option<&[u8]>,
+        url: &str,
+        read_limit: Option<usize>,
+    ) -> Result<(u16, Vec<u8>, bool)> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        stream
+            .write_all(req.as_bytes())
+            .await
+            .map_err(|e| err("CACHE-HTTP", format!("write: {e}")))?;
+        if let Some(b) = body
+            && !b.is_empty()
+        {
+            stream
+                .write_all(b)
+                .await
+                .map_err(|e| err("CACHE-HTTP", format!("write body: {e}")))?;
+        }
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 4096];
+        // The head: incremental reads until the terminator, the F65 cap
+        // riding every chunk (a terminatorless flood stops at the cap).
+        let head_end = loop {
+            let n = stream
+                .read(&mut tmp)
+                .await
+                .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
+            if n == 0 {
+                // EOF before a parseable head — the stale-socket shape.
+                return Err(err("CACHE-HTTP", "no header terminator"));
+            }
+            Self::check_limit(&buf, n, url, read_limit)?;
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i;
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..head_end]);
+        let status: u16 = head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| err("CACHE-HTTP", "no status"))?;
+        let mut content_length: Option<usize> = None;
+        let mut peer_close = false;
+        for line in head.lines().skip(1) {
+            let lower = line.to_ascii_lowercase();
+            if let Some(v) = lower.strip_prefix("content-length:")
+                && let Ok(parsed) = v.trim().parse()
+            {
+                content_length = Some(parsed);
+            }
+            if let Some(v) = lower.strip_prefix("connection:")
+                && v.trim().eq_ignore_ascii_case("close")
+            {
+                peer_close = true;
+            }
+        }
+        match content_length {
+            Some(cl) => {
+                // The body: exactly the named length — the socket's next
+                // exchange starts right after it.
+                while buf.len() < head_end + 4 + cl {
+                    let n = stream
+                        .read(&mut tmp)
+                        .await
+                        .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
+                    if n == 0 {
+                        return Err(err(
+                            "CACHE-HTTP",
+                            "the answer ended before its Content-Length",
+                        ));
+                    }
+                    Self::check_limit(&buf, n, url, read_limit)?;
+                    buf.extend_from_slice(&tmp[..n]);
+                }
+                let body = buf[head_end + 4..head_end + 4 + cl].to_vec();
+                Ok((status, body, !peer_close))
+            }
+            // No Content-Length: the answer is close-delimited — drain to
+            // EOF (the pre-F70 read's own shape), park nothing.
+            None => loop {
+                let n = stream
+                    .read(&mut tmp)
+                    .await
+                    .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
+                if n == 0 {
+                    return Ok((status, buf[head_end + 4..].to_vec(), false));
+                }
+                Self::check_limit(&buf, n, url, read_limit)?;
+                buf.extend_from_slice(&tmp[..n]);
+            },
+        }
+    }
+
+    /// The F65 read bound's check, shared by every keep-alive read loop:
+    /// the chunk that would exceed the cap refuses the exchange LOUD (the
+    /// stable code, the cap named) instead of landing — the terminator,
+    /// the body and a close-delimited drain all riding the same budget.
+    fn check_limit(buf: &[u8], n: usize, url: &str, limit: Option<usize>) -> Result<()> {
+        match limit {
+            Some(limit) if buf.len() + n > limit => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    url = %url,
+                    limit = limit,
+                    "the peer's answer exceeded the client's read limit; \
+                     refusing the exchange"
+                );
+                Err(err(
+                    "CACHE-HTTP",
+                    format!("the peer's answer exceeded the read limit ({limit} bytes)"),
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The dial both exchange paths share.
+    async fn dial(host_port: &str) -> Result<tokio::net::TcpStream> {
+        tokio::net::TcpStream::connect(host_port)
+            .await
+            .map_err(|e| err("CACHE-HTTP", format!("connect: {e}")))
+    }
+
+    /// Pop the host's idle socket, `None` when nothing is parked (the
+    /// pool lock's poison recovers with the house `into_inner` shape —
+    /// a dead pool must not dead the client).
+    fn pop_pooled(&self, host: &str) -> Option<tokio::net::TcpStream> {
+        self.pool
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(host)
+            .and_then(Vec::pop)
+    }
+
+    /// Park a finished socket in the host's idle pool, bounded: the slot
+    /// at `max_idle` drops the socket here — the close is the bound's
+    /// answer.
+    fn park_pooled(&self, host: &str, stream: tokio::net::TcpStream, max_idle: usize) {
+        let mut pool = self
+            .pool
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let slot = pool.entry(host.to_string()).or_default();
+        if slot.len() < max_idle {
+            slot.push(stream);
+        }
     }
 }
 
