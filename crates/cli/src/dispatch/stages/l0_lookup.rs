@@ -43,19 +43,33 @@ pub(crate) async fn stage_l0_lookup(d: &DispatchDeps, cx: &mut RequestCtx) -> Fl
             None => cache.get(l0_route, l0_params, l0_vary).await,
         }
     {
-        // PERF-04: a conditional request whose validator
-        // matches the stored ETag gets a 304 (no body). The
-        // ETag is weak-formatted so a cache can still serve
-        // it after a nonce-only body change.
-        let etag = format!("W/\"{}\"", hit.etag());
-        let inm = req_owned.header("if-none-match").map(str::to_string);
-        if inm.as_deref().is_some_and(|v| {
-            v.split(',')
-                .map(str::trim)
-                .any(|t| t == etag || t == hit.etag() || t == "*")
-        }) {
+        // PERF-04 (the V2-F55 wire): the conditional decision rides the
+        // cache crate's canonical seam — `serve_conditional` composes the
+        // RFC 9110 §13 comparison (weak `If-None-Match` lists and `*`
+        // first, `If-Modified-Since` against the stored `Last-Modified`
+        // second — the arm the hand-rolled match never had) and the
+        // §15.4.5 validator set, so the L0 plane no longer re-rolls the
+        // semantics the F54 serving half's doc names as its evidence.
+        let cond_headers: Vec<(String, String)> = ["if-none-match", "if-modified-since"]
+            .into_iter()
+            .filter_map(|name| {
+                req_owned
+                    .header(name)
+                    .map(|value| (name.to_string(), value.to_string()))
+            })
+            .collect();
+        if let oxide_fw_cache::ServeOutcome::NotModified { headers } =
+            hit.serve_conditional(&cond_headers, l0_cache::now_secs())
+        {
             let mut resp = oxide_fw_server::OxideResponse::new(304, "");
-            resp = resp.with_header("etag", etag.clone());
+            // The canonical validator set, composed by the seam (one
+            // header per name): the echoed ETag, the policy's
+            // Cache-Control, the Date, and the Last-Modified the
+            // decision compared against (RFC 9110 §15.4.5: a 304
+            // carries what the 200 would have).
+            for (k, v) in &headers {
+                resp = resp.with_header(k, v.clone());
+            }
             resp = resp.with_header("x-oxide-fw-cache", "L0-hit");
             // P0-5: middleware runs per request and its
             // headers must reflect THIS request, not the
@@ -125,7 +139,10 @@ pub(crate) async fn stage_l0_lookup(d: &DispatchDeps, cx: &mut RequestCtx) -> Fl
                 .with_header("content-encoding", enc.clone())
                 .with_header("vary", "Accept-Encoding");
         }
-        resp = resp.with_header("etag", etag);
+        // V2-F55: the stored etag IS the served header value (the
+        // RFC-shaped weak form `make_entry` stores), so the 200 and the
+        // 304 speak the same validator a client echoes back.
+        resp = resp.with_header("etag", hit.etag());
         // §20: an explicit cache-outcome header makes the L0
         // layer observable and testable. A stale serve
         // (within the SWR window) is labelled so the caller
