@@ -767,6 +767,98 @@ pub fn cache_posture_path_with_config(config_path: Option<&str>) -> String {
     }
 }
 
+// ------------------------------------------------------------------- V2-F59: the cache plane's mount
+
+/// The V2-F59 mount's parse core (`OXIDE_CACHE_PLANE_MOUNT`): the F48
+/// bool family verbatim — the truthy spellings (`1`/`true`/`on`) mount
+/// the plane, the falsy spellings (`""`/`0`/`false`/`off`) keep it off
+/// (an operator's empty spelling is a real OFF choice, not a typo), and
+/// garbage degrades loudly-but-honestly to the default-off shape — one
+/// stderr notice naming the source, then the F40 doctrine (the boot is
+/// byte-identical when nothing meaningful was spelled). Pure — the pins
+/// drive it without touching the process env.
+pub fn cache_plane_mount_from(raw: Option<&str>) -> bool {
+    match raw {
+        None => false,
+        Some("1" | "true" | "on") => true,
+        Some("" | "0" | "false" | "off") => false,
+        Some(raw) => {
+            eprintln!(
+                "oxide: OXIDE_CACHE_PLANE_MOUNT={raw} is not a mount spelling; \
+                 the boot keeps the default shape"
+            );
+            false
+        }
+    }
+}
+
+/// The `--cache-plane-mount` boot flag's override (V2-F59, the F48
+/// shape), written once pre-runtime by `apply_startup_env` — the
+/// [`CACHE_PLANE_HEALTH_OVERRIDE`] shape: a command-level fact decided
+/// before the tokio runtime exists, so the read side never races a
+/// mid-async write. `None` (the flag was absent) leaves the
+/// `OXIDE_CACHE_PLANE_MOUNT` env var in charge.
+static CACHE_PLANE_MOUNT_OVERRIDE: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+/// Install the boot flag's mount override (see
+/// [`CACHE_PLANE_MOUNT_OVERRIDE`]). `None` clears it (the pins'
+/// hygiene).
+///
+/// # Examples
+///
+/// ```
+/// use oxide_fw_cli::observability::set_cache_plane_mount_override;
+///
+/// set_cache_plane_mount_override(Some(true));
+/// assert!(oxide_fw_cli::observability::cache_plane_mount_with_config(None));
+/// set_cache_plane_mount_override(None);
+/// assert!(!oxide_fw_cli::observability::cache_plane_mount_with_config(None));
+/// ```
+pub fn set_cache_plane_mount_override(value: Option<bool>) {
+    // Poison recovery: the house shape (the critical section cannot
+    // break an invariant, so the write lands instead of being swallowed).
+    let mut slot = CACHE_PLANE_MOUNT_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *slot = value;
+}
+
+fn cache_plane_mount_override() -> Option<bool> {
+    *CACHE_PLANE_MOUNT_OVERRIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The V2-F59 layered resolver — the boot wire's entry point now that
+/// the F57 mount has a project baseline (`cache.planeMount`, the
+/// `CacheConfig::plane_mount` field) beside the F59 flag and env
+/// spelling. The precedence mirrors the [`cache_plane_health_with_config`]
+/// family:
+///
+/// 1. the `--cache-plane-mount` flag's override slot (the F48 shape —
+///    written pre-runtime by `apply_startup_env`),
+/// 2. the `OXIDE_CACHE_PLANE_MOUNT` env spelling (the
+///    [`cache_plane_mount_from`] contract — truthy mounts, the falsy
+///    spellings stop THAT layer only, garbage degrades loudly to the
+///    default-off shape),
+/// 3. the `cache.planeMount` baseline — both spellings are real
+///    choices: `Some(true)` mounts the plane over the boot's own tier,
+///    `Some(false)` pins it off,
+/// 4. the default-off shape — the boot is byte-identical when no layer
+///    speaks (the F40 doctrine: the §11.2 plane answers only where the
+///    boot opts in).
+pub fn cache_plane_mount_with_config(config_mount: Option<bool>) -> bool {
+    if let Some(on) = cache_plane_mount_override() {
+        return on;
+    }
+    match std::env::var("OXIDE_CACHE_PLANE_MOUNT") {
+        Ok(raw) if !matches!(raw.as_str(), "" | "0" | "false" | "off") => {
+            cache_plane_mount_from(Some(&raw))
+        }
+        _ => config_mount.unwrap_or(false),
+    }
+}
+
 /// Build the `tracing-opentelemetry` layer for the given OTLP endpoint.
 /// The returned layer is backed by a batch span processor whose lifetime is
 /// process-wide via a leaked `TracerProvider` — acceptable for a CLI that
