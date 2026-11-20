@@ -193,6 +193,16 @@ name = "plane_mount"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F59: criterion bench for the mounted plane's health arm (the F57
+# mount × the F58 pull) — the balancer probe's `serve_request` exchange
+# through a provider-attached mount versus the core pull alone, plus the
+# two fall-through floors (the provider-less mount's user-route contract
+# and the unmounted pipeline).
+[[bench]]
+name = "plane_mount_health"
+harness = false
+required-features = ["bench-util"]
+
 # V2-A02: this crate does not inherit the workspace lints yet (the recorded
 # dedicated hygiene pass adopts pedantic) — declared so the newer cargo
 # `missing_lints_inheritance` notice stays silent about the intent.
