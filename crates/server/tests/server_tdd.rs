@@ -2811,7 +2811,10 @@ fn serve_ims_older_than_last_modified_serves_full() {
         )
         .unwrap();
     assert_eq!(resp.status, 200, "an older IMS serves the asset in full");
-    assert_eq!(resp.header("content-type"), Some("text/javascript"));
+    assert_eq!(
+        resp.header("content-type"),
+        Some("text/javascript; charset=utf-8")
+    );
 }
 
 /// `If-None-Match` decides and `If-Modified-Since` never runs (RFC 9110
