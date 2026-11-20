@@ -58,8 +58,26 @@
 //! mount is the scrape the F61 record promises a collector, a
 //! provider-less mount never shadows an application's own `/metrics`
 //! route.
+//!
+//! Since V2-F64 the socket shell's body drain carries the bound its
+//! header read always had: the F53 shell capped the header block
+//! (`HEADER_CAP`) but drained the body to whatever `Content-Length`
+//! claimed — a hostile peer writing a gigantic length and trickling bytes
+//! grew the buffer without bound, and the codec's own size gate ran only
+//! AFTER the drain. [`ExchangeLimits`] is the seam: the shell refuses an
+//! oversized length with 413 BEFORE the bytes land, the default cap rides
+//! the codec's own bound (every exchange the codec accepts drains; every
+//! one it would refuse is refused first), and `with_limits`/`limits` are
+//! the operator knob and the introspection seam. Since V2-F63 the CLIENT
+//! half gained the pull side of the observability surfaces — the
+//! [`PlanePeer`](crate::PlanePeer) probes over `HttpCacheHandler`'s
+//! request core — so the plane's posture and exposition answer the wired
+//! node, not only a direct socket caller.
 
-use crate::{CacheHandler, Result, auth, codec, err, health::CacheHealth, tiers::TieredCache};
+use crate::{
+    CacheHandler, MAC_LEN, MAX_ENTRY_BYTES, Result, auth, codec, err, health::CacheHealth,
+    tiers::TieredCache,
+};
 use std::sync::Arc;
 
 // ------------------------------------------------------------------- the health provider
@@ -216,6 +234,7 @@ impl PlaneRequest {
 pub struct PlaneResponse {
     /// The HTTP status (`200` hit/list/count, `204` stored/deleted,
     /// `400` malformed-or-forged, `404` miss, `405` wrong method,
+    /// `413` the F64 shell bound (the socket arm, not the core),
     /// `500` handler failure).
     pub status: u16,
     /// The response body (already the exact bytes the wire carries).
@@ -257,7 +276,8 @@ fn route(path: &str) -> (Segment, Option<&str>) {
         .map_or((segment, None), |n| (segment, Some(n)))
 }
 
-/// The reason phrases the socket shell emits (the protocol's statuses only).
+/// The reason phrases the socket shell emits (the protocol's statuses
+/// plus the F64 drain refusal).
 fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
@@ -265,7 +285,55 @@ fn reason(status: u16) -> &'static str {
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        413 => "Content Too Large",
         _ => "Internal Server Error",
+    }
+}
+
+// ------------------------------------------------------------------- the shell's bounds (F64)
+
+/// The socket shell's exchange bounds (V2-F64): the body-drain cap the
+/// F53 header cap deferred to "the codec's own re-check" — which runs
+/// only AFTER the drain, too late for the memory.
+///
+/// The default rides the codec's own bound, and the arithmetic is the
+/// contract: `MAX_ENTRY_BYTES` (the codec's decompressed-body gate) +
+/// `MAC_LEN` (the sealed envelope's prefix) + 64 KiB (the envelope's
+/// non-body JSON — status, headers, tags, etag — at the header cap's own
+/// scale). Every body the codec could decode drains; every body it would
+/// refuse is refused BEFORE the bytes land (413, not the codec's
+/// post-drain 400) — no legit exchange changes its answer, the hostile
+/// one stops costing memory. A host that fronts the plane with its own
+/// upstream bound (a proxy capping bodies) restores the pre-F64 drain
+/// explicitly with [`ExchangeLimits::unbounded`] — the choice is
+/// greppable, never silent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExchangeLimits {
+    /// The largest body the shell drains, in bytes. A `Content-Length`
+    /// past this answers 413 before the drain reads a byte.
+    pub max_body: usize,
+}
+
+impl Default for ExchangeLimits {
+    /// The codec-bound default: the drain never accepts what the codec
+    /// would reject, so the default cap changes no legit answer.
+    fn default() -> Self {
+        Self {
+            max_body: MAX_ENTRY_BYTES + MAC_LEN + 64 * 1024,
+        }
+    }
+}
+
+impl ExchangeLimits {
+    /// The pre-F64 shape, explicit: no body cap (the header cap still
+    /// holds). For a host whose fronting layer already bounds bodies —
+    /// the choice is documented and greppable, the drain's cost is the
+    /// host's to carry.
+    #[must_use]
+    pub fn unbounded() -> Self {
+        Self {
+            max_body: usize::MAX,
+        }
     }
 }
 
@@ -291,12 +359,19 @@ pub struct HttpCacheService {
     /// `/metrics` answering the pre-F61 shape — the same F40 doctrine.
     /// Attached via [`HttpCacheService::with_metrics`].
     metrics: Option<Arc<dyn PlaneMetrics>>,
+    /// V2-F64: the shell's exchange bounds. The default rides the codec's
+    /// own bound — no legit exchange changes its answer, a hostile one
+    /// stops before the bytes land. Swapped via
+    /// [`HttpCacheService::with_limits`], read back via
+    /// [`HttpCacheService::limits`].
+    limits: ExchangeLimits,
 }
 
 /// A wire-capped exchange: the header block refuses past this bound so a
 /// hostile client cannot grow the buffer unbounded (a refusal is a 400 +
-/// close). The cap guards the PARSER, not the codec — the codec re-checks
-/// the decompressed size itself.
+/// close). The cap guards the PARSER; the BODY drain rides the F64
+/// [`ExchangeLimits`] (the codec's post-drain re-check remains the last
+/// gate a drained payload passes).
 const HEADER_CAP: usize = 64 * 1024;
 
 impl HttpCacheService {
@@ -307,6 +382,7 @@ impl HttpCacheService {
             handler,
             health: None,
             metrics: None,
+            limits: ExchangeLimits::default(),
         }
     }
 
@@ -362,6 +438,29 @@ impl HttpCacheService {
     #[must_use]
     pub fn has_metrics_provider(&self) -> bool {
         self.metrics.is_some()
+    }
+
+    /// Attach the shell's exchange bounds (V2-F64): the body-drain cap a
+    /// `Content-Length` must fit — an oversized length answers 413 before
+    /// the drain reads a byte. The default already rides the codec's own
+    /// bound ([`ExchangeLimits::default`]: no legit exchange changes its
+    /// answer); this is the operator's knob to TIGHTEN (a plane whose
+    /// entries never approach the cap) or to lift explicitly
+    /// ([`ExchangeLimits::unbounded`] — for a front that bounds bodies
+    /// upstream). Chainable; the header cap is the parser's own and
+    /// unaffected.
+    #[must_use]
+    pub fn with_limits(mut self, limits: ExchangeLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// The shell's attached bounds (V2-F64) — the introspection seam the
+    /// F60 `deadline()` accessor established: tests and hosts pin the
+    /// state instead of guessing it.
+    #[must_use]
+    pub fn limits(&self) -> ExchangeLimits {
+        self.limits
     }
 
     /// The backing handler's self-named kind (the F32 introspection
@@ -786,6 +885,30 @@ impl HttpCacheService {
             if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
                 clen = v.trim().parse().unwrap_or(0);
             }
+        }
+        // V2-F64: the drain's bound. A length past the cap answers 413
+        // BEFORE the first body byte lands — the hostile shape (a huge
+        // length, a slow trickle) costs one warn instead of the memory
+        // the F53 header cap's own doc recorded as the parser-only gap.
+        // With the length at or under the cap the loop below is bounded
+        // by construction (`body.len() < clen`), so this one check is the
+        // whole bound.
+        if clen > self.limits.max_body {
+            tracing::warn!(
+                code = "CACHE-HTTP",
+                content_length = clen,
+                cap = self.limits.max_body,
+                path = %path,
+                "the exchange body exceeds the shell's bound; answering 413 without draining"
+            );
+            return Self::answer(
+                &mut stream,
+                &PlaneResponse {
+                    status: 413,
+                    body: Vec::new(),
+                },
+            )
+            .await;
         }
         let mut body = buf[head_end + 4..].to_vec();
         while body.len() < clen {
