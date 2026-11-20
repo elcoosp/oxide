@@ -48,6 +48,16 @@
 //! is the mount's routing seam): a provider-attached mount is the
 //! balancer probe the F58 record promised, and a provider-less mount
 //! never shadows an application's own `/health` route.
+//!
+//! Since V2-F61 the plane's OWN wire carries its observability too:
+//! `HttpCacheService::with_metrics` attaches a [`PlaneMetrics`] provider
+//! and `GET /metrics` answers the §20 exposition — the exporter's counter
+//! families then the posture's gauge families, both live pulls — and the
+//! mount routes it behind the same seam shape
+//! ([`HttpCacheService::has_metrics_provider`]): a provider-attached
+//! mount is the scrape the F61 record promises a collector, a
+//! provider-less mount never shadows an application's own `/metrics`
+//! route.
 
 use crate::{CacheHandler, Result, auth, codec, err, health::CacheHealth, tiers::TieredCache};
 use std::sync::Arc;
@@ -75,6 +85,67 @@ pub trait PlaneHealth: Send + Sync {
 impl PlaneHealth for TieredCache {
     fn plane_health(&self) -> CacheHealth {
         self.health()
+    }
+}
+
+/// The plane's metrics provider (V2-F61): the §20 exposition's two live
+/// pulls — the exporter's counter snapshot and the posture's gauge pull —
+/// behind one seam.
+///
+/// The health arm established the shape (a PULL — one snapshot as it
+/// stands NOW, never a value frozen at attach time); the metrics arm
+/// transposes it onto the counters' half. The gauges ride the SAME
+/// contract the health arm serves ([`PlaneHealth::plane_health`]) — one
+/// posture, two surfaces — so a scrape diffs both halves the way the
+/// F49 probe's doc defines a scrape: over two pulls, nothing frozen.
+pub trait PlaneMetrics: Send + Sync {
+    /// The live counter pull: the §20 exporter's snapshot
+    /// ([`crate::MetricsCacheObserver::snapshot`]), as it stands NOW.
+    fn plane_metrics(&self) -> crate::metrics::CacheMetricsSnapshot;
+
+    /// The live gauge pull: the posture contract the health arm serves
+    /// ([`PlaneHealth::plane_health`]), as it stands NOW.
+    fn plane_gauges(&self) -> CacheHealth;
+}
+
+/// The plane's natural metrics provider: the boot's two observability
+/// halves behind one value — the §20 exporter the §20 fan fans onto (the
+/// counter pull) and the tier the plane is rooted at (the gauge pull).
+///
+/// The boot already holds both: the exporter attaches at tier
+/// construction (F36/F37), the tier IS a [`PlaneHealth`] provider (F58).
+/// `MetricsPlaneSource::new` composes them — one `Arc`, both halves of
+/// the §20 story, zero extra state — so the mount's
+/// `with_metrics` attach rides the same wire the `with_health` attach
+/// rides.
+pub struct MetricsPlaneSource {
+    /// The counter pull's source: the exporter's live snapshot.
+    metrics: Arc<crate::metrics::MetricsCacheObserver>,
+    /// The gauge pull's source: the posture provider (the rooted tier,
+    /// the natural shape).
+    health: Arc<dyn PlaneHealth>,
+}
+
+impl MetricsPlaneSource {
+    /// Compose the source over the exporter and the posture provider —
+    /// the boot's own halves (a `TieredCache` IS a provider, so the
+    /// common compose is `MetricsPlaneSource::new(exporter,
+    /// Arc::clone(&tier))`).
+    pub fn new(
+        metrics: Arc<crate::metrics::MetricsCacheObserver>,
+        health: Arc<dyn PlaneHealth>,
+    ) -> Self {
+        Self { metrics, health }
+    }
+}
+
+impl PlaneMetrics for MetricsPlaneSource {
+    fn plane_metrics(&self) -> crate::metrics::CacheMetricsSnapshot {
+        self.metrics.snapshot()
+    }
+
+    fn plane_gauges(&self) -> CacheHealth {
+        self.health.plane_health()
     }
 }
 
@@ -216,6 +287,10 @@ pub struct HttpCacheService {
     /// F40 doctrine (a boot that never attached a provider leaks nothing).
     /// Attached via [`HttpCacheService::with_health`].
     health: Option<Arc<dyn PlaneHealth>>,
+    /// V2-F61: the optional metrics provider. `None` (the default) keeps
+    /// `/metrics` answering the pre-F61 shape — the same F40 doctrine.
+    /// Attached via [`HttpCacheService::with_metrics`].
+    metrics: Option<Arc<dyn PlaneMetrics>>,
 }
 
 /// A wire-capped exchange: the header block refuses past this bound so a
@@ -231,6 +306,7 @@ impl HttpCacheService {
         Self {
             handler,
             health: None,
+            metrics: None,
         }
     }
 
@@ -257,6 +333,35 @@ impl HttpCacheService {
     #[must_use]
     pub fn has_health_provider(&self) -> bool {
         self.health.is_some()
+    }
+
+    /// Attach the metrics provider (V2-F61): `GET /metrics` answers the
+    /// provider's pulls as the §20 text exposition — the counter families
+    /// ([`crate::MetricsCacheObserver`]'s F33 order, the F51 eviction pair
+    /// last) followed by the gauge families
+    /// ([`CacheHealth::render_prometheus`]'s F52 order), one blank line
+    /// between the halves. The F58 pull contract rides verbatim: the
+    /// unconfigured path 404s before anything else, the surface is
+    /// GET-only, the body is the LIVE pull — a scrape diffs two pulls,
+    /// nothing freezes. Chainable; the natural provider is the
+    /// [`MetricsPlaneSource`] over the boot's exporter and rooted tier.
+    #[must_use]
+    pub fn with_metrics(mut self, provider: Arc<dyn PlaneMetrics>) -> Self {
+        self.metrics = Some(provider);
+        self
+    }
+
+    /// Whether a metrics provider rides the service (V2-F61, the F59
+    /// routing-seam shape): a mount that answers `/metrics` into a
+    /// provider-less service would shadow an application's own `/metrics`
+    /// route with a bare 404, so the app server asks instead of guessing —
+    /// a provider-attached mount routes the surface (the scrape the F61
+    /// record promises a collector), a provider-less mount leaves it to
+    /// the app. The plain `respond` contract is unchanged: the
+    /// unconfigured path still 404s inside the core whoever asks.
+    #[must_use]
+    pub fn has_metrics_provider(&self) -> bool {
+        self.metrics.is_some()
     }
 
     /// The backing handler's self-named kind (the F32 introspection
@@ -286,6 +391,15 @@ impl HttpCacheService {
     /// - `POST /invalidate/{tag}` → `200` + `{"count":N}`; the body's
     ///   `{"soft":bool}` selects soft/hard (an empty body is hard, the
     ///   protocol's default), a malformed body is `400`.
+    /// - `GET /metrics` (V2-F61, provider attached via
+    ///   [`HttpCacheService::with_metrics`]) → `200` + the §20 text
+    ///   exposition — the counter families (the F33 order, the F51
+    ///   eviction pair last) then the gauge families (the F52 order), one
+    ///   blank line between the halves; the unconfigured path 404s before
+    ///   the method check (the F58 arm's contract), a non-GET is `405`.
+    /// - `GET /health` (V2-F58, provider attached via
+    ///   [`HttpCacheService::with_health`]) → `200` + the posture pull's
+    ///   JSON; the unconfigured path 404s before the method check.
     /// - An unknown path is `404`; a known path with the wrong method is
     ///   `405`.
     pub async fn respond(&self, req: &PlaneRequest) -> PlaneResponse {
@@ -340,6 +454,40 @@ impl HttpCacheService {
                         body: Vec::new(),
                     }
                 }
+            };
+        }
+
+        // V2-F61: the plane's own metrics arm. The F58 arm's contract,
+        // verbatim: the unconfigured path 404s BEFORE anything else (it
+        // leaks nothing, not even a method table), the surface is
+        // GET-only, the body is the provider's LIVE pull — a PULL, never
+        // a frozen snapshot. Not a protocol family: a plane without a
+        // provider answers the pre-F61 shape (route's `Unknown` 404).
+        //
+        // The body joins the §20 halves in one deterministic exposition:
+        // the counter families first (the exporter's F33 order, the F51
+        // eviction pair last), then the gauge families (the posture's F52
+        // order), one blank line between the halves. The render is
+        // infallible string building — the health arm's
+        // impossible-serialization 500 has no counterpart here (the F21
+        // posture: the render cannot refuse, so there is no refusal to
+        // make loud).
+        if req.path == "/metrics" {
+            let Some(provider) = &self.metrics else {
+                return PlaneResponse {
+                    status: 404,
+                    body: Vec::new(),
+                };
+            };
+            if method != "GET" {
+                return wrong_method("GET");
+            }
+            let mut body = provider.plane_metrics().render_prometheus();
+            body.push('\n');
+            body.push_str(&provider.plane_gauges().render_prometheus());
+            return PlaneResponse {
+                status: 200,
+                body: body.into_bytes(),
             };
         }
 
