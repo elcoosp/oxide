@@ -4,7 +4,7 @@ Drift gate: crates/cli/tests/docs_tdd.rs -->
 
 # Endpoint map
 
-Every HTTP surface the framework serves (Appendix V2.J), generated from the `oxide_fw_server::ENDPOINT_MAP` data the server crate ships. The plane rule is structural: `/__oxide/*` is the **data plane** (the build-header check guards it, A04), `/_oxide/*` is the **ops plane**, and the dev-only surfaces are dev-token guarded (D41).
+Every HTTP surface the framework serves (Appendix V2.J), generated from the `oxide_fw_server::ENDPOINT_MAP` data the server crate ships. The plane rule is structural: `/__oxide/*` is the **data plane** (the build-header check guards it, A04), `/_oxide/*` is the **ops plane**, the dev-only surfaces are dev-token guarded (D41), and the V2-F49 posture probe rides the `/-/` ops-probe convention (`/-/health` — deliberately beside, not under, the framework's own `/_oxide` namespace, so a platform's uniform probe-path config finds it).
 
 ## Endpoints
 
@@ -19,6 +19,7 @@ Every HTTP surface the framework serves (Appendix V2.J), generated from the `oxi
 | `/_oxide/nav?from=` | GET | ops | F13 | Aggregate next-route probabilities |
 | `/_oxide/csp-report` | POST | ops | E04 | CSP violation reports |
 | `/_oxide/health, /_oxide/ready` | GET | ops | existing, F12 | Liveness and readiness (level reported) |
+| `/-/health` | GET | ops | F49 | Cache posture probe (the live CacheHealth JSON; provider-gated) |
 | `/_oxide/{vitals,static,og,metrics,image,hmr}` | various | ops | existing | Unchanged |
 | `/__oxide/open, /__oxide/cost` | GET | dev | E08, F17 | Open in editor; component cost (dev-token guarded) |
 | `/__oxide/traces` | GET | dev | F21, F23 | Recent-request trace feed over the §20 context; the window answers filtered (?status=, ?method=, ?path=, ?limit=; dev-token guarded) |
