@@ -52,9 +52,10 @@ pub use http::{
     FetchMemo, ServeOutcome, cache_control, conditional_response, http_date, memo_key,
     parse_http_date, serve_entry,
 };
-pub use http_handler::HttpCacheHandler;
+pub use http_handler::{HttpCacheHandler, PlanePeer};
 pub use http_service::{
-    HttpCacheService, MetricsPlaneSource, PlaneHealth, PlaneMetrics, PlaneRequest, PlaneResponse,
+    ExchangeLimits, HttpCacheService, MetricsPlaneSource, PlaneHealth, PlaneMetrics, PlaneRequest,
+    PlaneResponse,
 };
 pub use keyhash::{KeyStr, key_of};
 pub use metrics::{CacheMetricsSnapshot, MetricsCacheObserver};
