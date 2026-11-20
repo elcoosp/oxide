@@ -6447,3 +6447,69 @@ landed: the stage's 304 arm still rides its hand-rolled match (its pins
 stay green by construction — the canonical comparison is a superset —
 but the IMS upgrade stays unlanded until that session). Standing pickups:
 the 17 cli lib pins, the server crate's example-less surfaces.
+
+## Session record — the conditional seam's two consumers (feat/l0-canonical-conditional, 2026-11-19)
+
+The F53/F54 handoff's recorded pickup lands as F55 + F56: the two hand-rolled
+conditional matches the F54 serving half's doc named as the duplication's
+evidence now compose through the canonical seam, and the IMS-only re-check —
+the capability neither hand-rolled match ever had — answers 304 in BOTH
+response planes.
+
+**F55 — the L0 conditional wire (the recorded consumer).**
+`crates/cli/src/l0_cache.rs`: `CachedResponse::serve_conditional` — the hit
+envelope's adapter over `oxide_fw_cache::serve_entry`; `make_entry` stores
+the RFC-shaped weak etag (`W/"<hash>"`, the exact value the responses serve
+so a conforming echo matches the canonical comparison verbatim) and
+generates the `Last-Modified` (the store time, IMF-fixdate) when the render
+set none — the IMS referent, the stored header winning per the F54 rule.
+`crates/cli/src/dispatch/stages/l0_lookup.rs`: the 304 arm answers through
+the adapter (the canonical validator set, the `L0-hit` label, the P0-5
+middleware headers); the full-hit path serves the stored etag verbatim and
+keeps its nonce-substitution/compression/SWR composition — the milestone's
+scope is the recorded 304 arm, the full arm's own body pipeline stays (its
+serve_entry `Full` outcome would carry the sentineled stored body, which is
+exactly why the stage's materializer composes its own response; the
+`serve_conditional` doc names the rule). The seam's public face re-exports
+`L0Cache`/`CachedResponse`/`NONCE_SENTINEL` beside the framework_shim shape
+(the bench and the walkthrough reuse them).
+
+**F56 — the static plane's canonical comparison.**
+`crates/server/src/lib.rs`: the asset server's private `If-None-Match`
+match is gone; the decision rides `oxide_fw_cache::conditional_response`
+over an entry view of the asset (the strong-quoted etag, the mtime as the
+`Last-Modified` referent; the comparison is body-blind so the view carries
+none). The 304 keeps the CACHE-SPLIT `Cache-Control` (the asset rules speak
+`must-revalidate`/`immutable`, shapes the cache crate's policy generator
+cannot render — the comparison is the seam, the CACHE-SPLIT composition
+stays the server's), gains the `Last-Modified`, and `with_asset_headers`
+serves the validator on the full responses too so a client has something to
+re-check with. The dev-mode skip keeps its documented shape. The
+`oxide-fw-cache` dependency edge is explicit in the server crate's manifest.
+
+**Micro-debt surveyed, one class deliberately left.** The
+`HotKeyObserver`/`EventFeed` lock `expect`s (hot_keys.rs, feed.rs) were
+audited and STAY: their `# Panics` docs declare poison-panic as the
+deliberate, loud contract — the house repairs targeted silent swallowing,
+not loud panics. The genuinely undocumented poison-panic class this session
+IDENTIFIED (not landed — the next codebase pickup): the render crate's
+streaming sink `.lock().unwrap()` sites (`crates/render/src/lib.rs` ~1101,
+~1201, ~1206, ~1246) deserve the house `PoisonError::into_inner` recovery
+on the streaming hot path.
+
+**Docs drift repaired.** `crates/cache/src/http.rs`'s `ServeOutcome`/
+`serve_entry` docs no longer name the L0 stage and the asset server as
+living duplicates — they name them as the seam's consumers (F55/F56); the
+cache README gains the consumer bullet; `docs/architecture.md`'s cache row
+gains the F55/F55/F56 consumer clause and the server row names the canonical
+comparison; the spec's WP table gains the F55/F56 rows; the cli README's
+serve section names the conditional wire; the README badge re-measured by
+`scripts/count-tests.sh`.
+
+**Verified.** TDD red-first, one red state per milestone: the F55 pins
+failed with E0599 ×3 over the unresolved `CachedResponse::serve_conditional`
+(the unit pins, the bench and the example) with the dispatch pins compiling
+against the pre-F55 behavior; the F56 pins failed with E0433/E0432 over the
+server crate's absent `oxide_fw_cache` edge. Then green: the full cli lib
+suite, the server suite, both benches in test mode, both examples executed
+end to end; fmt/clippy/the zero-allow grep over the touched regions clean.
