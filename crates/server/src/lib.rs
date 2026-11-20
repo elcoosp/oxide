@@ -690,18 +690,54 @@ impl StaticAssets {
         // the body on disk may have changed since the client got that etag.
         // Serve fresh bytes every time; the `no-cache` header prevents the
         // browser from caching them long enough for this to matter.
-        if !is_dev_pre && let Some(inm) = req.header("if-none-match") {
-            let matches = inm.split(',').map(str::trim).any(|cand| {
-                let cand = cand.strip_prefix("W/").unwrap_or(cand);
-                cand == "*" || cand.trim_matches('"') == etag_raw
-            });
-            if matches {
-                return Some(
-                    OxideResponse::new(304, Bytes::new())
-                        .with_header("ETag", etag_h)
-                        .with_header("Cache-Control", cache_ctl)
-                        .with_header("Vary", "Accept-Encoding"),
-                );
+        if !is_dev_pre {
+            // V2-F56: the conditional decision rides the canonical seam —
+            // `conditional_response` composes the RFC 9110 §13 comparison
+            // (weak `If-None-Match` lists and `*` first,
+            // `If-Modified-Since` against the stored `Last-Modified`
+            // second — the arm the hand-rolled match never had), so the
+            // static plane no longer re-rolls the semantics the F54
+            // serving half's doc named as the duplication's second
+            // evidence. The view's etag is the strong-quoted form the
+            // responses serve; the mtime rides as the `Last-Modified`
+            // referent (the comparison is body-blind, so the view
+            // carries none). The CACHE-SPLIT `Cache-Control` stays this
+            // server's composition — the asset rules speak
+            // `must-revalidate`/`immutable`, shapes the cache crate's
+            // policy generator cannot render.
+            let view = oxide_fw_cache::Entry {
+                body: Vec::new(),
+                status: 200,
+                headers: if entry.mtime > 0 {
+                    vec![(
+                        "last-modified".to_string(),
+                        oxide_fw_cache::http_date(entry.mtime),
+                    )]
+                } else {
+                    Vec::new()
+                },
+                tags: Vec::new(),
+                policy: oxide_fw_cache::Policy::default(),
+                stored_at: entry.mtime,
+                etag: format!("\"{etag_raw}\""),
+            };
+            let cond_headers: Vec<(String, String)> = ["if-none-match", "if-modified-since"]
+                .into_iter()
+                .filter_map(|name| {
+                    req.header(name)
+                        .map(|value| (name.to_string(), value.to_string()))
+                })
+                .collect();
+            if oxide_fw_cache::conditional_response(&cond_headers, &view) == Some(304) {
+                let mut resp = OxideResponse::new(304, Bytes::new())
+                    .with_header("ETag", etag_h)
+                    .with_header("Cache-Control", cache_ctl)
+                    .with_header("Vary", "Accept-Encoding");
+                if entry.mtime > 0 {
+                    resp =
+                        resp.with_header("Last-Modified", oxide_fw_cache::http_date(entry.mtime));
+                }
+                return Some(resp);
             }
         }
 
@@ -859,6 +895,15 @@ fn with_asset_headers(
     resp.headers
         .push(("Content-Type".into(), entry.content_type.to_string()));
     resp.headers.push(("ETag".into(), etag_h.to_string()));
+    // V2-F56: the validator the IMS-only re-check re-validates against —
+    // the 304 echoes it (RFC 9110 §15.4.5: a 304 carries what the 200
+    // would have).
+    if entry.mtime > 0 {
+        resp.headers.push((
+            "Last-Modified".into(),
+            oxide_fw_cache::http_date(entry.mtime),
+        ));
+    }
     resp.headers
         .push(("Cache-Control".into(), cache_ctl.to_string()));
     resp.headers.push(("Vary".into(), "Accept-Encoding".into()));
