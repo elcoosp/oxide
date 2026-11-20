@@ -2380,6 +2380,12 @@ pub struct Pipeline {
     /// default) the plane paths fall through to dispatch byte-identically —
     /// the F40 doctrine; an app serving its own `/entry/…` route is never
     /// intercepted. Attached via [`Pipeline::with_cache_plane`].
+    ///
+    /// V2-F59: the F58 health arm rides the mount when the service
+    /// carries a provider (`HttpCacheService::with_health`) — `GET
+    /// /health` answers the live posture pull on this socket, and the
+    /// provider check keeps a provider-less mount from shadowing an
+    /// application's own `/health` route.
     pub cache_plane: Option<Arc<oxide_fw_cache::HttpCacheService>>,
     /// Optional inspector provider (§13.4). When `Some`, `/__oxide` and
     /// `/__oxide/state` return the inspector snapshot. Never set in production.
@@ -4439,6 +4445,13 @@ impl Pipeline {
     /// surface. When `None` (the default) production is byte-identical:
     /// the plane paths fall through to dispatch. Chainable.
     ///
+    /// V2-F59: a service built with
+    /// [`HttpCacheService::with_health`](oxide_fw_cache::HttpCacheService::with_health)
+    /// also answers `GET /health` on this socket — the live posture pull,
+    /// the balancer probe the F58 record promised — while a provider-less
+    /// service leaves `/health` to the application (the mount never
+    /// shadows an app route with the plane's unconfigured 404).
+    ///
     /// ```no_run
     /// use std::sync::Arc;
     /// use oxide_fw_cache::HttpCacheService;
@@ -5321,10 +5334,21 @@ impl Pipeline {
         // Before static/dispatch: an attached mount means the plane owns its
         // families; unattached (the default), the None check costs one
         // branch and every pre-F57 byte is preserved (the F40 doctrine).
+        //
+        // V2-F59: the F58 health arm joins the mount's families — a mount
+        // whose service carries a provider answers `GET /health` with the
+        // live pull (the balancer probe the F58 record promised, one
+        // socket), and the provider check is the guard: a provider-less
+        // mount never shadows an application's own `/health` route (the
+        // plane's unconfigured 404 would answer a route the app owns; the
+        // F40 doctrine over the app's surface). The method table still
+        // rides the plane's — a POST to a provider-attached mount is the
+        // plane's 405, not a fall-through.
         if let Some(service) = &self.cache_plane {
             let is_plane_path = path.starts_with("/entry/")
                 || path.starts_with("/tag/")
-                || path.starts_with("/invalidate/");
+                || path.starts_with("/invalidate/")
+                || (path == "/health" && service.has_health_provider());
             if is_plane_path {
                 return NativePrefix::CachePlane {
                     service: Arc::clone(service),
