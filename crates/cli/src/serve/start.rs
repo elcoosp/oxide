@@ -703,6 +703,27 @@ pub(crate) async fn start_server_inner_full(
         &cache_posture_path,
         stack.cache_tier_typed.as_ref(),
     );
+    // V2-F59: the F57 mount's boot wire resolves ONCE through the layered
+    // resolver (the `cache.planeMount` baseline beside the F59 flag and
+    // the `OXIDE_CACHE_PLANE_MOUNT` env spelling) and the gate grows its
+    // own two halves — the plane mounts only where the boot opted in AND
+    // a tier handle exists (the posture gate's shape). The composition is
+    // `cache_plane_mount_provider`'s: the service over the boot's own
+    // tier, the tier doubling as the F58 health provider, so the mounted
+    // plane answers `/entry/`, `/tag/`, `/invalidate/` AND `GET /health`
+    // on this boot's socket. `None` keeps the boot byte-identical (the
+    // F40 doctrine).
+    let cache_plane = crate::framework_shim::cache_plane_mount_provider(
+        crate::observability::cache_plane_mount_with_config(cfg.cache.plane_mount),
+        stack.cache_tier_typed.as_ref(),
+    );
+    if let Some(service) = &cache_plane {
+        tracing::info!(
+            handler = %service.backing_kind(),
+            "cache plane mounted on this node's socket (§11.2): \
+             /entry/, /tag/, /invalidate/ and GET /health answer here"
+        );
+    }
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -814,11 +835,14 @@ pub(crate) async fn start_server_inner_full(
         // doctrine: the default shape leaks nothing).
         posture_path: cache_posture_path,
         cache_posture,
-        // V2-F57: the cache plane's mount. The recorded boot wire is the
-        // next pickup (it needs the V8-linked build to verify); `None`
-        // keeps the boot's shape byte-identical (the F40 doctrine) — the
-        // plane answers only where a host attaches `HttpCacheService`.
-        cache_plane: None,
+        // V2-F57/V2-F59: the cache plane's mount. The boot wire is LIVE:
+        // `cache_plane_mount_provider` composes the service over the
+        // boot's own tier (the tier doubling as the F58 health provider)
+        // when the layered `cache.planeMount` resolution opts the boot
+        // in; `None` keeps the boot's shape byte-identical (the F40
+        // doctrine) — the plane answers only where a host attaches
+        // `HttpCacheService`.
+        cache_plane,
         inspector: if with_inspector {
             // §20: with a recorder wired, the inspector's waterfall table
             // reflects the live per-request timings instead of staying empty.
