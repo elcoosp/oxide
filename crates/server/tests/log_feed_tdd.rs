@@ -133,7 +133,7 @@ fn endpoint_map_has_the_log_feed_row() {
     assert_eq!(row.plane, EndpointPlane::Dev);
     assert!(row.work_packages.contains("F24"));
     assert!(row.purpose.contains("dev-token guarded"));
-    assert_eq!(ENDPOINT_MAP.len(), 14, "the spec's map has 14 rows");
+    assert_eq!(ENDPOINT_MAP.len(), 15, "the spec's map has 15 rows");
 }
 
 // ------------------------------------------------------------- the constants
