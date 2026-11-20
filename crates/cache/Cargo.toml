@@ -129,6 +129,14 @@ name = "plane_health"
 harness = false
 required-features = ["bench-util"]
 
+# F60: the client's deadline arm — the happy path's wrapper overhead
+# (the bounded exchange vs the pre-F60 unbounded client) against a real
+# plane service on a local socket.
+[[bench]]
+name = "handler_deadline"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
