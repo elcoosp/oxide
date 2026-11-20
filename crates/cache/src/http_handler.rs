@@ -15,8 +15,16 @@
 //! `publish_invalidation` POSTs the tag so peer nodes sharing the service
 //! converge. A network error degrades to a miss/no-op — the local tier keeps
 //! serving, and the build/render proceeds (a remote cache is an optimization).
+//!
+//! Since V2-F63 the client also carries the PULL side of the plane's
+//! observability surfaces: the [`PlanePeer`] trait's probes answer "how is
+//! my remote cache doing?" — the F58 `GET /health` posture pull decoded
+//! into [`crate::CacheHealth`] and the F61 `GET /metrics` §20 exposition
+//! passed through byte-verbatim — riding the same [`HttpCacheHandler::request`]
+//! core the entry verbs ride, so the F60 deadline and the `CACHE-HTTP`
+//! error context come with the probes for free.
 
-use crate::{Entry, Result, auth, codec, err};
+use crate::{Entry, Result, auth, codec, err, health::CacheHealth};
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -297,6 +305,121 @@ impl crate::CacheHandler for HttpCacheHandler {
 
     fn handler_kind(&self) -> &'static str {
         "http"
+    }
+}
+
+// ------------------------------------------------------------------- the peer seam (F63)
+
+/// The client half of the plane's observability surfaces (V2-F63): the
+/// probes a node points at the plane it is wired to.
+///
+/// F58 gave the service `GET /health` and F61 gave it `GET /metrics`, but
+/// both answered a DIRECT socket caller only — the node whose
+/// `cache.handler = { type: 'http', url }` points at the plane had no way
+/// to answer "how is my remote cache doing?" without hand-rolling a raw
+/// exchange, exactly the duplication the F53 client/server split exists
+/// to prevent. The trait is the pull side: one seam a host composes,
+/// wraps (a failover pair, a circuit breaker) or fakes in tests, with the
+/// client's natural impl riding the same `request` core the entry verbs
+/// ride — the F60 deadline bounds a probe exactly as it bounds a `get`,
+/// and every failure speaks the file's stable `CACHE-HTTP` code.
+///
+/// The pull contract is the F58 arm's, transposed onto the client: each
+/// probe is a LIVE pull — a probe diffs two pulls, a dashboard holds
+/// none; nothing freezes at construction. A non-200 or an undecodable
+/// body is a LOUD error (the house convention): a probe that silently
+/// reported a zeroed posture for a provider-less or misrouted peer would
+/// be worse than one that fails — an operator watches the error, never
+/// the fabricated zero.
+#[async_trait]
+pub trait PlanePeer: Send + Sync {
+    /// The peer's live posture pull: `GET {base}/health` (the F58 arm)
+    /// decoded into [`CacheHealth`] — the F52 pull's value shape over the
+    /// wire. Errors under `CACHE-HTTP`: a non-200 (the arm rides a
+    /// provider-attached plane; a provider-less peer answers the F40
+    /// 404), an undecodable body (a 200 that is not a posture — a
+    /// misrouted front, a captive portal), a transport failure, an
+    /// exchange past the attached deadline.
+    async fn peer_health(&self) -> Result<CacheHealth>;
+
+    /// The peer's live exposition pull: `GET {base}/metrics` (the F61
+    /// arm) as the §20 text, byte-verbatim — a scraper diffs two pulls of
+    /// the returned string exactly as it diffs two scrapes of the wire.
+    /// The body is not re-rendered or validated beyond the status: the
+    /// exposition's contract is text (the renderer is ONE, on the peer's
+    /// side), and the health arm's serde decode has no text counterpart.
+    /// Errors under `CACHE-HTTP`: a non-200, a transport failure, an
+    /// exchange past the attached deadline.
+    async fn peer_metrics(&self) -> Result<String>;
+}
+
+#[async_trait]
+impl PlanePeer for HttpCacheHandler {
+    async fn peer_health(&self) -> Result<CacheHealth> {
+        let url = format!("{}/health", self.base);
+        match self.request("GET", &url, None).await {
+            Ok((200, body)) => serde_json::from_slice::<CacheHealth>(&body).map_err(|e| {
+                // A 200 that is not a posture is an anomaly worth the
+                // warn (a misrouted front answered); the error is the
+                // probe's answer, the warn its paper trail.
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    url = %url,
+                    error = %e,
+                    "the peer's /health body did not parse as a posture"
+                );
+                err(
+                    "CACHE-HTTP",
+                    format!("the peer's /health body did not parse as a posture: {e}"),
+                )
+            }),
+            Ok((status, _)) => {
+                // The expected shape is a provider-less peer's F40 404;
+                // the probe names the status either way — loud, never a
+                // fabricated zeroed posture.
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    url = %url,
+                    status,
+                    "the peer answered a non-200 for /health"
+                );
+                Err(err(
+                    "CACHE-HTTP",
+                    format!(
+                        "the peer answered {status} for /health — the arm rides a \
+                         provider-attached plane (the F58 shape); a provider-less \
+                         plane answers the F40 404"
+                    ),
+                ))
+            }
+            // The transport arm already carries the `CACHE-HTTP` code and
+            // the deadline's warn (the F60 shape) — nothing to add.
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn peer_metrics(&self) -> Result<String> {
+        let url = format!("{}/metrics", self.base);
+        match self.request("GET", &url, None).await {
+            Ok((200, body)) => Ok(String::from_utf8_lossy(&body).into_owned()),
+            Ok((status, _)) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    url = %url,
+                    status,
+                    "the peer answered a non-200 for /metrics"
+                );
+                Err(err(
+                    "CACHE-HTTP",
+                    format!(
+                        "the peer answered {status} for /metrics — the arm rides a \
+                         provider-attached plane (the F61 shape); a provider-less \
+                         plane answers the F40 404"
+                    ),
+                ))
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
