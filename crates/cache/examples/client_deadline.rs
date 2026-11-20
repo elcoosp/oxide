@@ -77,9 +77,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .block_on(bounded.get("route:/live"))
         .expect("the get answers under the deadline");
     println!(
-        "healthy exchange under a 2s deadline: set ok, get -> {} bytes ({})",
-        got.as_ref().map(|e| e.body.len()).unwrap_or(0),
-        "the deadline never clips live traffic"
+        "healthy exchange under a 2s deadline: set ok, get -> {} bytes \
+         (the deadline never clips live traffic)",
+        got.as_ref().map_or(0, |e| e.body.len()),
     );
 
     // 2. The hung half: a peer that accepts and NEVER answers — the
