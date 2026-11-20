@@ -20,7 +20,11 @@
 //!   exchange (the same shape the client's `request` half rides: one
 //!   request, `Connection: close`, Content-Length body) per connection,
 //!   parsed into a [`PlaneRequest`] and answered with the core's
-//!   [`PlaneResponse`].
+//!   [`PlaneResponse`]. Since V2-F70 the shell HONORS a request's
+//!   `Connection: keep-alive`: the next exchange rides the same
+//!   connection (the answer names `keep-alive` back) — the pooled
+//!   client's socket serves exchange after exchange — while a
+//!   close-shaped request keeps the pre-F70 byte shape.
 //!
 //! The trust boundary holds on BOTH sides of the wire (§11.3 / P0-8): the
 //! client seals every entry it PUTs, so the service opens and decodes a PUT
@@ -863,15 +867,19 @@ impl HttpCacheService {
         }
     }
 
-    /// Host the service on a bound listener: one minimal HTTP/1.1 exchange
-    /// per connection (`Connection: close`, the client's own posture),
-    /// parsed into a [`PlaneRequest`] and answered with the core's
+    /// Host the service on a bound listener: a minimal HTTP/1.1 exchange
+    /// per connection by default (`Connection: close`, the client's own
+    /// posture) — the request's own `Connection: keep-alive` is HONORED
+    /// since V2-F70 and the connection serves exchange after exchange.
+    /// Parsed into a [`PlaneRequest`] and answered with the core's
     /// [`PlaneResponse`]. Connections run concurrently, bounded by the
     /// attached concurrency knob ([`HttpCacheService::with_max_connections`],
     /// V2-F67): the excess connections wait with their bytes unread until
-    /// a running exchange frees its permit — a wait, never a refusal. A
-    /// malformed exchange answers 400 and closes without touching the
-    /// accept loop.
+    /// a running exchange frees its permit — a wait, never a refusal.
+    /// (With keep-alive honored, the bounded unit is the concurrent
+    /// CONNECTION: its idle exchanges park inside the connection's
+    /// permit.) A malformed exchange answers 400 and closes without
+    /// touching the accept loop.
     ///
     /// # Errors
     ///
@@ -921,131 +929,167 @@ impl HttpCacheService {
         }
     }
 
-    /// One connection's exchange: parse the request line + headers, drain
-    /// the body, route, answer, close. Never panics — a parse refusal is
-    /// a 400 (or a bare close when the peer is already gone).
+    /// One connection's exchanges: parse the request line + headers, drain
+    /// the body, route, answer. Never panics — a parse refusal is
+    /// a 400 (or a bare close when the peer is already gone). Since V2-F70
+    /// the loop HONORS the request's `Connection: keep-alive`: the next
+    /// exchange is read on the same connection (the answer names
+    /// `keep-alive` back), so a pooled client rides one socket across
+    /// many exchanges; a close-shaped request keeps the pre-F70 byte
+    /// shape (one answer, then the close). The F67 permit rides the
+    /// connection's whole life either way — with keep-alive the bounded
+    /// unit is the concurrent CONNECTION, its idle exchanges park inside
+    /// it.
     async fn handle_conn(&self, mut stream: tokio::net::TcpStream) -> Result<()> {
         use tokio::io::AsyncReadExt;
 
-        // Read until the header terminator, bounded (the hostile-client
-        // cap): an exchange that never terminates answers 400 + close.
-        let mut buf: Vec<u8> = Vec::new();
-        let mut tmp = [0u8; 4096];
-        let head_end = loop {
-            let n = stream
-                .read(&mut tmp)
-                .await
-                .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
-            if n == 0 {
-                // The peer closed before a parseable exchange arrived —
-                // nothing to answer; the close IS the answer.
-                return Ok(());
-            }
-            buf.extend_from_slice(&tmp[..n]);
-            if buf.len() > HEADER_CAP {
-                // V2-F68 session micro-debt: the hostile-header refusal
-                // was the shell's last SILENT arm (the F65-session repair's
-                // class). Behavior unchanged — the 400 + close is the
-                // refusal — the SILENCE is the repair: the cap is named,
-                // so an operator watching the logs sees the flood.
-                tracing::warn!(
-                    code = "CACHE-HTTP",
-                    cap = HEADER_CAP,
-                    buffered = buf.len(),
-                    "the exchange's header block exceeds the parser's cap; answering 400 without reading further"
-                );
-                Self::answer(
-                    &mut stream,
-                    &PlaneResponse {
-                        status: 400,
-                        body: Vec::new(),
-                    },
-                )
-                .await?;
-                return Ok(());
-            }
-            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                break i;
-            }
-        };
-
-        let head = String::from_utf8_lossy(&buf[..head_end]);
-        let mut lines = head.lines();
-        let reqline = lines.next().unwrap_or("");
-        let mut parts = reqline.split_whitespace();
-        let method = parts.next().unwrap_or("").to_string();
-        let path = parts.next().unwrap_or("").to_string();
-
-        // Content-Length drives the body drain (the client's own shape:
-        // unread data + close = a TCP RST the peer reports as an error).
-        // A value that does not parse rides 0 (the pre-F65 behavior — a
-        // garbage length drains nothing), but the gap is LOUD now: a
-        // silent `unwrap_or(0)` hid a malformed exchange from every log.
-        let mut clen = 0usize;
-        for line in lines {
-            if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                match v.trim().parse() {
-                    Ok(parsed) => clen = parsed,
-                    Err(e) => tracing::warn!(
+        loop {
+            // Read until the header terminator, bounded (the hostile-client
+            // cap): an exchange that never terminates answers 400 + close.
+            let mut buf: Vec<u8> = Vec::new();
+            let mut tmp = [0u8; 4096];
+            let head_end = loop {
+                let n = stream
+                    .read(&mut tmp)
+                    .await
+                    .map_err(|e| err("CACHE-HTTP", format!("read: {e}")))?;
+                if n == 0 {
+                    // The peer closed before a parseable exchange arrived —
+                    // nothing to answer; the close IS the answer. On an
+                    // honored connection this is the pooled client's idle
+                    // close ending the ride (the F70 loop's normal exit).
+                    return Ok(());
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                if buf.len() > HEADER_CAP {
+                    // V2-F68 session micro-debt: the hostile-header refusal
+                    // was the shell's last SILENT arm (the F65-session repair's
+                    // class). Behavior unchanged — the 400 + close is the
+                    // refusal — the SILENCE is the repair: the cap is named,
+                    // so an operator watching the logs sees the flood.
+                    tracing::warn!(
                         code = "CACHE-HTTP",
-                        value = %v.trim(),
-                        error = %e,
-                        "the Content-Length did not parse; draining none"
-                    ),
+                        cap = HEADER_CAP,
+                        buffered = buf.len(),
+                        "the exchange's header block exceeds the parser's cap; answering 400 without reading further"
+                    );
+                    Self::answer(
+                        &mut stream,
+                        &PlaneResponse {
+                            status: 400,
+                            body: Vec::new(),
+                        },
+                        false,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break i;
+                }
+            };
+
+            let head = String::from_utf8_lossy(&buf[..head_end]);
+            let mut lines = head.lines();
+            let reqline = lines.next().unwrap_or("");
+            let mut parts = reqline.split_whitespace();
+            let method = parts.next().unwrap_or("").to_string();
+            let path = parts.next().unwrap_or("").to_string();
+
+            // Content-Length drives the body drain (the client's own shape:
+            // unread data + close = a TCP RST the peer reports as an error).
+            // A value that does not parse rides 0 (the pre-F65 behavior — a
+            // garbage length drains nothing), but the gap is LOUD now: a
+            // silent `unwrap_or(0)` hid a malformed exchange from every log.
+            // V2-F70: the same scan reads the Connection header — the
+            // request's keep-alive is what the loop honors.
+            let mut clen = 0usize;
+            let mut conn_keep_alive = false;
+            for line in lines {
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    match v.trim().parse() {
+                        Ok(parsed) => clen = parsed,
+                        Err(e) => tracing::warn!(
+                            code = "CACHE-HTTP",
+                            value = %v.trim(),
+                            error = %e,
+                            "the Content-Length did not parse; draining none"
+                        ),
+                    }
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("connection:") {
+                    conn_keep_alive = v.trim().eq_ignore_ascii_case("keep-alive");
                 }
             }
-        }
-        // V2-F64: the drain's bound. A length past the cap answers 413
-        // BEFORE the first body byte lands — the hostile shape (a huge
-        // length, a slow trickle) costs one warn instead of the memory
-        // the F53 header cap's own doc recorded as the parser-only gap.
-        // With the length at or under the cap the loop below is bounded
-        // by construction (`body.len() < clen`), so this one check is the
-        // whole bound.
-        if clen > self.limits.max_body {
-            tracing::warn!(
-                code = "CACHE-HTTP",
-                content_length = clen,
-                cap = self.limits.max_body,
-                path = %path,
-                "the exchange body exceeds the shell's bound; answering 413 without draining"
-            );
-            return Self::answer(
-                &mut stream,
-                &PlaneResponse {
-                    status: 413,
-                    body: Vec::new(),
-                },
-            )
-            .await;
-        }
-        let mut body = buf[head_end + 4..].to_vec();
-        while body.len() < clen {
-            let n = stream
-                .read(&mut tmp)
-                .await
-                .map_err(|e| err("CACHE-HTTP", format!("read body: {e}")))?;
-            if n == 0 {
-                break;
+            // V2-F64: the drain's bound. A length past the cap answers 413
+            // BEFORE the first body byte lands — the hostile shape (a huge
+            // length, a slow trickle) costs one warn instead of the memory
+            // the F53 header cap's own doc recorded as the parser-only gap.
+            // With the length at or under the cap the loop below is bounded
+            // by construction (`body.len() < clen`), so this one check is the
+            // whole bound. The refusal CLOSES (a hostile exchange never
+            // rides a reused connection), whatever the request asked.
+            if clen > self.limits.max_body {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    content_length = clen,
+                    cap = self.limits.max_body,
+                    path = %path,
+                    "the exchange body exceeds the shell's bound; answering 413 without draining"
+                );
+                return Self::answer(
+                    &mut stream,
+                    &PlaneResponse {
+                        status: 413,
+                        body: Vec::new(),
+                    },
+                    false,
+                )
+                .await;
             }
-            body.extend_from_slice(&tmp[..n]);
-        }
-        body.truncate(clen);
+            let mut body = buf[head_end + 4..].to_vec();
+            while body.len() < clen {
+                let n = stream
+                    .read(&mut tmp)
+                    .await
+                    .map_err(|e| err("CACHE-HTTP", format!("read body: {e}")))?;
+                if n == 0 {
+                    break;
+                }
+                body.extend_from_slice(&tmp[..n]);
+            }
+            body.truncate(clen);
 
-        let req = PlaneRequest { method, path, body };
-        let resp = self.respond(&req).await;
-        Self::answer(&mut stream, &resp).await
+            let req = PlaneRequest { method, path, body };
+            let resp = self.respond(&req).await;
+            Self::answer(&mut stream, &resp, conn_keep_alive).await?;
+            // The honored connection loops for the next exchange; the
+            // close shape returns (the drop closes the socket — the
+            // client's `read_to_end` completes).
+            if !conn_keep_alive {
+                return Ok(());
+            }
+        }
     }
 
     /// Serialize one [`PlaneResponse`] onto the wire (status line,
-    /// Content-Length, `Connection: close`, the body).
-    async fn answer(stream: &mut tokio::net::TcpStream, resp: &PlaneResponse) -> Result<()> {
+    /// Content-Length, the Connection answer, the body). V2-F70: the
+    /// Connection answer follows the REQUEST — `keep-alive` when the
+    /// exchange is honored (the client reads it and reuses the socket),
+    /// `close` otherwise (the pre-F70 byte shape).
+    async fn answer(
+        stream: &mut tokio::net::TcpStream,
+        resp: &PlaneResponse,
+        keep_alive: bool,
+    ) -> Result<()> {
         use tokio::io::AsyncWriteExt;
+        let conn = if keep_alive { "keep-alive" } else { "close" };
         let head = format!(
-            "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: {}\r\n\r\n",
             resp.status,
             reason(resp.status),
             resp.body.len(),
+            conn,
         );
         stream
             .write_all(head.as_bytes())
@@ -1055,7 +1099,6 @@ impl HttpCacheService {
             .write_all(&resp.body)
             .await
             .map_err(|e| err("CACHE-HTTP", format!("write body: {e}")))?;
-        // The drop closes the socket — the client's `read_to_end` completes.
         Ok(())
     }
 }
