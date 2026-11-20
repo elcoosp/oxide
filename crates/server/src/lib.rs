@@ -2525,9 +2525,15 @@ pub struct SocketRegistration {
 
 impl Drop for SocketRegistration {
     fn drop(&mut self) {
-        if let Ok(mut reg) = self.registry.lock() {
-            reg.remove(&self.id);
-        }
+        // The F55/F56 sweep's house shape: the map's contents stay valid
+        // across a poisoning panic — only the lock is poisoned — so a
+        // poisoned guard is RECOVERED, never swallowed (a swallowed write
+        // here leaks the entry forever).
+        let mut reg = self
+            .registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        reg.remove(&self.id);
     }
 }
 
@@ -2540,15 +2546,19 @@ impl SocketService {
         module_path: &str,
         tx: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> SocketRegistration {
-        if let Ok(mut reg) = self.registry.lock() {
-            reg.insert(
-                id.to_string(),
-                SocketClient {
-                    module_path: module_path.to_string(),
-                    tx,
-                },
-            );
-        }
+        // Poison recovery (the F55/F56 sweep's shape): a swallowed write
+        // here would leave the socket dark for presence and broadcast.
+        let mut reg = self
+            .registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        reg.insert(
+            id.to_string(),
+            SocketClient {
+                module_path: module_path.to_string(),
+                tx,
+            },
+        );
         SocketRegistration {
             registry: Arc::clone(&self.registry),
             id: id.to_string(),
@@ -2559,9 +2569,12 @@ impl SocketService {
     /// `id` itself.
     #[must_use]
     pub fn client_ids(&self, module_path: &str) -> Vec<String> {
-        let Ok(reg) = self.registry.lock() else {
-            return Vec::new();
-        };
+        // Poison recovery (the F55/F56 sweep's shape): a swallowed read
+        // here would answer an empty presence list forever.
+        let reg = self
+            .registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut ids: Vec<String> = reg
             .iter()
             .filter(|(_, c)| c.module_path == module_path)
@@ -2574,9 +2587,12 @@ impl SocketService {
     /// Fan out to every other socket on `module_path` (targeted frames are
     /// delivered with [`Self::send_to`]).
     pub fn broadcast(&self, module_path: &str, except: &str, data: &str) {
-        let Ok(reg) = self.registry.lock() else {
-            return;
-        };
+        // Poison recovery (the F55/F56 sweep's shape): a swallowed read
+        // here would silently drop EVERY later frame.
+        let reg = self
+            .registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (id, client) in reg.iter() {
             if id != except && client.module_path == module_path {
                 let _ = client.tx.send(data.to_string());
@@ -2586,9 +2602,12 @@ impl SocketService {
 
     /// Deliver one frame to a specific live socket id.
     pub fn send_to(&self, id: &str, data: &str) {
-        let Ok(reg) = self.registry.lock() else {
-            return;
-        };
+        // Poison recovery (the F55/F56 sweep's shape): a swallowed read
+        // here would make a targeted frame vanish.
+        let reg = self
+            .registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(client) = reg.get(id) {
             let _ = client.tx.send(data.to_string());
         }
@@ -5344,11 +5363,18 @@ impl Pipeline {
         // F40 doctrine over the app's surface). The method table still
         // rides the plane's — a POST to a provider-attached mount is the
         // plane's 405, not a fall-through.
+        //
+        // V2-F61: the metrics arm joins the same way — a mount whose
+        // service carries a metrics provider answers `GET /metrics` with
+        // the live §20 exposition (the scrape the F61 record promises a
+        // collector), a provider-less mount never shadows an application's
+        // own `/metrics` route, and the method table rides the plane's.
         if let Some(service) = &self.cache_plane {
             let is_plane_path = path.starts_with("/entry/")
                 || path.starts_with("/tag/")
                 || path.starts_with("/invalidate/")
-                || (path == "/health" && service.has_health_provider());
+                || (path == "/health" && service.has_health_provider())
+                || (path == "/metrics" && service.has_metrics_provider());
             if is_plane_path {
                 return NativePrefix::CachePlane {
                     service: Arc::clone(service),
@@ -7955,5 +7981,86 @@ mod socket_fanout_tests {
         assert_eq!(svc.registry.lock().unwrap().len(), 1);
         drop(guard);
         assert!(svc.registry.lock().unwrap().is_empty());
+    }
+
+    // The poison-recovery pins (the F55/F56 sweep class, this site
+    // family): a panic while the registry lock is held poisons it, and
+    // the map's contents stay valid — only the lock is poisoned — so the
+    // house `PoisonError::into_inner` recovery is the guard, not a
+    // rebuild. Written FIRST (red): against the swallow shape, register
+    // answers an empty registry, presence answers an empty list, the
+    // targeted frame vanishes, and the drop guard's unregister never
+    // lands.
+    fn poison_registry(svc: &SocketService) {
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = svc.registry.lock().unwrap();
+            panic!("the poisoning panic");
+        }));
+        std::panic::set_hook(hook);
+        assert!(svc.registry.lock().is_err(), "the lock IS poisoned");
+    }
+
+    #[test]
+    fn a_poisoned_registry_still_registers_and_answers_presence() {
+        let svc = service();
+        poison_registry(&svc);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let _guard = svc.register("a", "/chat", tx);
+        assert_eq!(
+            svc.registry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
+            1,
+            "the recovered write lands — the socket is in the registry"
+        );
+        assert_eq!(
+            svc.client_ids("/chat"),
+            vec!["a".to_string()],
+            "presence reads the recovered registry, never an empty list"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_registry_still_delivers_the_targeted_frame() {
+        let svc = service();
+        poison_registry(&svc);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let _guard = svc.register("b", "/other", tx);
+        svc.send_to("b", "direct");
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            "direct",
+            "send_to recovers the guard and delivers"
+        );
+        svc.broadcast("/other", "b", "wide");
+        // The sender is the only /other socket, so the broadcast arm has
+        // no other target; the delivery proof above is the recovery proof.
+        assert!(rx.try_recv().is_err(), "the sender is excluded");
+    }
+
+    #[test]
+    fn a_poisoned_registry_still_unregisters() {
+        let svc = service();
+        poison_registry(&svc);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let guard = svc.register("a", "/chat", tx);
+        assert_eq!(
+            svc.registry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
+            1
+        );
+        drop(guard);
+        assert!(
+            svc.registry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "the recovered unregister lands — no leaked entry"
+        );
     }
 }
