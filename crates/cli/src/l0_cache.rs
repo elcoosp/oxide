@@ -43,6 +43,15 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// The unix-seconds clock the conditional seam's `Date` header rides
+/// (`serve_entry` takes the value, so the decision stays testable).
+pub(crate) fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// The L0 layer: a cache handler plus the per-build key salt and default policy.
 pub struct L0Cache {
     handler: Arc<dyn CacheHandler>,
@@ -189,27 +198,46 @@ impl L0Cache {
         tags: Vec<String>,
     ) -> Entry {
         let body = encode_segments(&body).unwrap_or(body);
+        // V2-F55: the etag is the RFC-shaped weak form — the exact value
+        // the responses serve as the `ETag` header — so a conforming
+        // client's echo matches the canonical conditional comparison
+        // verbatim, and the stage no longer re-formats a bare digest.
         let etag = {
             let mut h = blake3::Hasher::new();
             h.update(&body);
-            h.finalize().to_hex()[..16].to_string()
+            format!("W/\"{}\"", &h.finalize().to_hex()[..16])
         };
+        let stored_at = now_ms();
+        let mut stored: Vec<(String, String)> = headers
+            .into_iter()
+            // §V2-F04 item 3: `set-cookie` is never stored — a minted
+            // experiment identity (or a loader cookie) belongs to the
+            // response that produced it, not to every later hit. The
+            // render path already refuses to store a cookie-setting
+            // response; this strip is the belt-and-braces for the
+            // other make_entry call sites.
+            .filter(|(k, _)| {
+                !k.eq_ignore_ascii_case("content-security-policy")
+                    && !k.eq_ignore_ascii_case("set-cookie")
+            })
+            .collect();
+        // V2-F55: the IMS-only re-check needs a `Last-Modified` referent —
+        // the generated store time (IMF-fixdate) when the render set none.
+        // A stored header wins: the generated value only fills the gap
+        // (the F54 serving half's one-header-per-name rule).
+        if !stored
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+        {
+            stored.push((
+                "last-modified".to_string(),
+                oxide_fw_cache::http_date(stored_at / 1000),
+            ));
+        }
         Entry {
             body,
             status,
-            headers: headers
-                .into_iter()
-                // §V2-F04 item 3: `set-cookie` is never stored — a minted
-                // experiment identity (or a loader cookie) belongs to the
-                // response that produced it, not to every later hit. The
-                // render path already refuses to store a cookie-setting
-                // response; this strip is the belt-and-braces for the
-                // other make_entry call sites.
-                .filter(|(k, _)| {
-                    !k.eq_ignore_ascii_case("content-security-policy")
-                        && !k.eq_ignore_ascii_case("set-cookie")
-                })
-                .collect(),
+            headers: stored,
             tags,
             policy: Policy {
                 ttl: self.ttl,
@@ -221,7 +249,7 @@ impl L0Cache {
                 stale_if_error: None,
                 soft_tags: true,
             },
-            stored_at: now_ms(),
+            stored_at,
             etag,
         }
     }
@@ -316,6 +344,31 @@ impl CachedResponse {
     /// PERF-04: the stored ETag, for a conditional-request 304.
     pub fn etag(&self) -> &str {
         &self.entry.etag
+    }
+
+    /// V2-F55: the conditional-request decision for this hit, through the
+    /// cache crate's canonical seam — [`oxide_fw_cache::serve_entry`]
+    /// composes the RFC 9110 §13 comparison (weak `If-None-Match` lists
+    /// and `*` first, `If-Modified-Since` against the stored
+    /// `Last-Modified` second) and the §15.4.5 validator set, so no host
+    /// re-rolls the semantics (the duplication the F54 serving half's doc
+    /// names the L0 stage as its evidence for).
+    ///
+    /// The [`oxide_fw_cache::ServeOutcome::NotModified`] arm IS the 304:
+    /// its header set is the answer (the echoed `ETag`, the policy's
+    /// `Cache-Control`, the `Date`, the stored `Last-Modified`). The
+    /// `Full` arm's body is the STORED representation — the sentinel
+    /// included — so a nonce pipeline materializes its own body over it:
+    /// the dispatch stage's full-hit path composes its own response and
+    /// consumes only the 304 arm. `now_secs` is unix seconds (the `Date`
+    /// header's value), passed in so the decision stays deterministic for
+    /// tests.
+    pub fn serve_conditional(
+        &self,
+        req_headers: &[(String, String)],
+        now_secs: u64,
+    ) -> oxide_fw_cache::ServeOutcome {
+        oxide_fw_cache::serve_entry(&self.entry, req_headers, now_secs)
     }
 
     /// Replace the nonce sentinel with `nonce` and build the final body in a
@@ -674,7 +727,20 @@ mod tests {
         let got = c.get("routes/index", "{}", "lang=").await.expect("hit");
         assert_eq!(got.status(), 200);
         assert_eq!(got.entry.body, b"<html>body</html>");
-        assert_eq!(got.headers().len(), 1);
+        // V2-F55: the stored header rides verbatim, beside the generated
+        // `Last-Modified` the IMS-only re-check compares against (the
+        // generated value fills the gap — one header per name).
+        assert_eq!(got.headers().len(), 2);
+        assert!(
+            got.headers()
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        );
+        assert!(
+            got.headers()
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+        );
     }
 
     #[tokio::test]
@@ -1236,6 +1302,149 @@ mod tests {
         assert!(
             c.get("routes/index", "", "").await.is_some(),
             "unrelated path must not sweep"
+        );
+    }
+
+    // ------------------------- V2-F55: the canonical conditional seam's store side
+
+    /// The stored etag is the RFC-shaped weak form — the value the 304 and
+    /// 200 responses serve as the `ETag` header — so a conforming client's
+    /// echo matches the canonical comparison verbatim (the F55 wire).
+    #[test]
+    fn make_entry_stores_the_rfc_shaped_weak_etag() {
+        let c = cache(60);
+        let entry = c.make_entry(200, vec![], b"BODY".to_vec(), vec![]);
+        assert!(
+            entry.etag.starts_with("W/\"") && entry.etag.ends_with('"') && entry.etag.len() > 5,
+            "the stored etag is the weak-quoted form: {:?}",
+            entry.etag
+        );
+        // The quoted hash inside is the same digest the old bare form held.
+        let quoted = &entry.etag[3..entry.etag.len() - 1];
+        let mut h = blake3::Hasher::new();
+        h.update(&entry.body);
+        assert_eq!(
+            quoted,
+            &h.finalize().to_hex()[..16],
+            "the digest is the body's"
+        );
+    }
+
+    /// A store without a `Last-Modified` gains the generated one — the
+    /// referent the IMS-only re-check compares against (the F55 upgrade).
+    #[test]
+    fn make_entry_generates_last_modified_when_absent() {
+        let c = cache(60);
+        let entry = c.make_entry(
+            200,
+            vec![("content-type".to_string(), "text/html".to_string())],
+            b"BODY".to_vec(),
+            vec![],
+        );
+        let lm = entry
+            .headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+            .count();
+        assert_eq!(lm, 1, "exactly one generated Last-Modified");
+        let (_, value) = entry
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+            .expect("present");
+        let secs = oxide_fw_cache::parse_http_date(value).expect("the generated date parses");
+        assert_eq!(secs, entry.stored_at / 1000, "the date is the store time");
+    }
+
+    /// A render that set its own `Last-Modified` keeps it verbatim — the
+    /// generated value only fills the gap (the stored-header-wins rule).
+    #[test]
+    fn make_entry_stored_last_modified_wins() {
+        let c = cache(60);
+        let entry = c.make_entry(
+            200,
+            vec![(
+                "Last-Modified".to_string(),
+                "Sun, 06 Nov 1994 08:49:37 GMT".to_string(),
+            )],
+            b"BODY".to_vec(),
+            vec![],
+        );
+        let lms: Vec<_> = entry
+            .headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+            .collect();
+        assert_eq!(lms.len(), 1, "one header, the stored one");
+        assert_eq!(lms[0].1, "Sun, 06 Nov 1994 08:49:37 GMT");
+    }
+
+    /// The `CachedResponse::serve_conditional` adapter answers the 304 with
+    /// the canonical validator set and falls through to the stored
+    /// representation when the validators do not match.
+    #[tokio::test]
+    async fn serve_conditional_composes_the_canonical_decision() {
+        let c = cache(60);
+        c.put(L0Put {
+            route: "r",
+            params: "",
+            vary: "",
+            status: 200,
+            headers: vec![("content-type".to_string(), "text/html".to_string())],
+            body: b"BODY".to_vec(),
+            tags: vec![],
+        })
+        .await;
+        let hit = c.get("r", "", "").await.expect("fresh");
+        // The echoed validator: a 304 with the full validator set, no body.
+        let out =
+            hit.serve_conditional(&[("if-none-match".to_string(), hit.etag().to_string())], 0);
+        let oxide_fw_cache::ServeOutcome::NotModified { headers } = out else {
+            panic!("the echoed validator answers NotModified, got {out:?}")
+        };
+        for name in ["etag", "cache-control", "date", "last-modified"] {
+            assert!(
+                headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(name)),
+                "the 304 set carries {name}: {headers:?}"
+            );
+        }
+        // A non-matching validator: the Full outcome — the STORED
+        // representation (sentinel included; the nonce pipeline
+        // materializes its own body, the stage's full-hit path stays).
+        let out =
+            hit.serve_conditional(&[("if-none-match".to_string(), "\"nope\"".to_string())], 0);
+        let oxide_fw_cache::ServeOutcome::Full {
+            status,
+            headers,
+            body,
+        } = out
+        else {
+            panic!("a mismatching validator serves in full, got {out:?}")
+        };
+        assert_eq!(status, 200);
+        assert!(
+            headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("content-type")),
+            "the stored headers ride the Full outcome"
+        );
+        assert_eq!(
+            body.as_slice(),
+            hit.entry.body.as_slice(),
+            "the stored body verbatim"
+        );
+        // The IMS-only re-check against the generated Last-Modified.
+        let (_, lm) = hit
+            .entry
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("last-modified"))
+            .expect("generated at make_entry")
+            .clone();
+        let out = hit.serve_conditional(&[("if-modified-since".to_string(), lm)], 0);
+        assert!(
+            matches!(out, oxide_fw_cache::ServeOutcome::NotModified { .. }),
+            "the IMS-only re-check answers NotModified"
         );
     }
 }
