@@ -15479,3 +15479,265 @@ async fn l0_conditional_inm_precedes_ims() {
     );
     assert_eq!(cache_label(&both), Some("L0-hit"));
 }
+
+// -------------------------------------------------------------------
+// V2-F59: the `cache.planeMount` boot wire — the §11.2 mount joins the
+// layered resolver family (the F46/F48 boolean shape over the F50
+// posture): the `--cache-plane-mount` flag on BOTH boots (the override
+// slot `apply_startup_env` writes pre-runtime through the
+// `cache_plane_mount_arg()` accessor), the `OXIDE_CACHE_PLANE_MOUNT`
+// env spelling over the pure parse core `cache_plane_mount_from` (the
+// falsy spellings `""`/`0`/`false`/`off` keep the mount off — the F48
+// contract — and garbage degrades loudly-but-honestly to the default-off
+// shape), and the `cache.planeMount` project baseline through the
+// layered `cache_plane_mount_with_config` resolver — flag > env >
+// config > default-off. The config crate's own parse pins ride
+// `crates/config/tests/cache_plane_mount_config.rs`. The boot's
+// composition rides `cache_plane_mount_provider` (the F49
+// `posture_probe_provider` shape): the service over the boot's own
+// tier, the tier doubling as the F58 health provider.
+
+/// The mount state lock: the pins that touch `OXIDE_CACHE_PLANE_MOUNT`
+/// AND the mount override slot serialize behind it (the
+/// `POSTURE_PATH_STATE_LOCK` shape — edition-2024 `set_var` concurrent
+/// with a `get_var` is the data race the P1 readiness posture exists
+/// for).
+static MOUNT_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The dev boot takes the flag: the opt-in mounts the shared plane.
+#[test]
+fn dev_cache_plane_mount_flag_parses() {
+    let cli = crate::Cli::parse_from(["oxide", "dev", "--cache-plane-mount"]);
+    match cli.command {
+        Command::Dev {
+            cache_plane_mount, ..
+        } => {
+            assert!(cache_plane_mount, "the dev boot's opt-in");
+        }
+        _ => panic!("expected the dev command"),
+    }
+}
+
+/// Absent on the dev boot, the flag is `false` — the env var keeps its
+/// spelling (the F46 shape never moves behind a boot without the flag).
+#[test]
+fn dev_cache_plane_mount_flag_defaults_to_false() {
+    let cli = crate::Cli::parse_from(["oxide", "dev"]);
+    match cli.command {
+        Command::Dev {
+            cache_plane_mount, ..
+        } => {
+            assert!(!cache_plane_mount, "the flag-absent default");
+        }
+        _ => panic!("expected the dev command"),
+    }
+}
+
+/// The serve boot takes the flag too: the mount is a production surface
+/// (the site AND the shared plane on one node — the F57 record), so the
+/// flag rides `oxide start` (the `root`/`port` multi-command precedent).
+#[test]
+fn start_cache_plane_mount_flag_parses() {
+    let cli = crate::Cli::parse_from(["oxide", "start", "--cache-plane-mount"]);
+    match cli.command {
+        Command::Start {
+            cache_plane_mount, ..
+        } => {
+            assert!(cache_plane_mount, "the serve boot's opt-in");
+        }
+        _ => panic!("expected the start command"),
+    }
+}
+
+/// The parse core's truthy spellings opt the mount in — the F48 bool
+/// family verbatim.
+#[test]
+fn cache_plane_mount_from_truthy_spellings_mount() {
+    for spelling in ["1", "true", "on"] {
+        assert!(
+            crate::observability::cache_plane_mount_from(Some(spelling)),
+            "`{spelling}` is a mount spelling"
+        );
+    }
+}
+
+/// The parse core's falsy spellings keep the mount off — the empty
+/// spelling is a real OFF choice, not a typo.
+#[test]
+fn cache_plane_mount_from_falsy_spellings_stay_off() {
+    for spelling in ["", "0", "false", "off"] {
+        assert!(
+            !crate::observability::cache_plane_mount_from(Some(spelling)),
+            "`{spelling}` is an off spelling"
+        );
+    }
+}
+
+/// Garbage degrades loudly-but-honestly to the default-off shape: a
+/// spelling that is not a bool never silently mounts the plane.
+#[test]
+fn cache_plane_mount_from_garbage_stays_off() {
+    for spelling in ["sure", "mount", "2"] {
+        assert!(
+            !crate::observability::cache_plane_mount_from(Some(spelling)),
+            "`{spelling}` degrades to the default-off shape"
+        );
+    }
+}
+
+/// The unset spelling: the default-off shape answers (the F40 doctrine —
+/// the boot is byte-identical when no layer speaks).
+#[test]
+fn cache_plane_mount_from_none_is_off() {
+    assert!(
+        !crate::observability::cache_plane_mount_from(None),
+        "the unset spelling keeps the mount off"
+    );
+}
+
+/// The layered resolver's no-layer shape: with no flag, no env and no
+/// config, the mount stays off.
+#[test]
+fn cache_plane_mount_without_any_layer_stays_off() {
+    let _g = MOUNT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    crate::observability::set_cache_plane_mount_override(None);
+    assert!(
+        !crate::observability::cache_plane_mount_with_config(None),
+        "no layer speaks, the default-off shape answers"
+    );
+}
+
+/// The flag's override slot wins over the env var (the
+/// `CACHE_PLANE_HEALTH_OVERRIDE` shape), and a cleared slot leaves the
+/// env var in charge.
+#[test]
+fn cache_plane_mount_override_wins_over_the_env_var() {
+    let _g = MOUNT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: pre-runtime in the boot; the pin serializes behind the
+    // state lock (the POSTURE_PATH_STATE_LOCK posture).
+    unsafe { std::env::set_var("OXIDE_CACHE_PLANE_MOUNT", "false") };
+    crate::observability::set_cache_plane_mount_override(Some(true));
+    assert!(
+        crate::observability::cache_plane_mount_with_config(None),
+        "the flag's slot wins over the env spelling"
+    );
+    crate::observability::set_cache_plane_mount_override(None);
+    assert!(
+        !crate::observability::cache_plane_mount_with_config(None),
+        "the slot cleared leaves the env var in charge"
+    );
+    // SAFETY: pin hygiene — the next pin's layer must start clean.
+    unsafe { std::env::remove_var("OXIDE_CACHE_PLANE_MOUNT") };
+}
+
+/// The env layer: a truthy spelling mounts even with no config baseline.
+#[test]
+fn cache_plane_mount_env_truthy_mounts() {
+    let _g = MOUNT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    crate::observability::set_cache_plane_mount_override(None);
+    // SAFETY: pin-local, behind the state lock.
+    unsafe { std::env::set_var("OXIDE_CACHE_PLANE_MOUNT", "true") };
+    assert!(
+        crate::observability::cache_plane_mount_with_config(None),
+        "the env spelling mounts the plane"
+    );
+    // SAFETY: pin hygiene.
+    unsafe { std::env::remove_var("OXIDE_CACHE_PLANE_MOUNT") };
+}
+
+/// The env layer's falsy spellings stop THAT layer only: a committed
+/// baseline below still answers — an operator's `off` is not the
+/// project's config being refused.
+#[test]
+fn cache_plane_mount_env_falsy_stops_only_the_env_layer() {
+    let _g = MOUNT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    crate::observability::set_cache_plane_mount_override(None);
+    // SAFETY: pin-local, behind the state lock.
+    unsafe { std::env::set_var("OXIDE_CACHE_PLANE_MOUNT", "off") };
+    assert!(
+        crate::observability::cache_plane_mount_with_config(Some(true)),
+        "the falsy env spelling stops the env layer; the baseline answers"
+    );
+    // SAFETY: pin hygiene.
+    unsafe { std::env::remove_var("OXIDE_CACHE_PLANE_MOUNT") };
+}
+
+/// The env layer is ABOVE the config layer: a truthy env spelling beats
+/// a committed `false` baseline (the precedence the F48 family holds).
+#[test]
+fn cache_plane_mount_env_truthy_beats_config_false() {
+    let _g = MOUNT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    crate::observability::set_cache_plane_mount_override(None);
+    // SAFETY: pin-local, behind the state lock.
+    unsafe { std::env::set_var("OXIDE_CACHE_PLANE_MOUNT", "1") };
+    assert!(
+        crate::observability::cache_plane_mount_with_config(Some(false)),
+        "the env layer outranks the baseline"
+    );
+    // SAFETY: pin hygiene.
+    unsafe { std::env::remove_var("OXIDE_CACHE_PLANE_MOUNT") };
+}
+
+/// The config baseline alone: `Some(true)` mounts, `Some(false)` pins
+/// off (both spellings are real choices — the F46 posture).
+#[test]
+fn cache_plane_mount_config_baseline_answers() {
+    let _g = MOUNT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    crate::observability::set_cache_plane_mount_override(None);
+    // SAFETY: pin hygiene — the env layer must start clean.
+    unsafe { std::env::remove_var("OXIDE_CACHE_PLANE_MOUNT") };
+    assert!(
+        crate::observability::cache_plane_mount_with_config(Some(true)),
+        "the committed opt-in mounts"
+    );
+    assert!(
+        !crate::observability::cache_plane_mount_with_config(Some(false)),
+        "the committed-off shape stays off"
+    );
+}
+
+// The boot's composition: `cache_plane_mount_provider` (the F49
+// `posture_probe_provider` shape) — the mount decision rides the boot's
+// own tier, and the F58 health provider attaches from the SAME Arc (the
+// natural provider: the mounted plane's `GET /health` answers the boot
+// tier's live pull).
+
+/// Mount off (the default), even with a tier: `None` — every pre-F59
+/// byte preserved.
+#[test]
+fn cache_plane_mount_provider_mount_off_is_none() {
+    let tier = std::sync::Arc::new(oxide_fw_cache::TieredCache::new_memory());
+    assert!(
+        crate::framework_shim::cache_plane_mount_provider(false, Some(&tier)).is_none(),
+        "the default-off shape never mounts"
+    );
+}
+
+/// Mount on, no tier: `None` — there is nothing to root the plane in
+/// (the posture gate's same shape).
+#[test]
+fn cache_plane_mount_provider_none_without_the_tier() {
+    assert!(
+        crate::framework_shim::cache_plane_mount_provider(true, None).is_none(),
+        "no tier, no mount"
+    );
+}
+
+/// Mount on, tier present: the service composes over the boot's own
+/// tier AND carries the health provider — the F58 arm answers on the
+/// mount (the balancer surface the F58 record promised).
+#[test]
+fn cache_plane_mount_provider_mounts_the_tier_with_health() {
+    let tier = std::sync::Arc::new(oxide_fw_cache::TieredCache::new_memory());
+    let mounted = crate::framework_shim::cache_plane_mount_provider(true, Some(&tier))
+        .expect("the mount composes");
+    assert!(
+        mounted.has_health_provider(),
+        "the natural provider rides the mount"
+    );
+    assert_eq!(
+        mounted.backing_kind(),
+        "tiered",
+        "the plane roots in the boot's own tier"
+    );
+}
