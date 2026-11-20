@@ -122,6 +122,13 @@ name = "serve"
 harness = false
 required-features = ["bench-util"]
 
+# F58: the health arm's cost (§20): the per-pull cost `GET /health` pays
+# (one CacheHealth snapshot + serde) against the unconfigured 404 floor.
+[[bench]]
+name = "plane_health"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
