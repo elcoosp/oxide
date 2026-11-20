@@ -713,15 +713,24 @@ pub(crate) async fn start_server_inner_full(
     // plane answers `/entry/`, `/tag/`, `/invalidate/` AND `GET /health`
     // on this boot's socket. `None` keeps the boot byte-identical (the
     // F40 doctrine).
+    //
+    // V2-F61: the boot's §20 exporter rides the same wire — the tier it
+    // roots in already fans every cache event onto the exporter (the
+    // F36/F37 construction), so the provider composes both §20 halves and
+    // the mounted plane answers `GET /metrics` too. A boot without an
+    // exporter (the test-stack shape) mounts the plane without the
+    // metrics arm — the mount's provider check keeps `/metrics` out of
+    // its path families (the F40 doctrine over the app's own route).
     let cache_plane = crate::framework_shim::cache_plane_mount_provider(
         crate::observability::cache_plane_mount_with_config(cfg.cache.plane_mount),
         stack.cache_tier_typed.as_ref(),
+        stack.cache_exporter.as_ref(),
     );
     if let Some(service) = &cache_plane {
         tracing::info!(
             handler = %service.backing_kind(),
             "cache plane mounted on this node's socket (§11.2): \
-             /entry/, /tag/, /invalidate/ and GET /health answer here"
+             /entry/, /tag/, /invalidate/, GET /health and GET /metrics answer here"
         );
     }
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
