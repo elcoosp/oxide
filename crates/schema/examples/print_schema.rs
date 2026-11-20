@@ -24,7 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let pretty = oxide_fw_schema::schema_pretty()?;
-    println!("the schema document: {} bytes, top-level type: object", pretty.len());
+    println!(
+        "the schema document: {} bytes, top-level type: object",
+        pretty.len()
+    );
 
     // The typed half: the pretty document re-parses (SCHEMA-002 guards
     // the impossible-not-JSON arm — a serde bug class, not user input).
