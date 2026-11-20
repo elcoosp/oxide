@@ -107,6 +107,9 @@ fn a_second_attach_replaces_the_plane() {
 // The slot survives the registry's own concurrent traffic: an observe on
 // another thread during a render with an attached plane neither deadlocks
 // nor drops the plane's rows (the render takes the slot's read lock only).
+// The raced route is polled up to a deadline, not read once: on a loaded
+// box the render can beat the observing thread's first landing, and the
+// pin's intent is "the raced route renders", not a scheduling bet.
 #[test]
 fn observe_and_render_with_an_attached_plane_coexist() {
     let m = std::sync::Arc::new(Metrics::new());
@@ -117,7 +120,16 @@ fn observe_and_render_with_an_attached_plane_coexist() {
             bg.observe("/raced", std::time::Duration::from_millis(1), 200);
         }
     });
-    let text = m.render();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let text = loop {
+        let rendered = m.render();
+        if rendered.contains("oxide_request_duration_ms_bucket")
+            || std::time::Instant::now() >= deadline
+        {
+            break rendered;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
     handle.join().expect("the observing thread joins");
     assert!(
         text.contains("oxide_cache_plane_alive 1"),
