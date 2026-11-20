@@ -183,6 +183,22 @@ name = "client_name_guard"
 harness = false
 required-features = ["bench-util"]
 
+# F67: the shell's concurrency bound — the bound's whole happy-path price
+# (one permit acquire before the spawn, one release at task end) against
+# the pre-F67 uncapped shell over the same GET.
+[[bench]]
+name = "conn_cap"
+harness = false
+required-features = ["bench-util"]
+
+# F68: the client's inflight bound — the bound's whole happy-path price
+# (one permit acquire before the socket opens, one release at
+# completion) against the pre-F68 unbounded client over the same GET.
+[[bench]]
+name = "client_inflight"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
