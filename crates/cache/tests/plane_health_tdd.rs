@@ -211,3 +211,41 @@ async fn the_health_arm_rides_the_socket_shell() {
         serde_json::from_slice(body).expect("the wire body is the CacheHealth JSON");
     assert_eq!(answered, fake());
 }
+
+// ------------------------------------------------------------------- the mount's routing seam (V2-F59)
+
+/// The F57 mount's routing seam (V2-F59): the mount must answer `/health`
+/// through the plane ONLY when a provider rides the service — a
+/// provider-less mount must never shadow an app's own `/health` route,
+/// while a provider-attached mount is exactly the surface the F58 record
+/// promised a balancer ("the probe a balancer can point at the shared
+/// node"). The accessor is the decision's input: the service knows its
+/// own posture, the mount asks instead of guessing.
+///
+/// Written FIRST (red): E0599 over the unresolved `has_health_provider`.
+#[test]
+fn has_health_provider_reflects_the_attached_state() {
+    let plain =
+        HttpCacheService::new(TieredCache::new_memory() as Arc<dyn oxide_fw_cache::CacheHandler>);
+    assert!(
+        !plain.has_health_provider(),
+        "no provider attached — the mount must not route /health into the plane"
+    );
+
+    let tier = TieredCache::new_memory();
+    let attached =
+        HttpCacheService::new(Arc::clone(&tier) as Arc<dyn oxide_fw_cache::CacheHandler>)
+            .with_health(Arc::clone(&tier) as Arc<dyn oxide_fw_cache::PlaneHealth>);
+    assert!(
+        attached.has_health_provider(),
+        "the natural provider rides — the mount routes /health through the plane"
+    );
+
+    let fake_attached =
+        HttpCacheService::new(TieredCache::new_memory() as Arc<dyn oxide_fw_cache::CacheHandler>)
+            .with_health(Arc::new(FakeHealth(fake())) as Arc<dyn oxide_fw_cache::PlaneHealth>);
+    assert!(
+        fake_attached.has_health_provider(),
+        "an injected provider counts the same as the natural one"
+    );
+}
