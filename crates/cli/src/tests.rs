@@ -15708,7 +15708,7 @@ fn cache_plane_mount_config_baseline_answers() {
 fn cache_plane_mount_provider_mount_off_is_none() {
     let tier = std::sync::Arc::new(oxide_fw_cache::TieredCache::new_memory());
     assert!(
-        crate::framework_shim::cache_plane_mount_provider(false, Some(&tier)).is_none(),
+        crate::framework_shim::cache_plane_mount_provider(false, Some(&tier), None).is_none(),
         "the default-off shape never mounts"
     );
 }
@@ -15718,7 +15718,7 @@ fn cache_plane_mount_provider_mount_off_is_none() {
 #[test]
 fn cache_plane_mount_provider_none_without_the_tier() {
     assert!(
-        crate::framework_shim::cache_plane_mount_provider(true, None).is_none(),
+        crate::framework_shim::cache_plane_mount_provider(true, None, None).is_none(),
         "no tier, no mount"
     );
 }
@@ -15729,7 +15729,7 @@ fn cache_plane_mount_provider_none_without_the_tier() {
 #[test]
 fn cache_plane_mount_provider_mounts_the_tier_with_health() {
     let tier = std::sync::Arc::new(oxide_fw_cache::TieredCache::new_memory());
-    let mounted = crate::framework_shim::cache_plane_mount_provider(true, Some(&tier))
+    let mounted = crate::framework_shim::cache_plane_mount_provider(true, Some(&tier), None)
         .expect("the mount composes");
     assert!(
         mounted.has_health_provider(),
@@ -15739,5 +15739,51 @@ fn cache_plane_mount_provider_mounts_the_tier_with_health() {
         mounted.backing_kind(),
         "tiered",
         "the plane roots in the boot's own tier"
+    );
+}
+
+/// V2-F61: mount on, tier AND the boot's §20 exporter present: the mount
+/// carries the metrics provider too — the composed `MetricsPlaneSource`
+/// answers `GET /metrics` with the live exposition (the scrape the F61
+/// record promises a collector), riding the same `--cache-plane-mount`
+/// opt-in the plane itself rides.
+#[test]
+fn cache_plane_mount_provider_mounts_the_tier_with_metrics() {
+    let tier = std::sync::Arc::new(oxide_fw_cache::TieredCache::new_memory());
+    let exporter = std::sync::Arc::new(oxide_fw_cache::MetricsCacheObserver::new());
+    let mounted =
+        crate::framework_shim::cache_plane_mount_provider(true, Some(&tier), Some(&exporter))
+            .expect("the mount composes");
+    assert!(
+        mounted.has_metrics_provider(),
+        "the composed §20 source rides the mount"
+    );
+    assert!(
+        mounted.has_health_provider(),
+        "the health provider rides beside it (the F59 shape, unchanged)"
+    );
+    assert_eq!(
+        mounted.backing_kind(),
+        "tiered",
+        "the plane roots in the boot's own tier"
+    );
+}
+
+/// V2-F61: mount on, tier present, NO exporter (the test-stack shape):
+/// the mount carries the health provider but NOT the metrics arm — the
+/// surface exists only where a provider rides (the F40 doctrine), so the
+/// app's own `/metrics` route survives on such a boot.
+#[test]
+fn cache_plane_mount_provider_without_an_exporter_skips_the_metrics_arm() {
+    let tier = std::sync::Arc::new(oxide_fw_cache::TieredCache::new_memory());
+    let mounted = crate::framework_shim::cache_plane_mount_provider(true, Some(&tier), None)
+        .expect("the mount composes");
+    assert!(
+        !mounted.has_metrics_provider(),
+        "no exporter, no metrics arm — the app's own /metrics route survives"
+    );
+    assert!(
+        mounted.has_health_provider(),
+        "the health provider rides regardless (the F59 shape, unchanged)"
     );
 }
