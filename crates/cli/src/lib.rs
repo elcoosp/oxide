@@ -82,6 +82,11 @@ mod framework_shim;
 // crate-internal, the `mod args; pub use args::*` shape).
 pub use framework_shim::{TierCachePosture, cache_posture_probe_json, posture_probe_provider};
 mod l0_cache;
+// V2-F55: the L0 conditional seam's public face — the cache handle, the
+// hit envelope and the nonce sentinel the conditional walkthrough
+// composes (the bench and the example reuse them; the module's
+// internals stay crate-internal, the framework_shim shape).
+pub use l0_cache::{CachedResponse, L0Cache, NONCE_SENTINEL};
 pub mod loader_shim;
 mod modules_loader;
 pub mod precompile;
