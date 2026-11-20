@@ -8,8 +8,9 @@
 //!   every scrape pays.
 //! - `exposition/render-cache-plane`: the render with the slot attached —
 //!   the delta the cache-plane families add per scrape (one closure call
-//!   + the append; the closure here renders the F30 exporter's real
+//!   plus the append; the closure here renders the F30 exporter's real
 //!   family count, nine families × three lines).
+//!
 //! - `exposition/attach`: the `set_cache_plane` attach itself (boot-time,
 //!   once — pinned for completeness, not for the dashboards).
 
