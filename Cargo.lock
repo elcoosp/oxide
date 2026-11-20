@@ -6747,6 +6747,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "moka",
+ "oxide-fw-cache",
  "oxide-fw-config",
  "oxide-fw-diagnostics",
  "oxide-fw-odf",
