@@ -85,7 +85,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo run -p oxide-fw-cli --quiet -- docs generate --root . --check
+      # The `--root` argument rides the `docs` parent command (clap
+      # rejects it after the subcommand): `docs --root . generate --check`.
+      - run: cargo run -p oxide-fw-cli --quiet -- docs --root . generate --check
   wasm32-edge:
     name: wasm32 edge bundle gate (P0-1c)
     runs-on: ubuntu-latest
