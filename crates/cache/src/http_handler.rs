@@ -16,6 +16,14 @@
 //! converge. A network error degrades to a miss/no-op — the local tier keeps
 //! serving, and the build/render proceeds (a remote cache is an optimization).
 //!
+//! Since V2-F68 the client's fan-out carries its own bound:
+//! `with_inflight_cap` gates `request` on a permit per concurrent
+//! exchange (the verbs and the F63 probes alike), acquired BEFORE the
+//! socket opens and INSIDE the deadline window — a saturated cap
+//! degrades within the F60 clock, never past it, and the default stays
+//! the pre-F68 unbounded shape (the F60 posture: the operator opts in,
+//! the choice is greppable).
+//!
 //! Since V2-F63 the client also carries the PULL side of the plane's
 //! observability surfaces: the [`PlanePeer`] trait's probes answer "how is
 //! my remote cache doing?" — the F58 `GET /health` posture pull decoded
@@ -39,7 +47,9 @@
 
 use crate::{Entry, Result, auth, codec, err, health::CacheHealth};
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 /// An HTTP-backed `CacheHandler`.
 pub struct HttpCacheHandler {
@@ -52,6 +62,18 @@ pub struct HttpCacheHandler {
     /// (the default) for the pre-F65 unbounded read — the F60 posture for
     /// the client half: the operator opts in, the choice is greppable.
     read_limit: Option<usize>,
+    /// V2-F68: the inflight bound's operator state (`with_inflight_cap`),
+    /// `None` (the default) for the pre-F68 unbounded fan-out — the F60
+    /// posture again. Read back via [`HttpCacheHandler::inflight_cap`];
+    /// set TOGETHER with the gate below, never alone.
+    inflight_cap: Option<usize>,
+    /// V2-F68: the inflight bound's resource — the permit gate every
+    /// `request` acquires (the verbs and the F63 probes alike), built by
+    /// `with_inflight_cap` and `None` when no cap rides. The permit is
+    /// acquired INSIDE the deadline window (`request` schedules
+    /// [`HttpCacheHandler::gated`]), so a saturated cap degrades within
+    /// the F60 clock, never past it.
+    inflight_gate: Option<Arc<Semaphore>>,
 }
 
 impl HttpCacheHandler {
@@ -60,6 +82,8 @@ impl HttpCacheHandler {
             base: base.into().trim_end_matches('/').to_string(),
             deadline: None,
             read_limit: None,
+            inflight_cap: None,
+            inflight_gate: None,
         }
     }
 
@@ -93,6 +117,44 @@ impl HttpCacheHandler {
     #[must_use]
     pub fn read_limit(&self) -> Option<usize> {
         self.read_limit
+    }
+
+    /// Bound the client's CONCURRENCY (V2-F68): at most `cap` exchanges
+    /// are on the wire at once; an exchange past the cap waits for a
+    /// permit BEFORE its socket opens, inside the deadline window.
+    ///
+    /// The client opens one fresh socket per exchange (`Connection:
+    /// close`) and degrades transport failures through this file's arms —
+    /// but nothing bounded HOW MANY exchanges ran at once: a render
+    /// fanning out over a hundred keys opened a hundred concurrent
+    /// sockets against the same plane, and a struggling peer met a
+    /// thundering herd instead of a queue. The F60 deadline bounds an
+    /// exchange's TIME, the F65 read bound bounds its MEMORY, the F66
+    /// guard bounds its NAMES — the F68 inflight cap bounds the client's
+    /// concurrency, the last unbounded resource of the fan-out. The
+    /// permit rides the exchange's whole life and is acquired INSIDE the
+    /// deadline window ([`HttpCacheHandler::request`] schedules
+    /// [`HttpCacheHandler::gated`]), so a saturated cap degrades within
+    /// the F60 clock — a loud `CACHE-HTTP` deadline `Err`, never a hang —
+    /// and the F63 probes ride the same gate (they are `request`
+    /// consumers like any verb). Chainable; `None` (the default) stays
+    /// the pre-F68 unbounded shape — byte-identical for every existing
+    /// deployment, the F60 posture: the operator opts in, the choice is
+    /// greppable.
+    #[must_use]
+    pub fn with_inflight_cap(mut self, cap: usize) -> Self {
+        self.inflight_cap = Some(cap);
+        self.inflight_gate = Some(Arc::new(Semaphore::new(cap)));
+        self
+    }
+
+    /// The attached inflight bound, `None` when the client is unbounded
+    /// (the default) — the introspection seam the F60 `deadline()`
+    /// accessor established: tests and hosts pin the state instead of
+    /// guessing it.
+    #[must_use]
+    pub fn inflight_cap(&self) -> Option<usize> {
+        self.inflight_cap
     }
 
     /// The request-line trust boundary (V2-F66): the public predicate a
@@ -169,14 +231,18 @@ impl HttpCacheHandler {
     /// it degraded under), never a bare `String`. The V2-F60 deadline
     /// wraps the WHOLE exchange: connect, write and read share one
     /// budget, so a peer that accepts and never answers degrades on the
-    /// same clock a refused connection already rode.
+    /// same clock a refused connection already rode. Since V2-F68 the
+    /// scheduled future is [`HttpCacheHandler::gated`] — the inflight
+    /// bound's permit rides INSIDE the deadline window, so a saturated
+    /// cap degrades on that same clock too (the queue is part of the
+    /// exchange).
     async fn request(
         &self,
         method: &str,
         url: &str,
         body: Option<&[u8]>,
     ) -> Result<(u16, Vec<u8>)> {
-        let exchange = self.exchange(method, url, body);
+        let exchange = self.gated(method, url, body);
         if let Some(deadline) = self.deadline {
             match tokio::time::timeout(deadline, exchange).await {
                 Ok(result) => result,
@@ -196,6 +262,23 @@ impl HttpCacheHandler {
             }
         } else {
             exchange.await
+        }
+    }
+
+    /// The inflight-bound wrapper `request` schedules (V2-F68): the
+    /// permit is acquired BEFORE the socket opens and rides the whole
+    /// exchange, so at most `cap` exchanges are on the wire at once —
+    /// verbs and probes alike. Without a cap this is the pre-F68 shape
+    /// verbatim (the exchange, one wrapper hop).
+    async fn gated(&self, method: &str, url: &str, body: Option<&[u8]>) -> Result<(u16, Vec<u8>)> {
+        if let Some(gate) = &self.inflight_gate {
+            let _permit = gate
+                .acquire()
+                .await
+                .map_err(|e| err("CACHE-HTTP", format!("the inflight gate: {e}")))?;
+            self.exchange(method, url, body).await
+        } else {
+            self.exchange(method, url, body).await
         }
     }
 
@@ -308,7 +391,33 @@ impl crate::CacheHandler for HttpCacheHandler {
                     Err(e) => Err(err("CACHE-HTTP", format!("entry decode: {e}"))),
                 }
             }
-            Ok(_) | Err(_) => Ok(None),
+            // V2-F68 session micro-debt: the last SILENT degradation
+            // arms in the file learned the loud convention (the
+            // F65-session repair's class — `tag_keys` and
+            // `invalidate_tag` already warn). Behavior unchanged —
+            // the §11.2 contract degrades to a miss, the local tier
+            // keeps serving — the SILENCE is the repair: a non-200
+            // names the status (the plane's 500 handler-failure arm
+            // is the shape to expect), a transport failure names the
+            // error.
+            Ok((status, _)) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    key = %key,
+                    status,
+                    "the remote entry lookup answered a non-200; treating as a miss"
+                );
+                Ok(None)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    key = %key,
+                    error = %e,
+                    "the remote entry lookup failed; treating as a miss"
+                );
+                Ok(None)
+            }
         }
     }
 
