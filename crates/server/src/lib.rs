@@ -2369,6 +2369,18 @@ pub struct Pipeline {
     /// a boot that never opted in leaks nothing. Attached via
     /// [`Pipeline::with_cache_posture`].
     pub cache_posture: Option<Arc<dyn CachePosture>>,
+    /// V2-F57: the mounted cache plane (§11.2). F53 minted the plane's HTTP
+    /// service — the `HttpCacheHandler` client's own server half — and
+    /// nothing hosted it; the mount IS the host: when `Some`, the three
+    /// plane path families (`/entry/{key}`, `/tag/{tag}`, `/invalidate/{tag}`)
+    /// answer through the service's pure routing core on THIS server's
+    /// socket — one port, one TLS/firewall surface, the site and the shared
+    /// plane on the same node, a second node's `cache.handler =
+    /// { type: 'http', url }` pointing at the mount. When `None` (the
+    /// default) the plane paths fall through to dispatch byte-identically —
+    /// the F40 doctrine; an app serving its own `/entry/…` route is never
+    /// intercepted. Attached via [`Pipeline::with_cache_plane`].
+    pub cache_plane: Option<Arc<oxide_fw_cache::HttpCacheService>>,
     /// Optional inspector provider (§13.4). When `Some`, `/__oxide` and
     /// `/__oxide/state` return the inspector snapshot. Never set in production.
     pub inspector: Option<Arc<dyn InspectorSnapshot>>,
@@ -3064,6 +3076,7 @@ impl Default for Pipeline {
             metrics: None,
             posture_path: String::new(),
             cache_posture: None,
+            cache_plane: None,
             inspector: None,
             open_editor: None,
             cost_endpoint: None,
@@ -4301,6 +4314,15 @@ enum NativePrefix {
     },
     /// Proceed to dispatch carrying the merged rule headers.
     Dispatch(Vec<(String, String)>, Option<String>),
+    /// V2-F57: the mounted cache plane (§11.2). The sync prefix captured
+    /// the transport-free exchange ([`oxide_fw_cache::PlaneRequest`]) from
+    /// the already-buffered body; the async arm runs the service's pure
+    /// routing core and answers the plane's status/body verbatim — the
+    /// same split the `ServerFn`/`LocalImage`/`RemoteImage` variants ride.
+    CachePlane {
+        service: Arc<oxide_fw_cache::HttpCacheService>,
+        request: oxide_fw_cache::PlaneRequest,
+    },
 }
 
 impl Pipeline {
@@ -4404,6 +4426,31 @@ impl Pipeline {
     #[must_use]
     pub fn with_posture_path(mut self, path: impl Into<String>) -> Self {
         self.posture_path = path.into();
+        self
+    }
+
+    /// V2-F57: mount the cache plane's HTTP service on this server's
+    /// socket (§11.2). F53's service composed any `CacheHandler` behind the
+    /// `HttpCacheHandler` client's protocol but had no production host —
+    /// the mount is the host: the three plane path families answer through
+    /// the service's pure routing core (`respond`), the trust boundary
+    /// (forged PUTs are 400s that never store) rides the service itself,
+    /// and the plane shares the site's port, TLS termination and rules
+    /// surface. When `None` (the default) production is byte-identical:
+    /// the plane paths fall through to dispatch. Chainable.
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use oxide_fw_cache::HttpCacheService;
+    /// use oxide_fw_server::Pipeline;
+    ///
+    /// let tier = oxide_fw_cache::TieredCache::new_memory();
+    /// let plane = HttpCacheService::new(tier as Arc<dyn oxide_fw_cache::CacheHandler>);
+    /// let pipeline = Pipeline::default().with_cache_plane(Arc::new(plane));
+    /// ```
+    #[must_use]
+    pub fn with_cache_plane(mut self, plane: Arc<oxide_fw_cache::HttpCacheService>) -> Self {
+        self.cache_plane = Some(plane);
         self
     }
 
@@ -4543,6 +4590,45 @@ impl Pipeline {
                     started.elapsed(),
                 );
                 Box::pin(std::future::ready(finished).instrument(span))
+            }
+            NativePrefix::CachePlane { service, request } => {
+                // §11.2: the mounted plane answers through the service's
+                // pure routing core — statuses and bodies verbatim (the
+                // plane's own observability arms fire inside `respond`,
+                // under `CACHE-HTTP`; the mount adds none). The §20 shape
+                // matches the other native branches: one `_native`
+                // observation and one request trace, the pipeline's own.
+                let request_id = req.request_id.clone();
+                let method = req.method.clone();
+                let cookie = req.header("cookie").map(str::to_string);
+                let trace = req.trace.clone();
+                let url_path = path_of(&req.url);
+                Box::pin(
+                    async move {
+                        let resp = service.respond(&request).await;
+                        let answered = OxideResponse::new(resp.status, Bytes::from(resp.body));
+                        if let Some(m) = &metrics {
+                            m.observe("_native", started.elapsed(), answered.status);
+                        }
+                        let finished = self.finish_response_with_request(
+                            answered,
+                            &[],
+                            &request_id,
+                            Some(&method),
+                            cookie.as_deref(),
+                        );
+                        self.record_request_trace(
+                            &request_id,
+                            &method,
+                            &url_path,
+                            trace.as_ref(),
+                            finished.status,
+                            started.elapsed(),
+                        );
+                        finished
+                    }
+                    .instrument(span),
+                )
             }
             NativePrefix::LocalImage {
                 endpoint,
@@ -5222,6 +5308,33 @@ impl Pipeline {
                     .with_header("content-type", "application/json; charset=utf-8")
                     .with_header("cache-control", "no-store"),
             );
+        }
+
+        // (3b''') the mounted cache plane (V2-F57, §11.2). When a service is
+        // mounted, the plane's three path families answer through its pure
+        // routing core — any method: the plane's own method table owns the
+        // 405s, the 404s and the trust boundary (a forged PUT is a 400 that
+        // never stores). The exchange rides the plane's transport-free shape
+        // (`PlaneRequest`: method, path, the already-buffered body) because
+        // the routing core is the same one the service's own socket shell
+        // drives — the mount changes WHERE the plane answers, never HOW.
+        // Before static/dispatch: an attached mount means the plane owns its
+        // families; unattached (the default), the None check costs one
+        // branch and every pre-F57 byte is preserved (the F40 doctrine).
+        if let Some(service) = &self.cache_plane {
+            let is_plane_path = path.starts_with("/entry/")
+                || path.starts_with("/tag/")
+                || path.starts_with("/invalidate/");
+            if is_plane_path {
+                return NativePrefix::CachePlane {
+                    service: Arc::clone(service),
+                    request: oxide_fw_cache::PlaneRequest {
+                        method: req.method.clone(),
+                        path: path.clone(),
+                        body: req.body.to_vec(),
+                    },
+                };
+            }
         }
 
         // (3c) image endpoint (§16.1). GET/HEAD only. The transform runs
