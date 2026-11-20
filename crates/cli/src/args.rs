@@ -120,6 +120,16 @@ pub enum Command {
         /// default (`/-/health`).
         #[arg(long, value_name = "PATH")]
         cache_posture_path: Option<String>,
+        /// V2-F59: the F57 cache plane's mount opt-in, beside the
+        /// `OXIDE_CACHE_PLANE_MOUNT` env var (the flag wins). The boot
+        /// composes `HttpCacheService` over its own tier — the §11.2
+        /// shared plane answers `/entry/`, `/tag/`, `/invalidate/` and
+        /// (the tier doubling as the F58 provider) `GET /health` on the
+        /// site's own socket; the value rides pre-runtime into the
+        /// override slot (the `cache_plane_coverage` shape). Default
+        /// off: the boot's shape stays byte-identical.
+        #[arg(long)]
+        cache_plane_mount: bool,
     },
     /// Build for production (all environments + manifests, §6).
     Build {
@@ -190,6 +200,14 @@ pub enum Command {
         /// OFF; garbage degrades loudly to the recorded default.
         #[arg(long, value_name = "PATH")]
         cache_posture_path: Option<String>,
+        /// V2-F59: the F57 cache plane's mount opt-in, beside the
+        /// `OXIDE_CACHE_PLANE_MOUNT` env var (the flag wins). The mount
+        /// is a production surface (the site AND the shared plane on one
+        /// node), so the flag rides the serve boot too (the
+        /// `root`/`port` multi-command shape). Default off: the boot's
+        /// shape stays byte-identical.
+        #[arg(long)]
+        cache_plane_mount: bool,
     },
     /// Preview the production build locally.
     Preview {
@@ -610,6 +628,22 @@ impl Command {
             _ => None,
         }
     }
+
+    /// V2-F59: the `--cache-plane-mount` argument, when this command
+    /// takes one. Read by [`apply_startup_env`] so the override slot is
+    /// written pre-runtime (the `cache_plane_health_arg` shape — the
+    /// mount is a production surface, so BOTH boots carry the flag).
+    pub fn cache_plane_mount_arg(&self) -> bool {
+        match self {
+            Command::Dev {
+                cache_plane_mount, ..
+            }
+            | Command::Start {
+                cache_plane_mount, ..
+            } => *cache_plane_mount,
+            _ => false,
+        }
+    }
 }
 
 /// P1 (readiness): ALL startup-time environment writes happen HERE, in the
@@ -704,6 +738,18 @@ pub fn apply_startup_env(cli: &Cli) {
     if let Some(path) = cli.command.cache_posture_path_arg() {
         crate::observability::set_cache_posture_path_override(Some(path));
     }
+    // V2-F59: `--cache-plane-mount` beside the `OXIDE_CACHE_PLANE_MOUNT`
+    // env var (the flag wins). The override slot is the
+    // `CACHE_PLANE_HEALTH_OVERRIDE` shape — a command-level fact decided
+    // once pre-runtime; the env var remains the shell user's spelling.
+    // The mount is a production surface (the site AND the shared plane
+    // on one node), so the arm rides BOTH boot commands, outside the
+    // dev-mode gate. A present flag mounts the plane; an absent flag
+    // leaves the slot empty and the env var in charge (the flag cannot
+    // spell "off" — the falsy spellings do).
+    if cli.command.cache_plane_mount_arg() {
+        crate::observability::set_cache_plane_mount_override(Some(true));
+    }
     // PERF-23: `oxide start --no-warmup` skips the renderer warm-up. Read
     // once by the warm-up block in `start_server_inner_full`.
     if let Command::Start {
@@ -782,6 +828,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // `apply_startup_env` into its override slot pre-runtime.
             cache_plane_health: _,
             cache_posture_path: _,
+            // V2-F59: same posture — the mount opt-in rode
+            // `apply_startup_env` into its override slot pre-runtime.
+            cache_plane_mount: _,
         } => {
             cmd_dev(
                 &root,
@@ -827,6 +876,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // `apply_startup_env` into its override slot pre-runtime.
             cache_plane_health: _,
             cache_posture_path: _,
+            // V2-F59: same posture — the mount opt-in rode
+            // `apply_startup_env` into its override slot pre-runtime.
+            cache_plane_mount: _,
         } => cmd_serve(&root, port, "oxide start", w).await,
         Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
