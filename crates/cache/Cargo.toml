@@ -137,6 +137,15 @@ name = "handler_deadline"
 harness = false
 required-features = ["bench-util"]
 
+# F61: the plane's metrics arm — the full scrape cost (both §20 halves:
+# the counter pull + render, the gauge pull + render) against the
+# unconfigured 404 floor and the render-only shape a host's own scrape
+# rides.
+[[bench]]
+name = "plane_metrics"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 redis = ["dep:redis"]
 s3 = ["dep:object_store", "dep:futures"]
