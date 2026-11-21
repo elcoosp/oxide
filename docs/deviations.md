@@ -346,6 +346,63 @@ substrate call, absent the superseded loops) and a recorded orig-side
 substitution for `stage_route`'s `LayoutLoadSpec` verdict carry — the other
 eight stages stay token-checked verbatim.
 
+## V2-A06 follow-up — the /__data leg joins the load graph (2026-11-21)
+
+The 2026-11-16 adoption deferred exactly one thing: "the /__data path keeps
+its sequential chain and reads only the spec's id/path pair (parallelizing
+it is a follow-up)." This closes that follow-up: `route_data_response`
+(`crates/cli/src/data_route.rs`) builds the SAME node list `stage_loaders`
+builds — a `LoadNode` per layout carrying its own scanner verdict
+(`LayoutLoadSpec.needs_parent` from the RouteContextTable) plus the page
+node, whose verdict now rides the args (`RouteDataArgs.page_needs_parent`,
+fed from `RequestCtx::needs_parent` by `stage_data_route` — recorded as an
+orig-side substitution for `data_route` in `split_selfcheck.py`, the
+established precedent) — and runs them through ONE
+`run_load_graph_outcomes` call. A client-side navigation's data envelope
+stops paying the sequential waterfall the SSR render stopped paying, and
+both legs share the substrate's semantics verbatim: independent loads run
+concurrently, `parent()`-calling loads serialize behind their predecessor,
+the FIRST short-circuit in input order wins, and a runner failure names its
+node (`Failed { index, code, message }` keeps the layout-vs-page error
+bodies; the diagnostic code joins the log per the loaders arm's
+`tracing::error!` convention). The graph's `overlap-saved` staged row
+(sum(elapsed) − wall) is recorded here too, so the inspector reads one
+saving convention across both legs.
+
+**Deliberate deltas (substrate-authoritative, mirroring the SSR
+adoption):** `parent_data` threads only along `needs_parent` chains — an
+independent layout reads Null where the sequential loop threaded its
+predecessor's data unconditionally (a verdict false-positive only
+serializes, so a loader that READS `parent()` is always threaded; pinned
+red→green by
+`data_route_independent_layout_reads_null_parent_data_under_the_graph`).
+Every node starts from the middleware locals: the sequential loop threaded
+layout session mutations through `locals_for_load` into later loads and the
+page — concurrent loads cannot, and SSR does not either — so a cookie's
+`before` baseline is the inbound post-middleware session for every node.
+On a short-circuit terminal result the layouts that ran before the winner
+are not carried by `LoadResult::ShortCircuit`, so a page short-circuit no
+longer re-attaches the last layout's session cookie — the same shape the
+SSR short-circuit arm consumes. The /__data envelope, ODF encode, metrics
+labels and the `[middleware, load]` waterfall row are unchanged.
+
+**Test placement (the V2.0 item-3 rule):** the pipeline pins live in
+`crates/cli/src/tests.rs` beside the SSR graph pins —
+`data_route_independent_layout_loads_overlap_under_the_load_graph`
+(two layouts + page, peak concurrency 3; the sequential chain measured 1),
+`data_route_threads_parent_data_through_parent_calling_loads` (the §9.2
+parity walk: outer → blog → page, each reading its predecessor's data —
+green on both shapes by design) and
+`data_route_independent_layout_reads_null_parent_data_under_the_graph`
+(the verdict-authoritative delta, red against the unconditional chain).
+Both red pins ran RED against the pre-adoption tree and GREEN after
+(`scripts/gates/a06_data_route_red.log`,
+`scripts/gates/a06_data_route_green.log`; full CLI suite 497 passed /
+0 failed). The substrate is untouched. The missing A06 walkthrough example
+lands with this leg (`crates/dispatch/examples/load_graph.rs` — the
+three-node chain printed node-by-node with the elapsed column and the
+`overlap-saved` mark).
+
 ## V2-B01 + B02 unified match view adoption — the dispatch match path (2026-11-16)
 
 The A01 phase-3 seam made both Wave-B integration points contained; they
