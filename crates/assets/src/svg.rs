@@ -189,10 +189,7 @@ pub fn referenced_svg_ids(svg: &str) -> BTreeSet<String> {
     let mut from = 0;
     while let Some(found) = lower[from..].find("url(#") {
         let start = from + found + "url(#".len();
-        let end = lower[start..]
-            .find(')')
-            .map(|i| start + i)
-            .unwrap_or(lower.len());
+        let end = lower[start..].find(')').map_or(lower.len(), |i| start + i);
         let id = svg[start..end].trim();
         if !id.is_empty() {
             ids.insert(id.to_string());
