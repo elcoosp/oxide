@@ -5,9 +5,12 @@
 //! - WebP uses the `image` crate's **lossless-only** encoder. If a future/alternate
 //!   build rejects an encode, we fall back to PNG, set `result.format` to the actual
 //!   output format (PNG) and append a warning diagnostic with code `AST-WEBP`.
-//! - AVIF encode is real: `?format=avif` encodes via `ravif` (pure Rust).
-//!   The stale "returns AST-AVIF" note was removed in BUG-14; failures
-//!   surface as `AST-AVIF` diagnostics with the ravif error.
+//! - AVIF encode is real: `?format=avif` encodes via `ravif` (pure Rust) behind
+//!   the crate's non-default `avif` feature. Failures under the feature surface
+//!   as `AST-AVIF` diagnostics with the ravif error (BUG-14); WITHOUT the
+//!   feature the AVIF capability is refused loudly — the same `AST-AVIF` code
+//!   names the missing feature and the response carries the WebP/PNG fallback
+//!   with `result.format` stating the actual output (the WebP arm's shape).
 //! - Placeholder pipeline: resize to 16px wide (aspect preserved), JPEG; `Blur` adds
 //!   two extra blur passes (`imageops::blur`, σ=2) — the classic LQIP look.
 //! - `fast_image_resize`, `ravif`, `webp`, `oxipng` per §16.1 are backend-swap items,
@@ -112,8 +115,47 @@ fn encode(
             }
         }
         ImageFormat::Avif => {
-            let bytes = encode_avif(rgba, quality)?;
-            Ok((bytes, ImageFormat::Avif, Vec::new()))
+            // M1 (capability matrix): the ravif encoder rides the non-default
+            // `avif` feature. Without it the AVIF capability is refused
+            // loudly — the `AST-AVIF` diagnostic names the missing feature —
+            // and the response carries the next available encoding with
+            // `result.format` stating the actual output: the same documented
+            // fallback shape as the WebP arm above.
+            #[cfg(not(feature = "avif"))]
+            {
+                let _ = quality; // the encoder speed knob rides the `avif` feature
+                let diag = Diagnostic::warning(
+                    "AST-AVIF",
+                    "AVIF output requires the `avif` feature (rebuild with `cargo build --features avif`); emitted WebP instead",
+                );
+                let mut cursor = Cursor::new(Vec::new());
+                let enc = image::codecs::webp::WebPEncoder::new_lossless(&mut cursor);
+                match enc.encode(rgba.as_raw(), w, h, image::ExtendedColorType::Rgba8) {
+                    Ok(()) => Ok((cursor.into_inner(), ImageFormat::Webp, vec![diag])),
+                    Err(e) => {
+                        // The documented last resort: PNG bytes, actual format stated.
+                        let png = encode_png_fallback(rgba)?;
+                        Ok((
+                            png,
+                            ImageFormat::Png,
+                            vec![
+                                diag,
+                                Diagnostic::warning(
+                                    "AST-WEBP",
+                                    format!(
+                                        "webp encode unavailable in this image build; emitted PNG instead: {e}"
+                                    ),
+                                ),
+                            ],
+                        ))
+                    }
+                }
+            }
+            #[cfg(feature = "avif")]
+            {
+                let bytes = encode_avif(rgba, quality)?;
+                Ok((bytes, ImageFormat::Avif, Vec::new()))
+            }
         }
     }
 }
@@ -123,16 +165,20 @@ fn encode(
 ///
 /// Speed is the `images.avifSpeed` config knob (§V2-C09, default 6 —
 /// ravif's documented middle rate); the caller (the images endpoint's job
-/// model) threads the config value through.
+/// model) threads the config value through. Behind the crate's `avif`
+/// feature (the rav1e/nasm chain).
+#[cfg(feature = "avif")]
 fn encode_avif(rgba: &image::RgbaImage, quality: u8) -> Result<Vec<u8>> {
     encode_avif_at_speed(rgba, quality, DEFAULT_AVIF_SPEED)
 }
 
 /// The `images.avifSpeed` default (§V2-C09): ravif's documented middle rate.
+#[cfg(feature = "avif")]
 pub(crate) const DEFAULT_AVIF_SPEED: u8 = 6;
 
 /// [`encode_avif`] with the config-selected encoder speed (1..=10; the
 /// config layer validates the range, `CFG-AVIF`).
+#[cfg(feature = "avif")]
 pub(crate) fn encode_avif_at_speed(
     rgba: &image::RgbaImage,
     quality: u8,
