@@ -8,6 +8,47 @@
 
 use crate::*;
 
+/// V2-B01 tail: one page route's prerender dispatch answers, read off the
+/// boot-time [`oxide_fw_router::RouteContextTable`] row.
+///
+/// The prerender walk used to re-derive these per page route with three
+/// O(entries) scans (the layout-chain prefix walk, the layout-module pair
+/// with a `stat` per layout, the nearest-ancestor error walk) — the perf
+/// #10 arms of the spec's evidence table. The table precomputes all three
+/// once over the scanned tree; this mapping is the ONE definition of how a
+/// table row becomes the prerender locals (pinned against the scan oracle
+/// by `prerender_route_answers_match_the_scan_oracle`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PrerenderRouteAnswers {
+    /// The §8.2 layout chain ids, outermost first.
+    pub(crate) layout_ids: Vec<String>,
+    /// The §9.2 `(id, layout.server.ts path)` pairs — only layouts with a
+    /// server module participate (the scanner's `has_server_module` flag,
+    /// the same flag-driven verdict the serving side's `stage_route` reads;
+    /// no per-layout stat), paths joined under the routes root.
+    pub(crate) layout_modules: Vec<(String, std::path::PathBuf)>,
+    /// The nearest ancestor `error.tsx` route id (innermost wins).
+    pub(crate) error_route_id: Option<String>,
+}
+
+/// Map one context-table row to the prerender locals (see
+/// [`PrerenderRouteAnswers`]).
+#[must_use]
+pub(crate) fn prerender_route_answers(
+    ctx: &oxide_fw_router::RouteContext,
+    routes_root: &std::path::Path,
+) -> PrerenderRouteAnswers {
+    PrerenderRouteAnswers {
+        layout_ids: ctx.layout_chain.iter().map(|i| i.0.clone()).collect(),
+        layout_modules: ctx
+            .layout_loads
+            .iter()
+            .map(|l| (l.id.0.clone(), routes_root.join(&l.server_file)))
+            .collect(),
+        error_route_id: ctx.error_route.as_ref().map(|i| i.0.clone()),
+    }
+}
+
 // >>> phase-wrapper (not part of the moved body; split_selfcheck --phases strips this block)
 pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
     let rootp = &cx.rootp;
@@ -37,6 +78,12 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
     // Runtime-valued `generateParams` cannot be evaluated at build time without
     // a JS worker (post-MLP) and is skipped with a printed notice.
     let nonce = oxide_fw_bundler::ChunkBundler::content_hash(&[build_id.as_bytes()]);
+    // V2-B01: ONE context table over the scanned tree, built once before
+    // the prerender walk — the per-route dispatch answers come off it as
+    // `HashMap` hits (the same boot-time precompute the serving side's
+    // `SwappableRouteTree` builds per generation; the walk below no longer
+    // re-scans `tree.entries` per page route).
+    let ctx_table = oxide_fw_router::RouteContextTable::build_with_default_pattern(&tree.entries);
     let mut prerendered: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // PERF-04: (route_id, url_path, sentineled html) for the L0 seed manifest.
     // (route_id, url, sentineled_html, status, locale) — the locale is
@@ -86,100 +133,22 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
         // WP-A2: prerender speaks the same canonical id the live pipeline
         // hands the renderer, so the adapter's resolver hit is identical.
         let route_id = canonical_route_id(&e.id.0);
-        // §8.2: the layout chain for this route. `e` is a scanned entry;
-        // asking the tree to match this route's own id via a synthetic path
-        // is overkill — compute the chain directly from the entry list using
-        // the same rule the matcher uses (any layout whose id is a prefix
-        // directory of this route id).
-        let layout_ids: Vec<String> = {
-            let mut chain: Vec<(String, usize)> = Vec::new();
-            for candidate in &tree.entries {
-                if !matches!(candidate.kind, oxide_fw_router::RouteKind::Layout) {
-                    continue;
-                }
-                // A layout `routes/<a>/<b>/layout` wraps any route whose id
-                // starts with `routes/<a>/<b>/`. The root layout
-                // `routes/layout` wraps everything.
-                let layout_base = candidate
-                    .id
-                    .0
-                    .strip_suffix("/layout")
-                    .unwrap_or(&candidate.id.0);
-                let wraps = if layout_base == "routes" || layout_base.is_empty() {
-                    true
-                } else {
-                    // §V2-B02: the RAW id — the same prefix rule the
-                    // dispatch `RouteContextTable` builds its chains with
-                    // (the matcher-oracle). The CANONICAL id (the `/page`
-                    // suffix stripped) made a group's own index page
-                    // canonical-equal to the layout base and miss the
-                    // group layout the table finds.
-                    e.id.0.starts_with(&format!("{layout_base}/"))
-                };
-                if wraps {
-                    chain.push((candidate.id.0.clone(), layout_base.len()));
-                }
-            }
-            // Outermost first: shortest base wins.
-            chain.sort_by_key(|(_, len)| *len);
-            chain.into_iter().map(|(id, _)| id).collect()
-        };
-
-        // §9.2: layout `(id, layout.server.ts path)` pairs for the prerender
-        // layout-load chain. Only layouts that actually have a
-        // `layout.server.ts` participate.
-        let prerender_layout_modules: Vec<(String, std::path::PathBuf)> = layout_ids
-            .iter()
-            .filter_map(|lid| {
-                tree.entries
-                    .iter()
-                    .find(|le| {
-                        le.id.0 == *lid && matches!(le.kind, oxide_fw_router::RouteKind::Layout)
-                    })
-                    .map(|le| {
-                        (
-                            lid.clone(),
-                            rootp
-                                .join(&cfg.routes.dir)
-                                .join(le.file.with_file_name("layout.server.ts")),
-                        )
-                    })
-            })
-            .filter(|(_, p)| p.is_file())
-            .collect();
-        // §10.2 step 5: nearest ancestor error.tsx for this route.
-        // Innermost wins — a `routes/blog/error` shadows `routes/error`.
-        let prerender_error_route_id: Option<String> = {
-            let mut best: Option<(String, usize)> = None;
-            for candidate in &tree.entries {
-                if !matches!(candidate.kind, oxide_fw_router::RouteKind::Error) {
-                    continue;
-                }
-                let base = candidate
-                    .id
-                    .0
-                    .strip_suffix("/error")
-                    .unwrap_or(&candidate.id.0);
-                let wraps = if base == "routes" || base.is_empty() {
-                    true
-                } else {
-                    // §V2-B02: the RAW id — the table's prefix rule (see the
-                    // layout-chain note above): the canonical id made a
-                    // group-root error boundary unreachable for the group's
-                    // own index page.
-                    e.id.0.starts_with(&format!("{base}/"))
-                };
-                if !wraps {
-                    continue;
-                }
-                let len = base.len();
-                match &best {
-                    Some((_, prev)) if *prev >= len => {}
-                    _ => best = Some((candidate.id.0.clone(), len)),
-                }
-            }
-            best.map(|(id, _)| id)
-        };
+        // §8.2 + §9.2 + §10.2 step 5: the layout chain, the layout-load
+        // modules and the nearest ancestor `error.tsx` — ONE context-table
+        // hit. The three per-route scans these replaced were the perf #10
+        // arms (every page route re-walked all entries for its layouts and
+        // error boundary; the module pair paid a `stat` per layout). The
+        // table is the matcher-oracle (V2-B01): the wrap rule rides the RAW
+        // id exactly as the scans did since the group-route divergence
+        // resolved, so the answers are oracle-equal by construction (pinned
+        // by `prerender_route_answers_match_the_scan_oracle`).
+        let rc = ctx_table
+            .get(&e.id.0)
+            .expect("every scanned page has a context-table row");
+        let answers = prerender_route_answers(rc, routes_root);
+        let layout_ids = answers.layout_ids;
+        let prerender_layout_modules = answers.layout_modules;
+        let prerender_error_route_id = answers.error_route_id;
         // §9.1: if the route declares a server module, resolve its path so
         // the loader can run during prerender. Uses the same
         // `page.server.ts` sibling convention as build_dispatch.
