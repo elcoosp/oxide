@@ -38,8 +38,11 @@ type LoaderInputs = (
 /// The spec is the module path plus the scanner's token-exact `parent()`
 /// verdict (A06 step 1 applies `calls_parent` to `layout.server.ts`, not
 /// only to pages). The §9.2 load graph runs the layout concurrently unless
-/// its own verdict says it awaits its predecessor's data; the /__data path
-/// keeps the sequential chain and reads only the id/path pair.
+/// its own verdict says it awaits its predecessor's data — on BOTH legs
+/// since the follow-up adoption: the SSR render (`stage_loaders`) and the
+/// `GET /__data` endpoint (`route_data_response`, which builds the same
+/// node shapes and adds the page's own verdict from
+/// `RequestCtx::needs_parent`).
 pub use oxide_fw_dispatch::route_ctx::LayoutLoadSpec;
 
 /// The wasm-bindgen-processed `oxide-fw-core-wasm` artifact, embedded at
