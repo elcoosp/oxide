@@ -86,6 +86,33 @@ pub(crate) fn emit_snapshot_lint(
 ///
 /// A snapshot failure (a bundle that does not evaluate cleanly in V8) is
 /// reported and skipped — the server still runs without one.
+///
+/// M1 (capability matrix): the deno_core snapshot machinery rides the
+/// crate's `v8` feature. Without it there is no V8 isolate in this binary
+/// to snapshot, and no `server.backend = "v8"` server to load the blob —
+/// the write is skipped with a loud `SNP-V8OFF` line instead.
+#[cfg(not(feature = "v8"))]
+pub(crate) fn emit_snapshot_blob(
+    root: &Path,
+    server_out: &Path,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let _ = (&root, &server_out);
+    let entry = server_out.join("ssr/index.js");
+    if entry.is_file() {
+        outln!(
+            w,
+            "snapshot: skipped (SNP-V8OFF: the `.oxide/snapshot.bin` write needs the `v8` feature; \
+             rebuild with `cargo build -p oxide-fw-cli --features v8`)"
+        );
+    }
+    Ok(())
+}
+
+/// §4.4: build a V8 startup snapshot from the emitted server bundle and
+/// write it to `<root>/.oxide/snapshot.bin`. The `v8`-featured twin of the
+/// `SNP-V8OFF` skip above.
+#[cfg(feature = "v8")]
 pub(crate) fn emit_snapshot_blob(
     root: &Path,
     server_out: &Path,
