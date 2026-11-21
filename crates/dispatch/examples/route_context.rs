@@ -88,7 +88,9 @@ fn main() {
 
     // A matched page request: the match decision carries the table's
     // precomputed pattern as the metrics label and the route's context as
-    // one hit.
+    // one hit. WP B03 item 2: that label IS the table's `Arc<str>` pattern
+    // (shared by refcount bump, not cloned into a `String`) — the matched
+    // hot path pays one atomic increment for the label, zero allocation.
     let decision = resolve_match(
         "/blog/hello",
         "GET",
@@ -100,12 +102,11 @@ fn main() {
     println!(
         "GET /blog/hello -> status {} label {} (route `{}`)",
         decision.status,
-        decision.label,
+        decision.label.as_ref(),
         decision
             .matched
             .as_ref()
-            .map(|m| m.route.id.0.clone())
-            .unwrap_or_default(),
+            .map_or(String::new(), |m| m.route.id.0.clone()),
     );
     let rc = decision
         .route_ctx
@@ -133,7 +134,11 @@ fn main() {
     // A 404: the table's unmatched context answers the render arm — the
     // not-found route id and ITS layout chain, still one hit.
     let miss = resolve_match("/nope", "GET", "/nope", &tree, None, Some(&table));
-    println!("GET /nope -> status {} label {}", miss.status, miss.label);
+    println!(
+        "GET /nope -> status {} label {}",
+        miss.status,
+        miss.label.as_ref()
+    );
     let answers404 = resolve_answers(
         miss.route_ctx.as_deref(),
         Some(&table),
@@ -153,7 +158,8 @@ fn main() {
     let degenerate = resolve_match("/blog/hello", "GET", "/blog/hello", &tree, None, None);
     println!(
         "without a table -> status {} label {} (the pattern_of fallback)",
-        degenerate.status, degenerate.label
+        degenerate.status,
+        degenerate.label.as_ref()
     );
     let answers_degenerate = resolve_answers(
         None,
