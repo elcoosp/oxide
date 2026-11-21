@@ -16,6 +16,7 @@
 use oxide_fw_dispatch::route_ctx::{LayoutLoadSpec, pattern_of, resolve_answers, resolve_match};
 use oxide_fw_router::{RouteContextTable, RouteEntry, RouteId, RouteKind, RouteTree};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 const ROUTES_ROOT: &str = "/srv/app";
 
@@ -131,7 +132,29 @@ fn match_trailing_slash_folds_and_labels_from_table() {
     let matched = m.matched.as_ref().expect("blog page matches");
     assert_eq!(matched.route.id.0, "routes/blog/page");
     assert_eq!(m.status, 200);
-    assert_eq!(m.label, "/blog");
+    assert_eq!(&*m.label, "/blog");
+}
+
+/// `stage_match` (WP B03 item 2 — the zero-alloc label): the matched-with-
+/// context label is NOT a freshly allocated `String` cloned from the
+/// precomputed pattern — it IS the table's `Arc<str>` pattern, shared by
+/// refcount bump (`Arc::clone`). The hot path's per-request label cost is
+/// one atomic increment, not a heap allocation + byte copy. The proof is
+/// pointer identity: `Arc::ptr_eq` of the decision's label and the matched
+/// route's `RouteContext.pattern` (same allocation).
+#[test]
+fn matched_label_borrows_precomputed_pattern_arc() {
+    let f = fixture();
+    let m = resolve_match("/blog", "GET", "/blog", &f.tree, None, Some(&f.table));
+    let rc = m
+        .route_ctx
+        .as_deref()
+        .expect("a matched page has a context row");
+    assert!(
+        Arc::ptr_eq(&m.label, &rc.pattern),
+        "the matched label must share the precomputed pattern's Arc allocation (zero-alloc hot path)"
+    );
+    assert_eq!(&*m.label, "/blog");
 }
 
 /// `stage_match`: the root path's `["/", "/index"]` candidate pair hits the
@@ -143,7 +166,7 @@ fn match_root_candidates_hit_index() {
     let matched = m.matched.as_ref().expect("root matches via candidates");
     assert_eq!(matched.route.id.0, "routes/index/page");
     assert_eq!(m.status, 200);
-    assert_eq!(m.label, "/");
+    assert_eq!(&*m.label, "/");
 }
 
 /// `stage_match`: with no context table (the degenerate fallback arm) the
@@ -161,7 +184,7 @@ fn match_param_route_labels_pattern_of_without_table() {
     );
     assert!(m.route_ctx.is_none(), "no table, no context hit");
     assert_eq!(m.status, 200);
-    assert_eq!(m.label, "/blog/:slug");
+    assert_eq!(&*m.label, "/blog/:slug");
 }
 
 /// `stage_match`: an unmatched URL 404s with the `_unmatched` label and the
@@ -173,7 +196,7 @@ fn match_unmatched_404s_with_not_found_context() {
     let m = resolve_match("/nope", "GET", "/nope", &f.tree, None, Some(&f.table));
     assert!(m.matched.is_none());
     assert_eq!(m.status, 404);
-    assert_eq!(m.label, "_unmatched");
+    assert_eq!(&*m.label, "_unmatched");
     let ctx = m.route_ctx.as_ref().expect("table unmatched context");
     assert_eq!(ctx.route_id.0, "routes/not-found");
 }
@@ -198,7 +221,7 @@ fn match_data_route_targets_the_query_route() {
     let matched = m.matched.as_ref().expect("target route matches");
     assert_eq!(matched.route.id.0, "routes/blog/page");
     assert_eq!(m.status, 200);
-    assert_eq!(m.label, "/blog");
+    assert_eq!(&*m.label, "/blog");
 }
 
 /// `stage_match`: a `GET /__data` without a usable `route=` value targets
@@ -235,7 +258,7 @@ fn match_data_route_requires_get() {
     assert!(!m.is_data_request);
     assert!(m.matched.is_none());
     assert_eq!(m.status, 404);
-    assert_eq!(m.label, "_unmatched");
+    assert_eq!(&*m.label, "_unmatched");
 }
 
 /// `stage_match`: the target is percent-decoded and its trailing slash
