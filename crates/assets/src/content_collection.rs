@@ -48,6 +48,7 @@ pub struct NativeSchema {
 }
 
 impl NativeSchema {
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             required: BTreeMap::new(),
@@ -181,6 +182,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Validate every entry's frontmatter against `schema`. Emits one diagnostic
 /// per failed constraint; a clean collection yields an empty vector.
+#[must_use]
 pub fn validate_collection(coll: &Collection, schema: &SchemaKind) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     match schema {
@@ -300,6 +302,7 @@ fn type_name(ty: &FieldType) -> &'static str {
 /// Walk every entry's body and check that relative links pointing at
 /// `.md`/`.mdx` files resolve to a known entry's slug. Absolute URLs and
 /// anchor-only links are ignored.
+#[must_use]
 pub fn check_references(coll: &Collection) -> Vec<Diagnostic> {
     let known: std::collections::BTreeSet<&str> =
         coll.entries.iter().map(|e| e.slug.as_str()).collect();
@@ -407,7 +410,7 @@ fn markdown_link_targets(md: &str) -> Vec<String> {
 
 /// A searchable index for a collection. `terms` maps a lowercased token to
 /// the entries containing it (indices into `entries`). Deterministic across
-/// runs because all iteration is BTreeMap / sorted.
+/// runs because all iteration is `BTreeMap` / sorted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchIndex {
     pub collection: String,
@@ -601,7 +604,10 @@ mod tests {
             ("title", serde_json::json!("Hi")),
             ("count", serde_json::json!(3)),
         ])]);
-        assert!(validate_collection(&coll, &SchemaKind::Native(schema)).is_empty());
+        assert_eq!(
+            validate_collection(&coll, &SchemaKind::Native(schema)),
+            [] as [oxide_fw_diagnostics::Diagnostic; 0]
+        );
     }
 
     #[test]
@@ -633,7 +639,10 @@ mod tests {
         let mut schema = NativeSchema::empty();
         schema.optional.insert("excerpt".into(), FieldType::String);
         let ok = coll_with(vec![entry_with(&[])]);
-        assert!(validate_collection(&ok, &SchemaKind::Native(schema.clone())).is_empty());
+        assert_eq!(
+            validate_collection(&ok, &SchemaKind::Native(schema.clone())),
+            [] as [oxide_fw_diagnostics::Diagnostic; 0]
+        );
         let bad = coll_with(vec![entry_with(&[("excerpt", serde_json::json!(1))])]);
         assert_eq!(
             validate_collection(&bad, &SchemaKind::Native(schema)).len(),
@@ -649,7 +658,10 @@ mod tests {
             FieldType::Enum(vec!["draft".into(), "published".into()]),
         );
         let ok = coll_with(vec![entry_with(&[("status", serde_json::json!("draft"))])]);
-        assert!(validate_collection(&ok, &SchemaKind::Native(schema.clone())).is_empty());
+        assert_eq!(
+            validate_collection(&ok, &SchemaKind::Native(schema.clone())),
+            [] as [oxide_fw_diagnostics::Diagnostic; 0]
+        );
         let bad = coll_with(vec![entry_with(&[(
             "status",
             serde_json::json!("archived"),
@@ -667,7 +679,10 @@ mod tests {
             .required
             .insert("tags".into(), FieldType::Array(Box::new(FieldType::String)));
         let ok = coll_with(vec![entry_with(&[("tags", serde_json::json!(["a", "b"]))])]);
-        assert!(validate_collection(&ok, &SchemaKind::Native(schema.clone())).is_empty());
+        assert_eq!(
+            validate_collection(&ok, &SchemaKind::Native(schema.clone())),
+            [] as [oxide_fw_diagnostics::Diagnostic; 0]
+        );
         let bad = coll_with(vec![entry_with(&[("tags", serde_json::json!(["a", 1]))])]);
         assert_eq!(
             validate_collection(&bad, &SchemaKind::Native(schema)).len(),
@@ -691,7 +706,10 @@ mod tests {
             body_entry("a", "See [b](b.md) for details."),
             body_entry("b", "Back to [a](a.md#top)."),
         ]);
-        assert!(check_references(&coll).is_empty());
+        assert_eq!(
+            check_references(&coll),
+            [] as [oxide_fw_diagnostics::Diagnostic; 0]
+        );
     }
 
     #[test]
@@ -708,14 +726,20 @@ mod tests {
         let body =
             "See [ext](https://example.com/x.md) and [anchor](#section) and [abs](/other.md)";
         let coll = coll_with(vec![body_entry("a", body)]);
-        assert!(check_references(&coll).is_empty());
+        assert_eq!(
+            check_references(&coll),
+            [] as [oxide_fw_diagnostics::Diagnostic; 0]
+        );
     }
 
     #[test]
     fn references_ignore_image_links_and_code_blocks() {
         let body = "![img](missing.png)\n\n```\n[inside](ghost.md)\n```\n\nInline `[code](ghost2.md)` here.\n";
         let coll = coll_with(vec![body_entry("a", body)]);
-        assert!(check_references(&coll).is_empty());
+        assert_eq!(
+            check_references(&coll),
+            [] as [oxide_fw_diagnostics::Diagnostic; 0]
+        );
     }
 
     #[test]
