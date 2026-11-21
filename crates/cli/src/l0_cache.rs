@@ -996,6 +996,7 @@ mod tests {
                 build_id: "build-x".into(),
             }
             .canonical()
+            .to_string()
         };
         let past = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1060,7 +1061,8 @@ mod tests {
             vary: String::new(),
             build_id: "b".into(),
         }
-        .canonical();
+        .canonical()
+        .to_string();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
