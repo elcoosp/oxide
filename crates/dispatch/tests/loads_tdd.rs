@@ -512,8 +512,11 @@ async fn failed_result_carries_the_failing_node_index() {
         }
         other => panic!("expected Failed, got {other:?}"),
     }
-    // The poisoned dependent's slot is zero-length: it never ran.
-    assert_eq!(outcomes.elapsed_ms[2], 0.0);
+    // The poisoned dependent's slot is zero-length: it never ran. A
+    // tolerance compare — `assert_eq!` on f32 trips `clippy::float_cmp`
+    // under `-D warnings`; the pin's meaning (never ran, ~no elapsed time)
+    // is unchanged.
+    assert!((outcomes.elapsed_ms[2] - 0.0).abs() < 1e-6);
 }
 
 #[tokio::test(start_paused = true)]
