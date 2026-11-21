@@ -332,13 +332,11 @@ pub(crate) fn param_name(segment: &str) -> Option<&str> {
     Some(s)
 }
 
-pub(crate) fn pattern_of(segments: &[String]) -> String {
-    if segments.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{}", segments.join("/"))
-    }
-}
+// V2-A02 route-context adoption: the §20 metrics pattern moved to the
+// substrate (`oxide_fw_dispatch::route_ctx::pattern_of`, pinned by
+// `crates/dispatch/tests/route_ctx_tdd.rs`); the re-export keeps the CLI
+// name (`build/prerender.rs` reads it through the module glob) resolving.
+pub(crate) use oxide_fw_dispatch::route_ctx::pattern_of;
 
 pub(crate) fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
