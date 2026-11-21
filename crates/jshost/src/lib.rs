@@ -39,12 +39,20 @@ type StreamSenders = Arc<std::sync::Mutex<HashMap<u64, mpsc::Sender<Result<Bytes
 
 pub mod snapshot;
 pub mod tooling;
+// M1 (capability matrix): the embedded V8 isolate (deno_core) rides the
+// non-default `v8` feature; the Node worker backend and the snapshot
+// data model below are feature-independent.
+#[cfg(feature = "v8")]
 pub mod v8_loader;
+#[cfg(feature = "v8")]
 pub mod v8_ops;
-pub use snapshot::{
-    AppSnapshot, SNAPSHOT_FORMAT, SideEffect, lint_top_level_side_effects, loader_options,
-    snapshot_build, snapshot_build_bundle, snapshot_build_runtime,
-};
+// Always available: the snapshot envelope, its version tag and the
+// advisory side-effect lint (the §4.4 data model the CLI's build talks
+// about regardless of the backend it will serve with).
+pub use snapshot::{AppSnapshot, SNAPSHOT_FORMAT, SideEffect, lint_top_level_side_effects};
+// The V8 snapshot machinery (deno_core `create_snapshot`/`RuntimeOptions`).
+#[cfg(feature = "v8")]
+pub use snapshot::{loader_options, snapshot_build, snapshot_build_bundle, snapshot_build_runtime};
 pub mod framework_host;
 pub mod framework_renderer;
 pub mod loader_host;
@@ -715,7 +723,12 @@ impl JsHost for ScriptedHost {
 }
 
 // ----------------------------------------------------------- v8 backend ----
+//
+// M1 (capability matrix): everything between this banner and the node
+// backend banner is the embedded V8 isolate (deno_core) and rides the
+// non-default `v8` feature. The Node backend below is feature-independent.
 
+#[cfg(feature = "v8")]
 use deno_core::{JsRuntime, RuntimeOptions};
 
 /// Bootstrap script executed once per V8 runtime.
@@ -726,6 +739,7 @@ use deno_core::{JsRuntime, RuntimeOptions};
 /// its named export with the JSON payload, returning a `{ok, value}` /
 /// `{__oxide_error}` envelope. `boom`/`die` are handled Rust-side before
 /// dispatch.
+#[cfg(feature = "v8")]
 pub(crate) const V8_BOOTSTRAP: &str = r#"
 // Sec.4.6 tier 2: the minimal Node-compat globals a self-contained bundle needs.
 // A bundled SSR chunk references `process.env.NODE_ENV` (React's dev/prod
@@ -1874,6 +1888,7 @@ globalThis.__oxideGenerateParamsRun = async function (moduleUrl) {
 /// rejects a snapshot loaded with a differently-named extension
 /// ("loaded in wrong order"), and a snapshot's op external-reference table is
 /// keyed by that order.
+#[cfg(feature = "v8")]
 pub(crate) fn oxide_extension() -> deno_core::Extension {
     use deno_core::ExtensionFileSource;
     use std::borrow::Cow;
@@ -1915,6 +1930,7 @@ pub(crate) fn oxide_extension() -> deno_core::Extension {
 }
 
 /// Messages from the pool to a V8 worker thread.
+#[cfg(feature = "v8")]
 enum V8Msg {
     Call {
         id: u64,
@@ -1927,6 +1943,7 @@ enum V8Msg {
 }
 
 /// Handle to a V8 worker thread running a pinned `JsRuntime` (§4.2 default).
+#[cfg(feature = "v8")]
 struct V8WorkerHandle {
     tx: mpsc::Sender<V8Msg>,
     in_flight: AtomicU64,
@@ -1944,6 +1961,7 @@ struct V8WorkerHandle {
     dead: AtomicBool,
 }
 
+#[cfg(feature = "v8")]
 fn spawn_v8_worker(
     snapshot: Option<&'static [u8]>,
     cache: Option<Arc<dyn oxide_fw_cache::CacheHandler>>,
@@ -2096,6 +2114,7 @@ fn spawn_v8_worker(
 
 /// Build a `file://` URL for a module path so the `FsModuleLoader` can resolve
 /// it. A relative path is joined onto the current directory first.
+#[cfg(feature = "v8")]
 fn v8_module_url(path: &str) -> Result<String> {
     let p = std::path::Path::new(path);
     let abs = if p.is_absolute() {
@@ -2506,6 +2525,7 @@ async fn v8_dispatch(
 /// `FsModuleLoader` and invokes `entry.export` (default `default`) with the
 /// JSON payload, awaiting the result on the V8 event loop. Mirrors the Node
 /// worker's `boom` / `die` sentinels.
+#[cfg(feature = "v8")]
 pub struct V8Host {
     /// §4.4: an optional V8 startup snapshot blob. When set, each worker
     /// restores this heap instead of evaluating the bootstrap — skipping V8
@@ -2529,6 +2549,7 @@ pub struct V8Host {
     leaked: std::sync::OnceLock<Option<&'static [u8]>>,
 }
 
+#[cfg(feature = "v8")]
 impl Default for V8Host {
     fn default() -> Self {
         Self {
@@ -2541,6 +2562,7 @@ impl Default for V8Host {
     }
 }
 
+#[cfg(feature = "v8")]
 impl V8Host {
     /// A host with no snapshot — each worker evaluates the bootstrap fresh.
     pub fn new() -> Self {
@@ -2699,6 +2721,7 @@ impl V8Host {
     }
 }
 
+#[cfg(feature = "v8")]
 impl JsHost for V8Host {
     fn render_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>> {
         Self::build_pool(
@@ -2729,6 +2752,7 @@ impl JsHost for V8Host {
 ///
 /// `workers` is `Arc<RwLock<...>>` so the warm-replacement background task
 /// (§4.3) can hold a handle without borrowing the pool.
+#[cfg(feature = "v8")]
 pub struct V8Pool {
     cfg: PoolConfig,
     workers: Arc<std::sync::RwLock<Vec<Arc<V8WorkerHandle>>>>,
@@ -2748,6 +2772,7 @@ pub struct V8Pool {
     transform_handler: Option<std::sync::Arc<dyn crate::TransformHandler>>,
 }
 
+#[cfg(feature = "v8")]
 impl V8Pool {
     fn total_in_flight(&self) -> u64 {
         self.workers
@@ -2820,6 +2845,7 @@ impl V8Pool {
 }
 
 #[async_trait]
+#[cfg(feature = "v8")]
 impl Pool for V8Pool {
     async fn call(&self, entry: EntryRef, req: CallInput) -> Result<CallStream> {
         if self.draining.load(Ordering::Relaxed) {
@@ -4400,6 +4426,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "v8")]
 mod bug12_tests {
     use super::*;
     fn write_envelope(
@@ -4589,6 +4616,7 @@ mod perf02_tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "v8")]
 mod bug03_tests {
     use super::*;
     #[test]
@@ -4674,6 +4702,7 @@ mod p0_2_overflow_tests {
         assert_eq!(&out[..], b"hellohellohello");
     }
     #[cfg(test)]
+    #[cfg(feature = "v8")]
     mod path_url_tests {
         use super::path_to_file_url;
         use std::path::Path;
