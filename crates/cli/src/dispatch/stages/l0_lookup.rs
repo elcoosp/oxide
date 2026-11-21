@@ -24,7 +24,9 @@ pub(crate) async fn stage_l0_lookup(d: &DispatchDeps, cx: &mut RequestCtx) -> Fl
     let ppr_for_request = d.ppr_shells.clone();
     let middleware_headers = cx.middleware_headers.clone();
     let metrics = std::sync::Arc::clone(&d.metrics);
-    let label = &cx.label;
+    // WP B03 item 2: borrow the label as `&str` (Deref coercion from the
+    // `Arc<str>` field) — the metrics `observe(label, …)` takes `&str`.
+    let label: &str = &cx.label;
     let started = cx.started;
     let request_nonce = &cx.request_nonce;
     let waterfall = cx.waterfall.clone();
