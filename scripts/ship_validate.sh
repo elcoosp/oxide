@@ -49,13 +49,20 @@ N=0
 while IFS= read -r f; do
     N=$((N + 1))
     [ -e "$f" ] || fail "[[commit]] #$N: file does not exist: $f"
-    # The file must have changed between base_commit and HEAD (the
-    # branch's own diff — a committed file whose content matches base
-    # has nothing to ship) or be new at HEAD.
-    if git diff --quiet "$BASE_TOML" "$HEAD_SHA" -- "$f" 2>/dev/null && [ ! -f "$f" -o -n "$(git ls-files -- "$f")" ] && git diff --quiet "$BASE_TOML" "$HEAD_SHA" -- "$f" 2>/dev/null; then
-        if git diff --quiet "$BASE_TOML" "$HEAD_SHA" -- "$f" && git ls-files -- "$f" | grep -q .; then
-            fail "[[commit]] #$N: file is unchanged between base and HEAD (nothing to ship): $f"
-        fi
+    # The file must be NEW (untracked), or DIRTY in the working tree
+    # relative to HEAD (the delivery protocol: the ship tool commits the
+    # listed files FROM the dirty tree), or changed between base_commit
+    # and HEAD (a branch whose own commits already exist). A tracked file
+    # identical to HEAD and to base has nothing to ship.
+    if [ -z "$(git ls-files -- "$f")" ] \
+        && git diff --quiet "$BASE_TOML" "$HEAD_SHA" -- "$f" 2>/dev/null; then
+        : # new (untracked) file — ships as a fresh commit
+    elif ! git diff --quiet "$HEAD_SHA" -- "$f" 2>/dev/null; then
+        : # dirty in the working tree — ships from the tree
+    elif ! git diff --quiet "$BASE_TOML" "$HEAD_SHA" -- "$f" 2>/dev/null; then
+        : # already committed on the branch — ships as history
+    else
+        fail "[[commit]] #$N: file is unchanged between base and HEAD (nothing to ship): $f"
     fi
     echo "ok  [[$N]] $f"
 done <<EOF
