@@ -4,7 +4,7 @@
 //! substrate's tests must compile in seconds; the CLI's dispatch pins pay a
 //! V8 link for logic that never touches it).
 //!
-//! The oracle is the CLI's inline logic at base_commit (`dispatch/stages/
+//! The oracle is the CLI's inline logic at `base_commit` (`dispatch/stages/
 //! matcher.rs` `stage_match` + `dispatch/stages/route.rs` `stage_route`):
 //! every pin restates an answer those stages produced, byte-identically.
 //! The fixture mirrors the scanner's conventions: the root page has empty
