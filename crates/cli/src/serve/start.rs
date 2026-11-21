@@ -1555,6 +1555,10 @@ pub(crate) async fn cmd_serve(
         cfg.server.backend,
         transform_handler,
         Some(&cfg.cache.handler),
+        // §V2-A09: live serving keeps importing SOURCE modules (the
+        // pre-A09 behavior) — only the build-time prerender imports the
+        // bundle.
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     if let Some(name) = stack.renderer_name() {
@@ -1613,6 +1617,9 @@ pub(crate) async fn cmd_serve(
                                                 promote_backend,
                                                 None,
                                                 Some(&promote_cache_handler),
+                                                // §V2-A09: the promoted generation serves
+                                                // live — Source, like the boot above.
+                                                oxide_fw_jshost::ModuleSource::Source,
                                             )
                                             .await;
                                             match next.pool.clone() {
