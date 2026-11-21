@@ -33,7 +33,7 @@ use oxide_fw_router::{
     ArchivedTree, MatchResult, MatchedView, RouteContext, RouteContextTable, RouteTree,
 };
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 /// The metrics label for a route's segments (§20): `/` for the root,
 /// `/<segments joined by />` otherwise. Moved verbatim from the CLI's
@@ -48,6 +48,17 @@ pub fn pattern_of(segments: &[String]) -> String {
         let joined = segments.join("/");
         format!("/{joined}")
     }
+}
+
+/// WP B03 item 2: the `_unmatched` metrics label, cached as an `Arc<str>` so
+/// a 404's `observe` shares one allocation across every unmatched request
+/// (the prior `"_unmatched".to_string()` allocated a fresh `String` per
+/// 404). `LazyLock` initializes the `Arc` once on first use; every later
+/// unmatched request pays one refcount bump, the same zero-alloc shape a
+/// matched route's `Arc::clone(&rc.pattern)` pays.
+fn unmatched_label() -> Arc<str> {
+    static UNMATCHED_LABEL: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("_unmatched"));
+    Arc::clone(&UNMATCHED_LABEL)
 }
 
 /// The match-stage decision: everything `stage_match` derived from the
@@ -72,9 +83,11 @@ pub struct MatchDecision {
     pub route_ctx: Option<Arc<RouteContext>>,
     /// 200 matched, 404 unmatched (the §10.2 step 5 status).
     pub status: u16,
-    /// The metrics label: the table's precomputed pattern, the
-    /// [`pattern_of`] fallback without a table, `_unmatched` on a miss.
-    pub label: String,
+    /// The metrics label: the table's precomputed `Arc<str>` pattern (WP B03
+    /// item 2 — shared by refcount bump on the matched hot path, not cloned
+    /// into a fresh `String`), the [`pattern_of`] fallback without a table,
+    /// `_unmatched` (a cached `Arc<str>`) on a miss.
+    pub label: Arc<str>,
 }
 
 /// Resolve `stage_match`'s decision for one request line.
@@ -139,9 +152,17 @@ pub fn resolve_match(
         None => None,
     };
     let (status, label) = match (&matched, &route_ctx) {
-        (Some(_), Some(rc)) => (200u16, rc.pattern.to_string()),
-        (Some(m), None) => (200u16, pattern_of(&m.route.segments)),
-        (None, _) => (404u16, "_unmatched".to_string()),
+        // WP B03 item 2: the matched-with-context label IS the table's
+        // precomputed `Arc<str>` pattern, shared by refcount bump — the hot
+        // path's per-request label cost is one atomic increment, not the heap
+        // allocation + byte copy the prior `rc.pattern.to_string()` paid. The
+        // degenerate no-table arm still builds the `pattern_of` `String` (rare
+        // — a table-less tree is a test shape), and the unmatched label is a
+        // cached `Arc<str>` so a 404 pays the same zero-alloc observe a
+        // matched route does.
+        (Some(_), Some(rc)) => (200u16, Arc::clone(&rc.pattern)),
+        (Some(m), None) => (200u16, Arc::from(pattern_of(&m.route.segments))),
+        (None, _) => (404u16, unmatched_label()),
     };
     MatchDecision {
         normalized,
