@@ -36,6 +36,9 @@ pub mod hot_keys;
 pub mod http;
 pub mod http_handler;
 pub mod http_service;
+pub mod key;
+#[cfg(test)]
+mod key_hash_tdd;
 pub mod keyhash;
 pub mod metrics;
 pub mod observer;
@@ -60,6 +63,7 @@ pub use http_service::{
     ExchangeLimits, HttpCacheService, MetricsPlaneSource, PlaneHealth, PlaneMetrics, PlaneRequest,
     PlaneResponse,
 };
+pub use key::KeyHash;
 pub use keyhash::{KeyStr, key_of};
 pub use metrics::{CacheMetricsSnapshot, MetricsCacheObserver};
 pub use observer::{CacheEvent, CacheObserver, CacheOp, TracingCacheObserver};
@@ -165,10 +169,14 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
-    /// blake3 over `layer 0x00 route 0x00 params 0x00 vary 0x00 build_id` → 64-char hex.
-    /// The NUL separators make the encoding prefix-free (component boundaries are part
-    /// of the digest).
-    pub fn canonical(&self) -> String {
+    /// D24 (V2-B05, perf #6): the key's identity as a 128-bit
+    /// [`KeyHash`] — blake3 over `layer 0x00 route 0x00 params 0x00 vary
+    /// 0x00 build_id`, truncated to the first 16 digest bytes. No heap
+    /// allocation; hex exists only at the display boundary
+    /// (`KeyHash`'s `Display`/`hex()`), whose 32-char form is exactly
+    /// [`key_of`](crate::key_of).
+    #[must_use = "the key identity is the derivation's whole point"]
+    pub fn canonical(&self) -> KeyHash {
         Self::canonical_parts(
             self.layer,
             &self.route,
@@ -179,25 +187,16 @@ impl CacheKey {
     }
 
     /// P-04: same digest as [`CacheKey::canonical`] but from borrowed parts —
-    /// no intermediate `String` allocations on the hot key path.
+    /// no intermediate allocation on the hot key path.
+    #[must_use = "the key identity is the derivation's whole point"]
     pub fn canonical_parts(
         layer: Layer,
         route: &str,
         params: &str,
         vary: &str,
         build_id: &str,
-    ) -> String {
-        let mut h = Hasher::new();
-        h.update(layer.as_str().as_bytes());
-        h.update(b"\x00");
-        h.update(route.as_bytes());
-        h.update(b"\x00");
-        h.update(params.as_bytes());
-        h.update(b"\x00");
-        h.update(vary.as_bytes());
-        h.update(b"\x00");
-        h.update(build_id.as_bytes());
-        h.finalize().to_hex().to_string()
+    ) -> KeyHash {
+        KeyHash::of_parts(layer.as_str(), route, params, vary, build_id)
     }
 }
 
@@ -461,7 +460,9 @@ mod tests {
             build_id: "b".into(),
         };
         let a = k("/r", "p").canonical();
-        assert_eq!(a.len(), 64);
+        // D24: 128-bit identity, 32-char hex display.
+        assert_eq!(a.as_bytes().len(), 16);
+        assert_eq!(a.to_string().len(), 32);
         assert_eq!(a, k("/r", "p").canonical());
         assert_ne!(a, k("/r", "q").canonical());
         // NUL separators: ("ab","c") and ("a","bc") must not collide.
