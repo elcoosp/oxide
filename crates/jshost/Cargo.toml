@@ -26,9 +26,15 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-deno_core = { workspace = true }
+# M1 (capability matrix): the embedded V8 isolate rides the non-default
+# `v8` feature. deno_core pulls the V8/bindgen chain (libclang), so a
+# V8-free host builds this crate with no external toolchain; the default
+# feature keeps the isolate in every normal build (the shipped default),
+# `--no-default-features` drops it, and the Node worker backend is
+# unaffected either way (same op protocol, spec §4.2).
+deno_core = { workspace = true, optional = true }
 ring = { workspace = true }
-deno_error = { workspace = true }
+deno_error = { workspace = true, optional = true }
 base64 = { workspace = true }
 
 [dev-dependencies]
@@ -36,7 +42,11 @@ tempfile = { workspace = true }
 criterion = { workspace = true }
 
 [features]
-default = []
+default = ["v8"]
+# M1: the embedded V8 isolate (deno_core). Gating it keeps `cargo build -p
+# oxide-fw-cli --no-default-features` linking with no libclang; the Node
+# worker pool (the default SSR backend) is feature-independent.
+v8 = ["dep:deno_core", "dep:deno_error"]
 # §20: opts the trace-parent bench target in, so plain `cargo test` never
 # pays the criterion build (the workspace-wide bench-util gate shape).
 bench-util = []
@@ -45,6 +55,50 @@ bench-util = []
 name = "trace"
 harness = false
 required-features = ["bench-util"]
+
+# M1: the V8-backend test targets ride the `v8` feature — `cargo test -p
+# oxide-fw-jshost --no-default-features` compiles zero V8 test binaries,
+# and the default/workspace build (which enables `v8`) runs them exactly
+# as before.
+[[test]]
+name = "v8_bundle_tdd"
+required-features = ["v8"]
+
+[[test]]
+name = "v8_dispatch_tdd"
+required-features = ["v8"]
+
+[[test]]
+name = "v8_lazy_entry_tdd"
+required-features = ["v8"]
+
+[[test]]
+name = "v8_module_tdd"
+required-features = ["v8"]
+
+[[test]]
+name = "v8_prelude_tdd"
+required-features = ["v8"]
+
+[[test]]
+name = "v8_ts_loader_tdd"
+required-features = ["v8"]
+
+# The §20 trace-parent pins reach the V8 fetch op's `propagate_trace_parent`
+# (the pure helper) and the ops table.
+[[test]]
+name = "trace_parent_tdd"
+required-features = ["v8"]
+
+# The multi-file snapshot build boots deno_core's snapshot machinery.
+[[test]]
+name = "snapshot_bundle_tdd"
+required-features = ["v8"]
+
+# The walkthrough drives `v8_ops` (the ops table + trace-parent helper).
+[[example]]
+name = "trace_propagation"
+required-features = ["v8"]
 
 [package.metadata.docs.rs]
 all-features = true
