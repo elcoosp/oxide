@@ -442,38 +442,12 @@ export default { fileURLToPath, pathToFileURL };"#.to_string(),
     }
 }
 
-/// SPEC-02 / §4.6.3: does this module specifier require the Node backend?
-///
-/// - a `.node` native addon — V8 cannot load it at all;
-/// - a `node:` builtin outside the shim set (`fs`, `crypto`, `child_process`,
-///   `net`, `worker_threads`, …).
-///
-/// When true and `server.backend` is `auto`/`v8`, the build switches to Node
-/// and prints why.
-pub fn requires_node_backend(specifier: &str) -> Option<String> {
-    if specifier.ends_with(".node") {
-        return Some(format!("native addon `{specifier}`"));
-    }
-    if let Some(name) = specifier.strip_prefix("node:") {
-        let shimmed = matches!(
-            name,
-            "module"
-                | "path"
-                | "url"
-                | "buffer"
-                | "events"
-                | "util"
-                | "stream"
-                | "crypto"
-                | "fs"
-                | "fs/promises"
-        );
-        if !shimmed {
-            return Some(format!("node:{name} builtin"));
-        }
-    }
-    None
-}
+// SPEC-02 / §4.6.3: the Node-backend classifier is PURE (no V8 API, no
+// loader state) and the CLIENT bundle path consults it in a
+// `--no-default-features` build, where this module does not compile — it
+// moved to the V8-free `node_compat` module; the v8-gated unit pins keep
+// their path through this re-export.
+pub use crate::node_compat::requires_node_backend;
 
 /// Pick the `lang` tag `lower_to_js` expects from a path's extension.
 fn lang_of(path: &Path) -> &'static str {
