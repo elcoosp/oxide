@@ -70,8 +70,18 @@ fn prerendered_html_becomes_a_json_route_index() {
     // no title, route_search.rs); the pin compares through `as_deref` — the
     // stale `assert_eq!(title, "Home")` broke the crate's test compile for
     // five recorded sessions (E0277, docs/deviations.md).
+    //
+    // The row is looked up BY ROUTE, not by position: the cross-entry order
+    // is the unit pin's contract (`route_search.rs::tests` — entries sort by
+    // route id, so `routes/blog` precedes `routes/index`); this pin holds
+    // the cross-module flow, not the sort the unit pin already owns.
+    let home = idx
+        .entries
+        .iter()
+        .find(|e| e.route == "routes/index")
+        .expect("the index route has an entry");
     assert_eq!(
-        idx.entries[0].title.as_deref(),
+        home.title.as_deref(),
         Some("Home"),
         "the <title> rides the entry"
     );
@@ -155,14 +165,17 @@ fn the_svg_pipeline_preserves_the_referenced_ids() {
 
 /// A scanned collection feeds the reference checker: the entries the
 /// scanner built are the known-target set `check_references` tests
-/// against — a broken `[[link]]` is flagged with the target named, a
-/// valid link passes silently.
+/// against — a broken doc link is flagged with the target named, a valid
+/// link passes silently. The checker's contract (the function doc and the
+/// `content_collection_tdd` pins) scopes it to relative `.md`/`.mdx`
+/// targets — extensionless links are assets/anchors/routes, not doc
+/// references, and flagging them would false-positive every asset link.
 #[test]
 fn a_scanned_collection_flags_broken_references() {
     let dir = tempfile::tempdir().expect("the collection tempdir");
     std::fs::write(
         dir.path().join("hello.md"),
-        "---\ntitle: Hello\n---\nA link to [good](world) and a [broken](missing) one.\n",
+        "---\ntitle: Hello\n---\nA link to [good](world.md) and a [broken](missing.md) one.\n",
     )
     .expect("the entry writes");
     std::fs::write(
