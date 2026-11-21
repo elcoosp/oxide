@@ -108,7 +108,7 @@ pub(crate) async fn phase_bundle_client(cx: &mut BuildCtx<'_>) -> anyhow::Result
                             .chars()
                             .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
                             .collect();
-                        if let Some(reason) = oxide_fw_jshost::v8_loader::requires_node_backend(
+                        if let Some(reason) = oxide_fw_jshost::node_compat::requires_node_backend(
                             &format!("node:{bname}"),
                         ) {
                             needs.push(reason);
