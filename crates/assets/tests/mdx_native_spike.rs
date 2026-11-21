@@ -9,13 +9,13 @@
 
 use snapfire_fsr_mdx::{ClassAttr, Format, Options, Target};
 
-const DOC: &str = r#"# Hello
+const DOC: &str = r"# Hello
 
 A paragraph with **bold** and a [link](https://example.com).
 
 - one
 - two
-"#;
+";
 
 #[test]
 #[ignore = "C10 spike probe — run with --ignored --nocapture"]
@@ -45,7 +45,7 @@ fn spike_mdx_output_is_jsx_shaped() {
     // the whole point: JSX is the adapter boundary the Vue and Svelte
     // adapters cannot consume.
     assert!(
-        react_out.contains("_jsx") || react_out.contains("jsx-runtime") || react_out.contains("<"),
+        react_out.contains("_jsx") || react_out.contains("jsx-runtime") || react_out.contains('<'),
         "the emitted module is JSX-classed output, got: {}",
         &react_out[..react_out.len().min(400)]
     );
