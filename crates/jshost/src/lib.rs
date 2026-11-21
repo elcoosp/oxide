@@ -39,6 +39,12 @@ type StreamSenders = Arc<std::sync::Mutex<HashMap<u64, mpsc::Sender<Result<Bytes
 
 pub mod snapshot;
 pub mod tooling;
+// §20: the V8-free trace-context extraction (the pure half the Node
+// worker's request-driven hosts stamp with; see the module docs).
+pub mod trace;
+// SPEC-02 / §4.6.3: the V8-free Node-backend selection classifier (the
+// pure half the client bundle path consults; see the module docs).
+pub mod node_compat;
 // M1 (capability matrix): the embedded V8 isolate (deno_core) rides the
 // non-default `v8` feature; the Node worker backend and the snapshot
 // data model below are feature-independent.
@@ -59,7 +65,8 @@ pub mod loader_host;
 pub mod tooling_pool;
 pub use framework_host::{FrameworkDescriptor, FrameworkHost};
 pub use framework_renderer::{
-    ComponentSource, FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, RenderStream,
+    ComponentSource, FrameworkHostRenderer, FrameworkRenderInput, FrameworkRenderer, ModuleSource,
+    RenderStream,
 };
 pub use loader_host::{
     ActionHost, ActionOutcome, EndpointHost, EndpointOutcome, LoaderHost, MiddlewareHost,
@@ -2143,6 +2150,10 @@ fn v8_module_url(path: &str) -> Result<String> {
 /// point returning a JSON envelope string) and parse the envelope.
 /// `site` names the call for diagnostics; `default_code` is the error code
 /// when the envelope carries a message but no `__oxide_code`.
+///
+// M1 (capability matrix): V8-only — takes a `deno_core::JsRuntime`. The cfg
+// gate keeps the `--no-default-features` (Node worker) build linking.
+#[cfg(feature = "v8")]
 async fn exec_v8_json(
     js: &mut JsRuntime,
     site: &'static str,
@@ -2185,6 +2196,9 @@ async fn exec_v8_json(
     Ok(v)
 }
 
+// M1 (capability matrix): V8-only — the dispatch body drives a
+// `deno_core::JsRuntime` (`v8_module_url`, `exec_v8_json`, `v8_ops`).
+#[cfg(feature = "v8")]
 async fn v8_dispatch(
     js: &mut JsRuntime,
     entry: &EntryRef,
@@ -3168,6 +3182,7 @@ struct Worker {
 /// go through this first, or the conversion fails with
 /// "path is not a file URL" (the V8 snapshot + import paths in this
 /// crate both hit that).
+#[cfg(feature = "v8")]
 pub(crate) fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
     let s = p.to_string_lossy();
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
