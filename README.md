@@ -161,11 +161,10 @@ oxide start --root examples/smoke-app-react --port 3100
 **Pre-alpha. Built against a published specification and audited against it.**
 
 |                 |                                                                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Spec compliance | **~93 / 100** on a 21-section scorecard — [every finding public](docs/deviations.md)                                                    |
+| Spec compliance | **~93 / 100** (r9; r10 re-verifies the P0 table and CI posture at HEAD — [scorecard-r10](packages/oxide-website/content/docs/scorecard-r10.md)) — [every finding public](docs/deviations.md) |
 | CI              | 24 jobs on Linux, macOS, Windows — 21 per pull request; nightly Miri, the release-profile check and smoke-deploy run on schedule/main |
-| Rust            | 3275 test functions; clippy-clean at `-D warnings` with **zero** `#[allow(clippy::*)]`                                                |
-| Security        | cargo-deny exits 0 (licenses + advisories); two unfixable upstream advisories suppressed with reachability analyses in [deny.toml](deny.toml)                                      |
+| Rust            | 3276 test functions; clippy-clean at `-D warnings` (workspace, no excludes) with **zero** `#[allow(clippy::*)]`                       |
+| Security        | cargo-deny exits 0 (licenses + advisories); unfixable upstream advisories suppressed by exact id with reachability analyses in [deny.toml](deny.toml) |
 
 `v0.2.0` through `v0.13.0` are tagged; the crates.io / npm publication step is still pending. Releases follow a **48-hour / 5-consecutive-green-CI** soak rule — see [PUBLISHING.md](PUBLISHING.md).
 
