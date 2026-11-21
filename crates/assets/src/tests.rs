@@ -79,7 +79,10 @@ fn tailwind_scan_collects_class_tokens_sorted_and_deduped() {
 #[test]
 fn tailwind_scan_ignores_non_attribute_text() {
     let src = "function flex() { return 'items-center'; }";
-    assert!(scan_tailwind_candidates(&[src]).is_empty());
+    assert_eq!(
+        scan_tailwind_candidates(&[src]),
+        [] as [std::string::String; 0]
+    );
 }
 
 // ---------------- Images (§16.1, D19) ----------------
@@ -142,7 +145,9 @@ fn image_webp_succeeds_or_falls_back_to_png_with_ast_webp_diagnostic() {
         .process(req(gradient_png(32, 16), None, ImageFormat::Webp, None))
         .unwrap();
     match out.format {
-        ImageFormat::Webp => assert!(out.diagnostics.is_empty()),
+        ImageFormat::Webp => {
+            assert_eq!(out.diagnostics, [] as [oxide_fw_diagnostics::Diagnostic; 0])
+        }
         ImageFormat::Png => assert!(out.diagnostics.iter().any(|d| d.code == "AST-WEBP")),
         other => panic!("unexpected format {other:?}"),
     }
