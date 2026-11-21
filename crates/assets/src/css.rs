@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn empty_and_whitespace_only_values_yield_nothing() {
         let out = scan_tailwind_candidates(&["<div class=\"   \"></div>", "", "<i class=''></i>"]);
-        assert!(out.is_empty());
+        assert_eq!(out, [] as [std::string::String; 0]);
     }
 
     #[test]
