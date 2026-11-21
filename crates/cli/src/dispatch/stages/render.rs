@@ -54,7 +54,10 @@ pub(crate) async fn stage_render(
     let flight_key = &cx.flight_key;
     let mut flight_owner = std::mem::take(&mut cx.flight_owner);
     let metrics = std::sync::Arc::clone(&d.metrics);
-    let label = &cx.label;
+    // WP B03 item 2: borrow the label as `&str` (Deref coercion from the
+    // `Arc<str>` field) so the tracing `%label` and the `{label}` body stamp
+    // pay no clone and no per-request `String`.
+    let label: &str = &cx.label;
     let status = cx.status;
     let stage_load_start = cx.stage_load_start;
     let boot_build_id = cx.boot_build_id.clone();
@@ -202,9 +205,14 @@ pub(crate) async fn stage_render(
                 // truncating the response.
                 let bridged = render_stream_with_recovery(
                     render_stream,
-                    Some(label.clone()),
+                    // WP B03 item 2: `label` is now `&str` (borrowed from the
+                    // `Arc<str>` field); the recovery boundary + route_id the
+                    // stream API takes as owned `String` get a `to_string`
+                    // (same one allocation the prior `&String`'s `.clone()`
+                    // paid — this is the rare mid-stream-error path).
+                    Some(label.to_string()),
                     Some(request_nonce.clone()),
-                    label.clone(),
+                    label.to_string(),
                 );
 
                 // B2: when the load declared at least one
