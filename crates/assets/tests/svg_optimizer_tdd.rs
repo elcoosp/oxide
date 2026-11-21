@@ -32,17 +32,17 @@ const FIXTURE_USE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0
 
 /// The WP's second named fixture: an inline `<style>` the rules must keep
 /// working (the class is referenced, so the style survives).
-const FIXTURE_STYLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+const FIXTURE_STYLE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   <style>.icon { fill: currentColor; }</style>
   <rect class="icon" width="24" height="24"/>
-</svg>"##;
+</svg>"#;
 
 /// The WP's third named fixture: `viewBox` only (no width/height — the
 /// attribute the rules must preserve verbatim).
-const FIXTURE_VIEWBOX: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+const FIXTURE_VIEWBOX: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
   <!-- generated icon shell -->
   <circle cx="24" cy="24" r="20"/>
-</svg>"##;
+</svg>"#;
 
 /// All three fixtures in one document (the acceptance's "fixture set").
 const FIXTURES: [&str; 3] = [FIXTURE_USE, FIXTURE_STYLE, FIXTURE_VIEWBOX];
