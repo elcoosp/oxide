@@ -1,0 +1,22 @@
+# WP B05 — TDD GREEN state (recorded 2026-11-21 13:40:40Z)
+# Base: ee5bd2cd8ec9386bb40088e7b878ced87f042ac1, branch perf/cache-keyhash-tag-index, tree dirty (uncommitted delivery)
+
+# TDD tests (all five, from crates/cache/src/key_hash_tdd.rs):
+ok  test key_hash_tdd::key_hash_display_is_hex ... ok
+ok  test key_hash_tdd::key_hash_is_128_bit_truncated_blake3 ... ok
+ok  test key_hash_tdd::tag_index_no_json_roundtrip ... ok
+ok  test key_hash_tdd::tag_index_reverse_lookup ... ok
+ok  test key_hash_tdd::tag_index_insert_is_o1 ... ok
+
+# Gate results:
+cargo fmt --all --check                                             exit 0
+cargo clippy -p oxide-fw-cache --all-targets --no-deps -- -D warnings   exit 0
+# clippy pedantic note: the bare '-W pedantic' spelling errors on rustc 1.100
+# ('lint name pedantic is deprecated', -D renamed-and-removed-lints); the modern
+# spelling '-W clippy::pedantic' was run: exit 101 over 128 PRE-EXISTING sites
+# (0 findings in the files this WP adds — crates/cache/src/key.rs and key_hash_tdd.rs).
+# The crate's own [lints] entry records that pedantic adoption is a dedicated
+# future hygiene pass, so the recorded gate stays '-D warnings'.
+cargo test -p oxide-fw-cache                                        exit 0 (316 passed, 0 failed)
+grep -rnE '#!?[(allow|expect)]' crates/cache/src/                      empty (exit 1)
+cargo check -p oxide-fw-cli --tests                                 exit 0 (the two canonical() test callers updated)
