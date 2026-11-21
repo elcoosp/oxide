@@ -104,7 +104,7 @@ oxide-fw-cache = { path = "crates/cache" }
 oxide-fw-search = { path = "crates/search" }
 oxide-fw-compiler = { path = "crates/compiler" }
 oxide-fw-bundler = { path = "crates/bundler" }
-oxide-fw-jshost = { path = "crates/jshost" }
+oxide-fw-jshost = { path = "crates/jshost", default-features = false }
 oxide-fw-plugin = { path = "crates/plugin" }
 oxide-fw-render = { path = "crates/render" }
 oxide-fw-server = { path = "crates/server" }
