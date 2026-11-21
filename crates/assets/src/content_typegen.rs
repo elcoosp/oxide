@@ -44,21 +44,16 @@ pub fn write_content_dts(
         let _ = writeln!(out, "export interface {iface} {{");
         out.push_str("  /** URL-safe id of the entry. */\n");
         out.push_str("  readonly slug: string;\n");
-        match c.schema {
-            Some(schema) => {
-                for (field, ty) in &schema.required {
-                    let _ = writeln!(out, "  readonly {field}: {};", ts_type(ty));
-                }
-                for (field, ty) in &schema.optional {
-                    let _ = writeln!(out, "  readonly {field}?: {};", ts_type(ty));
-                }
+        if let Some(schema) = c.schema {
+            for (field, ty) in &schema.required {
+                let _ = writeln!(out, "  readonly {field}: {};", ts_type(ty));
             }
-            None => {
-                out.push_str(
-                    "  /** Unchecked/External schema — frontmatter shape is not typed. */\n",
-                );
-                out.push_str("  readonly [field: string]: unknown;\n");
+            for (field, ty) in &schema.optional {
+                let _ = writeln!(out, "  readonly {field}?: {};", ts_type(ty));
             }
+        } else {
+            out.push_str("  /** Unchecked/External schema — frontmatter shape is not typed. */\n");
+            out.push_str("  readonly [field: string]: unknown;\n");
         }
         out.push_str("}\n\n");
     }
@@ -179,6 +174,7 @@ fn ts_type(ty: &FieldType) -> String {
 /// cannot express — it widens to `String`, the safe supertype for display).
 /// An explicit `NativeSchema` in config, when that field exists, overrides
 /// this.
+#[must_use]
 pub fn infer_schema(collection: &Collection) -> NativeSchema {
     let total = collection.entries.len();
     // field → (observed type, count seen)
@@ -212,9 +208,7 @@ fn field_type_of(v: &serde_json::Value) -> FieldType {
             // Array elements' type; the wrapper is what makes the emitted
             // TypeScript `readonly <elem>[]`. An empty array widens to
             // `readonly string[]` — the safe display type.
-            FieldType::Array(Box::new(
-                a.first().map(field_type_of).unwrap_or(FieldType::String),
-            ))
+            FieldType::Array(Box::new(a.first().map_or(FieldType::String, field_type_of)))
         }
         // Object, Null, or anything else — String is the safe display type.
         _ => FieldType::String,
@@ -234,6 +228,7 @@ fn widen(a: &FieldType, b: &FieldType) -> FieldType {
 /// Build the `(name → schema)` lookup `cmd_build` needs. A collection whose
 /// config carries a `NativeSchema` gets a typed shape; `Unchecked` /
 /// `External` get `None`.
+#[must_use]
 pub fn schemas_from(
     defs: &[crate::content_collection::CollectionConfig],
 ) -> BTreeMap<String, Option<NativeSchema>> {
