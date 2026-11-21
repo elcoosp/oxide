@@ -340,6 +340,9 @@ pub(crate) async fn cmd_dev(
         cfg.server.backend,
         transform_handler,
         Some(&cfg.cache.handler),
+        // §V2-A09: dev keeps importing SOURCE modules (the pre-A09
+        // behavior) — only the build-time prerender imports the bundle.
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     // §6.4 / WP-C1: in dev there is no build entry, so hand the worker the
