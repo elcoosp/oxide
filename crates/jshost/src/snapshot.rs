@@ -8,10 +8,12 @@
 //! that creates a live handle) degrades to a V8 code cache — the loader feeds
 //! the source through V8 on second boot; parse and compile are still skipped.
 
+#[cfg(feature = "v8")]
 use crate::{Result, err};
 #[cfg(feature = "v8")]
 use deno_core::snapshot::{CreateSnapshotOptions, create_snapshot};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "v8")]
 use std::borrow::Cow;
 
 /// Version tag; the loader rejects blobs with a mismatched tag.
