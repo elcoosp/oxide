@@ -1,10 +1,12 @@
 //! The §9.2 parallel load graph (spec v0.2, V2-A06 step 2).
 //!
-//! The dispatch closure runs the layout chain sequentially and its comment
-//! (near `cli/src/lib.rs`, the `§9.2: layout loads first` banner) names the
-//! gap: layout and page loads run one after another even when neither calls
-//! `parent()`. This module is the substrate `stage_loaders` wires instead:
-//! a node list (outer layouts first, page last) where independent loads run
+//! The dispatch closure originally ran the layout chain sequentially (the
+//! pre-A06 comment near `cli/src/lib.rs`, the `§9.2: layout loads first`
+//! banner, named the gap: layout and page loads ran one after another even
+//! when neither calls `parent()`). Both dispatch legs now run THIS module
+//! instead — the SSR render (`stage_loaders`, adopted 2026-11-16) and the
+//! `GET /__data` endpoint (`route_data_response`, the A06 follow-up): a
+//! node list (outer layouts first, page last) where independent loads run
 //! concurrently and a load whose scanner verdict is
 //! [`LoadNode::needs_parent`] starts only after its predecessor resolves
 //! and receives its data as `LoaderRunInput::parent_data`.
