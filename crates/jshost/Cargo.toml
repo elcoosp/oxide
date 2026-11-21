@@ -13,8 +13,12 @@ repository.workspace = true
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }
 oxide-fw-compiler = { workspace = true }
-lightningcss = { workspace = true, features = ["bundler", "sourcemap"] }
-oxc_resolver = { workspace = true }
+# V8-only (v8_loader's CSS-modules transform): optional so the
+# --no-default-features build carries no unused dependency.
+lightningcss = { workspace = true, features = ["bundler", "sourcemap"], optional = true }
+# V8-only (v8_loader's bare-specifier resolution): optional per the
+# same rule.
+oxc_resolver = { workspace = true, optional = true }
 oxide-fw-cache = { workspace = true }
 tracing = { workspace = true }
 oxide-fw-odf = { workspace = true }
@@ -46,7 +50,7 @@ default = ["v8"]
 # M1: the embedded V8 isolate (deno_core). Gating it keeps `cargo build -p
 # oxide-fw-cli --no-default-features` linking with no libclang; the Node
 # worker pool (the default SSR backend) is feature-independent.
-v8 = ["dep:deno_core", "dep:deno_error"]
+v8 = ["dep:deno_core", "dep:deno_error", "dep:lightningcss", "dep:oxc_resolver"]
 # §20: opts the trace-parent bench target in, so plain `cargo test` never
 # pays the criterion build (the workspace-wide bench-util gate shape).
 bench-util = []
