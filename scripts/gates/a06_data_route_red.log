@@ -1,0 +1,37 @@
+# a06_data_route_red.log — 2026-11-21T17:53:14Z
+# command: cargo test -p oxide-fw-cli --lib data_route_
+# branch: perf/data-route-load-graph (uncommitted; base_commit 8cce3f951dc0de1e6069d1435d09a4ad4290a12d)
+# note: the two /__data adoption pins fail against the sequential chain
+# (max_active 1 vs 3; unconditional parent-data threading) — the parity
+# pin is green on both shapes by design.
+
+running 3 tests
+test tests::data_route_independent_layout_loads_overlap_under_the_load_graph ... FAILED
+test tests::data_route_independent_layout_reads_null_parent_data_under_the_graph ... FAILED
+test tests::data_route_threads_parent_data_through_parent_calling_loads ... ok
+
+failures:
+
+---- tests::data_route_independent_layout_loads_overlap_under_the_load_graph stdout ----
+
+thread 'tests::data_route_independent_layout_loads_overlap_under_the_load_graph' (27308) panicked at crates/cli/src/tests.rs:7497:5:
+assertion `left == right` failed: two layouts + the page overlap on /__data — the graph, not the chain
+  left: 1
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::data_route_independent_layout_reads_null_parent_data_under_the_graph stdout ----
+
+thread 'tests::data_route_independent_layout_reads_null_parent_data_under_the_graph' (27309) panicked at crates/cli/src/tests.rs:7572:5:
+assertion `left == right` failed: an independent layout reads Null parent data on /__data — the verdict, not the unconditional chain
+  left: Object {"route": String("routes/layout")}
+ right: Null
+
+
+failures:
+    tests::data_route_independent_layout_loads_overlap_under_the_load_graph
+    tests::data_route_independent_layout_reads_null_parent_data_under_the_graph
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 512 filtered out; finished in 0.38s
+
+error: test failed, to rerun pass `-p oxide-fw-cli --lib`
