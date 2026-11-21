@@ -97,11 +97,13 @@ pub(crate) fn emit_search_engine_index(
         return Ok(());
     }
     // The engine owns a fresh directory (a stale index must never be
-    // committed onto), then the static fallback + the CAS marker.
+    // committed onto), then the static fallback + the CAS marker. The
+    // wipe is the engine's own: a bare `remove_dir_all` loses the race
+    // against the serving reader's OnCommit reloader (its 500 ms poll
+    // tick re-creates `.tantivy-meta.lock` mid-wipe, and the refresh
+    // would fail before the rebuild ever runs).
     let index_dir = out_dir.join(oxide_fw_search::SEARCH_INDEX_DIR);
-    if index_dir.exists() {
-        std::fs::remove_dir_all(&index_dir)?;
-    }
+    oxide_fw_search::wipe_dir_for_rebuild(&index_dir)?;
     let opts = oxide_fw_search::SearchEngineOptions::from_config(search);
     let idx = oxide_fw_search::TantivyIndex::build_in_dir(&docs, &opts, &index_dir)?;
     let static_json = oxide_fw_search::StaticIndex::build(&docs).to_json()?;
