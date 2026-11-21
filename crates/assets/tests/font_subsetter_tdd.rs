@@ -16,6 +16,14 @@
 //! `fixtures/subset-fixture.ttf` (the spec's cmap pin: subset to
 //! `{"a","b"}` and read the subset's cmap back with `skrifa`), so the
 //! seam is proven on a real font, not only on fakes.
+//!
+//! M1: the suite rides the crate's `subset` feature (the `SkrifaSubsetter`
+//! backend it pins is `#[cfg(feature = "subset")]`), the V2-F09 file-level
+//! convention. The workspace gate unifies `subset` on (the CLI enables it),
+//  so every pin runs there exactly as before; a bare
+//  `cargo test -p oxide-fw-assets` compiles this target empty instead of
+//  failing E0432 on the gated import.
+#![cfg(feature = "subset")]
 
 use std::collections::BTreeSet;
 
