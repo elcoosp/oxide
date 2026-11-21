@@ -151,7 +151,11 @@ fn image_webp_succeeds_or_falls_back_to_png_with_ast_webp_diagnostic() {
 /// Real AVIF output needs the ravif encoder — behind the crate's `avif`
 /// feature (the capability matrix: without the feature the request is
 /// refused loudly and falls back, which the pin below holds on every
-/// default build).
+/// default build). The encoder pin rides the feature the same way the
+/// `subset` pins do (the file-level cfg convention): on a default build
+/// the ravif chain is not linked, so an ungated pin would hold the
+/// fallback to the encoder's contract and fail it.
+#[cfg(feature = "avif")]
 #[test]
 fn image_avif_encoding_produces_real_avif_bytes() {
     let out = RustImageBackend
