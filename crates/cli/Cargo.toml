@@ -15,6 +15,15 @@ name = "oxide"
 path = "src/main.rs"
 
 [features]
+# M1 (capability matrix): the embedded V8 isolate (jshost's deno_core chain,
+# libclang at build time) rides the non-default-at-crate-level `v8` feature.
+# The DEFAULT build keeps it (the shipped binary matches the pre-gate
+# capability set); `cargo build -p oxide-fw-cli --no-default-features`
+# links with no libclang and serves `server.backend = "v8"` requests with
+# a loud `JS-V8OFF` refusal onto the Node worker pool (the default SSR
+# backend, unchanged).
+default = ["v8"]
+v8 = ["oxide-fw-jshost/v8"]
 # V2-F11: the object-store deploy targets (`s3://`, `r2://`) ride the
 # adapters crate's `s3` feature — release builds enable it, dev builds
 # keep the binary lean (the `search` feature pattern).
@@ -107,7 +116,10 @@ oxide-fw-bundler = { workspace = true }
 oxide-rustfn = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }
-oxide-fw-jshost = { workspace = true }
+# M1: jshost's default features are suppressed here so `--no-default-features`
+# compiles the V8-free Node-worker build; the crate's own `v8` feature
+# forwards `v8` to jshost (the default feature set keeps the isolate).
+oxide-fw-jshost = { workspace = true, default-features = false }
 oxide-fw-cache = { workspace = true, features = ["redis", "s3"] }
 dashmap = { workspace = true }
 oxide-fw-render = { workspace = true }
