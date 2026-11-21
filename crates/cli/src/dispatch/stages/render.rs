@@ -110,7 +110,23 @@ pub(crate) async fn stage_render(
                         .collect(),
                 ),
             );
-            oxide_fw_odf::encode_to_bytes(&OdfValue::Object(obj)).unwrap_or_default()
+            // Micro-debt (V2-B01 session): the old `.unwrap_or_default()`
+            // silently answered an EMPTY envelope when the §17.1 encoder
+            // refused the value (depth/size limits) — the client parsed a
+            // corrupt-but-200 payload with no trace of the failure. The
+            // empty fallback stays (the render must still answer); the
+            // failure is loud now.
+            match oxide_fw_odf::encode_to_bytes(&OdfValue::Object(obj)) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    tracing::warn!(
+                        route = %route_for_render,
+                        error = %e,
+                        "loader-data envelope encode failed; answering an empty envelope"
+                    );
+                    bytes::Bytes::new()
+                }
+            }
         };
         let mut input =
             oxide_fw_server::PageRenderInput::new(route_for_render, req_owned.url.clone());
