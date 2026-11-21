@@ -1,56 +1,78 @@
-## CURRENT STATE (post-r10)
+## CURRENT STATE (post-B01-tail)
 
-**Session:** `build/oxide-unwall-capability-gates` (uncommitted tree; `ship.toml` +
+**Session:** `perf/b01-prerender-context-table` (uncommitted tree; `ship.toml` +
 `.github/pr-body.md` are gitignored session artifacts). **base_commit:**
-`8d44700eaed201639bb5b9483f8e5b75892d74a1` (2026-11-20). Sandbox: 2 cores, 9.9G
-rootfs (NOT the 458MB recorded in §0 — the walls below were re-tested, not
-assumed), no cargo/node-preinstalled → vendored: rustup 1.98.0 (exit 0), nasm
-2.16.03 (Ubuntu .deb, `dpkg -x`), libclang 18.1.1 (PyPI wheel, `LIBCLANG_PATH`).
-The F47–F70 "no nasm / no libclang" walls are DOWN in this sandbox class.
+`60a9a012d9ab4b85284f5e552de04dc7dda2dbb4` (2026-11-21). Sandbox: 2 cores, 9.9G
+rootfs, vendored rustup stable 1.100.0 (+ rustfmt/clippy components; the
+toolchain is NOT preinstalled in this sandbox class) and libclang 18.1.1 +
+nasm 2.16.03 vendored for the V8 chain (`LIBCLANG_PATH` + `PATH`). No pnpm —
+the TS suite does not run here; the recorded 760/760 stands. The rootfs hit
+ENOSPC twice during the session: run `cargo clean` (or drop
+`target/debug/build/<crate>-*` test binaries) before any full-workspace
+build.
 
 **What is GREEN now (all run here, transcripts in scripts/gates/):**
 - `cargo fmt --all --check` — exit 0.
-- `cargo clippy --workspace --all-targets -- -D warnings` — **exit 0 with NO
-  excludes** (M1's green bar; per-crate sweep 22/22 clean). This is the first
-  no-excludes green since the V8/nasm walls were recorded.
-- `cargo check -p oxide-fw-jshost -p oxide-fw-assets --all-targets` and
-  `-p oxide-fw-cli --all-targets` and `--features search --lib` — exit 0.
-- `cargo deny check licenses advisories` — exit 0 (deny.toml migrated off the
-  PR #611-removed keys; wasmtime 48.0.10; RUSTSEC-2025-0134 + RUSTSEC-2026-0543
-  ignored by exact id with reachability).
+- `cargo test -p oxide-fw-router -p oxide-fw-dispatch` — 0 failed (the
+  router lib pins + the substrate suites, the `route_ctx_tdd` 12 among
+  them).
+- `cargo test -p oxide-fw-cli --no-default-features --lib` — **493 passed /
+  0 failed** (`scripts/gates/b01_m2_green.log`); was 477 passed / 16 failed
+  at the base commit (`scripts/gates/b01_green.log`): the previous
+  handoff's "16 failing CLI lib pins" are FIXED — the 8 `migrate_*` pins
+  rewritten to the shipped E03 engine's contracts, the 3 search-emission
+  pins feature-gated (`#[cfg(feature = "search")]`; the emission hook and
+  SRC-106 are feature-gated — CI runs the lib suite with `--features
+  search`), the brownout pin's missing `cfg.enabled = true`, the deploy-dir
+  pin's pre-A04 "2 upload(s)" → 3 (the `build-id` stamp uploads), the
+  nonce pin's stale `dist/index.html` path → `dist/prerendered/`, and the
+  experiments pin's broken premise (`a`/`b` both blake3 into `control`, so
+  cohort B correctly coalesced onto A's flight — the pin scans the
+  alphabet through the engine's own `assign` for one identity per variant
+  and asserts the true per-assignment exposure counts 2/1).
+- One REAL bug out of those 16: `is_secret_key` missed the separator-free
+  `apiKey`/`x-api-key` spellings — the MCP request-log redaction LEAKED
+  camelCase api keys. Fixed in `crates/server/src/lib.rs` (the flattened
+  form matches), pinned in `crates/server/tests/redaction_tdd.rs` (0
+  failed).
+- `cargo test -p oxide-fw-dispatch --features bench-util --benches -- --test`
+  — the benches run in test mode, the new `baseline_scan` group included.
+- `cargo run -p oxide-fw-dispatch --example route_context` — the leg's
+  consumer example, end to end.
 - The zero-`#[allow]`/`#[expect]` grep — empty.
-- The 5-session `oxide-fw-assets` test-compile break (the recorded
-  rkyv-skew): REPAIRED — `RouteSearchEntry.title` is documented
-  `Option<String>` (`route_search.rs:32-34`), the pins predated it;
-  `integration.rs:69/:99` compare via `as_deref`. Also `font_subsetter_tdd`
-  rides `subset` (V2-F09 file-level cfg) so `-p assets` compiles standalone.
 
-**What this session changed (M1):** `avif` non-default feature in
-oxide-fw-assets (AVIF requests refuse loudly `AST-AVIF` + WebP/PNG fallback);
-`v8` feature in oxide-fw-jshost/oxide-fw-cli (default kept; `--no-default-features`
-links with no libclang; `backend = "v8"` without the feature warns `JS-V8OFF`
-and serves the Node pool; the snapshot write skips with `SNP-V8OFF`); the
-`node` CI job gained its missing `Install nasm` step; README's unsupported
-"21-section scorecard" phrasing replaced by scorecard-r10;
-`packages/oxide-website/content/docs/scorecard-r10.md` authored (P0 table
-re-verified at HEAD with file:line; P0-1c evidence: `crates/cli/resources/`
-still holds only `edge.wasm`).
+**What this session changed (M1 = the WP-B01 tail):** `phase_prerender`
+builds ONE `RouteContextTable::build_with_default_pattern(&tree.entries)`
+before the walk and each page route resolves the trio (layout chain,
+layout-load modules, error boundary) through `prerender_route_answers(rc,
+routes_root)` — the three O(entries) per-route scans are deleted (spec
+perf #10; the §V2-B01 acceptance grep `for candidate in &tree.entries` is
+EMPTY), the per-layout `stat` left the build path with them, and the
+participation verdict is the scanner's `has_server_module` flag — the same
+flag-driven shape the serving side reads, so build-time and run-time can
+no longer disagree on a layout's server module. The spec's
+`baseline_scan` bench group landed (`crates/dispatch/benches/context.rs`:
+the four pre-B01 walks over a mixed synthetic set against `ctx_table/get`;
+the `is_file()` stat excluded — no filesystem in a bench, and the stat
+made the old path strictly slower). The `route_context` example is the
+leg's consumer walkthrough. Micro-debt: `phase_prerender`'s
+`page.server.ts` read was `unwrap_or_default()` (an unreadable module
+silently became "no generateParams") — the loud skip notice names the
+route and the io error; `stage_render`'s loader-data envelope encode
+failure (§17.1 refusals) warns instead of silently answering an empty
+envelope.
 
-**What is RED / open:**
+**What is RED / open (unchanged from the previous handoff):**
 - The `oxide build` regression cluster (smoke-deploy ×3, cli-split-digest,
-  HMR, Playwright ×4, search-feature pins, fixtures-v8, scaffold-install ×4)
-  — the M2 bisect harness is ready (`scripts/bisect_smoke.sh`, zero-API over
-  the deepened local history; `8bcc462e..HEAD` = 2,485 commits).
-- Node-worker tests locally: 16 tests / 10 pass / 6 fail — every failure is
-  solid/vue compiler ops needing the npm packages only `pnpm install`
-  provides (CI executor).
-- The workspace `cargo nextest run` gate: the first full attempt hit ENOSPC
-  (9.9G rootfs, 100%); the session re-runs it in dependency-ordered chunks
-  with per-chunk `cargo clean -p` — chunk results recorded in
-  `scripts/gates/nextest-{a,b,c,d}.log`; CI (rust-cache, 30-min jobs) runs
-  the one command.
+  HMR, Playwright ×4, scaffold-install ×4) — the M2 bisect harness is
+  ready (`scripts/bisect_smoke.sh`).
+- Node-worker tests and the un-chunked workspace nextest gate: need a
+  ≥20G host and the npm packages only `pnpm install` provides; the
+  recorded chunk logs stand.
+- The pre-existing pedantic debt in `oxide-fw-cache`'s untouched code
+  (the recorded 237 findings) — still the dedicated hygiene pass's work.
 
-**The exact next command** (whoever picks this up, on a host with ≥20G free):
+**The exact next command** (on a host with ≥20G free):
 ```
 cargo nextest run --workspace --no-fail-fast   # the un-chunked workspace gate
 cargo build -p oxide-fw-cli && ./target/debug/oxide build --root examples/smoke-app-react
