@@ -1,15 +1,22 @@
-//! V2-A02/V2-A06: criterion benchmarks for the dispatch substrate
+//! V2-A02/V2-A06/V2-B01: criterion benchmarks for the dispatch substrate
 //! (`crates/dispatch`).
 //!
-//! Three groups:
+//! Four groups:
 //! - `url/*`: the prelude's per-request URL helpers (`path_of`,
 //!   `normalize_path`, `data_route_of`, `parse_form_urlencoded`,
 //!   `action_from_query`) on representative inputs. These set the baseline
 //!   the phase-3 closure adoption is compared against.
 //! - `ctx_table/*`: `RouteContextTable` build and `get` — the boot-time
-//!   dispatch answers `stage_match` will consume through this crate's
-//!   dependency surface (V2-B01, integration deferred per
+//!   dispatch answers `stage_match` and the build-time prerender walk
+//!   consume through this crate's dependency surface (V2-B01; the
+//!   serving-side and build-side integrations are landed, see
 //!   `docs/deviations.md`).
+//! - `baseline_scan/*`: the OLD per-request O(entries) walks the request
+//!   closure and the prerender loop paid per route (spec perf #1 / #10) —
+//!   the baseline `ctx_table/get` replaces. The walks copy the pre-B01
+//!   scan shapes verbatim; the per-layout `is_file()` stat is NOT included
+//!   (no filesystem in a bench — the stat made the old path strictly
+//!   slower).
 //! - `loads/*`: the §9.2 parallel load graph (`run_load_graph`, V2-A06) —
 //!   orchestration overhead on a zero-delay runner, plus the wall-clock
 //!   win of independent loads versus a fully parent-chained chain at the
@@ -24,8 +31,10 @@ use oxide_fw_dispatch::url::{
 };
 use oxide_fw_router::RouteContextTable;
 use oxide_fw_router::testing::synthetic_entries;
+use oxide_fw_router::{RouteEntry, RouteId, RouteKind};
 use oxide_fw_server::{LoaderOutput, LoaderRunInput, LoaderRunner};
 use std::hint::black_box;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -62,6 +71,140 @@ fn bench_url_helpers(c: &mut Criterion) {
 /// Route id of synthetic entry 7 (`routes/s7/p7/page`): a static page, a
 /// guaranteed hit for every n >= 8.
 const CTX_HIT_ID: &str = "routes/s7/p7/page";
+
+/// A mixed synthetic set for the scan baseline: pages plus layouts,
+/// middleware, error and loading modules at fixed strides — the shapes the
+/// old per-request scans hunted for (a page-only set makes every walk
+/// degenerate to an empty answer).
+fn mixed_entries(n: usize) -> Vec<RouteEntry> {
+    (0..n)
+        .map(|i| {
+            let (kind, suffix) = match i % 5 {
+                0 => (RouteKind::Layout, "layout"),
+                1 => (RouteKind::Middleware, "middleware"),
+                2 => (RouteKind::Error, "error"),
+                3 => (RouteKind::Loading, "loading"),
+                _ => (RouteKind::Page, "page"),
+            };
+            let dir = format!("d{}", i % 64);
+            RouteEntry {
+                id: RouteId(format!("routes/{dir}/{suffix}")),
+                kind,
+                segments: Vec::new(),
+                file: PathBuf::from(format!("{dir}/{suffix}.tsx")),
+                render_mode: None,
+                tags: Vec::new(),
+                has_server_module: i % 2 == 0,
+                needs_parent: false,
+                live: None,
+                priority: None,
+                slot: None,
+            }
+        })
+        .collect()
+}
+
+/// The OLD per-request scans (spec perf #1 / #10): the O(entries) walks the
+/// request closure and the prerender loop paid per route — the layout chain
+/// (outermost first, `format!("{base}/")` per candidate), the nearest
+/// error boundary, the middleware chain and the not-found id. Copied from
+/// the pre-B01 scan shapes so the comparison stays honest.
+fn baseline_scan(
+    entries: &[RouteEntry],
+    id: &str,
+) -> (Vec<String>, Option<String>, Vec<PathBuf>, Option<String>) {
+    let layout_ids: Vec<String> = {
+        let mut chain: Vec<(String, usize)> = Vec::new();
+        for candidate in entries {
+            if !matches!(candidate.kind, RouteKind::Layout) {
+                continue;
+            }
+            let layout_base = candidate
+                .id
+                .0
+                .strip_suffix("/layout")
+                .unwrap_or(&candidate.id.0);
+            let wraps = layout_base == "routes"
+                || layout_base.is_empty()
+                || id.starts_with(&format!("{layout_base}/"));
+            if wraps {
+                chain.push((candidate.id.0.clone(), layout_base.len()));
+            }
+        }
+        chain.sort_by_key(|(_, len)| *len);
+        chain.into_iter().map(|(id_, _)| id_).collect()
+    };
+    let error_route: Option<String> = {
+        let mut best: Option<(String, usize)> = None;
+        for candidate in entries {
+            if !matches!(candidate.kind, RouteKind::Error) {
+                continue;
+            }
+            let base = candidate
+                .id
+                .0
+                .strip_suffix("/error")
+                .unwrap_or(&candidate.id.0);
+            let wraps = base == "routes" || base.is_empty() || id.starts_with(&format!("{base}/"));
+            if !wraps {
+                continue;
+            }
+            let len = base.len();
+            match &best {
+                Some((_, prev)) if *prev >= len => {}
+                _ => best = Some((candidate.id.0.clone(), len)),
+            }
+        }
+        best.map(|(id_, _)| id_)
+    };
+    let middleware: Vec<PathBuf> = {
+        let mut chain: Vec<(PathBuf, usize)> = Vec::new();
+        for candidate in entries {
+            if !matches!(candidate.kind, RouteKind::Middleware) {
+                continue;
+            }
+            let base = candidate
+                .id
+                .0
+                .strip_suffix("/middleware")
+                .unwrap_or(&candidate.id.0);
+            let wraps = base == "routes" || base.is_empty() || id.starts_with(&format!("{base}/"));
+            if wraps {
+                chain.push((candidate.file.clone(), base.len()));
+            }
+        }
+        chain.sort_by_key(|(_, len)| *len);
+        chain.into_iter().map(|(f, _)| f).collect()
+    };
+    let not_found: Option<String> = entries
+        .iter()
+        .find(|e| matches!(e.kind, RouteKind::NotFound))
+        .map(|e| e.id.0.clone());
+    (layout_ids, error_route, middleware, not_found)
+}
+
+fn bench_baseline_scan(c: &mut Criterion) {
+    let mut g = c.benchmark_group("baseline_scan");
+    g.sample_size(30);
+    g.measurement_time(Duration::from_secs(4));
+    for n in [100, 1000] {
+        g.bench_with_input(BenchmarkId::new("walks", n), &n, |b, &n| {
+            let entries = mixed_entries(n);
+            let id = entries
+                .iter()
+                .find(|e| matches!(e.kind, RouteKind::Page))
+                .expect("the mixed set carries pages")
+                .id
+                .0
+                .clone();
+            b.iter(|| {
+                let answers = baseline_scan(black_box(&entries), black_box(&id));
+                black_box(answers)
+            });
+        });
+    }
+    g.finish();
+}
 
 fn bench_ctx_table(c: &mut Criterion) {
     let mut g = c.benchmark_group("ctx_table");
@@ -182,6 +325,7 @@ criterion_group!(
     benches,
     bench_url_helpers,
     bench_ctx_table,
+    bench_baseline_scan,
     bench_load_graph
 );
 criterion_main!(benches);
