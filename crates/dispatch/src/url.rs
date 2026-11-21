@@ -7,10 +7,12 @@
 //! `parse_form_urlencoded` / `action_from_query` moves here verbatim from the
 //! same file so the phase-3 stages can adopt them without touching the CLI.
 //!
-//! The CLI keeps its private copies until the phase-3 integration PR; this
-//! module is the single future home. Semantics are pinned by the tests below,
-//! including the deliberate edge pins that document current closure behaviour
-//! rather than an idealized contract.
+//! The adoption has landed: the phase-3 stages call these helpers
+//! directly, and the V2-A02 route-context leg (`route_ctx::resolve_match`)
+//! consumes `normalize_path` / `data_route_of` substrate-side — the CLI's
+//! last private copies are gone. Semantics are pinned by the tests below,
+//! including the deliberate edge pins that document current closure
+//! behaviour rather than an idealized contract.
 
 /// Rewrite-hop budget for the dispatch prelude's rewrite guard. The guard
 /// itself (§4.1: reject request chains that exceed the internal rewrite
