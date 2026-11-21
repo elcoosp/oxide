@@ -1146,6 +1146,22 @@ impl TieredCache {
         Ok(keys)
     }
 
+    /// V2-B05 (D25): the reverse index's read half — the tags `key` was
+    /// last set under, sorted for determinism. Empty when the key was
+    /// never set or its delete already ran (the reverse index is cleaned
+    /// eagerly, so a deleted key never dangles). This is the observable
+    /// face of the private `key_tags` map the write path maintains: one
+    /// hash-map entry op per set, one removal per delete.
+    #[must_use = "the tag list answers the caller's attribution question; dropping it loses the answer"]
+    pub fn tags_of(&self, key: &str) -> Vec<String> {
+        let mut tags = self
+            .key_tags
+            .get(key)
+            .map_or_else(Vec::new, |entry| entry.value().clone());
+        tags.sort();
+        tags
+    }
+
     /// `revalidate.tag('x')`: soft marks stale (serve-then-regen) or hard deletes (§11.3).
     ///
     /// Soft invalidation rewrites each matching entry with `ttl = 0` and
@@ -1541,7 +1557,8 @@ mod tests {
     #[tokio::test]
     async fn tiered_cache_key_and_layer_helpers_available() {
         // CacheKey/Layer flow through the tiered API's key space (integration tests
-        // cover tier behavior; this pins the key derivation plumbing).
+        // cover tier behavior; this pins the key derivation plumbing — the D24
+        // KeyHash's hex display is the string the trait boundary carries).
         let cache = TieredCache::new(1 << 20);
         let key = CacheKey {
             layer: Layer::L0,
@@ -1550,12 +1567,10 @@ mod tests {
             vary: String::new(),
             build_id: crate::build_id(&[b"m"]),
         };
-        cache
-            .set(&key.canonical(), entry(b"hello", &[]))
-            .await
-            .unwrap();
-        assert!(cache.get(&key.canonical()).await.unwrap().is_some());
-        cache.record_coalesced(&key.canonical(), 3);
+        let digest = key.canonical().to_string();
+        cache.set(&digest, entry(b"hello", &[])).await.unwrap();
+        assert!(cache.get(&digest).await.unwrap().is_some());
+        cache.record_coalesced(&digest, 3);
         assert_eq!(cache.stats().coalesced, 3);
         assert_eq!(path_tag("/x"), "path:/x");
         assert!(PATH_TAG_PREFIX.starts_with("path"));
