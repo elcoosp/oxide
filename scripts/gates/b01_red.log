@@ -1,0 +1,26 @@
+      |
+16068 |         let answers = crate::build::prerender_route_answers(rc, root);
+      |                                     ^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `prerender_route_answers` in module `crate::build`
+     --> crates/cli/src/tests.rs:16107:33
+      |
+16107 |     let answers = crate::build::prerender_route_answers(rc, std::path::Path::new("/proj/src/routes"));
+      |                                 ^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `prerender_route_answers` in module `crate::build`
+     --> crates/cli/src/tests.rs:16151:23
+      |
+16151 |         crate::build::prerender_route_answers(admin, std::path::Path::new("/proj/src/routes"))
+      |                       ^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `prerender_route_answers` in module `crate::build`
+     --> crates/cli/src/tests.rs:16158:23
+      |
+16158 |         crate::build::prerender_route_answers(plain, std::path::Path::new("/proj/src/routes"))
+      |                       ^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+Some errors have detailed explanations: E0422, E0425.
+For more information about an error, try `rustc --explain E0422`.
+error: could not compile `oxide-fw-cli` (lib test) due to 6 previous errors
+RED EXIT: 101
