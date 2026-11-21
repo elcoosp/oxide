@@ -3,13 +3,14 @@
 //! The `CacheHandler` trait is string-keyed, so the string stays the trait
 //! boundary; [`KeyStr`] builds it in 32 bytes of stack (no `String`, no heap)
 //! and derefs to `&str`. [`key_of`] digests the same NUL-separated component
-//! sequence as [`CacheKey::canonical`](crate::CacheKey::canonical), so its hex
-//! form is the first 32 chars of the canonical 64-char digest.
+//! sequence as [`CacheKey::canonical`](crate::CacheKey::canonical) — since the
+//! D24 `KeyHash` landed, both are views of ONE digest: [`key_of`] is
+//! `CacheKey::canonical().hex()`, the first 32 hex chars of the canonical digest.
 //!
 //! Hex only at this display/filename boundary (D24): all in-memory comparisons
-//! and map keys can move to the 16 raw digest bytes.
+//! and map keys are the 16 raw digest bytes ([`crate::key::KeyHash`]).
 
-use blake3::Hasher;
+use crate::key::KeyHash;
 
 /// 32 ASCII hex chars (a 128-bit blake3 prefix) on the stack. Derefs to `&str`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -30,6 +31,19 @@ impl KeyStr {
             out[i] = hexval(pair[0]) << 4 | hexval(pair[1]);
         }
         out
+    }
+
+    /// The hex form of a 16-byte digest — the constructor the D24
+    /// [`KeyHash`](crate::key::KeyHash) renders through. One hex table, so
+    /// the raw and hex views of a key cannot drift.
+    pub(crate) fn from_digest16(raw: &[u8; 16]) -> Self {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = [0u8; 32];
+        for (i, b) in raw.iter().enumerate() {
+            out[2 * i] = HEX[(b >> 4) as usize];
+            out[2 * i + 1] = HEX[(b & 15) as usize];
+        }
+        KeyStr(out)
     }
 }
 
@@ -61,24 +75,12 @@ fn hexval(b: u8) -> u8 {
 }
 
 /// blake3 over `layer 0x00 route 0x00 params 0x00 vary 0x00 build_id`, hex of the
-/// first 16 digest bytes (128 bits) — the same digest [`crate::CacheKey::canonical`]
-/// computes, truncated. NUL separators keep the encoding prefix-free.
+/// first 16 digest bytes (128 bits) — the display form of the digest
+/// [`crate::CacheKey::canonical`] computes, i.e. `CacheKey::canonical().hex()`
+/// since the D24 `KeyHash` landed. NUL separators keep the encoding prefix-free.
+#[must_use = "the stack key is the derivation's whole point; dropping it loses the key"]
 pub fn key_of(layer: &str, route: &str, params: &str, vary: &str, build_id: &str) -> KeyStr {
-    let mut h = Hasher::new();
-    for (i, p) in [layer, route, params, vary, build_id].iter().enumerate() {
-        if i > 0 {
-            h.update(&[0]); // NUL separators keep the encoding prefix-free
-        }
-        h.update(p.as_bytes());
-    }
-    let d = h.finalize();
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = [0u8; 32];
-    for (i, b) in d.as_bytes()[..16].iter().enumerate() {
-        out[2 * i] = HEX[(b >> 4) as usize];
-        out[2 * i + 1] = HEX[(b & 15) as usize];
-    }
-    KeyStr(out)
+    KeyHash::of_parts(layer, route, params, vary, build_id).hex()
 }
 
 #[cfg(test)]
@@ -103,9 +105,9 @@ mod tests {
     }
 
     #[test]
-    fn matches_canonical_prefix() {
-        // canonical() hashes the same byte sequence, so its first 32 hex chars
-        // equal key_of.
+    fn matches_canonical_display() {
+        // canonical() hashes the same byte sequence, so its 32-char hex
+        // display IS key_of — one digest, one display.
         let k = CacheKey {
             layer: Layer::L0,
             route: "r".into(),
@@ -113,7 +115,10 @@ mod tests {
             vary: "v".into(),
             build_id: "b".into(),
         };
-        assert_eq!(&k.canonical()[..32], &*key_of("L0", "r", "p", "v", "b"));
+        assert_eq!(
+            k.canonical().to_string(),
+            key_of("L0", "r", "p", "v", "b").as_str()
+        );
     }
 
     #[test]
