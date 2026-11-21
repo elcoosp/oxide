@@ -52,7 +52,8 @@ fn canonical_key_deterministic_and_component_sensitive() {
         build_id: build.into(),
     };
     let a = k(Layer::L0, "/blog/[slug]", "slug=a", "lang=en", "b1").canonical();
-    assert_eq!(a.len(), 64, "blake3 hex digest");
+    assert_eq!(a.as_bytes().len(), 16, "D24: 128-bit raw identity");
+    assert_eq!(a.to_string().len(), 32, "blake3 hex digest");
     assert_eq!(
         a,
         k(Layer::L0, "/blog/[slug]", "slug=a", "lang=en", "b1").canonical()
