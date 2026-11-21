@@ -218,8 +218,12 @@ fn field_boosts_from_options_can_invert_the_ranking() {
 #[test]
 fn engine_options_default_from_the_typed_search_config() {
     let opts = SearchEngineOptions::from_config(&SearchConfig::default());
-    assert_eq!(opts.title_boost, 3.0);
-    assert_eq!(opts.body_boost, 1.0);
+    // Exact-value pins: 3.0 / 1.0 / 2.0 / 0.5 are exactly representable in
+    // f32 and the config path copies them verbatim, so the tolerance is a
+    // formality — but `assert_eq!` on f32 trips `clippy::float_cmp` under
+    // `-D warnings`, so the exactness is spelled out instead of allowed.
+    assert!((opts.title_boost - 3.0).abs() < 1e-6);
+    assert!((opts.body_boost - 1.0).abs() < 1e-6);
     assert_eq!(opts.snippet_len, 160);
     assert_eq!(opts.languages, vec!["en".to_string()]);
 
@@ -233,8 +237,8 @@ fn engine_options_default_from_the_typed_search_config() {
         ..SearchConfig::default()
     };
     let opts = SearchEngineOptions::from_config(&configured);
-    assert_eq!(opts.title_boost, 2.0);
-    assert_eq!(opts.body_boost, 0.5);
+    assert!((opts.title_boost - 2.0).abs() < 1e-6);
+    assert!((opts.body_boost - 0.5).abs() < 1e-6);
     assert_eq!(opts.snippet_len, 80);
     assert_eq!(opts.languages, vec!["de".to_string()]);
 }
