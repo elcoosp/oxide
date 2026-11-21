@@ -121,7 +121,7 @@ impl FrameworkHost {
         // stamp the validated traceparent into CallInput.headers before the
         // envelope nests into the payload, so the worker's `fetch` op can
         // propagate it (empty map = untraced, nothing fabricated).
-        let trace_headers = crate::v8_ops::payload_trace_headers(&input);
+        let trace_headers = crate::trace::payload_trace_headers(&input);
         let payload = match components {
             Some(c) => serde_json::json!({
                 "path": config_path, "input": input, "components": c
@@ -188,7 +188,7 @@ impl FrameworkHost {
         // stamp the validated traceparent into CallInput.headers before the
         // envelope nests into the payload, so the worker's `fetch` op can
         // propagate it (empty map = untraced, nothing fabricated).
-        let trace_headers = crate::v8_ops::payload_trace_headers(&input);
+        let trace_headers = crate::trace::payload_trace_headers(&input);
         let payload = match components {
             Some(c) => serde_json::json!({
                 "path": config_path, "input": input, "components": c
