@@ -22,6 +22,7 @@ use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// §6.4 / WP-B1: where the adapter resolves route components from.
@@ -43,6 +44,32 @@ impl ComponentSource {
     pub fn is_empty(&self) -> bool {
         self.entry.is_none() && self.sources.is_empty()
     }
+}
+
+/// §V2-A09: where the worker's real-ssr LOADER imports route and layout
+/// modules from during a render.
+///
+/// The prerender path's module loader imports SOURCE modules, so a plugin
+/// transform that only ships in the build-emitted server bundle never
+/// reaches the prerendered HTML (the SPEC-17 known remainder). The fix
+/// threads this knob through the framework renderer's config:
+/// `phase_prerender` constructs the renderer with
+/// [`ModuleSource::Bundle`](`ModuleSource::Bundle`) pointing at
+/// `dist/server`; dev and `oxide render` keep the [`ModuleSource::Source`]
+/// default. The default keeps the wire unchanged — a `Source` render emits
+/// no module-source keys, so every existing worker payload is
+/// byte-identical.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "dir", rename_all = "lowercase")]
+pub enum ModuleSource {
+    /// Import route/layout modules from their source files — dev and
+    /// `oxide render` (the default).
+    #[default]
+    Source,
+    /// Import from the build-emitted server bundle rooted at `dir` — the
+    /// build-time prerender, so plugin-transformed modules are what the
+    /// loader sees.
+    Bundle(PathBuf),
 }
 
 /// The per-request shape the pipeline hands to a renderer (spec §7 RenderInput).
@@ -103,6 +130,17 @@ pub struct FrameworkRenderInput {
     /// it under `strict-dynamic`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
+
+    /// §V2-A09: where the worker's real-ssr loader imports route/layout
+    /// modules from. The default is [`ModuleSource::Source`] (dev and
+    /// `oxide render` keep importing source modules — pre-A09 behavior);
+    /// the build-time prerender renderer stamps
+    /// [`ModuleSource::Bundle`](`ModuleSource::Bundle`) onto every input it
+    /// sends, and the payload carries the kind and the directory the worker
+    /// imports from. `#[serde(default)]` so a pre-A09 payload (the field
+    /// absent) keeps parsing.
+    #[serde(default)]
+    pub module_source: ModuleSource,
 }
 
 impl FrameworkRenderInput {
@@ -122,11 +160,19 @@ impl FrameworkRenderInput {
             locale: None,
             deferred: std::collections::BTreeMap::new(),
             nonce: None,
+            module_source: ModuleSource::Source,
         }
     }
 
     /// Serialize into the JSON payload the JS-side worker expects.
-    fn to_payload(&self) -> Value {
+    ///
+    /// Public because the shape IS the §7 worker contract (the JS-side
+    /// `RenderInput`), and the A09 pins assert it: a `Source` render emits
+    /// no module-source keys (the wire is byte-identical to the pre-A09
+    /// shape), while a `Bundle(dir)` render stamps `moduleSource` +
+    /// `moduleDir` for the worker's real-ssr loader.
+    #[must_use]
+    pub fn to_payload(&self) -> Value {
         let mut payload = serde_json::json!({
             "route": self.route,
             "url": self.url,
@@ -153,6 +199,15 @@ impl FrameworkRenderInput {
         }
         if let Some(n) = &self.nonce {
             payload["nonce"] = Value::String(n.clone());
+        }
+        // §V2-A09: the loader's import root. `Source` (the default) emits
+        // NOTHING — the worker payload stays byte-identical for dev,
+        // `oxide render` and every pre-A09 caller; only the build-time
+        // prerender's `Bundle(dir)` rides the keys the worker's real-ssr
+        // loader reads.
+        if let ModuleSource::Bundle(dir) = &self.module_source {
+            payload["moduleSource"] = Value::String("bundle".to_string());
+            payload["moduleDir"] = Value::String(dir.to_string_lossy().into_owned());
         }
         payload
     }
