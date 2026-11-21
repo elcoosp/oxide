@@ -23,7 +23,9 @@ pub(crate) async fn stage_action(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow 
     let ppr_for_request = d.ppr_shells.clone();
     let live_for_request = d.live.clone();
     let metrics = std::sync::Arc::clone(&d.metrics);
-    let label = &cx.label;
+    // WP B03 item 2: borrow the label as `&str` (Deref coercion from the
+    // `Arc<str>` field) — the metrics `observe(label, …)` takes `&str`.
+    let label: &str = &cx.label;
     let started = cx.started;
     let middleware_ms = cx.middleware_ms;
     // <<< stage-wrapper
