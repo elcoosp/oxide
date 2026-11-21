@@ -195,7 +195,9 @@ pub(crate) async fn stage_middleware(d: &DispatchDeps, cx: &mut RequestCtx) -> F
                 return Flow::Respond(re_dispatch(new_req).await);
             }
             tracing::warn!(
-                route = %label,
+                // WP B03 item 2: `label` is an `Arc<str>` (zero-alloc clone);
+                // deref to `&str` for the tracing field's `Display`.
+                route = %&*label,
                 rewrite = %to,
                 "middleware rewrite: self-dispatch unavailable; serving with the chain's \
                  accumulated state",
