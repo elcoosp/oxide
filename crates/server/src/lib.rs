@@ -275,6 +275,11 @@ impl OxideRequest {
 #[must_use]
 pub fn is_secret_key(k: &str) -> bool {
     let k = k.to_ascii_lowercase();
+    // The separator-free spelling catches the camelCase and kebab forms
+    // (`apiKey`, `x-api-key`) the `api_key` literal missed — the MCP
+    // request-log redaction shipped a leak for exactly that class (the
+    // `redact_secrets` pin redacted 4 of 5 fixture secrets before this).
+    let flat = k.replace(['_', '-'], "");
     matches!(
         k.as_str(),
         "cookie" | "authorization" | "set-cookie" | "x-oxide-fw-dev-token"
@@ -282,6 +287,7 @@ pub fn is_secret_key(k: &str) -> bool {
         || k.contains("token")
         || k.contains("password")
         || k.contains("api_key")
+        || flat.contains("apikey")
 }
 
 /// SPEC-24: the shared redacting headers renderer for the `Debug` impls.
