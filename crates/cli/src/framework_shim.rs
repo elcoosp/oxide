@@ -892,6 +892,23 @@ pub async fn build_framework_stack(
         ssrf_allow_list: Vec::new(),
     });
 
+    // M1 (capability matrix): the embedded V8 isolate rides the crate's
+    // `v8` feature. A binary built without it cannot honor
+    // `server.backend = "v8"` — say so loudly (the P-21 rule) and serve
+    // through the Node worker pool, the default backend, instead of
+    // failing the boot. No code changes when the feature is present.
+    #[cfg(not(feature = "v8"))]
+    let backend = if matches!(backend, JsBackend::V8) {
+        eprintln!(
+            "warn: JS-V8OFF: server.backend = \"v8\" but this binary was built without the `v8` \
+             feature (rebuild with `cargo build -p oxide-fw-cli --features v8`); \
+             running the Node worker pool instead"
+        );
+        JsBackend::Node
+    } else {
+        backend
+    };
+
     let host: Arc<dyn JsHost> = match backend {
         JsBackend::Node => {
             let mut h = NodeHost::new(NodeHost::worker_script_default())
@@ -904,33 +921,46 @@ pub async fn build_framework_stack(
             Arc::new(h)
         }
         JsBackend::V8 => {
+            #[cfg(not(feature = "v8"))]
+            {
+                // Unreachable at runtime — `backend` was normalized to Node
+                // above when the `v8` feature is compiled out — but the arm
+                // must exist so the match stays exhaustive on both sides of
+                // the feature gate.
+                unreachable!(
+                    "server.backend = \"v8\" is normalized to the Node backend without the `v8` feature"
+                )
+            }
             // P-21: the V8 worker implements render + tooling ops only; the
             // loader/middleware/action ops still route to the Node fallback
             // pool. Say so loudly instead of letting "V8 parity" be silent.
-            tracing::warn!(
-                "server.backend = \"v8\": loader/middleware/action still run on the Node \
-                 fallback pool (V8 only implements render + tooling ops)"
-            );
-            // §4.4: if `oxide build` wrote a snapshot, boot from it.
-            let snap = config_path
-                .and_then(|p| p.parent())
-                .map(|root| root.join(".oxide/snapshot.bin"));
-            let host = match snap {
-                Some(path) if path.is_file() => V8Host::from_snapshot_file(&path),
-                _ => V8Host::new(),
-            };
-            // BUG-02: give the V8 backend the same cache tier as Node — it
-            // had none, so `'use cache'` silently degraded to per-worker Maps.
-            let host = host
-                .with_cache_handler(Arc::clone(&cache_tier))
-                .with_fetch_handler(Arc::clone(&fetch_handler));
-            // §6.2: attach the plugin transform to the render pool's host.
-            let host = if let Some(t) = transform_handler.as_ref() {
-                host.with_transform_handler(Arc::clone(t))
-            } else {
-                host
-            };
-            Arc::new(host)
+            #[cfg(feature = "v8")]
+            {
+                tracing::warn!(
+                    "server.backend = \"v8\": loader/middleware/action still run on the Node \
+                     fallback pool (V8 only implements render + tooling ops)"
+                );
+                // §4.4: if `oxide build` wrote a snapshot, boot from it.
+                let snap = config_path
+                    .and_then(|p| p.parent())
+                    .map(|root| root.join(".oxide/snapshot.bin"));
+                let host = match snap {
+                    Some(path) if path.is_file() => V8Host::from_snapshot_file(&path),
+                    _ => V8Host::new(),
+                };
+                // BUG-02: give the V8 backend the same cache tier as Node — it
+                // had none, so `'use cache'` silently degraded to per-worker Maps.
+                let host = host
+                    .with_cache_handler(Arc::clone(&cache_tier))
+                    .with_fetch_handler(Arc::clone(&fetch_handler));
+                // §6.2: attach the plugin transform to the render pool's host.
+                let host = if let Some(t) = transform_handler.as_ref() {
+                    host.with_transform_handler(Arc::clone(t))
+                } else {
+                    host
+                };
+                Arc::new(host)
+            }
         }
     };
     // PERF-02: size the render/loader pool by the machine's parallelism, not
@@ -1765,6 +1795,9 @@ mod backend_tests {
     /// the pool via `V8Host` (not `NodeHost`). We cannot spawn the CLI
     /// worker from a unit test on every host — the assertion here is that
     /// the pool exists and reports the V8 backend name through the trait.
+    /// Rides the crate's `v8` feature (the embedded isolate is feature-gated;
+    /// without it `build_framework_stack` refuses loudly and serves Node).
+    #[cfg(feature = "v8")]
     #[tokio::test]
     async fn v8_backend_builds_a_pool() {
         use oxide_fw_jshost::JsHost;
