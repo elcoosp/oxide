@@ -55,6 +55,7 @@ pub struct RouteSearchIndex {
 /// Extract the search-relevant text from a rendered HTML document. The
 /// route/url are caller-supplied (the build knows them; the HTML does
 /// not always carry a canonical route id in a machine-readable way).
+#[must_use]
 pub fn extract_from_html(route: &str, url: &str, html: &str) -> RouteSearchEntry {
     // Headings and the excerpt both run through `strip_tags`; the title did
     // not, so a `<title>` with an entity or an inline tag would carry raw
@@ -110,12 +111,13 @@ pub fn extract_from_html(route: &str, url: &str, html: &str) -> RouteSearchEntry
     }
 }
 
-/// Walk `prerendered` (route_id → list of relative output paths) and build
+/// Walk `prerendered` (`route_id` → list of relative output paths) and build
 /// the index. `dist` is the project's `dist/` directory (the paths are
 /// relative to it). A route with multiple variants (per-locale outputs)
 /// produces one entry per variant — the URL is what the client needs to
 /// navigate, and a search result should land on the locale the user is
 /// browsing in.
+#[must_use]
 pub fn build_route_search_index(
     prerendered: &BTreeMap<String, Vec<String>>,
     dist: &Path,
@@ -147,8 +149,8 @@ pub fn build_route_search_index(
     }
 }
 
-/// Serialize to pretty JSON. Byte-stable across runs (BTreeMap + sort
-/// above + serde_json's stable map ordering means the output does not
+/// Serialize to pretty JSON. Byte-stable across runs (`BTreeMap` + sort
+/// above + `serde_json`'s stable map ordering means the output does not
 /// depend on hashing).
 pub fn route_search_index_to_json(idx: &RouteSearchIndex) -> crate::Result<String> {
     serde_json::to_string_pretty(idx)
@@ -292,7 +294,7 @@ mod tests {
         let html = "<html><body>No title, no headings.</body></html>";
         let e = extract_from_html("routes/x", "/x", html);
         assert!(e.title.is_none());
-        assert!(e.headings.is_empty());
+        assert_eq!(e.headings, [] as [std::string::String; 0]);
         assert!(e.excerpt.is_none());
     }
 
