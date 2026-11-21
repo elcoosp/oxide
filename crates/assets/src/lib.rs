@@ -157,6 +157,7 @@ pub struct CssOutput {
 /// Tailwind v4 integration point (§6.6): native plugin using the Rust scanner against
 /// graph-known files (no separate glob pass). This scanner extracts candidate utilities;
 /// the engine itself is provided by the tailwind plugin (docs/deviations.md).
+#[must_use]
 pub fn scan_tailwind_candidates(sources: &[&str]) -> Vec<String> {
     css::scan_tailwind_candidates(sources)
 }
@@ -172,6 +173,7 @@ pub enum ImageFormat {
 }
 
 impl ImageFormat {
+    #[must_use]
     pub fn mime(&self) -> &'static str {
         match self {
             ImageFormat::Avif => "image/avif",
@@ -180,6 +182,7 @@ impl ImageFormat {
             ImageFormat::Png => "image/png",
         }
     }
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "avif" => ImageFormat::Avif,
@@ -224,7 +227,7 @@ pub struct ImageResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// ImageBackend trait (D19): pure-Rust default; libvips optional backend slots in.
+/// `ImageBackend` trait (D19): pure-Rust default; libvips optional backend slots in.
 pub trait ImageBackend: Send + Sync {
     fn process(&self, req: ImageRequest) -> Result<ImageResult>;
 }
@@ -236,6 +239,7 @@ pub struct RustImageBackend;
 
 /// srcset/sizes generator (§16.1): `?w=` widths → responsive candidates, ascending,
 /// e.g. `"<base>?w=640 640w, <base>?w=1024 1024w"`. Deduplicated; empty → `""`.
+#[must_use]
 pub fn srcset(widths: &[u32], base_url: &str) -> String {
     let mut ws = widths.to_vec();
     ws.sort_unstable();
@@ -248,6 +252,7 @@ pub fn srcset(widths: &[u32], base_url: &str) -> String {
 
 /// `/_oxide/image` endpoint request signing (§16.1, signed URLs optional):
 /// appends `s=<blake3(url||secret)[..16]>` with `&` when the URL already has a query.
+#[must_use]
 pub fn sign_image_url(url: &str, secret: &str) -> String {
     let mut h = Hasher::new();
     h.update(url.as_bytes());
@@ -264,6 +269,7 @@ pub fn sign_image_url(url: &str, secret: &str) -> String {
 
 /// §16.1 / SEC-08: verify the signature `sign_image_url` produced.
 /// Constant-time compare (see [`constant_time_eq_hex`]).
+#[must_use]
 pub fn verify_image_signature(url: &str, secret: &str, sig: &str) -> bool {
     let mut h = Hasher::new();
     h.update(url.as_bytes());
@@ -274,6 +280,7 @@ pub fn verify_image_signature(url: &str, secret: &str, sig: &str) -> bool {
 
 /// SEC-08: constant-time hex-string compare. Length is allowed to leak (it
 /// is public); the bytes are compared without an early exit.
+#[must_use]
 pub fn constant_time_eq_hex(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
@@ -452,7 +459,7 @@ pub struct FontBundle {
     pub preload: Vec<String>,
 }
 
-/// FontBackend trait (D19): fontations/skrifa subsetting slots in.
+/// `FontBackend` trait (D19): fontations/skrifa subsetting slots in.
 pub trait FontBackend: Send + Sync {
     fn bundle(&self, spec: &FontSpec) -> Result<FontBundle>;
 }
@@ -509,10 +516,10 @@ impl FontBackend for DefaultFontBackend {
                     format!("failed to read font file {}: {e}", p.display()),
                 )
             })?;
-            let original_name = p
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "font.woff2".to_string());
+            let original_name = p.file_name().map_or_else(
+                || "font.woff2".to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
 
             // The subset output is TrueType (subsetter emits sfnt); the
             // file is renamed to `.ttf` so the CSS `format()` hint below
@@ -569,7 +576,7 @@ impl FontBackend for DefaultFontBackend {
                     let fmt = match std::path::Path::new(name)
                         .extension()
                         .and_then(|e| e.to_str())
-                        .map(|e| e.to_ascii_lowercase())
+                        .map(str::to_ascii_lowercase)
                         .as_deref()
                     {
                         Some("woff2") => "woff2",
@@ -644,10 +651,11 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    /// Emit neutral head tags (consumed by render::HeadTags). Meta key convention
+    /// Emit neutral head tags (consumed by `render::HeadTags`). Meta key convention
     /// mirrors render: `name:<n>`, `property:<p>`; `og:*` uses `property`,
     /// `twitter:*` uses `name`. The title template (`%s`) applies only when a title
     /// is set and contains `%s`.
+    #[must_use]
     pub fn to_head(&self) -> crate::render_types::HeadContrib {
         let mut head = crate::render_types::HeadContrib::default();
         if let Some(t) = &self.title {
@@ -689,7 +697,7 @@ impl Metadata {
     }
 }
 
-/// Minimal mirror of render::HeadTags to avoid a dep cycle.
+/// Minimal mirror of `render::HeadTags` to avoid a dep cycle.
 pub mod render_types {
     #[derive(Debug, Clone, Default)]
     pub struct HeadContrib {
@@ -701,6 +709,7 @@ pub mod render_types {
 }
 
 /// sitemap.xml generation (§16.3): one `<url><loc>` per URL, XML-escaped.
+#[must_use]
 pub fn sitemap_xml(urls: &[&str]) -> String {
     let mut s = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     s.push_str("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
@@ -718,6 +727,7 @@ pub fn sitemap_xml(urls: &[&str]) -> String {
 /// `robots.txt` as "allow everything" — but an explicit `User-agent: *`
 /// group is clearer and is what every deployment actually wants. Emit that
 /// default when the caller passes no rules.
+#[must_use]
 pub fn robots_txt(rules: &[(&str, &str)], sitemap: Option<&str>) -> String {
     let mut s = String::new();
     if rules.is_empty() {
@@ -744,7 +754,7 @@ fn xml_escape(s: &str) -> String {
 // ---------------- OG images (§16.3) ----------------
 
 /// OG image template: neutral element tree rendered through taffy/parley/resvg
-/// behind the OgBackend trait (D19); cached by input hash. Default backend returns
+/// behind the `OgBackend` trait (D19); cached by input hash. Default backend returns
 /// a diagnostic explaining the feature-gated rasterizer (docs/deviations.md).
 pub trait OgBackend: Send + Sync {
     fn render(&self, tree: &serde_json::Value, width: u32, height: u32) -> Result<Vec<u8>>;
@@ -760,7 +770,8 @@ pub struct ContentEntry {
     pub body_markdown: String,
 }
 
-/// Markdown → HTML (CommonMark + tables via a minimal renderer; comrak slots in).
+/// Markdown → HTML (`CommonMark` + tables via a minimal renderer; comrak slots in).
+#[must_use]
 pub fn markdown_to_html(md: &str) -> String {
     content::markdown_to_html(md)
 }
@@ -773,6 +784,7 @@ pub fn parse_content_entry(path: &Path, source: &str) -> Result<ContentEntry> {
 
 /// Syntax highlighting at build time (§16.5): minimal token highlighter for common
 /// languages (tree-sitter/syntect slot in behind the same signature).
+#[must_use]
 pub fn highlight(code: &str, lang: &str) -> String {
     content::highlight(code, lang)
 }
