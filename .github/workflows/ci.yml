@@ -141,6 +141,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Install nasm
+        # The asymmetry that kept this job red (run 44826407648): every other
+        # job that builds the CLI installs nasm, this one did not. The M1
+        # avif feature gate takes ravif/rav1e out of the DEFAULT CLI build,
+        # but the step stays so the job is correct for `--features avif`
+        # variants too — same install the docs-check job runs.
+        run: sudo apt-get update && sudo apt-get install -y nasm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
