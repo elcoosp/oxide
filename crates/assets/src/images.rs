@@ -1,4 +1,4 @@
-//! RustImageBackend internals (spec §16.1, D19): pure-`image` decode → resize
+//! `RustImageBackend` internals (spec §16.1, D19): pure-`image` decode → resize
 //! (triangle filter) → encode PNG/JPEG/WebP, plus LQIP/blur placeholders.
 //!
 //! Documented scope decisions (Task 9):
@@ -34,10 +34,10 @@ impl ImageBackend for crate::RustImageBackend {
         let (ow, oh) = (img.width(), img.height());
         let (tw, th) = target_dims(ow, oh, req.width, req.height);
 
-        let rgba = if (tw, th) != (ow, oh) {
-            image::imageops::resize(&img.to_rgba8(), tw, th, FilterType::Triangle)
-        } else {
+        let rgba = if (tw, th) == (ow, oh) {
             img.to_rgba8()
+        } else {
+            image::imageops::resize(&img.to_rgba8(), tw, th, FilterType::Triangle)
         };
         let (fw, fh) = (rgba.width(), rgba.height());
         let placeholder = req.placeholder.map(|kind| make_placeholder(&rgba, kind));
@@ -60,8 +60,14 @@ impl ImageBackend for crate::RustImageBackend {
 /// Width wins when both are set (aspect preserved, §16.1 "intrinsic dimensions").
 fn target_dims(ow: u32, oh: u32, width: Option<u32>, height: Option<u32>) -> (u32, u32) {
     let (w, h) = match (width, height) {
-        (Some(w), _) => (w, ((oh as f64) * w as f64 / ow as f64).round() as u32),
-        (None, Some(h)) => (((ow as f64) * h as f64 / oh as f64).round() as u32, h),
+        (Some(w), _) => (
+            w,
+            (f64::from(oh) * f64::from(w) / f64::from(ow)).round() as u32,
+        ),
+        (None, Some(h)) => (
+            (f64::from(ow) * f64::from(h) / f64::from(oh)).round() as u32,
+            h,
+        ),
         (None, None) => (ow, oh),
     };
     (w.max(1), h.max(1))
@@ -216,7 +222,7 @@ fn encode_png_fallback(rgba: &image::RgbaImage) -> Result<Vec<u8>> {
 fn make_placeholder(rgba: &image::RgbaImage, kind: PlaceholderKind) -> String {
     let (ow, oh) = (rgba.width(), rgba.height());
     let w = PLACEHOLDER_WIDTH.min(ow).max(1);
-    let h = (((oh as f64) * w as f64 / ow as f64).round() as u32).max(1);
+    let h = ((f64::from(oh) * f64::from(w) / f64::from(ow)).round() as u32).max(1);
     let mut small = image::imageops::resize(rgba, w, h, FilterType::Triangle);
     if kind == PlaceholderKind::Blur {
         // Two blur passes (σ=2) ≈ the classic box-blur LQIP smear.
@@ -275,7 +281,7 @@ fn base64_encode(data: &[u8]) -> String {
             *chunk.get(1).unwrap_or(&0),
             *chunk.get(2).unwrap_or(&0),
         ];
-        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         out.push(TABLE[(n >> 18 & 63) as usize] as char);
         out.push(TABLE[(n >> 12 & 63) as usize] as char);
         out.push(if chunk.len() > 1 {
