@@ -7461,6 +7461,126 @@ async fn independent_layout_loads_overlap_with_the_page_under_the_load_graph() {
     );
 }
 
+// ---- V2-A06 follow-up: the /__data leg joins the load graph -------------
+//
+// The SSR adoption (2026-11-16) left the data route's layout chain
+// sequential on purpose ("parallelizing it is a follow-up" — the
+// deviations entry). These pins drag the GET /__data endpoint onto the
+// SAME `run_load_graph_outcomes` substrate `stage_loaders` runs, so a
+// client-side navigation's data envelope stops paying the sequential
+// waterfall the SSR render stopped paying.
+
+#[tokio::test]
+async fn data_route_independent_layout_loads_overlap_under_the_load_graph() {
+    // §9.2 MUST on the /__data leg: with no `parent()` anywhere, BOTH
+    // layout loads and the page run concurrently — the sequential chain
+    // this endpoint kept after the SSR adoption capped peak concurrency
+    // at 1 on this shape.
+    let (_dir, root, tree) = scan_two_layout_project(
+        "export async function load() { return {}; }\n",
+        "export async function load() { return {}; }\n",
+    );
+    let probe = std::sync::Arc::new(ParentDataProbe::new());
+    let max_active = std::sync::Arc::clone(&probe.max_active);
+    let loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> = Some(probe);
+    let dispatch = build_dispatch(
+        tree,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/__data?route=%2Fblog")).await;
+    assert_eq!(resp.status, 200, "the data envelope answers");
+    assert_eq!(
+        max_active.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "two layouts + the page overlap on /__data — the graph, not the chain"
+    );
+}
+
+#[tokio::test]
+async fn data_route_threads_parent_data_through_parent_calling_loads() {
+    // §9.2 parity: a layout (and the page) that calls `parent()` reads its
+    // predecessor's resolved data on the /__data leg exactly as SSR —
+    // outer layout first, then the blog layout behind it, then the page.
+    let (_dir, root, tree) = scan_two_layout_project(
+        "export async function load({ parent }) { return await parent(); }\n",
+        "export async function load({ parent }) { return await parent(); }\n",
+    );
+    let probe = std::sync::Arc::new(ParentDataProbe::new());
+    let seen = std::sync::Arc::clone(&probe.seen);
+    let loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> = Some(probe);
+    let dispatch = build_dispatch(
+        tree,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/__data?route=%2Fblog")).await;
+    assert_eq!(resp.status, 200, "the data envelope answers");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3, "two layouts + the page ran");
+    assert_eq!(
+        seen[0].1,
+        serde_json::Value::Null,
+        "the outer layout is the chain head"
+    );
+    assert_eq!(
+        seen[1].1["route"], "routes/layout",
+        "the blog layout read the outer layout's data"
+    );
+    assert_eq!(
+        seen[2].1["route"], "routes/blog/layout",
+        "the page read the innermost layout's data"
+    );
+}
+
+#[tokio::test]
+async fn data_route_independent_layout_reads_null_parent_data_under_the_graph() {
+    // Substrate-authoritative delta, the SSR graph's semantics carried to
+    // /__data: a layout whose scanner verdict says it never calls
+    // `parent()` reads Null — the endpoint no longer threads its
+    // predecessor's data in unconditionally (parity with stage_loaders;
+    // the verdict is conservative, so a loader that reads `parent()` is
+    // always serialized and threaded).
+    let (_dir, root, tree) = scan_two_layout_project(
+        "export async function load({ parent }) { return await parent(); }\n",
+        "export async function load() { return {}; }\n",
+    );
+    let probe = std::sync::Arc::new(ParentDataProbe::new());
+    let seen = std::sync::Arc::clone(&probe.seen);
+    let loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> = Some(probe);
+    let dispatch = build_dispatch(
+        tree,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/__data?route=%2Fblog")).await;
+    assert_eq!(resp.status, 200, "the data envelope answers");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3, "two layouts + the page ran");
+    assert_eq!(
+        seen[1].1,
+        serde_json::Value::Null,
+        "an independent layout reads Null parent data on /__data — the verdict, \
+         not the unconditional chain"
+    );
+    assert_eq!(
+        seen[2].1["route"], "routes/blog/layout",
+        "the page still reads its predecessor's data (it calls parent())"
+    );
+}
+
 // ---- Wave 3 item 2: prerender error-status carried through L0 seed -----
 //
 // `write_prerender` must return the status the adapter's buffered output
