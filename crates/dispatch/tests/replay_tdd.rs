@@ -164,9 +164,12 @@ fn the_sequences_play_back_in_observation_order() {
         "RPL-004"
     );
 
-    assert_eq!(seq.next_random().expect("the first random"), 0.25);
-    assert_eq!(seq.next_random().expect("the second random"), 0.5);
-    assert_eq!(seq.next_random().expect("the third random"), 0.75);
+    // Scripted exact-value pins, tolerance compare (`assert_eq!` on f32
+    // trips `clippy::float_cmp` under `-D warnings`; the stream yields the
+    // literal values, so the difference is zero).
+    assert!((seq.next_random().expect("the first random") - 0.25).abs() < 1e-6);
+    assert!((seq.next_random().expect("the second random") - 0.5).abs() < 1e-6);
+    assert!((seq.next_random().expect("the third random") - 0.75).abs() < 1e-6);
     assert_eq!(
         seq.next_random()
             .expect_err("the random stream is drained")
