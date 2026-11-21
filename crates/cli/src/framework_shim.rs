@@ -311,6 +311,10 @@ fn to_fw_input(input: PageRenderInput) -> FrameworkRenderInput {
         locale: input.locale,
         deferred: input.deferred,
         nonce: input.nonce,
+        // §V2-A09: the Source default — the LAZY renderer stamps the
+        // configured `module_source` onto every input it sends
+        // (`with_module_source`), so the config owns the choice.
+        module_source: oxide_fw_jshost::ModuleSource::Source,
     }
 }
 
@@ -762,6 +766,14 @@ pub async fn build_framework_stack(
     // by every `cmd_*` call site so the tier the WORKER sees honors the
     // config. `None` keeps the memory/disk-only tier (tests, defaults).
     cache_handler: Option<&oxide_fw_config::CacheHandlerConfig>,
+    // §V2-A09: where the worker's real-ssr loader imports route/layout
+    // modules from. The build path passes
+    // `ModuleSource::Bundle(dist/server)` — the prerender pass runs AFTER
+    // `phase_bundle_server`, so the plugin-transformed bundle is what its
+    // renders import from (the SPEC-17 remainder). Dev, serve and every
+    // other caller keep `ModuleSource::Source` (source imports, the
+    // pre-A09 behavior — the wire is unchanged for them).
+    module_source: oxide_fw_jshost::ModuleSource,
 ) -> FrameworkStack {
     // Captured before any local `config_path = ...` shadows the parameter,
     // so the renderer construction at the bottom of this function can find
@@ -790,7 +802,11 @@ pub async fn build_framework_stack(
         }
     }
 
-    use oxide_fw_jshost::{JsHost, NodeHost, PoolConfig, V8Host};
+    use oxide_fw_jshost::{JsHost, NodeHost, PoolConfig};
+    // M1 (capability matrix): the V8 host rides the `v8` feature — the
+    // backend arm that uses it is cfg-gated the same way.
+    #[cfg(feature = "v8")]
+    use oxide_fw_jshost::V8Host;
 
     // §6.3: which framework's JSX the worker's `tsx-loader.mjs` should
     // lower `.tsx`/`.jsx` against. Read here (not at the CLI call sites) so
@@ -1083,6 +1099,7 @@ pub async fn build_framework_stack(
                 bundled_path,
                 name: peeked,
                 components: Arc::clone(&component_source),
+                module_source,
                 inner: tokio::sync::OnceCell::new(),
             };
             Some(Arc::new({
@@ -1152,6 +1169,11 @@ pub struct LazyFrameworkRenderer {
     name: String,
     /// §6.4: the component surface for this render (prod entry or dev map).
     components: Arc<std::sync::RwLock<oxide_fw_jshost::ComponentSource>>,
+    /// §V2-A09: where the worker's real-ssr loader imports route/layout
+    /// modules from. Stamped onto EVERY input this renderer sends (after
+    /// `with_components`), so the choice is the renderer's config, not a
+    /// per-call argument. The default (`Source`) is the pre-A09 behavior.
+    module_source: oxide_fw_jshost::ModuleSource,
     inner: tokio::sync::OnceCell<Arc<dyn FrameworkRenderer>>,
 }
 
@@ -1236,6 +1258,15 @@ impl LazyFrameworkRenderer {
         input
     }
 
+    /// §V2-A09: stamp the renderer's module source onto the input. The
+    /// renderer's CONFIG owns the choice (the build path constructs the
+    /// stack with `ModuleSource::Bundle(dist/server)`); a per-call argument
+    /// would let a caller drift from the construction-time decision.
+    fn with_module_source(&self, mut input: FrameworkRenderInput) -> FrameworkRenderInput {
+        input.module_source = self.module_source.clone();
+        input
+    }
+
     async fn resolve(&self) -> oxide_fw_jshost::Result<Arc<dyn FrameworkRenderer>> {
         let v = self
             .inner
@@ -1261,14 +1292,14 @@ impl FrameworkRenderer for LazyFrameworkRenderer {
         &self.name
     }
     async fn render(&self, input: FrameworkRenderInput) -> oxide_fw_jshost::Result<String> {
-        let input = self.with_components(input);
+        let input = self.with_module_source(self.with_components(input));
         self.resolve().await?.render(input).await
     }
     async fn render_streaming(
         &self,
         input: FrameworkRenderInput,
     ) -> oxide_fw_jshost::Result<oxide_fw_jshost::RenderStream> {
-        let input = self.with_components(input);
+        let input = self.with_module_source(self.with_components(input));
         self.resolve().await?.render_streaming(input).await
     }
 }
