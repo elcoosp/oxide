@@ -120,6 +120,15 @@ name = "idem"
 harness = false
 required-features = ["bench-util"]
 
+# WP B03: criterion bench for the matched-label zero-alloc hot path — the
+# `Arc::clone` of the precomputed `RouteContext.pattern` (one refcount bump,
+# zero allocation) vs the degenerate `pattern_of` `String` fallback and the
+# isolated `to_string` baseline the hoist replaced.
+[[bench]]
+name = "hot_path"
+harness = false
+required-features = ["bench-util"]
+
 [features]
 # V2-A02: exposes the criterion bench harness (bench-support feature). The
 # synthetic route fixtures for the `ctx_table` group live behind the same
