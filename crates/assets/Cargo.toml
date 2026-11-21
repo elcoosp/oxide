@@ -21,7 +21,13 @@ formatjs_icu_messageformat = "0.3.0"
 read-fonts = { workspace = true }
 skrifa = { workspace = true }
 subsetter = { workspace = true, optional = true }
-ravif = { workspace = true }
+# M1 (capability matrix): the AVIF encoder rides the non-default `avif`
+# feature. ravif pulls the rav1e assembly chain (nasm), so the default
+# `--all-targets` build compiles with no external assembler; the encoder
+# stays fully wired under `--features avif`, and an AVIF request without
+# the feature is refused loudly (`AST-AVIF`) with the documented WebP/PNG
+# fallback (images.rs, the same shape as the WebP arm).
+ravif = { workspace = true, optional = true }
 usvg = { workspace = true }
 tiny-skia = { workspace = true }
 resvg = { workspace = true }
@@ -62,6 +68,11 @@ criterion = { workspace = true }
 
 [features]
 subset = ["dep:subsetter"]
+# M1: the ravif/rav1e AVIF encoder. Default off — a host that never
+# encodes AVIF does not pay the nasm/rav1e build; `--features avif`
+# restores the exact pre-gate behavior (real ravif output, `AST-AVIF`
+# diagnostics on encoder failure).
+avif = ["dep:ravif"]
 # V2-C07: the OXVG SVG optimizer backend (the `OxvgSvg` impl and its
 # `oxvg_ast`/`oxvg_optimiser` dependency pair). Default off — the seam
 # (`SvgOptimizer`, `IdentitySvg`, the rules, the CAS key) compiles
@@ -100,7 +111,9 @@ required-features = ["subset"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-# V2-A02: this crate does not inherit the workspace lints yet (the recorded
-# dedicated hygiene pass adopts pedantic) — declared so the newer cargo
-# `missing_lints_inheritance` notice stays silent about the intent.
+# V2-A02: M1.f — this crate now inherits the workspace lints (the recorded
+# dedicated hygiene pass adopts pedantic). The workspace clippy gate
+# (`-D warnings`) promotes the pedantic groups to hard failures, held with
+# zero `#[allow]` escape hatches.
 [lints]
+workspace = true
