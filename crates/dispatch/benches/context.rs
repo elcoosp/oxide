@@ -305,7 +305,9 @@ fn bench_load_graph(c: &mut Criterion) {
             })
         });
     });
-    // The chain the sequential loop runs today: eight serialized loads.
+    // The fully parent-chained (serialized) shape — what a chain of
+    // `parent()`-calling loads pays; the contrast `parallel_8` is the
+    // graph's win.
     g.bench_function("chain_8", |b| {
         b.iter(|| {
             rt.block_on(async {
