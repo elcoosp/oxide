@@ -1591,6 +1591,101 @@ async fn smoke_app_builds_its_own_pages() {
     let _ = std::fs::remove_dir_all(&dist);
 }
 
+/// The M2 regression-cluster guard (the `build/oxide-unwall-capability-gates`
+/// handoff's exact repro): `oxide build --root examples/smoke-app-react` must
+/// emit the `binary` adapter's deploy bundle, not just the prerender tree —
+/// `dist/deploy/` with the stamped `deploy.json` (the DEP-BUILDID pointer
+/// never names a guess), the build-id file the stamp is taken from, and the
+/// emit-side artifacts the build summary promises (sitemap, web manifest,
+/// search index). The schema_stability pin caught the last drift of this
+/// class (a config key the shipped schema refused); this pin guards the
+/// deploy half of the same end-to-end path.
+///
+/// `#[ignore]` — spawns a Node worker, needs workspace node_modules, and
+/// writes `dist/` under the fixture. Run with:
+///     cargo test -p oxide-fw-cli -- --ignored smoke_app
+#[tokio::test]
+#[ignore]
+async fn smoke_app_build_emits_the_binary_deploy_bundle() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let smoke = workspace.join("examples/smoke-app-react");
+    assert!(
+        smoke.join("oxide.config.ts").is_file(),
+        "smoke-app fixture missing at {}",
+        smoke.display()
+    );
+    let smoke_str = smoke.to_str().expect("smoke path utf-8");
+
+    let dist = smoke.join("dist");
+    let _ = std::fs::remove_dir_all(&dist);
+
+    let (code, out) = run_ok(&["oxide", "build", "--root", smoke_str]).await;
+    assert_eq!(code, 0, "build exit code; output:\n{out}");
+
+    // The stamped deploy bundle: the pointer's source of truth and the
+    // deploy.json that names it.
+    let build_id_file = dist.join("build-id");
+    assert!(
+        build_id_file.is_file(),
+        "dist/build-id must exist after a build at {}",
+        build_id_file.display()
+    );
+    let build_id = std::fs::read_to_string(&build_id_file)
+        .expect("read dist/build-id")
+        .trim()
+        .to_string();
+    assert!(
+        !build_id.is_empty() && build_id.chars().all(|c| c.is_ascii_hexdigit()),
+        "dist/build-id must be a non-empty hex stamp, got {build_id:?}"
+    );
+
+    let deploy_json = dist.join("deploy/deploy.json");
+    assert!(
+        deploy_json.is_file(),
+        "deploy/deploy.json must exist for the binary adapter at {}",
+        deploy_json.display()
+    );
+    let deploy: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&deploy_json).expect("read deploy.json"),
+    )
+    .expect("deploy.json parses as json");
+    assert_eq!(
+        deploy.get("target").and_then(|v| v.as_str()),
+        Some("binary"),
+        "the smoke app's config declares adapter 'binary': {deploy}"
+    );
+    assert_eq!(
+        deploy.get("entry").and_then(|v| v.as_str()),
+        Some("server"),
+        "the binary adapter's entry is the server: {deploy}"
+    );
+    assert_eq!(
+        deploy.get("build_id").and_then(|v| v.as_str()),
+        Some(build_id.as_str()),
+        "deploy.json must name the same stamp dist/build-id carries (DEP-BUILDID's source of truth)"
+    );
+
+    // The emit-side artifacts the build summary prints.
+    for (artifact, what) in [
+        ("sitemap.xml", "sitemap"),
+        ("manifest.webmanifest", "web manifest"),
+        ("client/search-index.json", "search index"),
+    ] {
+        let path = dist.join(artifact);
+        assert!(
+            path.is_file(),
+            "{what} must be emitted at {} (build summary: {out})",
+            path.display()
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dist);
+}
+
 /// Collect the full response body, whether it came back collected
 /// (`resp.body`) or streamed (`resp.stream`). Streaming responses leave
 /// `.body` empty by design; the content is in `.stream`. Most tests want
