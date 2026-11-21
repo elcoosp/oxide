@@ -128,8 +128,26 @@ def phases_check():
             owner[i] = ph
     order = ['load', 'plan', 'bundle_client', 'bundle_server', 'prerender',
              'seed_l0', 'typegen', 'emit']
+    # V2-B01 prerender adoption (d94f3dcf + fad11906, 2026-11-21 — recorded
+    # here 2026-11-21): the prerender walk's layout-chain / error-boundary /
+    # load-spec trio became ONE RouteContextTable resolution
+    # (`prerender_route_answers`, oracle-pinned against the pre-adoption
+    # scan by `prerender_route_answers_match_the_scan_oracle`), deleting 61
+    # scan lines the token proof cannot express as line substitutions.
+    # Marker-checked like the stages proof's adopted phases; the scan-rule
+    # fix (feat/prerender-raw-id-wraps) rides the same oracle pins.
+    PHASE_ADOPTED = {
+        'prerender': {
+            'require': ['prerender_route_answers(', 'answers.layout_modules',
+                        'prerender_route_answers_match_the_scan_oracle'],
+            'absent': ['layout_chain_for(', 'error_route_for(',
+                       'let mut parent_data: serde_json::Value ='],
+        },
+    }
     orig = []
     for ph in order:
+        if ph in PHASE_ADOPTED:
+            continue
         lo2, hi2 = SPANS[ph]
         chunk = []
         for i in range(lo2, hi2 + 1):
@@ -148,12 +166,27 @@ def phases_check():
     order = ['load', 'plan', 'bundle_client', 'bundle_server', 'prerender',
              'seed_l0', 'typegen', 'emit']
     got = []
+    adopted_phases = []
     for ph in order:
         fp = os.path.join(src, ph + '.rs')
         plines = open(fp).read().split(NL)
         if len(plines) > 700:
             print('DIFF: %s exceeds the 700-line budget (%d)' % (ph + '.rs', len(plines)))
             sys.exit(1)
+        if ph in PHASE_ADOPTED:
+            flat = re.sub(r'\s+', '', NL.join(plines))
+            for marker in PHASE_ADOPTED[ph]['require']:
+                if re.sub(r'\s+', '', marker) not in flat:
+                    print('DIFF: adopted phase %s lost the adoption marker: %s'
+                          % (ph, marker))
+                    sys.exit(1)
+            for marker in PHASE_ADOPTED[ph]['absent']:
+                if re.sub(r'\s+', '', marker) in flat:
+                    print('DIFF: adopted phase %s still carries the superseded walk: %s'
+                          % (ph, marker))
+                    sys.exit(1)
+            adopted_phases.append(ph)
+            continue
         first = next(i for i, t in enumerate(plines)
                      if t.strip().startswith('// >>> phase-wrapper'))
         last = max(i for i, t in enumerate(plines) if t.strip())
@@ -192,8 +225,9 @@ def phases_check():
     if want_calls != calls[:len(want_calls)] or idx != sorted(idx):
         print('DIFF: orchestrator phase order drifted: %s' % calls)
         sys.exit(1)
-    print('# phase bodies checked: %d lines vs HEAD %d lines, files: %s'
-          % (len(got), len(orig), ', '.join(order)))
+    print('# phase bodies checked: %d lines vs HEAD %d lines, files: %s; '
+          'adopted (marker-checked): %s'
+          % (len(got), len(orig), ', '.join(order), ', '.join(adopted_phases) or 'none'))
     print('phase_selfcheck: zero diffs — the phase split is verbatim modulo '
           'indent, rustfmt layout and the 3 recorded substitutions')
 
@@ -217,6 +251,66 @@ def stages_check():
     # PRESENCE markers of the adoption (the substrate call plus the
     # superseded-loop markers' absence). Every other stage stays verbatim.
     STAGE_ADOPTED = {
+        # V2-A02 adoption (recorded here 2026-11-21): the ENTIRE match
+        # decision core is one substrate call
+        # (`route_ctx::resolve_match` — normalize fold, the /__data
+        # target re-point, the root candidate pair, the unified-view
+        # match, the context-table hit and the 404/label pair), so the
+        # token-stream proof has no meaningful orig-side residue; recorded
+        # as the established marker-check (the middleware/loaders
+        # precedent). The stage keeps exactly what the substrate leaves to
+        # the caller: the §16.4 locale resolution and the ctx writes.
+        'match': {
+            'require': ['route_ctx::resolve_match(', 'decision.normalized',
+                        'decision.req_path', 'decision.is_data_request',
+                        'decision.matched', 'decision.route_ctx',
+                        'decision.status', 'decision.label',
+                        'strip_locale_prefix(', 'negotiate('],
+            # the inline walk is gone: the normalize fold, the data-target
+            # parse and the candidate/match/label arms live in the substrate.
+            'absent': ['Route conventions:', 'let normalized = if raw.len() > 1',
+                       'data_route_of(', 'match_path('],
+        },
+        # V2-B01 route-context adoption (b3f83040, 2026-11-16 — recorded
+        # here 2026-11-21): the four inline resolution blocks (middleware
+        # chain, not-found pair, error boundary, layout chain + §9.2 load
+        # specs) became ONE substrate call (`route_ctx::resolve_answers`)
+        # whose answers the stage destructures. The 2026-11-16 session
+        # recorded orig-side substitutions for the LATER blocks, but the
+        # FIRST block's rule was written against a post-2e0a13bc comment
+        # spelling and never matched the pinned pre-split text, so the
+        # stage token stream diverged at HEAD. Recorded as the established
+        # marker-check (the match/middleware/loaders precedent) instead of
+        # re-deriving four brittle orig-side regexes; the stage's
+        # remaining body (endpoint params, nonce, L0 keys) stays
+        # compile-checked and pinned by the CLI suite.
+        'route': {
+            'require': ['route_ctx::resolve_answers(', 'answers.middleware_paths',
+                        'answers.layout_loads', 'answers.error_route_id',
+                        'answers.unmatched_route_id', 'answers.layout_ids'],
+            # the inline walks are gone: the tree's dispatch-index fallbacks
+            # live behind resolve_answers.
+            'absent': ['middleware_files_for(', 'not_found_route()',
+                       'error_route_for(', 'm.layout_chain'],
+        },
+        # V2-F55 adoption (recorded here 2026-11-21): the L0 hit arm's
+        # hand-rolled 304 match became the cache crate's canonical seam
+        # (`hit.serve_conditional(&cond_headers, …)` — RFC 9110 §13 +
+        # §15.4.5 in ONE place, the brownout variant riding `get_brownout`).
+        'l0_lookup': {
+            'require': ['serve_conditional(', 'get_brownout(', 'cond_headers',
+                        'if-modified-since'],
+            'absent': ['let etag = format!("W/', 'If-Modified-Since HTTP date'],
+        },
+        # Micro-debt adoption (dabdb9f5, the V2-B01 session — recorded here
+        # 2026-11-21): the render stage's loader-data envelope encode no
+        # longer ends in `.unwrap_or_default()`; the empty fallback stays
+        # but a `tracing::warn!` names the route and the encoder error.
+        'render': {
+            'require': ['"loader-data envelope encode failed; answering an empty envelope"',
+                        'Micro-debt (V2-B01 session)'],
+            'absent': ['encode_to_bytes(&OdfValue::Object(obj)).unwrap_or_default()'],
+        },
         'middleware': {
             'require': ['run_chain(', 'ChainOutcome::Respond', 'ChainOutcome::Rewrite',
                         'ChainOutcome::Continue', 'finish_middleware_stage'],
@@ -293,51 +387,9 @@ def stages_check():
         # matches through the unified `MatchedView` seam (both trees' hot
         # paths) and takes the metrics label from the precomputed
         # `RouteContext.pattern` (the table hit set by the prelude).
-        'match': [(
-            re.compile(
-            r"let matched: Option<oxide_fw_router::MatchResult> = match archived \{"
-            r"\s*Some\(a\) => candidates\.iter\(\)\.find_map\(\|p\| a\.match_path\(p\)\),"
-            r"\s*None => candidates\.iter\(\)\.find_map\(\|p\| tree\.match_path\(p\)\),"
-            r"\s*\};"
-            r"\s*let \(status, label\) = match &matched \{"
-            r"\s*Some\(m\) => \(200u16, pattern_of\(&m\.route\.segments\)\),"
-            r"\s*None => \(404u16, \"_unmatched\"\.to_string\(\)\),"
-            r"\s*\};",
-            ),
-            NL.join([
-                "    // V2-B02: the match goes through the unified view seam — one shape",
-                "    // over `RouteTree::match_ref` (borrowed entry) and",
-                "    // `ArchivedTree::match_ref` (index into the mmap), reached through the",
-                "    // candidate index on both trees. `into_match_result` produces the",
-                "    // byte-identical owned shape the stages consume; the prelude's live",
-                "    // gate reads `is_live_route` in place with no materialization.",
-                "    let matched: Option<oxide_fw_router::MatchResult> = candidates.iter().find_map(|p| {",
-                "        match archived {",
-                "            Some(a) => MatchedView::archived(a, p),",
-                "            None => MatchedView::live(tree, p),",
-                "        }",
-                "        .map(|v| v.into_match_result())",
-                "    });",
-                "    // V2-B01: the per-route context is one table hit — the metrics label",
-                "    // is the precomputed pattern (no per-request `pattern_of` walk), and",
-                "    // the route step reads the chain answers from the same hit.",
-                "    let route_ctx: Option<std::sync::Arc<oxide_fw_router::RouteContext>> = match cx",
-                "        .ctx_table",
-                "        .as_ref()",
-                "    {",
-                "        Some(table) => match &matched {",
-                "            Some(m) => table.get(&m.route.id.0).cloned(),",
-                "            None => table.unmatched().cloned(),",
-                "        },",
-                "        None => None,",
-                "    };",
-                "    let (status, label) = match (&matched, &route_ctx) {",
-                "        (Some(_), Some(rc)) => (200u16, rc.pattern.to_string()),",
-                "        (Some(m), None) => (200u16, pattern_of(&m.route.segments)),",
-                "        (None, _) => (404u16, \"_unmatched\".to_string()),",
-                "    };",
-            ]),
-        )],
+        # (the 'match' entry was superseded 2026-11-21: the whole stage is
+        # STAGE_ADOPTED marker-checked — the resolve_match substrate call
+        # replaced the inline decision core the substitution covered).
         'route': [
             # V2-B01 adoption (this diff): every chain answer reads the
             # precomputed `RouteContext` (one table hit); the tree's P-06
@@ -650,6 +702,29 @@ def stages_check():
                     "let buf = sw",
                     "    .store",
                     "    .begin_bound(id.clone(), sw.binding_of(&req_owned.headers));",
+                ]),
+            ),
+        ],
+        # V2-A06 follow-up adoption (this diff), recorded substitution:
+        # stage_data_route passes the PAGE's own `parent()` verdict to the
+        # data route (`page_needs_parent: needs_parent`) so the /__data
+        # load graph serializes the page behind the innermost layout on
+        # the same verdict the SSR stage reads — the args literal gained
+        # the one field.
+        'data_route': [
+            (
+                # runs AFTER the borrow rules, so the orig-side literal reads
+                # the shorthand (`layout_module_paths: &layout_module_paths`
+                # loses the `&` and collapses to the shorthand) — anchor the
+                # insertion on the shorthand + the next field so the token
+                # position matches the stage file exactly.
+                re.compile(
+                    r"layout_module_paths,\n                locale: resolved_locale,"
+                ),
+                NL.join([
+                    "                layout_module_paths,",
+                    "                page_needs_parent: needs_parent,",
+                    "                locale: resolved_locale,",
                 ]),
             ),
         ],
