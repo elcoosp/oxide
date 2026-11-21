@@ -1,10 +1,14 @@
 //! V8-free request orchestration (spec v0.2, WP V2-A02).
 //!
-//! `build_dispatch` in `oxide-fw-cli` is a 1,400-line closure whose tests pay
-//! the V8 link cost on every iteration (CONVENTIONS §8: ~5 minutes per edit).
-//! This crate is the escape hatch the spec orders: the pure, request-shaped
-//! logic moves here so its tests compile in seconds against fakes, while the
-//! V8-linked CLI keeps only the wiring.
+//! The CLI's dispatch pipeline (the A01 phase-3 stage table:
+//! `stage_prelude` … `stage_render`) used to be one ~1,400-line closure
+//! whose tests paid the V8 link cost on every iteration (CONVENTIONS §8:
+//! ~5 minutes per edit). This crate is the escape hatch the spec orders:
+//! the pure, request-shaped logic moves here so its tests compile in
+//! seconds against fakes and hand-built route trees, while the V8-linked
+//! CLI keeps only the wiring. The [`route_ctx`] module completes that
+//! story: the match decision and the per-route dispatch answers are the
+//! last pure request decisions, and they resolve here now.
 //!
 //! Initial surface (V2-A02 + V2-A05 + V2-A06):
 //! - [`url`]: the URL/query helpers the dispatch prelude needs —
@@ -76,6 +80,17 @@
 //!   (`DSP-116`) — the [`idem::IdempotencyStore`] seam is the L1 tier's
 //!   shape, the PWA worker and the client outbox are the other F14
 //!   halves (CLI adoption deferred, see `docs/deviations.md`).
+//! - [`route_ctx`]: the route-context resolution leg (V2-A02, the last
+//!   pure request decision that lived inline in the CLI) —
+//!   [`route_ctx::resolve_match`] answers `stage_match`'s decision
+//!   (trailing-slash fold, the `/__data` target re-point, the root
+//!   candidate pair, the V2-B02 unified match, the context-table hit,
+//!   the 404/`_unmatched` label) and [`route_ctx::resolve_answers`]
+//!   answers `stage_route`'s per-route quartet (middleware chain paths,
+//!   not-found pair, error boundary, layout chain + §9.2 load specs),
+//!   both table-first with the tree's dispatch index as the fallback;
+//!   pinned by `crates/dispatch/tests/route_ctx_tdd.rs` WITHOUT a V8
+//!   runtime.
 //!
 //! Acceptance (spec V2-A02): `cargo test -p oxide-fw-dispatch` finishes in
 //! under 20 seconds after dependencies are built, and
@@ -91,5 +106,6 @@ pub mod locals;
 pub mod pools;
 pub mod record;
 pub mod replay;
+pub mod route_ctx;
 pub mod skew;
 pub mod url;
