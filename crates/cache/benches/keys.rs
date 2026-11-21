@@ -1,8 +1,10 @@
 //! V2-B09: criterion benchmarks for cache keys, tag indexing and disk writes
 //! (`crates/cache`).
 //!
-//! Cases (spec V2-B09): key construction (old `canonical()` and the V2-B05
-//! `key_of` stack key), tag insert at a 10k-key tag, and a disk-tier `set`
+//! Cases (spec V2-B09): key construction (the `canonical()` key and the V2-B05
+//! `key_of` stack key — since the D24 `KeyHash` landed both derive the same
+//! 128-bit digest and `canonical` no longer allocates a hex `String`),
+//! tag insert at a 10k-key tag, and a disk-tier `set`
 //! carrying 5 tags. Bench ids stay stable across Wave B WPs so
 //! `benchmarks/criterion_compare.py` can diff against `baseline-v01.json`.
 //!
