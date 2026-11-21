@@ -211,7 +211,9 @@ pub(crate) async fn stage_loaders(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow
                 tracing::error!(
                     code = %code,
                     error = %message,
-                    route = %label,
+                    // WP B03 item 2: `label` is an `Arc<str>` (zero-alloc clone);
+                    // deref to `&str` for the tracing field's `Display`.
+                    route = %&*label,
                     "loader failed",
                 );
                 metrics.observe(&label, started.elapsed(), 500);
