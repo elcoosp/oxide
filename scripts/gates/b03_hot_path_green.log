@@ -1,0 +1,47 @@
+# WP B03 — TDD GREEN state (recorded 2026-11-21)
+# Milestone: M1 — Hot-path hoists completion. Branch perf/b03-hot-path-hoists
+#   (uncommitted; base 1bbce325ad68faa6034ad4b5972892730cbbf16d).
+# The two red-first pins now pass:
+#   • matched_label_borrows_precomputed_pattern_arc — the matched-with-context
+#     label SHARES the precomputed `RouteContext.pattern` Arc (pointer
+#     identity): `Arc::as_ptr(&m.label) == Arc::as_ptr(&rc.pattern)`. The hot
+#     path's per-request label cost is one refcount bump, zero allocation.
+#   • register_routes_freezes_dynamic_labels — `_unmatched` / `_proxy` /
+#     `_data` are in the frozen map after `register_routes`, so a 404 / proxy
+#     pass / data request's `observe` takes no fallback write lock.
+
+== cargo test -p oxide-fw-dispatch --test route_ctx_tdd ==
+   Compiling oxide-fw-server v0.17.0 (/home/z/my-project/oxide/crates/server)
+   Compiling oxide-fw-dispatch v0.17.0 (/home/z/my-project/oxide/crates/dispatch)
+    Finished `test` profile [unoptimized] target(s) in 23.66s
+running 13 tests
+test answers_unmatched_compose_the_not_found_pair ... ok
+test answers_matched_route_compose_chain_layout_error ... ok
+test answers_without_table_fall_back_to_the_tree ... ok
+test match_data_route_decodes_and_folds_target ... ok
+test match_data_route_defaults_to_root ... ok
+test match_data_route_requires_get ... ok
+test match_param_route_labels_pattern_of_without_table ... ok
+test match_data_route_targets_the_query_route ... ok
+test match_root_candidates_hit_index ... ok
+test match_trailing_slash_folds_and_labels_from_table ... ok
+test match_unmatched_404s_with_not_found_context ... ok
+test matched_label_borrows_precomputed_pattern_arc ... ok
+test pattern_of_shapes ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+== cargo test -p oxide-fw-server --lib metrics:: ==
+   Compiling oxide-fw-server v0.17.0 (/home/z/my-project/oxide/crates/server)
+    Finished `test` profile [unoptimized] target(s) in 29.78s
+running 9 tests
+test metrics::sec07_tests::prom_escape_neutralizes_injection ... ok
+test metrics::tests::brownout_level_gauge_round_trips ... ok
+test metrics::tests::empty_registry_renders_zero ... ok
+test metrics::sec07_tests::hostile_route_renders_inert ... ok
+test metrics::tests::experiment_assignments_render_per_pair_counters ... ok
+test metrics::tests::observe_accumulates_by_route ... ok
+test metrics::tests::plus_inf_bucket_matches_count ... ok
+test metrics::tests::register_routes_freezes_dynamic_labels ... ok
+test metrics::tests::observe_registered_route_takes_no_lock ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 75 filtered out
+cargo exit: 0
