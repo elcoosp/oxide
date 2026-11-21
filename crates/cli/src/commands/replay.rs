@@ -160,6 +160,8 @@ pub(crate) async fn run_replay(
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        // §V2-A09: replay renders keep importing source modules.
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     let started = crate::start_dev_server_full(
