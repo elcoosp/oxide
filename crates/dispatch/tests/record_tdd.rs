@@ -386,7 +386,13 @@ async fn the_recording_runner_captures_the_load_graph() {
 #[test]
 fn the_sample_roll_is_deterministic_per_request() {
     let first = sample_roll_for("req-0001");
-    assert_eq!(first, sample_roll_for("req-0001"), "same id, same roll");
+    // Determinism pin, tolerance compare (`assert_eq!` on f32 trips
+    // `clippy::float_cmp` under `-D warnings`; same id ⇒ identical roll ⇒
+    // zero difference).
+    assert!(
+        (first - sample_roll_for("req-0001")).abs() < 1e-6,
+        "same id, same roll"
+    );
     assert!(
         (0.0..1.0).contains(&first),
         "the roll is in [0, 1): {first}"
