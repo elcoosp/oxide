@@ -174,9 +174,7 @@ impl ImageJobs {
     /// endpoint's tiered CAS is built as `Arc<dyn ImageCas>` upstream).
     #[must_use]
     pub fn from_shared(cas: Arc<dyn ImageCas>) -> Self {
-        let cores = std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(1);
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
         let cpu = cores.saturating_sub(1).max(1);
         Self::with_lanes_shared(cas, cpu, (cpu / 2).max(1))
     }
