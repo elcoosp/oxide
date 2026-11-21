@@ -1332,6 +1332,7 @@ async fn dev_server_serves_smoke_app_over_http() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     assert!(
@@ -1649,10 +1650,9 @@ async fn smoke_app_build_emits_the_binary_deploy_bundle() {
         "deploy/deploy.json must exist for the binary adapter at {}",
         deploy_json.display()
     );
-    let deploy: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&deploy_json).expect("read deploy.json"),
-    )
-    .expect("deploy.json parses as json");
+    let deploy: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&deploy_json).expect("read deploy.json"))
+            .expect("deploy.json parses as json");
     assert_eq!(
         deploy.get("target").and_then(|v| v.as_str()),
         Some("binary"),
@@ -1746,6 +1746,7 @@ async fn start_serves_smoke_app_over_http() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     assert!(
@@ -11859,6 +11860,7 @@ async fn dev_server_serves_esm_urls_over_http() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
 
@@ -11994,6 +11996,7 @@ async fn dev_server_serves_react_refresh_prebundle() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
 
@@ -12094,6 +12097,7 @@ async fn dev_server_serves_website_with_tailwind_css() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
 
@@ -13256,6 +13260,7 @@ async fn replay_reproduces_a_recorded_request_without_network() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     let started = crate::start_dev_server_full(
@@ -13487,6 +13492,7 @@ async fn build_identity_advertises_and_rejects_stale_on_the_wire() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     let root_str = root.to_str().expect("root utf-8");
@@ -13918,6 +13924,7 @@ async fn live_pushes_snapshots_over_the_wire() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     let smoke_str = smoke.to_str().expect("smoke path utf-8");
@@ -14407,6 +14414,7 @@ async fn stream_resume_reattach_delivers_the_missed_bytes() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     let smoke_str = smoke.to_str().expect("smoke path utf-8");
@@ -14637,6 +14645,7 @@ async fn brownout_sheds_low_and_reports_the_level() {
         oxide_fw_config::JsBackend::Node,
         None,
         None,
+        oxide_fw_jshost::ModuleSource::Source,
     )
     .await;
     let smoke_str = smoke.to_str().expect("smoke path utf-8");
