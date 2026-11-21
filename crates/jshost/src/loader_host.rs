@@ -80,7 +80,7 @@ impl LoaderHost {
         // §20: stamp the validated W3C traceparent into CallInput.headers so
         // the worker's `fetch` op can propagate it (the empty map = untraced,
         // nothing fabricated).
-        let trace_headers = crate::v8_ops::payload_trace_headers(&payload);
+        let trace_headers = crate::trace::payload_trace_headers(&payload);
         let call_input = CallInput {
             payload,
             headers: trace_headers,
@@ -149,7 +149,7 @@ impl LoaderHost {
             .map(str::to_string);
         // §20: same stamping as the buffered run — the streaming loader's
         // late fetches propagate through the same seeded slot.
-        let trace_headers = crate::v8_ops::payload_trace_headers(&payload);
+        let trace_headers = crate::trace::payload_trace_headers(&payload);
         let call_input = CallInput {
             payload,
             headers: trace_headers,
@@ -741,7 +741,7 @@ impl EndpointHost {
         // §20: the route.ts handler's outgoing fetches join the request's
         // trace — the validated `trace` value (else the raw header pair)
         // stamped into the map the worker's fetch op reads.
-        let trace_headers = crate::v8_ops::payload_trace_headers(&payload);
+        let trace_headers = crate::trace::payload_trace_headers(&payload);
         let call_input = CallInput {
             payload,
             headers: trace_headers,
