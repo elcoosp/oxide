@@ -9,6 +9,7 @@
 //! the source through V8 on second boot; parse and compile are still skipped.
 
 use crate::{Result, err};
+#[cfg(feature = "v8")]
 use deno_core::snapshot::{CreateSnapshotOptions, create_snapshot};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -121,11 +122,13 @@ pub fn lint_top_level_side_effects(path: &str, source: &str) -> Vec<SideEffect> 
     out
 }
 
+#[cfg(feature = "v8")]
 fn leak(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
 
 /// Build a snapshot from the server bundle's top-level source (§4.4).
+#[cfg(feature = "v8")]
 pub fn snapshot_build(entry: &str, source: &str) -> Result<AppSnapshot> {
     let source_hash = blake3::hash(source.as_bytes()).to_hex().to_string();
     let warnings: Vec<String> = Vec::new();
@@ -213,6 +216,7 @@ pub fn snapshot_build(entry: &str, source: &str) -> Result<AppSnapshot> {
 /// user's string literals. Replacing each non-ASCII scalar with a `\uXXXX`
 /// escape is **semantics-preserving** for JavaScript: identical inside string,
 /// template and regex literals, and merely cosmetic inside a comment.
+#[cfg(feature = "v8")]
 pub(crate) fn escape_non_ascii(src: &str) -> String {
     if src.is_ascii() {
         return src.to_string();
@@ -252,6 +256,7 @@ pub(crate) fn escape_non_ascii(src: &str) -> String {
 /// otherwise throw `process is not defined` during evaluation.
 ///
 /// `files` is `(absolute path, source)`. `entry_path` must be one of them.
+#[cfg(feature = "v8")]
 pub fn snapshot_build_bundle(
     entry_path: &str,
     files: &[(std::path::PathBuf, String)],
@@ -392,6 +397,7 @@ pub fn snapshot_build_bundle(
 /// a **fixed** extension name (`oxide_runtime`) that the worker's load-time
 /// extension matches exactly. (A per-entry name made the snapshot unloadable:
 /// deno_core checks extension names in order.)
+#[cfg(feature = "v8")]
 pub fn snapshot_build_runtime() -> Result<AppSnapshot> {
     let mut warnings: Vec<String> = Vec::new();
     // The source hash is a constant: the extension is fixed. A version tag is
@@ -436,6 +442,7 @@ pub fn snapshot_build_runtime() -> Result<AppSnapshot> {
 /// `RuntimeOptions` to pass to `JsRuntime::new`, plus a bool that is `true`
 /// when a code-cache fallback is in use (the caller must then
 /// `execute_script("oxide:bundle", code)` after runtime creation).
+#[cfg(feature = "v8")]
 pub fn loader_options(snap: &AppSnapshot) -> Result<(deno_core::RuntimeOptions, bool)> {
     if snap.format != SNAPSHOT_FORMAT {
         return Err(err(
@@ -504,6 +511,7 @@ mod tests {
         assert!(lint_top_level_side_effects("entry.js", src).is_empty());
     }
 
+    #[cfg(feature = "v8")]
     #[test]
     #[ignore = "V8 snapshot machinery leaks an isolate under test harness; \
                 validated end-to-end by `oxide build`. Run with --ignored to exercise."]
@@ -519,6 +527,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "v8")]
     #[test]
     fn loader_options_reject_wrong_format() {
         let snap = AppSnapshot {
