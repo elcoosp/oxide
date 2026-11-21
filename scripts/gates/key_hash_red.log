@@ -1,0 +1,18 @@
+# WP B05 — TDD RED state (recorded 2026-11-21 13:24:35Z)
+# Command: cargo test -p oxide-fw-cache
+# Base: ee5bd2cd8ec9386bb40088e7b878ced87f042ac1 (branch perf/cache-keyhash-tag-index)
+# Baseline pre-change build: exit 0 (green before red).
+# Expected red: the D24 delta does not exist yet — no KeyHash type, no tags_of read seam.
+# The D25 regression pins (tag_index_insert_is_o1, tag_index_no_json_roundtrip) target
+# behavior the B05/B06 halves already landed upstream; they compile only after the red-first delta lands.
+# Exit code: 101 (compile failure — the red state)
+# Errors:
+error[E0432]: unresolved import `crate::key`
+error[E0599]: no method named `tags_of` found for struct `std::sync::Arc<tiers::TieredCache>` in the current scope
+error[E0599]: no method named `tags_of` found for struct `std::sync::Arc<tiers::TieredCache>` in the current scope
+error[E0599]: no method named `tags_of` found for struct `std::sync::Arc<tiers::TieredCache>` in the current scope
+error[E0599]: no method named `tags_of` found for struct `std::sync::Arc<tiers::TieredCache>` in the current scope
+error[E0599]: no method named `tags_of` found for struct `std::sync::Arc<tiers::TieredCache>` in the current scope
+error[E0599]: no method named `tags_of` found for struct `std::sync::Arc<tiers::TieredCache>` in the current scope
+error[E0599]: no method named `begin_read` found for struct `Database` in the current scope
+error: could not compile `oxide-fw-cache` (lib test) due to 8 previous errors
