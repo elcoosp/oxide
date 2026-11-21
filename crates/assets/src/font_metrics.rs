@@ -45,7 +45,7 @@ pub fn read_metrics(bytes: &[u8]) -> Result<FontMetric> {
         ascent: m.ascent,
         descent: m.descent,
         line_gap: m.leading,
-        units_per_em: m.units_per_em as f32,
+        units_per_em: f32::from(m.units_per_em),
     })
 }
 
@@ -60,6 +60,7 @@ pub struct MetricOverrides {
 
 /// Compute the CSS overrides that make the `fallback` face occupy exactly the same
 /// vertical box as `target`. See module docs for the algorithm.
+#[must_use]
 pub fn metric_overrides(target: FontMetric, fallback: FontMetric) -> MetricOverrides {
     let target_total = (target.ascent + target.descent + target.line_gap) / target.units_per_em;
     let fallback_total =
@@ -108,7 +109,7 @@ mod tests {
         );
     }
 
-    /// The three individual overrides sum to size-adjust * (total_height/upem).
+    /// The three individual overrides sum to size-adjust * (`total_height/upem`).
     #[test]
     fn overrides_are_consistent_with_size_adjust() {
         let target = FontMetric {
