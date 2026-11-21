@@ -119,11 +119,17 @@ pub(crate) async fn phase_load<'w>(
     if let Ok(Some(chosen)) = resolve_cache_handler_via_plugin(&rootp, &cfg, w).await {
         cfg.cache.handler = chosen;
     }
+    // §V2-A09: the build-time prerender imports route/layout modules from
+    // the plugin-transformed SERVER BUNDLE (the pass runs after
+    // phase_bundle_server), so its renderer is constructed with
+    // `Bundle(dist/server)` — the SPEC-17 remainder. Dev, serve, replay and
+    // every other caller keep `ModuleSource::Source`.
     let stack = framework_shim::build_framework_stack(
         config_path_opt.as_deref(),
         cfg.server.backend,
         transform_handler,
         Some(&cfg.cache.handler),
+        oxide_fw_jshost::ModuleSource::Bundle(dist.join("server")),
     )
     .await;
     if let Some(name) = stack.renderer_name() {
