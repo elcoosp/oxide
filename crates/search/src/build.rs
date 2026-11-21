@@ -130,7 +130,7 @@ const WIPE_RETRY_PARK: std::time::Duration = std::time::Duration::from_millis(5)
 /// serves `dist/search/index` and the watcher's content change re-emits
 /// into the same directory).
 ///
-/// A bare `remove_dir_all` loses a race there: the reader's OnCommit
+/// A bare `remove_dir_all` loses a race there: the reader's `OnCommit`
 /// reloader polls `meta.json` every 500 ms and takes tantivy's meta lock
 /// (`<dir>/.tantivy-meta.lock`) when its tick fires. When the tick lands
 /// mid-wipe, the lock file re-appears between the wipe's child pass and
