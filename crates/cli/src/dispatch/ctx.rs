@@ -38,7 +38,11 @@ pub(crate) struct RequestCtx {
     pub(crate) is_data_request: bool,
     pub(crate) matched: Option<oxide_fw_router::MatchResult>,
     pub(crate) status: u16,
-    pub(crate) label: String,
+    /// WP B03 item 2: the metrics label, an `Arc<str>` shared from the
+    /// matched route's precomputed `RouteContext.pattern` (zero-alloc
+    /// refcount bump on the hot path) or the cached `_unmatched` label —
+    /// never a per-request `String` allocation.
+    pub(crate) label: std::sync::Arc<str>,
     pub(crate) loader_runner: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>>,
     pub(crate) page_renderer: Option<std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
     pub(crate) module_path: Option<std::path::PathBuf>,
@@ -122,7 +126,7 @@ impl RequestCtx {
             is_data_request: false,
             matched: None,
             status: 0,
-            label: String::new(),
+            label: std::sync::Arc::<str>::from(""),
             loader_runner: None,
             page_renderer: None,
             module_path: None,
