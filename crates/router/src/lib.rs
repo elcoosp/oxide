@@ -304,12 +304,20 @@ impl RouteTree {
         // F46/F48/F51 repairs): a swallowed read silently rebuilt the
         // index on EVERY request after a poisoning panic, a swallowed
         // write silently dropped it.
-        let c = self
-            .index
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(idx) = c.as_ref() {
-            return std::sync::Arc::clone(idx);
+        //
+        // The read guard lives ONLY inside this block: a same-thread
+        // read→write hold self-deadlocks the std RwLock (glibc's wrlock
+        // waits for its own rdlock to drain), the cold-tree hang the
+        // route_ctx pins exposed — `match_path` over an `insert`-built
+        // tree never answered on the first build.
+        {
+            let c = self
+                .index
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(idx) = c.as_ref() {
+                return std::sync::Arc::clone(idx);
+            }
         }
         let idx = std::sync::Arc::new(index::CandidateIndex::build(&self.entries));
         let mut c = self
@@ -325,14 +333,20 @@ impl RouteTree {
     pub(crate) fn layout_chain_cached(&self, route_id: &str) -> Vec<RouteId> {
         // Poison recovery over the swallow (the house shape): a poisoned
         // lock must not silently re-scan the route table per request.
-        let c = self
-            .layout_chains
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(v) = c.get(route_id) {
-            return v.clone();
-        }
-        let chain = matcher::layout_chain(&self.entries, route_id);
+        //
+        // The read guard lives ONLY inside this block (the same-thread
+        // read→write hold self-deadlocks the std RwLock — the dispatch
+        // index's not-found branch hung a cold tree through this path).
+        let chain = {
+            let c = self
+                .layout_chains
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(v) = c.get(route_id) {
+                return v.clone();
+            }
+            matcher::layout_chain(&self.entries, route_id)
+        };
         let mut c = self
             .layout_chains
             .write()
@@ -345,12 +359,21 @@ impl RouteTree {
     fn dispatch_index(&self) -> std::sync::Arc<DispatchIndex> {
         // Poison recovery over the swallow (the house shape), same as the
         // candidate index above.
-        let c = self
-            .dispatch
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(idx) = c.as_ref() {
-            return std::sync::Arc::clone(idx);
+        //
+        // The read guard lives ONLY inside this block: a same-thread
+        // read→write hold self-deadlocks the std RwLock (glibc's wrlock
+        // waits for its own rdlock to drain), the cold-tree hang the
+        // route_ctx pins exposed — `middleware_files_for` /
+        // `error_route_for` / `not_found_route` never answered on an
+        // `insert`-built tree's first build.
+        {
+            let c = self
+                .dispatch
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(idx) = c.as_ref() {
+                return std::sync::Arc::clone(idx);
+            }
         }
         let mut middleware: Vec<(String, std::path::PathBuf, usize)> = Vec::new();
         let mut errors: Vec<(String, String, usize)> = Vec::new();
@@ -730,4 +753,84 @@ pub enum RuleOutcome {
     RateLimited {
         retry_after_secs: u64,
     },
+}
+
+#[cfg(test)]
+mod dispatch_index_tdd {
+    //! The route_ctx pins' red, promoted to a router pin: the lazy caches'
+    //! first build held the READ guard across the WRITE lock — a same-thread
+    //! read→write hold self-deadlocks the std RwLock, so a cold
+    //! `insert`-built tree never answered `match_path`,
+    //! `middleware_files_for` or `not_found_route` (the scanner-built
+    //! production trees were warm through other paths; hand-built trees
+    //! hung). The pin RACES the build from two threads: without the
+    //! guard-scoped fix the harness hangs, with it both threads get the
+    //! same answers.
+
+    use super::{RouteEntry, RouteId, RouteKind, RouteTree};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    fn entry(id: &str, kind: RouteKind, segments: &[&str], file: &str) -> RouteEntry {
+        RouteEntry {
+            id: RouteId(id.to_string()),
+            kind,
+            segments: segments.iter().map(|s| (*s).to_string()).collect(),
+            file: PathBuf::from(file),
+            render_mode: None,
+            tags: vec![],
+            has_server_module: false,
+            needs_parent: false,
+            slot: None,
+            live: None,
+            priority: None,
+        }
+    }
+
+    #[test]
+    fn concurrent_first_build_answers_every_thread() {
+        let mut tree = RouteTree::new();
+        tree.insert(entry(
+            "routes/blog/page",
+            RouteKind::Page,
+            &["blog"],
+            "routes/blog/page.tsx",
+        ));
+        tree.insert(entry(
+            "routes/middleware",
+            RouteKind::Middleware,
+            &[],
+            "routes/middleware.ts",
+        ));
+        tree.insert(entry(
+            "routes/not-found",
+            RouteKind::NotFound,
+            &[],
+            "routes/not-found.tsx",
+        ));
+        let tree = Arc::new(tree);
+        let a = {
+            let tree = Arc::clone(&tree);
+            std::thread::spawn(move || tree.middleware_files_for("routes/blog/page"))
+        };
+        let b = {
+            let tree = Arc::clone(&tree);
+            std::thread::spawn(move || tree.not_found_route())
+        };
+        let files = a.join().expect("the middleware build thread answers");
+        let nf = b.join().expect("the not-found build thread answers");
+        assert_eq!(
+            files,
+            vec![PathBuf::from("routes/middleware.ts")],
+            "the root middleware wraps every route, outermost first"
+        );
+        let (id, chain) = nf.expect("the fixture declares a not-found route");
+        assert_eq!(id, "routes/not-found");
+        assert!(chain.is_empty(), "the fixture not-found has no layouts");
+        // The cached shape: a follow-up read answers from the stored index.
+        assert_eq!(
+            tree.middleware_files_for("routes/blog/page"),
+            vec![PathBuf::from("routes/middleware.ts")]
+        );
+    }
 }
