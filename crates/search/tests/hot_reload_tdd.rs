@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use oxide_fw_search::{
     ReloadOutcome, SearchDocument, SearchEngineOptions, SearchIndex, SearchQuery,
-    SwappableSearchIndex, TantivyIndex,
+    SwappableSearchIndex, TantivyIndex, wipe_dir_for_rebuild,
 };
 
 /// One corpus entry: the marker lands in the body, so a query for the
@@ -42,10 +42,14 @@ fn doc(id: &str, marker: &str) -> SearchDocument {
 
 /// The emitter's exact rebuild sequence: the engine owns a FRESH
 /// directory (a stale index is never committed onto), then commits.
+/// The emitter's exact rebuild sequence: the engine owns a FRESH
+/// directory (a stale index is never committed onto), then commits. The
+/// wipe is the engine's own ([`wipe_dir_for_rebuild`]) —
+/// the serving reader's OnCommit reloader polls this directory every
+/// 500 ms, and a bare `remove_dir_all` loses that race (the reloader's
+/// tick re-creates `.tantivy-meta.lock` mid-wipe: ENOTEMPTY).
 fn rebuild(dir: &std::path::Path, docs: &[SearchDocument]) {
-    if dir.exists() {
-        std::fs::remove_dir_all(dir).unwrap();
-    }
+    wipe_dir_for_rebuild(dir).expect("the wipe clears the watched directory");
     TantivyIndex::build_in_dir(docs, &SearchEngineOptions::default(), dir)
         .expect("the rebuild commits");
 }
