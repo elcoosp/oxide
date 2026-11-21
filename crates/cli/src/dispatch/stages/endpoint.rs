@@ -22,7 +22,10 @@ pub(crate) async fn stage_endpoint(d: &DispatchDeps, cx: &mut RequestCtx) -> Flo
     let stream_counter = std::sync::Arc::clone(&d.stream_counter);
     let req_recording = &cx.req_recording;
     let metrics = std::sync::Arc::clone(&d.metrics);
-    let label = &cx.label;
+    // WP B03 item 2: borrow the label as `&str` (Deref coercion from the
+    // `Arc<str>` field) — the metrics `observe(label, …)` and the error
+    // envelope's `"route": label` both take `&str` / `Serialize`.
+    let label: &str = &cx.label;
     let started = cx.started;
     // <<< stage-wrapper
     // §8.1 route.ts / §10.2 step 7: an Endpoint route returns a
