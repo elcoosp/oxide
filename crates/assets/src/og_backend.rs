@@ -113,7 +113,7 @@ fn append_element(svg: &mut String, el: &serde_json::Value) {
                 .unwrap_or("sans-serif");
             let weight = el
                 .get("font_weight")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(400);
             let fill = el.get("fill").and_then(|v| v.as_str()).unwrap_or("#ffffff");
             let anchor = el
@@ -146,7 +146,9 @@ fn append_element(svg: &mut String, el: &serde_json::Value) {
 }
 
 fn num(el: &serde_json::Value, key: &str, default: f64) -> f64 {
-    el.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
+    el.get(key)
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(default)
 }
 
 fn escape_attr(s: &str) -> String {
