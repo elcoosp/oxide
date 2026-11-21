@@ -1,0 +1,19 @@
+# a06_data_route_green.log — 2026-11-21T17:5xZ
+# command: cargo test -p oxide-fw-cli --lib
+# branch: perf/data-route-load-graph (uncommitted; base_commit 8cce3f951dc0de1e6069d1435d09a4ad4290a12d)
+# note: the /__data load-graph adoption (crates/cli/src/data_route.rs +
+# stages/data_route.rs page verdict pass-through) flips both red pins:
+# the two-layout/three-node overlap (max_active 3) and the
+# verdict-authoritative parent-data threading. The parity pin
+# (data_route_threads_parent_data_through_parent_calling_loads) stayed
+# green through the rewrite, as did every pre-existing CLI pin.
+
+running 3 tests
+test tests::data_route_independent_layout_loads_overlap_under_the_load_graph ... ok
+test tests::data_route_independent_layout_reads_null_parent_data_under_the_graph ... ok
+test tests::data_route_threads_parent_data_through_parent_calling_loads ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 512 filtered out; finished in 0.26s
+
+# full suite (same tree):
+test result: ok. 497 passed; 0 failed; 18 ignored; 0 measured; 0 filtered out; finished in 7.71s
