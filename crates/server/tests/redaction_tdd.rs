@@ -48,6 +48,10 @@ fn is_secret_key_covers_the_spec_24_class() {
         "grafana_token",
         "openai_api_key",
         "client_secret",
+        // The separator-free spellings the flat form exists for (the MCP
+        // request-log redaction leaked `apiKey` before this).
+        "apiKey",
+        "x-api-key",
     ] {
         assert!(is_secret_key(k), "{k} must be in the secret class");
     }
