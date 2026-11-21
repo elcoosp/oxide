@@ -10,6 +10,15 @@ use std::time::Duration;
 
 const BUCKET_BOUNDS_MS: [u64; 10] = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000];
 
+/// WP B03 item 4: the dynamic labels the dispatch stages observe but the
+/// boot's `register_routes` caller does not hand in (it passes route
+/// patterns, which begin with `/`). `_unmatched` is the 404 arm's label,
+/// `_proxy` the prelude's proxy forward, `_data` the `GET /__data` route.
+/// Freezing them alongside the route patterns keeps their `observe` lock-free
+/// — a 404, a proxy pass and a data-plane request pay the same atomic-only
+/// `observe` a registered route does, instead of the fallback write lock.
+const DYNAMIC_LABELS: [&str; 3] = ["_unmatched", "_proxy", "_data"];
+
 #[derive(Debug)]
 struct RouteMetrics {
     count: AtomicU64,
@@ -168,17 +177,40 @@ impl Metrics {
             .observe(latency);
     }
 
+    /// §V2-B03 item 4 (test-only): whether `register_routes` froze a label.
+    /// The hot path's `observe` answers through the frozen map with no
+    /// lock, so a frozen label never contends on the fallback `RwLock`.
+    /// The dynamic labels (`_unmatched`, `_proxy`, `_data`) fire on every
+    /// unmatched / proxy / data request, so freezing them too (not just the
+    /// route patterns the boot hands in) is what keeps those paths lock-free.
+    #[cfg(test)]
+    pub fn is_frozen_label(&self, label: &str) -> bool {
+        self.frozen.get().is_some_and(|map| map.contains_key(label))
+    }
+
     /// §V2-B03 item 4: freeze the route labels BEFORE the server starts.
     /// Every `RouteContext.pattern` the boot built goes in; the map is
     /// never mutated afterwards, so a registered label's `observe` needs
-    /// no lock (the fallback `RwLock` map keeps serving the dynamic
-    /// labels and anything the registration missed). A second call after
-    /// the map is frozen is a no-op (the first registration wins).
+    /// no lock (the fallback `RwLock` map keeps serving anything the
+    /// registration missed). A second call after the map is frozen is a
+    /// no-op (the first registration wins).
+    ///
+    /// The three dynamic labels the dispatch stages observe — `_unmatched`
+    /// (the 404 arm), `_proxy` (the prelude's proxy forward) and `_data`
+    /// (the `GET /__data` route) — are frozen ALONGSIDE the route patterns
+    /// so they never reach the fallback write lock either: a 404, a proxy
+    /// pass and a data-plane request pay the same atomic-only `observe` a
+    /// registered route does. Route patterns begin with `/`; the dynamic
+    /// labels never do, so the two sets cannot collide.
     pub fn register_routes(&self, labels: impl IntoIterator<Item = std::sync::Arc<str>>) {
-        let map: HashMap<std::sync::Arc<str>, RouteMetrics> = labels
+        let mut map: HashMap<std::sync::Arc<str>, RouteMetrics> = labels
             .into_iter()
             .map(|label| (label, RouteMetrics::new()))
             .collect();
+        for dynamic in DYNAMIC_LABELS {
+            map.entry(std::sync::Arc::from(dynamic))
+                .or_insert_with(RouteMetrics::new);
+        }
         let _ = self.frozen.set(map);
     }
 
@@ -456,6 +488,41 @@ mod tests {
         // An UNREGISTERED label still goes through the fallback path.
         m.observe("/dynamic", std::time::Duration::from_millis(1), 200);
         assert_eq!(m.requests_total.load(Ordering::Relaxed), 2);
+    }
+
+    // §V2-B03 item 4 (WP B03 completion): the dynamic labels the dispatch
+    // stages observe — `_unmatched` (the 404 arm), `_proxy` (the prelude's
+    // proxy forward) and `_data` (the `GET /__data` route) — fire on EVERY
+    // unmatched / proxy / data request. If they are NOT in the frozen map
+    // `register_routes` builds, each first-sight observe takes the fallback
+    // `RwLock` WRITE lock (insert on miss), contending the whole registry.
+    // Freezing them alongside the route patterns keeps those paths
+    // atomic-only — the lock-free pattern the spec item 4 asks for beyond
+    // the registered-route case.
+    #[test]
+    fn register_routes_freezes_dynamic_labels() {
+        let m = Metrics::new();
+        m.register_routes([std::sync::Arc::from("/blog")]);
+        assert!(
+            m.is_frozen_label("/blog"),
+            "a registered route label is frozen"
+        );
+        assert!(
+            m.is_frozen_label("_unmatched"),
+            "_unmatched must be frozen so the 404 arm's observe takes no lock"
+        );
+        assert!(
+            m.is_frozen_label("_proxy"),
+            "_proxy must be frozen so the proxy forward's observe takes no lock"
+        );
+        assert!(
+            m.is_frozen_label("_data"),
+            "_data must be frozen so the data route's observe takes no lock"
+        );
+        assert!(
+            !m.is_frozen_label("/dynamic"),
+            "an unregistered label still falls back to the locked map"
+        );
     }
 
     // V2-F04 (§15.4): the experiment-exposure counter. Each (experiment,
