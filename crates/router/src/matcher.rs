@@ -389,11 +389,18 @@ fn regex_for(pattern: &str) -> Option<Regex> {
     // repairs) instead of swallowing: a swallowed read permanently
     // misses the cache and a swallowed write silently drops every
     // compiled regex after the poisoning panic.
-    let guard = cache
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(re) = guard.get(pattern) {
-        return Some(re.clone());
+    //
+    // The read guard lives ONLY inside this block: a same-thread
+    // read→write hold self-deadlocks the std RwLock (glibc's wrlock
+    // waits for its own rdlock to drain) — the first constrained-param
+    // match hung every tree that carried a `:param{regex}` constraint.
+    {
+        let guard = cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(re) = guard.get(pattern) {
+            return Some(re.clone());
+        }
     }
     let full = format!("^(?:{pattern})$");
     let re = Regex::new(&full).ok()?;
