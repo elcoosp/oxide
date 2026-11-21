@@ -265,7 +265,7 @@ fn dir_cas_roundtrips_put_get_overwrite() {
     // The temp+rename write leaves no dot-temp litter behind.
     let litter: Vec<_> = std::fs::read_dir(dir.path().join("image-cas"))
         .expect("store dir")
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
         .collect();
     assert!(litter.is_empty(), "no temp files left behind: {litter:?}");
