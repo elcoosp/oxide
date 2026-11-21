@@ -469,6 +469,7 @@ fn node_host_missing_node_binary_or_script_fails_fast() {
 
 // ------------------------------------------------------------- V8 backend ---
 
+#[cfg(feature = "v8")]
 fn v8_cfg(size: usize) -> PoolConfig {
     PoolConfig {
         size,
@@ -479,6 +480,7 @@ fn v8_cfg(size: usize) -> PoolConfig {
 /// Write a one-file ESM module into `dir` and return its absolute path. The
 /// V8 host loads modules from disk through `FsModuleLoader`, so each test
 /// gets a real file rather than the old hardcoded `routes/index`.
+#[cfg(feature = "v8")]
 fn v8_module(dir: &std::path::Path, name: &str, source: &str) -> String {
     let p = dir.join(name);
     std::fs::write(&p, source).unwrap();
@@ -486,6 +488,7 @@ fn v8_module(dir: &std::path::Path, name: &str, source: &str) -> String {
 }
 
 /// An `EntryRef` pointing at a real module file.
+#[cfg(feature = "v8")]
 fn v8_entry(module: &str, export: &str) -> EntryRef {
     EntryRef {
         kind: "render".into(),
@@ -495,6 +498,7 @@ fn v8_entry(module: &str, export: &str) -> EntryRef {
 }
 
 #[tokio::test]
+#[cfg(feature = "v8")]
 async fn v8_host_runs_a_module_export() {
     let dir = tempfile::tempdir().unwrap();
     let module = v8_module(
@@ -520,6 +524,7 @@ async fn v8_host_runs_a_module_export() {
 }
 
 #[tokio::test]
+#[cfg(feature = "v8")]
 async fn v8_plugin_ops_load_once_and_call_hooks_positionally() {
     let dir = tempfile::tempdir().unwrap();
     let module = v8_module(
@@ -598,6 +603,7 @@ async fn v8_plugin_ops_load_once_and_call_hooks_positionally() {
 }
 
 #[tokio::test]
+#[cfg(feature = "v8")]
 async fn v8_host_boom_and_missing_module_report_errors() {
     let host = V8Host::new();
     let pool = host.tooling_pool(v8_cfg(1)).unwrap();
@@ -626,6 +632,7 @@ async fn v8_host_boom_and_missing_module_report_errors() {
 }
 
 #[tokio::test]
+#[cfg(feature = "v8")]
 async fn v8_host_multiple_workers_dispatch_and_drain() {
     let dir = tempfile::tempdir().unwrap();
     let module = v8_module(
@@ -658,6 +665,7 @@ async fn v8_host_multiple_workers_dispatch_and_drain() {
 }
 
 #[tokio::test]
+#[cfg(feature = "v8")]
 async fn v8_host_abort_request_resolves_pending_call() {
     let dir = tempfile::tempdir().unwrap();
     let module = v8_module(
@@ -682,6 +690,7 @@ async fn v8_host_abort_request_resolves_pending_call() {
 }
 
 #[tokio::test]
+#[cfg(feature = "v8")]
 async fn v8_pool_recycles_warm() {
     // §4.3 lifecycle: a worker is replaced after `recycle_after_requests`
     // successful calls. The replacement is warm — a fresh worker is spawned
@@ -747,6 +756,7 @@ async fn v8_pool_recycles_warm() {
 /// Rust op functions. A module calls `oxide.trace` and returns the value, so
 /// the round-trip through a real op is asserted.
 #[tokio::test]
+#[cfg(feature = "v8")]
 async fn v8_ops_are_registered_and_callable() {
     let dir = tempfile::tempdir().unwrap();
     let module = v8_module(
@@ -775,6 +785,7 @@ async fn v8_ops_are_registered_and_callable() {
 }
 
 #[test]
+#[cfg(feature = "v8")]
 fn op_decls_returns_the_documented_ops() {
     // The V8 op surface (§4.5/§4.6): log, trace, serialize, random, sleep.
     // `random` and `sleep` back `crypto.getRandomValues` and the timer shims
