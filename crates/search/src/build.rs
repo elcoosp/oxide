@@ -112,7 +112,77 @@ impl TantivyIndex {
             .map_err(|e| err("SRC-102", format!("search index open for build: {e}")))?;
         Self::finish_build(index, fields, opts, docs, Some(dir))
     }
+}
 
+/// How many times the stale-directory removal retries when the removal
+/// races a lock file the reader's reload may still hold (see
+/// [`wipe_dir_for_rebuild`]). Each retry parks 5 ms; ten rounds cover the
+/// reload's worst case (one poll tick + one open) with an order of
+/// magnitude of headroom.
+const WIPE_RETRY_ROUNDS: usize = 10;
+
+/// How long one wipe retry parks before re-reading the stale directory
+/// (the in-flight reload's lock release is a milliseconds-scale event).
+const WIPE_RETRY_PARK: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// Empty `dir` for a rebuild while a live reader may still hold it under
+/// watch (the dev-loop emitter's exact situation: `SwappableSearchIndex`
+/// serves `dist/search/index` and the watcher's content change re-emits
+/// into the same directory).
+///
+/// A bare `remove_dir_all` loses a race there: the reader's OnCommit
+/// reloader polls `meta.json` every 500 ms and takes tantivy's meta lock
+/// (`<dir>/.tantivy-meta.lock`) when its tick fires. When the tick lands
+/// mid-wipe, the lock file re-appears between the wipe's child pass and
+/// its `rmdir`, the wipe dies with `DirectoryNotEmpty`, and the dev loop's
+/// refresh fails BEFORE the rebuild (the best-effort posture covers the
+/// reload failing, never the emitter's wipe failing). The rename moves
+/// the watched PATH out of the way atomically first — the watcher's next
+/// poll of the live path finds nothing and fires no callback, so no new
+/// lock can appear at the live path — and the removal of the renamed
+/// stale directory retries on `DirectoryNotEmpty` for the lock release
+/// that may still be in flight inside it.
+///
+/// The live path never survives a call: after `Ok(())` the directory is
+/// gone (the caller's rebuild then creates it fresh — the emitter's
+/// contract, a stale index is never committed onto).
+///
+/// # Errors
+///
+/// The underlying `std::io` error when the rename fails (the directory
+/// is not movable — a foreign mount, a permission issue) or when the
+/// stale directory still holds entries after every retry round.
+pub fn wipe_dir_for_rebuild(dir: &Path) -> std::io::Result<()> {
+    // A leftover from a crashed run must not block this one — cleaned
+    // before any early return, so the next wipe always finds the rename
+    // target free.
+    let mut stale = dir.as_os_str().to_owned();
+    stale.push(".wipe-stale");
+    let stale = std::path::PathBuf::from(stale);
+    if stale.exists() {
+        std::fs::remove_dir_all(&stale)?;
+    }
+    if !dir.exists() {
+        return Ok(());
+    }
+    std::fs::rename(dir, &stale)?;
+    let mut last_err = None;
+    for _ in 0..WIPE_RETRY_ROUNDS {
+        match std::fs::remove_dir_all(&stale) {
+            Ok(()) => return Ok(()),
+            // The in-flight reload's lock release lands within a tick;
+            // park and re-read the directory.
+            Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
+                last_err = Some(e);
+                std::thread::sleep(WIPE_RETRY_PARK);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| std::io::Error::other("stale directory never emptied")))
+}
+
+impl TantivyIndex {
     /// The shared build body: register analyzers, write the documents,
     /// commit, keep the read-only reader.
     fn finish_build(
