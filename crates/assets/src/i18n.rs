@@ -1,6 +1,6 @@
 //! Internationalization (spec §16.4). Locale-prefixed routing, Accept-Language
 //! negotiation, and locale-aware formatting (plurals, dates, numbers) via
-//! ICU4X. Message catalogs use ICU MessageFormat; a Fluent option is available
+//! ICU4X. Message catalogs use ICU `MessageFormat`; a Fluent option is available
 //! by swapping the parser.
 //!
 //! The negotiation algorithm follows RFC 4647 "lookup":
@@ -45,6 +45,7 @@ pub struct LanguageRange {
 /// Parse an `Accept-Language` header into a q-ordered list of ranges.
 /// Malformed entries are skipped silently (per RFC 7231 §5.3.5, senders
 /// SHOULD NOT send malformed but receivers MUST be tolerant).
+#[must_use]
 pub fn parse_accept_language(header: &str) -> Vec<LanguageRange> {
     let mut out: Vec<LanguageRange> = Vec::new();
     for part in header.split(',') {
@@ -73,6 +74,7 @@ pub fn parse_accept_language(header: &str) -> Vec<LanguageRange> {
 
 /// Negotiate the best locale for the given request against `cfg`. Returns the
 /// matched supported tag or the default.
+#[must_use]
 pub fn negotiate(cfg: &I18nConfig, accept_language: &str) -> String {
     let ranges = parse_accept_language(accept_language);
     if ranges.is_empty() {
@@ -107,6 +109,7 @@ pub fn negotiate(cfg: &I18nConfig, accept_language: &str) -> String {
 }
 
 /// Build the URL prefix for a locale under the given strategy.
+#[must_use]
 pub fn locale_prefix(cfg: &I18nConfig, locale: &str) -> String {
     match cfg.strategy.as_str() {
         "prefix-always" => format!("/{locale}"),
@@ -124,6 +127,7 @@ pub fn locale_prefix(cfg: &I18nConfig, locale: &str) -> String {
 
 /// Strip a locale prefix from an incoming path, returning `(locale, path)`.
 /// Falls back to the default when no prefix matches.
+#[must_use]
 pub fn strip_locale_prefix<'a>(cfg: &I18nConfig, path: &'a str) -> (String, &'a str) {
     for loc in &cfg.locales {
         let pref = format!("/{loc}");
@@ -138,6 +142,7 @@ pub fn strip_locale_prefix<'a>(cfg: &I18nConfig, path: &'a str) -> (String, &'a 
 }
 
 /// Localized `href()`: prefix the path with the locale per the strategy.
+#[must_use]
 pub fn href(cfg: &I18nConfig, locale: &str, path: &str) -> String {
     let prefix = locale_prefix(cfg, locale);
     if prefix.is_empty() {
@@ -155,6 +160,7 @@ pub fn href(cfg: &I18nConfig, locale: &str, path: &str) -> String {
 /// for common locales; ICU4X's `DecimalFormatter` will replace this body when
 /// the `fixed_decimal` crate lands in the workspace (the ICU4X path is the
 /// spec's §16.4 target).
+#[must_use]
 pub fn format_number(locale: &str, value: f64) -> String {
     let (thousands, decimal, use_commas) = match locale.split('-').next().unwrap_or("en") {
         // Locales that use `.` for thousands and `,` for decimals.
@@ -219,6 +225,7 @@ pub struct Catalog {
 }
 
 impl Catalog {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -245,11 +252,11 @@ impl Catalog {
         self.entries
             .get(default)
             .and_then(|c| c.get(key))
-            .map(String::as_str)
-            .unwrap_or(default)
+            .map_or(default, String::as_str)
     }
 
     /// Replace `{name}` placeholders in a message with values from `args`.
+    #[must_use]
     pub fn format(
         &self,
         locale: &str,
@@ -298,6 +305,7 @@ pub type IcuValues = std::collections::HashMap<String, IcuValue<String>>;
 /// Convert our JSON-shaped argument map into a formatjs `Values<String>`.
 /// Objects and arrays are stringified with `serde_json` so callers can pass
 /// anything without losing data.
+#[must_use]
 pub fn icu_values_from_json(args: &BTreeMap<String, serde_json::Value>) -> IcuValues {
     let mut out = IcuValues::with_capacity(args.len());
     for (k, v) in args {
@@ -331,6 +339,7 @@ pub struct MessageFormatter {
 }
 
 impl MessageFormatter {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -341,7 +350,10 @@ impl MessageFormatter {
     /// (missing argument or type mismatch).
     pub fn format(&self, locale: &str, template: &str, values: &IcuValues) -> Result<String> {
         let compiled = {
-            let mut cache = self.cache.lock().unwrap_or_else(|p| p.into_inner());
+            let mut cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(c) = cache.get(template) {
                 std::sync::Arc::clone(c)
             } else {
@@ -375,12 +387,18 @@ impl MessageFormatter {
 
     /// Drop cached templates. Useful in tests.
     pub fn clear(&self) {
-        self.cache.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// Number of templates currently cached.
     pub fn len(&self) -> usize {
-        self.cache.lock().unwrap_or_else(|p| p.into_inner()).len()
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -402,9 +420,9 @@ pub fn format_icu_message(locale: &str, template: &str, values: &IcuValues) -> R
 }
 
 impl Catalog {
-    /// ICU MessageFormat entry point. Looks up `key` in the catalog for
+    /// ICU `MessageFormat` entry point. Looks up `key` in the catalog for
     /// `locale` (with the usual language-subtag and default fallbacks), then
-    /// formats it as a MessageFormat template.
+    /// formats it as a `MessageFormat` template.
     ///
     /// The existing [`Catalog::format`] (plain `{name}` substitution) is kept
     /// for call sites that don't need ICU types; this method is the one that
@@ -844,7 +862,7 @@ pub fn write_messages_dts(cat: &Catalog, out_path: &std::path::Path) -> Result<(
     let locales: Vec<&String> = cat.entries.keys().collect();
     for locale in &locales {
         let ident = locale.replace('-', "_");
-        let _ = writeln!(out, "  {}: LocaleMessages;", ident);
+        let _ = writeln!(out, "  {ident}: LocaleMessages;");
     }
     out.push_str("}\n");
     out.push_str("\nexport type DefaultLocale = ");
