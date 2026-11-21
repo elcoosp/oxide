@@ -1,0 +1,53 @@
+# dispatch_green.log — 2026-11-21T15:06:38Z
+# command: cargo test -p oxide-fw-dispatch --test route_ctx_tdd (then cargo test -p oxide-fw-dispatch, cargo test -p oxide-fw-router --lib)
+# branch: refactor/extract-v8-free-dispatch (uncommitted; base_commit bdd505d8313fde3be67fb64b5d15df43df7aa752)
+# note: the substrate pins exposed a latent router deadlock (the lazy
+# caches' first build held the read guard across the write lock — cold
+# insert-built trees hung match_path/middleware_files_for/not_found_route
+# and the regex-cache path hung constrained params). Fixed in this tree:
+# crates/router/src/lib.rs (candidate_index, layout_chain_cached,
+# dispatch_index) + crates/router/src/matcher.rs (regex_for), pinned by
+# router's dispatch_index_tdd::concurrent_first_build_answers_every_thread.
+
+== cargo test -p oxide-fw-dispatch --test route_ctx_tdd ==
+     Running tests/route_ctx_tdd.rs (target/debug/build/oxide-fw-dispatch/9c6e90cfbb2b5aff/out/route_ctx_tdd-9c6e90cfbb2b5aff)
+
+running 12 tests
+test answers_unmatched_compose_the_not_found_pair ... ok
+test answers_matched_route_compose_chain_layout_error ... ok
+test answers_without_table_fall_back_to_the_tree ... ok
+test match_data_route_decodes_and_folds_target ... ok
+test match_data_route_requires_get ... ok
+test match_data_route_defaults_to_root ... ok
+test match_data_route_targets_the_query_route ... ok
+test match_param_route_labels_pattern_of_without_table ... ok
+test match_root_candidates_hit_index ... ok
+test match_trailing_slash_folds_and_labels_from_table ... ok
+test pattern_of_shapes ... ok
+test match_unmatched_404s_with_not_found_context ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+== cargo test -p oxide-fw-dispatch (all test binaries, exit 0) ==
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+== cargo test -p oxide-fw-router --lib (deadlock-fix regression proof) ==
+test result: ok. 84 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
