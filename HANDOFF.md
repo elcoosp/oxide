@@ -1,3 +1,64 @@
+## CURRENT STATE (post-r10)
+
+**Session:** `build/oxide-unwall-capability-gates` (uncommitted tree; `ship.toml` +
+`.github/pr-body.md` are gitignored session artifacts). **base_commit:**
+`8d44700eaed201639bb5b9483f8e5b75892d74a1` (2026-11-20). Sandbox: 2 cores, 9.9G
+rootfs (NOT the 458MB recorded in §0 — the walls below were re-tested, not
+assumed), no cargo/node-preinstalled → vendored: rustup 1.98.0 (exit 0), nasm
+2.16.03 (Ubuntu .deb, `dpkg -x`), libclang 18.1.1 (PyPI wheel, `LIBCLANG_PATH`).
+The F47–F70 "no nasm / no libclang" walls are DOWN in this sandbox class.
+
+**What is GREEN now (all run here, transcripts in scripts/gates/):**
+- `cargo fmt --all --check` — exit 0.
+- `cargo clippy --workspace --all-targets -- -D warnings` — **exit 0 with NO
+  excludes** (M1's green bar; per-crate sweep 22/22 clean). This is the first
+  no-excludes green since the V8/nasm walls were recorded.
+- `cargo check -p oxide-fw-jshost -p oxide-fw-assets --all-targets` and
+  `-p oxide-fw-cli --all-targets` and `--features search --lib` — exit 0.
+- `cargo deny check licenses advisories` — exit 0 (deny.toml migrated off the
+  PR #611-removed keys; wasmtime 48.0.10; RUSTSEC-2025-0134 + RUSTSEC-2026-0543
+  ignored by exact id with reachability).
+- The zero-`#[allow]`/`#[expect]` grep — empty.
+- The 5-session `oxide-fw-assets` test-compile break (the recorded
+  rkyv-skew): REPAIRED — `RouteSearchEntry.title` is documented
+  `Option<String>` (`route_search.rs:32-34`), the pins predated it;
+  `integration.rs:69/:99` compare via `as_deref`. Also `font_subsetter_tdd`
+  rides `subset` (V2-F09 file-level cfg) so `-p assets` compiles standalone.
+
+**What this session changed (M1):** `avif` non-default feature in
+oxide-fw-assets (AVIF requests refuse loudly `AST-AVIF` + WebP/PNG fallback);
+`v8` feature in oxide-fw-jshost/oxide-fw-cli (default kept; `--no-default-features`
+links with no libclang; `backend = "v8"` without the feature warns `JS-V8OFF`
+and serves the Node pool; the snapshot write skips with `SNP-V8OFF`); the
+`node` CI job gained its missing `Install nasm` step; README's unsupported
+"21-section scorecard" phrasing replaced by scorecard-r10;
+`packages/oxide-website/content/docs/scorecard-r10.md` authored (P0 table
+re-verified at HEAD with file:line; P0-1c evidence: `crates/cli/resources/`
+still holds only `edge.wasm`).
+
+**What is RED / open:**
+- The `oxide build` regression cluster (smoke-deploy ×3, cli-split-digest,
+  HMR, Playwright ×4, search-feature pins, fixtures-v8, scaffold-install ×4)
+  — the M2 bisect harness is ready (`scripts/bisect_smoke.sh`, zero-API over
+  the deepened local history; `8bcc462e..HEAD` = 2,485 commits).
+- Node-worker tests locally: 16 tests / 10 pass / 6 fail — every failure is
+  solid/vue compiler ops needing the npm packages only `pnpm install`
+  provides (CI executor).
+- The workspace `cargo nextest run` gate: the first full attempt hit ENOSPC
+  (9.9G rootfs, 100%); the session re-runs it in dependency-ordered chunks
+  with per-chunk `cargo clean -p` — chunk results recorded in
+  `scripts/gates/nextest-{a,b,c,d}.log`; CI (rust-cache, 30-min jobs) runs
+  the one command.
+
+**The exact next command** (whoever picks this up, on a host with ≥20G free):
+```
+cargo nextest run --workspace --no-fail-fast   # the un-chunked workspace gate
+cargo build -p oxide-fw-cli && ./target/debug/oxide build --root examples/smoke-app-react
+```
+…then, if the smoke build still fails, `bash scripts/bisect_smoke.sh` walks
+`8bcc462e..HEAD` and prints the first bad SHA (each step rebuilds the CLI and
+re-runs the smoke build; expect hours on 2 cores).
+
 # Handoff — one client learns to stand over many planes, and stops paying a fresh dial per exchange (`feat/cache-sharded-keepalive`: the §11.2 story's next two shapes land as F69/F70 — `ShardedCacheHandler`/`ShardRing` (`crates/cache/src/shard.rs`) compose N handlers into ONE `CacheHandler` with the ENTRY verbs routed to exactly one shard by rendezvous hashing over the crate's own blake3 (minimal disruption: growth moves only the keys whose winner changed; the tag verbs fan out over every shard, an empty set refuses loud under the minted `CAC-SHARD`) and `HttpCacheHandler::with_keep_alive(max_idle)` + the shell's honored loop close the dial tax (the client speaks keep-alive, reads the Content-Length-driven body, parks the socket in a per-host idle pool; the F53 shell loops the exchange read on honored connections while the close shape stays byte-identical))
 
 ## Where things stand
