@@ -100,8 +100,7 @@ fn wipe_plus_rebuild_survives_a_live_watched_directory() {
         } else {
             vec![doc("posts/a", "alpha")]
         };
-        wipe_dir_for_rebuild(&index_dir)
-            .expect("the watched directory wipes for the rebuild");
+        wipe_dir_for_rebuild(&index_dir).expect("the watched directory wipes for the rebuild");
         TantivyIndex::build_in_dir(&docs, &SearchEngineOptions::default(), &index_dir)
             .expect("the rebuild commits");
         let outcome = hot.try_reload().expect("the reload opens the rebuild");
