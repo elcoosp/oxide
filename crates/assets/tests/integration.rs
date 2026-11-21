@@ -66,7 +66,15 @@ fn prerendered_html_becomes_a_json_route_index() {
 
     let idx = build_route_search_index(&prerendered, dist.path());
     assert_eq!(idx.entries.len(), 3, "one entry per prerendered output");
-    assert_eq!(idx.entries[0].title, "Home", "the <title> rides the entry");
+    // `RouteSearchEntry.title` is `Option<String>` (`None` when the page had
+    // no title, route_search.rs); the pin compares through `as_deref` — the
+    // stale `assert_eq!(title, "Home")` broke the crate's test compile for
+    // five recorded sessions (E0277, docs/deviations.md).
+    assert_eq!(
+        idx.entries[0].title.as_deref(),
+        Some("Home"),
+        "the <title> rides the entry"
+    );
     assert!(
         idx.entries.iter().any(|e| e.url.contains("fr")),
         "the per-locale variant is its own entry: {:?}",
@@ -96,7 +104,7 @@ fn prerendered_html_becomes_a_json_route_index() {
         "/manual",
         "<html><head><title>M</title></head><body><h2>Section</h2><p>text</p></body></html>",
     );
-    assert_eq!(hand.title, "M");
+    assert_eq!(hand.title.as_deref(), Some("M"));
 }
 
 /// The SVG sprite pipeline: the ids the scan collects (`<use href="#…">`,
@@ -178,7 +186,7 @@ fn a_scanned_collection_flags_broken_references() {
         1,
         "exactly the broken link is flagged: {diagnostics:?}"
     );
-    let message = format!("{}", diagnostics[0].message);
+    let message = diagnostics[0].message.clone();
     assert!(
         message.contains("missing"),
         "the diagnostic names the broken target: {message}"
