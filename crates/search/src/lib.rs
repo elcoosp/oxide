@@ -79,7 +79,7 @@ pub fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
     OxideError(Box::new(Diagnostic::error(code, msg)))
 }
 
-pub use build::TantivyIndex;
+pub use build::{TantivyIndex, wipe_dir_for_rebuild};
 pub use endpoint::QueryCache;
 pub use hot::{ReloadOutcome, SwappableSearchIndex};
 pub use query::{
