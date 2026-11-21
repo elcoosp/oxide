@@ -1,6 +1,6 @@
 //! Content pipeline (spec §16.5): markdown → HTML via `comrak`, YAML-ish
 //! frontmatter for typed collections, and build-time highlighting via
-//! `syntect`. No in-house CommonMark renderer or tokenizer.
+//! `syntect`. No in-house `CommonMark` renderer or tokenizer.
 
 use crate::{ContentEntry, Result, err};
 use serde::{Deserialize, Serialize};
@@ -57,9 +57,10 @@ fn parse_scalar(raw: &str) -> serde_json::Value {
             if let Ok(n) = raw.parse::<i64>() {
                 serde_json::Value::Number(n.into())
             } else if let Ok(f) = raw.parse::<f64>() {
-                serde_json::Number::from_f64(f)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or_else(|| serde_json::Value::String(raw.to_string()))
+                serde_json::Number::from_f64(f).map_or_else(
+                    || serde_json::Value::String(raw.to_string()),
+                    serde_json::Value::Number,
+                )
             } else {
                 serde_json::Value::String(raw.to_string())
             }
@@ -89,7 +90,7 @@ pub fn parse_content_entry(path: &Path, source: &str) -> Result<ContentEntry> {
                 ),
             ));
         };
-        for line in &lines[1..1 + idx] {
+        for line in &lines[1..=idx] {
             if let Some((k, v)) = line.split_once(':') {
                 let key = k.trim();
                 if !key.is_empty() {
@@ -177,6 +178,7 @@ pub enum ContentFormat {
 
 impl ContentFormat {
     /// Infer from a path's extension. Unknown extensions default to Markdown.
+    #[must_use]
     pub fn from_path(path: &Path) -> Self {
         match path.extension().and_then(|e| e.to_str()) {
             Some("mdx") => ContentFormat::Mdx,
@@ -202,6 +204,7 @@ pub struct MdxCompileRequest {
 
 impl MdxCompileRequest {
     /// Canonical `@mdx-js/mdx` invocation.
+    #[must_use]
     pub fn mdx_js(source: &str, filename: &str) -> Self {
         Self {
             source: source.to_string(),
