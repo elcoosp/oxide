@@ -1,0 +1,62 @@
+# WP B03 — TDD RED state (recorded 2026-11-21)
+# Milestone: M1 — Hot-path hoists completion (label zero-alloc, dynamic-label
+#   lock-free freeze, endpoint module_path pre-stringify).
+# Base: 1bbce325ad68faa6034ad4b5972892730cbbf16d (branch perf/b03-hot-path-hoists,
+#   uncommitted). Baseline pre-change: dispatch route_ctx_tdd 12/12 green, server
+#   lib metrics tests green (the registered-route lock-free path landed in the
+#   prior B03 session; the gaps below are the remaining ones the prior landing
+#   left on the table).
+#
+# Two failing tests added ahead of the impl (red-first):
+#   1. crates/dispatch/tests/route_ctx_tdd.rs::matched_label_borrows_precomputed_pattern_arc
+#      — pins spec item 2's zero-alloc label: the matched-with-context label
+#      must SHARE the precomputed `RouteContext.pattern` Arc (pointer identity),
+#      not clone it into a fresh `String`. Today `MatchDecision.label: String`
+#      so `Arc::as_ptr(&m.label)` does not typecheck → compile failure (red).
+#   2. crates/server/src/metrics.rs::register_routes_freezes_dynamic_labels
+#      — pins spec item 4's lock-free pattern beyond the registered-route case:
+#      the dynamic labels `_unmatched` / `_proxy` / `_data` (fired on every 404,
+#      proxy pass and data request) must be in the frozen map so their observe
+#      takes no write lock. Today `register_routes` freezes only the route
+#      patterns the boot hands in → `is_frozen_label("_unmatched")` is false →
+#      assertion failure (red).
+
+== cargo test -p oxide-fw-dispatch --test route_ctx_tdd ==
+   Compiling oxide-fw-server v0.17.0 (/home/z/my-project/oxide/crates/server)
+   Compiling oxide-fw-dispatch v0.17.0 (/home/z/my-project/oxide/crates/dispatch)
+error[E0308]: mismatched types
+   --> crates/dispatch/tests/route_ctx_tdd.rs:154:21
+    |
+154 |         Arc::as_ptr(&m.label),
+    |         ----------- ^^^^^^^^ expected `&Arc<_, _>`, found `&String`
+    |         |
+    |         arguments to this function are incorrect
+    |
+    = note: expected reference `&Arc<_, _>`
+               found reference `&String`
+note: associated function defined here
+    --> /rustc/0ef1bc386059596dada8fb65b50425aab2ea637a/library/alloc/src/sync.rs:1934:11
+    = note: `#[derive(Debug)]` is required for the note to show the trait impls
+
+For more information about this error, try `rustc::explain E0308`.
+error: could not compile `oxide-fw-dispatch` (test "route_ctx_tdd") due to 1 previous error
+cargo exit: 101
+
+== cargo test -p oxide-fw-server --lib metrics:: ==
+   Compiling oxide-fw-server v0.17.0 (/home/z/my-project/oxide/crates/server)
+    Finished `test` profile [unoptimized] target(s) in 34.19s
+     Running unittests src/lib.rs (...)
+
+running 9 tests
+test metrics::tests::register_routes_freezes_dynamic_labels ... FAILED
+test metrics::tests::observe_registered_route_takes_no_lock ... ok
+... (8 passed)
+
+---- metrics::tests::register_routes_freezes_dynamic_labels stdout ----
+thread 'metrics::tests::register_routes_freezes_dynamic_labels' panicked at crates/server/src/metrics.rs:491:9:
+_unmatched must be frozen so the 404 arm's observe takes no lock
+
+failures:
+    metrics::tests::register_routes_freezes_dynamic_labels
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 75 filtered out
+cargo exit: 101 (test failure)
