@@ -2318,15 +2318,27 @@ async fn migrate_next_prints_non_destructive_plan() {
     .unwrap();
     let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "next"]).await;
     assert_eq!(code, 0);
-    assert!(out.contains("Next.js"), "{out}");
+    // The E03 plan: the kebab spelling (`Framework::as_str`) in the
+    // header, the compat config key, and an app-router file with no
+    // adapter imports contributes nothing (0 renames — file moves are the
+    // SvelteKit mapping's shape, never Next's).
+    assert!(out.contains("migration plan (next → oxide)"), "{out}");
     assert!(
-        out.contains("app/blog/page.tsx"),
-        "found files listed: {out}"
+        out.contains("0 rename(s), 0 import rewrite(s), 1 config key(s), 0 manual note(s)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("  - config: routes.compat = \"next\""),
+        "{out}"
     );
     assert!(out.contains("no files written"), "dry run: {out}");
     assert!(
         root.join("next.config.js").is_file(),
         "no destructive writes"
+    );
+    assert!(
+        !root.join("src/routes").exists(),
+        "a dry run never lays down the oxide tree"
     );
 }
 
@@ -2334,10 +2346,18 @@ async fn migrate_next_prints_non_destructive_plan() {
 async fn migrate_vite_and_unknown_source() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
+    // Detection rides the manifest's dependency names (vite has no
+    // config-file fallback — `vite.config.ts` alone is not a marker).
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"devDependencies\": { \"vite\": \"^5.0.0\" } }\n",
+    )
+    .unwrap();
     std::fs::write(root.join("vite.config.ts"), "export default {}\n").unwrap();
     let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "vite"]).await;
     assert_eq!(code, 0);
-    assert!(out.contains("Vite"), "{out}");
+    // The E03 header speaks the kebab spelling (`Framework::as_str`).
+    assert!(out.contains("migration plan (vite → oxide)"), "{out}");
 
     let (code, out) = run_ok(&[
         "oxide",
@@ -2348,11 +2368,14 @@ async fn migrate_vite_and_unknown_source() {
     ])
     .await;
     assert_eq!(code, 2, "unknown source → 2");
-    assert!(out.contains("unknown source"), "{out}");
+    assert!(out.contains("unknown source `angular`"), "{out}");
 
     let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "next"]).await;
-    assert_eq!(code, 2, "no next markers → 2");
-    assert!(out.contains("no Next.js project detected"), "{out}");
+    assert_eq!(code, 2, "next named on a vite tree → 2");
+    assert!(
+        out.contains("does not match the detected framework `vite`"),
+        "{out}"
+    );
 }
 
 // --------------------------------------------------------------------- build
@@ -4263,7 +4286,11 @@ async fn prerendered_nonce_is_stable_within_a_page() {
     let (_d, root) = fixture_project();
     let (code, out) = run_ok(&["oxide", "build", "--root", root.to_str().unwrap()]).await;
     assert_eq!(code, 0, "{out}");
-    let html = std::fs::read_to_string(root.join("dist/index.html")).expect("prerendered index");
+    // The prerendered shells live under `dist/prerendered/` (the same
+    // location `build_produces_dist_and_deploy_artifacts` pins); the old
+    // `dist/index.html` path predated the prerendered/ relocation.
+    let html = std::fs::read_to_string(root.join("dist/prerendered/index.html"))
+        .expect("prerendered index");
     let nonces: std::collections::BTreeSet<String> = html
         .match_indices("nonce=\"")
         .map(|(i, _)| {
@@ -6839,6 +6866,27 @@ async fn experiment_cohorts_get_separate_l0_entries_and_exposure_counters() {
         }));
 
     let exp = header_experiment();
+    // The pin's premise is TWO cohorts with two L0 keys, so the two
+    // identities must land in DIFFERENT variants. The engine's blake3
+    // buckets are fixed — `a` and `b` both landed in `control`, which made
+    // cohort B correctly coalesce onto cohort A's in-flight flight (same
+    // key, same variant) and broke this pin's premise rather than the
+    // pipeline. Scan the alphabet through the engine's own `assign` for
+    // one identity per variant instead of assuming a split.
+    let alphabet: Vec<String> = (0..26)
+        .map(|i| (b'a' + i) as char)
+        .map(|c| c.to_string())
+        .collect();
+    let id_a = alphabet
+        .iter()
+        .find(|s| variant_of(&exp, s) == "control")
+        .expect("an identity in the control cohort")
+        .clone();
+    let id_b = alphabet
+        .iter()
+        .find(|s| variant_of(&exp, s) == "treatment")
+        .expect("an identity in the treatment cohort")
+        .clone();
     let dispatch = build_dispatch(
         tree_with_static_page_and_middleware(),
         std::sync::Arc::clone(&metrics),
@@ -6854,7 +6902,7 @@ async fn experiment_cohorts_get_separate_l0_entries_and_exposure_counters() {
     // Cohort A renders (its own key misses), cohort B renders (a DIFFERENT
     // key — the `|exp:` dimension, so B does not hit A's entry), then
     // cohort A hits its own entry without re-rendering.
-    let a = dispatch(test_request_with_header("GET", "/", "x-bucket", "a")).await;
+    let a = dispatch(test_request_with_header("GET", "/", "x-bucket", &id_a)).await;
     assert_eq!(a.status, 200, "cohort A first request");
     let a_cache = a
         .headers
@@ -6862,7 +6910,7 @@ async fn experiment_cohorts_get_separate_l0_entries_and_exposure_counters() {
         .find(|(k, _)| k.eq_ignore_ascii_case("x-oxide-fw-cache"))
         .map(|(_, v)| v.as_str());
     assert_ne!(a_cache, Some("L0-hit"), "cohort A first request misses");
-    let b = dispatch(test_request_with_header("GET", "/", "x-bucket", "b")).await;
+    let b = dispatch(test_request_with_header("GET", "/", "x-bucket", &id_b)).await;
     let b_cache = b
         .headers
         .iter()
@@ -6875,7 +6923,7 @@ async fn experiment_cohorts_get_separate_l0_entries_and_exposure_counters() {
          headers {:?}",
         b.headers
     );
-    let a_again = dispatch(test_request_with_header("GET", "/", "x-bucket", "a")).await;
+    let a_again = dispatch(test_request_with_header("GET", "/", "x-bucket", &id_a)).await;
     let a_again_cache = a_again
         .headers
         .iter()
@@ -6895,19 +6943,22 @@ async fn experiment_cohorts_get_separate_l0_entries_and_exposure_counters() {
     // §V2-F04 item 4: the exposure counters — one per assigned pair, the
     // variant computed through the same engine the stage called.
     let exposition = metrics.render();
-    let want_a = variant_of(&exp, "a");
-    let want_b = variant_of(&exp, "b");
+    let want_a = variant_of(&exp, &id_a);
+    let want_b = variant_of(&exp, &id_b);
+    // The exposure counter INCREMENTS per assignment (metrics.rs
+    // `observe_experiment`): cohort A assigned on the first request AND on
+    // the repeat (2), cohort B exactly once (1).
     assert!(
         exposition.contains(&format!(
-            "oxide_experiment_assignment{{experiment=\"hero\",variant=\"{want_a}\"}} 1"
+            "oxide_experiment_assignment{{experiment=\"hero\",variant=\"{want_a}\"}} 2"
         )),
-        "cohort A's exposure counted: {exposition}"
+        "cohort A's exposure counted on both requests: {exposition}"
     );
     assert!(
         exposition.contains(&format!(
             "oxide_experiment_assignment{{experiment=\"hero\",variant=\"{want_b}\"}} 1"
         )),
-        "cohort B's exposure counted: {exposition}"
+        "cohort B's exposure counted once: {exposition}"
     );
 }
 
@@ -8716,7 +8767,10 @@ async fn mcp_graph_tool_reports_demand_graph_snapshot() {
 // ─── §19-B: migrate codemod tests ────────────────────────────────────────
 
 #[tokio::test]
-async fn migrate_next_pages_converts_to_oxide_routes() {
+async fn migrate_next_pages_router_is_reported_not_mangled() {
+    // The V2-E03 compat conventions cover the APP router only: a pages
+    // router is NEVER guessed into renames or rewrites — the plan carries
+    // one located manual note telling the user to port by hand.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
@@ -8740,59 +8794,27 @@ async fn migrate_next_pages_converts_to_oxide_routes() {
 
     let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "next"]).await;
     assert_eq!(code, 0, "dry run: {out}");
-    // Dry run — no writes.
     assert!(
-        !root.join("src/routes/page.tsx").exists(),
-        "dry run writes nothing"
-    );
-    // Both conventional pages are planned.
-    assert!(out.contains("pages/index.tsx"), "{out}");
-    assert!(out.contains("src/routes/page.tsx"), "{out}");
-    assert!(out.contains("pages/blog/post.tsx"), "{out}");
-    assert!(out.contains("src/routes/blog/post/page.tsx"), "{out}");
-    // API route planned as a route.ts.
-    assert!(out.contains("pages/api/hello.ts"), "{out}");
-    assert!(out.contains("route.ts"), "{out}");
-
-    // Now write.
-    let (code, out) = run_ok(&[
-        "oxide",
-        "migrate",
-        "--write",
-        "--root",
-        root.to_str().unwrap(),
-        "next",
-    ])
-    .await;
-    assert_eq!(code, 0, "write: {out}");
-    assert!(root.join("src/routes/page.tsx").is_file(), "index written");
-    assert!(
-        root.join("src/routes/blog/post/page.tsx").is_file(),
-        "blog page written"
+        out.contains("0 rename(s), 0 import rewrite(s)"),
+        "no mechanical plan for a pages router: {out}"
     );
     assert!(
-        root.join("src/routes/api/hello/route.ts").is_file(),
-        "api route written"
+        out.contains("the `pages` router is not migrated"),
+        "the port-by-hand note is on the plan: {out}"
     );
-    // Original files untouched (migrate copies, not moves).
-    assert!(root.join("pages/index.tsx").is_file(), "source preserved");
-
-    // Re-running refuses to overwrite.
-    let (code, out) = run_ok(&[
-        "oxide",
-        "migrate",
-        "--write",
-        "--root",
-        root.to_str().unwrap(),
-        "next",
-    ])
-    .await;
-    assert_eq!(code, 1, "second write must refuse: {out}");
-    assert!(out.contains("refusing to overwrite"), "{out}");
+    assert!(out.contains("no files written"), "dry run: {out}");
+    assert!(
+        !root.join("src/routes").exists(),
+        "a pages router never mangles into the oxide tree"
+    );
+    assert!(root.join("pages/index.tsx").is_file(), "sources untouched");
 }
 
 #[tokio::test]
-async fn migrate_next_gssp_becomes_load() {
+async fn migrate_next_pages_router_gssp_is_never_converted() {
+    // The pre-E03 engine rewrote `getServerSideProps` into an Oxide `load`;
+    // the shipped engine refuses the pages router wholesale — the gssp
+    // body is reported for a hand port, never mechanically rewritten.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
@@ -8819,24 +8841,30 @@ export default function Post({ post }) { return <main>{post.title}</main>; }
     ])
     .await;
     assert_eq!(code, 0, "{out}");
-    let written = root.join("src/routes/posts/[id]/page.tsx");
-    assert!(written.is_file(), "{out}");
-    let body = std::fs::read_to_string(&written).unwrap();
-    // `getServerSideProps` was rewritten to an Oxide `load`.
     assert!(
-        body.contains("export async function load("),
-        "load emitted: {body}"
+        out.contains("the `pages` router is not migrated"),
+        "the port-by-hand note: {out}"
     );
     assert!(
-        !body.contains("export async function getServerSideProps"),
-        "GSSP removed: {body}"
+        out.contains("applied 0 rename(s), 0 import rewrite(s)"),
+        "the apply is a no-op over an empty plan: {out}"
     );
-    // The internal fetch is preserved.
-    assert!(body.contains("fetchPost("), "body preserved: {body}");
+    assert!(
+        !root.join("src/routes").exists(),
+        "no silent conversion into the oxide tree"
+    );
+    let body = std::fs::read_to_string(root.join("pages/posts/[id].tsx")).unwrap();
+    assert!(
+        body.contains("export async function getServerSideProps"),
+        "the gssp body survives untouched: {body}"
+    );
 }
 
 #[tokio::test]
-async fn migrate_next_gssp_with_redirect_is_skipped() {
+async fn migrate_next_pages_router_redirect_is_not_silently_rewritten() {
+    // The redirect-flavored gssp rides the same refusal: a `redirect` in a
+    // `getServerSideProps` is a HAND-port follow-up, and the file's bytes
+    // are never touched by the plan or the apply.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
@@ -8856,16 +8884,24 @@ export default function Admin() { return <main>admin</main>; }
 
     let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "next"]).await;
     assert_eq!(code, 0, "{out}");
-    // Redirect uses are reported as follow-ups, not silently mangled.
-    assert!(out.contains("redirect/notFound"), "{out}");
     assert!(
-        out.contains("port by hand") || out.contains("skipped"),
-        "{out}"
+        out.contains("the `pages` router is not migrated"),
+        "the redirect rides the hand-port note, not a rewrite: {out}"
     );
+    assert!(
+        out.contains("0 import rewrite(s)"),
+        "nothing rewritten: {out}"
+    );
+    let body = std::fs::read_to_string(root.join("pages/admin/index.tsx")).unwrap();
+    assert!(body.contains("redirect"), "bytes untouched: {body}");
 }
 
 #[tokio::test]
-async fn migrate_next_app_router_path_rewrite() {
+async fn migrate_next_app_router_import_rewrites() {
+    // The E03 app-router contract: files stay where they are (the app
+    // router IS the compat conventions' layout); the ADAPTER imports are
+    // planned as in-place specifier rewrites (`next/link`/`next/image` →
+    // `@oxide/react`), applied by --write with the quotes intact.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
@@ -8882,11 +8918,19 @@ async fn migrate_next_app_router_path_rewrite() {
     .unwrap();
     std::fs::write(
         root.join("app/dashboard/page.tsx"),
-        "export default function D() { return null; }\n",
+        "import Link from 'next/link';\nexport default function D() { return <Link href=\"/\">d</Link>; }\n",
     )
     .unwrap();
 
-    let (code, _) = run_ok(&[
+    let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "next"]).await;
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("1 import rewrite(s)"), "{out}");
+    assert!(
+        out.contains("app/dashboard/page.tsx : next/link → @oxide/react"),
+        "{out}"
+    );
+
+    let (code, out) = run_ok(&[
         "oxide",
         "migrate",
         "--write",
@@ -8895,12 +8939,25 @@ async fn migrate_next_app_router_path_rewrite() {
         "next",
     ])
     .await;
-    assert_eq!(code, 0);
-    assert!(root.join("src/routes/page.tsx").is_file(), "root page");
-    assert!(root.join("src/routes/layout.tsx").is_file(), "root layout");
+    assert_eq!(code, 0, "{out}");
+    // No file moved — the app tree survives in place.
+    assert!(root.join("app/page.tsx").is_file(), "root page in place");
     assert!(
-        root.join("src/routes/dashboard/page.tsx").is_file(),
-        "nested page"
+        root.join("app/layout.tsx").is_file(),
+        "root layout in place"
+    );
+    assert!(
+        root.join("app/dashboard/page.tsx").is_file(),
+        "nested page in place"
+    );
+    let body = std::fs::read_to_string(root.join("app/dashboard/page.tsx")).unwrap();
+    assert!(
+        body.contains("from '@oxide/react'"),
+        "the specifier was rewritten in place: {body}"
+    );
+    assert!(
+        !body.contains("next/link"),
+        "the old specifier is gone: {body}"
     );
 }
 
@@ -8908,7 +8965,13 @@ async fn migrate_next_app_router_path_rewrite() {
 async fn migrate_sveltekit_renames_plus_prefixed_files() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
-    std::fs::write(root.join("svelte.config.js"), "export default {};\n").unwrap();
+    // Detection: the config-file fallback reads the file for a `kit`
+    // marker (a real SvelteKit config carries the `kit` section).
+    std::fs::write(
+        root.join("svelte.config.js"),
+        "export default { kit: {} };\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(root.join("src/routes/blog")).unwrap();
     std::fs::write(root.join("src/routes/+page.svelte"), "<main>home</main>\n").unwrap();
     std::fs::write(
@@ -8940,9 +9003,12 @@ async fn migrate_sveltekit_renames_plus_prefixed_files() {
         root.join("src/routes/blog/page.svelte").is_file(),
         "blog page"
     );
+    // The endpoint marker keeps its name (`oxide_route_basename` maps
+    // `+page.server.ts` → `page.server.ts`; only `+server.ts` becomes
+    // `route.ts`).
     assert!(
         root.join("src/routes/blog/page.server.ts").is_file(),
-        "blog server"
+        "blog server endpoint"
     );
     assert!(root.join("src/routes/layout.svelte").is_file(), "layout");
     // The non-route component stays untouched.
@@ -8950,11 +9016,10 @@ async fn migrate_sveltekit_renames_plus_prefixed_files() {
         root.join("src/routes/MyComponent.svelte").is_file(),
         "component untouched"
     );
-    // Originals are gone? No — `apply` copies; the source `+page.svelte`
-    // remains alongside the destination.
+    // `apply` MOVES (fs::rename): the `+`-prefixed originals are gone.
     assert!(
-        root.join("src/routes/+page.svelte").is_file(),
-        "source preserved"
+        !root.join("src/routes/+page.svelte").exists(),
+        "the moved original is gone"
     );
 }
 
@@ -8962,6 +9027,13 @@ async fn migrate_sveltekit_renames_plus_prefixed_files() {
 async fn migrate_unknown_source_and_missing_marker() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
+    // Detection rides the manifest's dependency names (vite has no
+    // config-file fallback — `vite.config.ts` alone is not a marker).
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"devDependencies\": { \"vite\": \"^5.0.0\" } }\n",
+    )
+    .unwrap();
     std::fs::write(root.join("vite.config.ts"), "export default {}\n").unwrap();
 
     // Unknown source → exit 2.
@@ -8976,19 +9048,44 @@ async fn migrate_unknown_source_and_missing_marker() {
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("unknown source"), "{out}");
 
-    // Nuxt without markers → exit 2.
-    let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "nuxt"]).await;
+    // Nuxt without ANY markers (a manifest-free tree) → exit 2 (the
+    // MIG-DETECT refusal names the tree and the four supported spellings).
+    let bare = tempfile::tempdir().unwrap();
+    let (code, out) = run_ok(&[
+        "oxide",
+        "migrate",
+        "--root",
+        bare.path().to_str().unwrap(),
+        "nuxt",
+    ])
+    .await;
     assert_eq!(code, 2, "{out}");
-    assert!(out.contains("no Nuxt project detected"), "{out}");
+    assert!(
+        out.contains("no source framework could be detected"),
+        "{out}"
+    );
 
-    // Vite with a config but no entry: config is the marker, entry missing
-    // is a reported follow-up, not an error.
+    // Vite with a config but no entry: the config IS the marker (exit 0),
+    // the plan carries the routes.dir compat key and no entry note —
+    // there is nothing to wrap.
     let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "vite"]).await;
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("Vite"), "{out}");
+    assert!(out.contains("migration plan (vite → oxide)"), "{out}");
     assert!(
-        out.contains("no src/main"),
-        "entry missing is reported: {out}"
+        out.contains("  - config: routes.dir = \"src/routes\""),
+        "{out}"
+    );
+    assert!(out.contains("0 manual note(s)"), "{out}");
+
+    // With a conventional entry the wrap note appears (the entry-missing
+    // case above is the silent one).
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/main.tsx"), "mount('#app');\n").unwrap();
+    let (code, out) = run_ok(&["oxide", "migrate", "--root", root.to_str().unwrap(), "vite"]).await;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("create `src/routes/page.tsx` with `export { default } from 'src/main.tsx'`"),
+        "the entry wrap is a reported follow-up: {out}"
     );
 }
 
@@ -12969,7 +13066,12 @@ fn the_dev_search_refresh_swaps_the_serve_side_index() {
 }
 
 // ------------------------------------------------------- V2-F09 search engine emission
+// These pins ride the `search` feature (the emission hook and the SRC-106
+// collection validation are feature-gated; without it the build's search
+// arm is inert BY DESIGN and the tantivy index never exists). CI runs the
+// lib suite with `--features search` for exactly these.
 
+#[cfg(feature = "search")]
 #[tokio::test]
 async fn build_emits_the_search_engine_index_for_a_configured_collection() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
@@ -13071,6 +13173,7 @@ async fn build_emits_the_search_engine_index_for_a_configured_collection() {
     );
 }
 
+#[cfg(feature = "search")]
 #[tokio::test]
 async fn build_skips_the_search_rebuild_when_the_corpus_is_unchanged() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
@@ -13136,6 +13239,7 @@ async fn build_skips_the_search_rebuild_when_the_corpus_is_unchanged() {
     );
 }
 
+#[cfg(feature = "search")]
 #[tokio::test]
 async fn an_unknown_search_collection_fails_the_build_with_src_106() {
     let _serial_guard = TEST_SERIAL_LOCK.lock().await;
@@ -14759,9 +14863,13 @@ fn cmd_deploy_dir_target_runs_the_engine_and_is_idempotent() {
     let log = String::from_utf8_lossy(&out).to_string();
     assert!(log.contains("deploy ok"), "{log}");
     assert!(
-        log.contains("2 upload(s)"),
-        "both files upload on the cold store: {log}"
+        log.contains("3 upload(s)"),
+        "all three dist files upload on the cold store (the A04 build-id stamp rides \
+         beside the asset and the shell): {log}"
     );
+    assert!(log.contains("upload  assets/app-abc123.js"), "{log}");
+    assert!(log.contains("upload  build-id"), "{log}");
+    assert!(log.contains("upload  index.html"), "{log}");
 
     // The pointer names the build (the atomic swap landed).
     let pointer = std::fs::read_to_string(rootp.join("store/current")).expect("pointer");
@@ -15889,5 +15997,309 @@ fn cache_plane_mount_provider_without_an_exporter_skips_the_metrics_arm() {
     assert!(
         mounted.has_health_provider(),
         "the health provider rides regardless (the F59 shape, unchanged)"
+    );
+}
+
+// ------------------- V2-B01 tail: the prerender rides the context table
+
+/// A hand-built route entry for the prerender table pins — the same field
+/// shape the scanner writes (`file` is routes-root-relative; segments stay
+/// empty, the prerender resolutions this section pins never read them).
+fn prerender_pin_entry(
+    id: &str,
+    kind: oxide_fw_router::RouteKind,
+    file: &str,
+    has_server_module: bool,
+) -> oxide_fw_router::RouteEntry {
+    oxide_fw_router::RouteEntry {
+        id: oxide_fw_router::RouteId(id.to_string()),
+        kind,
+        segments: Vec::new(),
+        file: std::path::PathBuf::from(file),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module,
+        needs_parent: false,
+        live: None,
+        priority: None,
+        slot: None,
+    }
+}
+
+/// The scan oracle: the three per-route resolutions the prerender walk ran
+/// before the V2-B01 tail (build/prerender.rs at the adoption base), copied
+/// verbatim — the layout-chain prefix walk (RAW id, outermost first), the
+/// layout-module `layout.server.ts` stat pair, the nearest-ancestor error
+/// walk. The table-hit answers must equal this for every page entry.
+fn prerender_scan_oracle(
+    entries: &[oxide_fw_router::RouteEntry],
+    e: &oxide_fw_router::RouteEntry,
+    routes_root: &std::path::Path,
+) -> crate::build::PrerenderRouteAnswers {
+    let layout_ids: Vec<String> = {
+        let mut chain: Vec<(String, usize)> = Vec::new();
+        for candidate in entries {
+            if !matches!(candidate.kind, oxide_fw_router::RouteKind::Layout) {
+                continue;
+            }
+            let layout_base = candidate
+                .id
+                .0
+                .strip_suffix("/layout")
+                .unwrap_or(&candidate.id.0);
+            let wraps = if layout_base == "routes" || layout_base.is_empty() {
+                true
+            } else {
+                e.id.0.starts_with(&format!("{layout_base}/"))
+            };
+            if wraps {
+                chain.push((candidate.id.0.clone(), layout_base.len()));
+            }
+        }
+        chain.sort_by_key(|(_, len)| *len);
+        chain.into_iter().map(|(id, _)| id).collect()
+    };
+    let layout_modules: Vec<(String, std::path::PathBuf)> = layout_ids
+        .iter()
+        .filter_map(|lid| {
+            entries
+                .iter()
+                .find(|le| le.id.0 == *lid && matches!(le.kind, oxide_fw_router::RouteKind::Layout))
+                .map(|le| {
+                    (
+                        lid.clone(),
+                        routes_root.join(le.file.with_file_name("layout.server.ts")),
+                    )
+                })
+        })
+        .filter(|(_, p)| p.is_file())
+        .collect();
+    let error_route_id: Option<String> = {
+        let mut best: Option<(String, usize)> = None;
+        for candidate in entries {
+            if !matches!(candidate.kind, oxide_fw_router::RouteKind::Error) {
+                continue;
+            }
+            let base = candidate
+                .id
+                .0
+                .strip_suffix("/error")
+                .unwrap_or(&candidate.id.0);
+            let wraps = if base == "routes" || base.is_empty() {
+                true
+            } else {
+                e.id.0.starts_with(&format!("{base}/"))
+            };
+            if !wraps {
+                continue;
+            }
+            let len = base.len();
+            match &best {
+                Some((_, prev)) if *prev >= len => {}
+                _ => best = Some((candidate.id.0.clone(), len)),
+            }
+        }
+        best.map(|(id, _)| id)
+    };
+    crate::build::PrerenderRouteAnswers {
+        layout_ids,
+        layout_modules,
+        error_route_id,
+    }
+}
+
+/// V2-B01 tail: for every page entry of a nested fixture (root layout, a
+/// blog layout WITH a server module, a group `(admin)` layout + its own
+/// error boundary), the table-hit answers equal the scan oracle — the
+/// equivalence proof the adoption rides (the flag-vs-stat participation is
+/// pinned by the fixture's flag ⟺ file-on-disk invariant, the scanner's).
+#[test]
+fn prerender_route_answers_match_the_scan_oracle() {
+    let routes_root = tempfile::tempdir().unwrap();
+    let root = routes_root.path();
+    let write = |rel: &str| {
+        if let Some(parent) = std::path::Path::new(rel).parent() {
+            std::fs::create_dir_all(root.join(parent)).unwrap();
+        }
+        std::fs::write(root.join(rel), "// server module").unwrap();
+    };
+    write("blog/layout.server.ts");
+    write("blog/[slug]/layout.server.ts");
+    write("blog/(admin)/layout.server.ts");
+    let entries = vec![
+        prerender_pin_entry(
+            "routes/layout",
+            oxide_fw_router::RouteKind::Layout,
+            "layout.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/blog/layout",
+            oxide_fw_router::RouteKind::Layout,
+            "blog/layout.tsx",
+            true,
+        ),
+        prerender_pin_entry(
+            "routes/blog/[slug]/layout",
+            oxide_fw_router::RouteKind::Layout,
+            "blog/[slug]/layout.tsx",
+            true,
+        ),
+        prerender_pin_entry(
+            "routes/blog/(admin)/layout",
+            oxide_fw_router::RouteKind::Layout,
+            "blog/(admin)/layout.tsx",
+            true,
+        ),
+        prerender_pin_entry(
+            "routes/error",
+            oxide_fw_router::RouteKind::Error,
+            "error.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/blog/error",
+            oxide_fw_router::RouteKind::Error,
+            "blog/error.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/blog/(admin)/error",
+            oxide_fw_router::RouteKind::Error,
+            "blog/(admin)/error.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/blog/[slug]/page",
+            oxide_fw_router::RouteKind::Page,
+            "blog/[slug]/page.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/blog/(admin)/page",
+            oxide_fw_router::RouteKind::Page,
+            "blog/(admin)/page.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/about/page",
+            oxide_fw_router::RouteKind::Page,
+            "about/page.tsx",
+            false,
+        ),
+    ];
+    let table = oxide_fw_router::RouteContextTable::build_with_default_pattern(&entries);
+    for e in &entries {
+        if !matches!(e.kind, oxide_fw_router::RouteKind::Page) {
+            continue;
+        }
+        let rc = table
+            .get(&e.id.0)
+            .unwrap_or_else(|| panic!("page `{}` has a table row", e.id.0));
+        let answers = crate::build::prerender_route_answers(rc, root);
+        assert_eq!(
+            answers,
+            prerender_scan_oracle(&entries, e, root),
+            "table answers diverge from the scan oracle for `{}`",
+            e.id.0
+        );
+    }
+}
+
+/// V2-B01 tail: the layout-load modules ride the routes-root join and the
+/// scanner's server-module flag — a flagged layout contributes
+/// `<routes_root>/<file>/layout.server.ts`, an unflagged one stays in the
+/// chain but contributes NO module row (no stat call, the table is
+/// flag-driven on `has_server_module`).
+#[test]
+fn prerender_layout_module_paths_join_the_routes_root() {
+    let entries = vec![
+        prerender_pin_entry(
+            "routes/blog/layout",
+            oxide_fw_router::RouteKind::Layout,
+            "blog/layout.tsx",
+            true,
+        ),
+        prerender_pin_entry(
+            "routes/blog/plain/layout",
+            oxide_fw_router::RouteKind::Layout,
+            "blog/plain/layout.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/blog/plain/page",
+            oxide_fw_router::RouteKind::Page,
+            "blog/plain/page.tsx",
+            false,
+        ),
+    ];
+    let table = oxide_fw_router::RouteContextTable::build_with_default_pattern(&entries);
+    let rc = table.get("routes/blog/plain/page").unwrap();
+    let answers =
+        crate::build::prerender_route_answers(rc, std::path::Path::new("/proj/src/routes"));
+    assert_eq!(
+        answers.layout_ids,
+        vec![
+            "routes/blog/layout".to_string(),
+            "routes/blog/plain/layout".to_string(),
+        ],
+        "the chain carries both layouts"
+    );
+    assert_eq!(
+        answers.layout_modules,
+        vec![(
+            "routes/blog/layout".to_string(),
+            std::path::PathBuf::from("/proj/src/routes/blog/layout.server.ts"),
+        )],
+        "only the flagged layout contributes a module row, joined under the routes root"
+    );
+}
+
+/// V2-B01 tail: the nearest ancestor `error.tsx` — the innermost boundary
+/// wins (a group's own `routes/blog/(admin)/error` shadows `routes/error`
+/// for the group's index page; the RAW-id prefix rule the divergence
+/// resolution landed).
+#[test]
+fn prerender_route_answers_take_the_innermost_error_boundary() {
+    let entries = vec![
+        prerender_pin_entry(
+            "routes/error",
+            oxide_fw_router::RouteKind::Error,
+            "error.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/blog/(admin)/error",
+            oxide_fw_router::RouteKind::Error,
+            "blog/(admin)/error.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/blog/(admin)/page",
+            oxide_fw_router::RouteKind::Page,
+            "blog/(admin)/page.tsx",
+            false,
+        ),
+        prerender_pin_entry(
+            "routes/x/page",
+            oxide_fw_router::RouteKind::Page,
+            "x/page.tsx",
+            false,
+        ),
+    ];
+    let table = oxide_fw_router::RouteContextTable::build_with_default_pattern(&entries);
+    let admin = table.get("routes/blog/(admin)/page").unwrap();
+    assert_eq!(
+        crate::build::prerender_route_answers(admin, std::path::Path::new("/proj/src/routes"))
+            .error_route_id,
+        Some("routes/blog/(admin)/error".to_string()),
+        "the group's own boundary shadows the root one"
+    );
+    let plain = table.get("routes/x/page").unwrap();
+    assert_eq!(
+        crate::build::prerender_route_answers(plain, std::path::Path::new("/proj/src/routes"))
+            .error_route_id,
+        Some("routes/error".to_string()),
+        "an outer boundary serves a route below it"
     );
 }
