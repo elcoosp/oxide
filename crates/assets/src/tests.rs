@@ -148,6 +148,10 @@ fn image_webp_succeeds_or_falls_back_to_png_with_ast_webp_diagnostic() {
     }
 }
 
+/// Real AVIF output needs the ravif encoder — behind the crate's `avif`
+/// feature (the capability matrix: without the feature the request is
+/// refused loudly and falls back, which the pin below holds on every
+/// default build).
 #[test]
 fn image_avif_encoding_produces_real_avif_bytes() {
     let out = RustImageBackend
@@ -155,6 +159,25 @@ fn image_avif_encoding_produces_real_avif_bytes() {
         .unwrap();
     assert_eq!(out.format, ImageFormat::Avif);
     assert_eq!(&out.bytes[4..8], b"ftyp");
+}
+
+#[cfg(not(feature = "avif"))]
+#[test]
+fn image_avif_request_without_the_feature_refuses_loudly_and_falls_back() {
+    let out = RustImageBackend
+        .process(req(gradient_png(32, 16), None, ImageFormat::Avif, None))
+        .unwrap();
+    // The requested AVIF output is never claimed: the actual format rides
+    // the result, and the `AST-AVIF` diagnostic names the missing feature.
+    assert_ne!(out.format, ImageFormat::Avif);
+    assert!(out.diagnostics.iter().any(|d| d.code == "AST-AVIF"));
+    assert!(
+        out.diagnostics
+            .iter()
+            .any(|d| d.code == "AST-AVIF" && d.message.contains("avif` feature")),
+        "the refusal names the feature: {:?}",
+        out.diagnostics
+    );
 }
 
 #[test]
