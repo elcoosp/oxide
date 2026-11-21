@@ -2,8 +2,12 @@
 //! (V2-A01 phase 3).
 //!
 //! stage_data_route — the §8.4 `/__data` endpoint (the sketch's
-//! /// `stage_data_route`): the loader-only route-data response with the
-//! /// same middleware locals/headers the SSR render saw.
+//! `stage_data_route`): the loader-only route-data response with the same
+//! middleware locals/headers the SSR render saw. Since the V2-A06
+//! follow-up adoption the load phase runs the §9.2 parallel load graph
+//! (see `crate::data_route`); this stage only threads the args through,
+//! plus the page's own `parent()` verdict the graph serializes the page
+//! node on.
 
 use crate::*;
 use oxide_fw_dispatch::flow::Flow;
@@ -26,6 +30,11 @@ pub(crate) async fn stage_data_route(d: &DispatchDeps, cx: &mut RequestCtx) -> F
     let started = cx.started;
     let middleware_ms = cx.middleware_ms;
     let is_data_request = cx.is_data_request;
+    // V2-A06 follow-up: the PAGE's own `parent()` verdict rides the args
+    // so the data route's load graph serializes the page behind the
+    // innermost layout exactly when the scanner says it may call
+    // `parent()` (the same field `stage_loaders` reads).
+    let needs_parent = cx.needs_parent;
     // <<< stage-wrapper
     // PERF-01 / §8.4: `/__data` is the client router's route-data
     // endpoint. The target route was re-matched in the prelude, so
@@ -46,6 +55,7 @@ pub(crate) async fn stage_data_route(d: &DispatchDeps, cx: &mut RequestCtx) -> F
                 middleware_locals,
                 middleware_headers,
                 layout_module_paths,
+                page_needs_parent: needs_parent,
                 locale: resolved_locale,
                 session_codec: session_codec.as_deref(),
                 middleware_ms,
