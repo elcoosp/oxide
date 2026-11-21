@@ -301,6 +301,10 @@ mod tests {
     fn ceiling_parses_to_the_percent_form() {
         let metrics = Arc::new(Metrics::new());
         let mut cfg = BrownoutConfig::default();
+        // The config default is `enabled: false` (the inert posture) — the
+        // wiring constructs only for an enabled config, so this pin opts in
+        // explicitly (the arm below flips it back off).
+        cfg.enabled = true;
         let w =
             BrownoutWiring::from_config(&cfg, None, metrics.clone()).expect("enabled: true wires");
         assert_eq!(
