@@ -45,8 +45,14 @@ fn full_collection_pipeline_scan_validate_index() {
 
     let coll = scan_collection(&cfg(dir.path(), SchemaKind::Native(schema.clone()))).unwrap();
     assert_eq!(coll.entries.len(), 2);
-    assert!(validate_collection(&coll, &SchemaKind::Native(schema)).is_empty());
-    assert!(check_references(&coll).is_empty());
+    assert_eq!(
+        validate_collection(&coll, &SchemaKind::Native(schema)),
+        [] as [oxide_fw_diagnostics::Diagnostic; 0]
+    );
+    assert_eq!(
+        check_references(&coll),
+        [] as [oxide_fw_diagnostics::Diagnostic; 0]
+    );
 
     let idx = build_search_index(&coll, &["title".into(), "excerpt".into()]);
     assert_eq!(idx.entries.len(), 2);
@@ -154,11 +160,17 @@ fn empty_collection_is_valid() {
     let mut schema = NativeSchema::empty();
     schema.required.insert("title".into(), FieldType::String);
     let coll = scan_collection(&cfg(dir.path(), SchemaKind::Native(schema.clone()))).unwrap();
-    assert!(coll.entries.is_empty());
-    assert!(validate_collection(&coll, &SchemaKind::Native(schema)).is_empty());
-    assert!(check_references(&coll).is_empty());
+    assert_eq!(coll.entries, [] as [oxide_fw_assets::CollectionEntry; 0]);
+    assert_eq!(
+        validate_collection(&coll, &SchemaKind::Native(schema)),
+        [] as [oxide_fw_diagnostics::Diagnostic; 0]
+    );
+    assert_eq!(
+        check_references(&coll),
+        [] as [oxide_fw_diagnostics::Diagnostic; 0]
+    );
     let idx = build_search_index(&coll, &[]);
-    assert!(idx.entries.is_empty());
+    assert_eq!(idx.entries, [] as [oxide_fw_assets::IndexedEntry; 0]);
     assert!(idx.terms.is_empty());
 }
 
