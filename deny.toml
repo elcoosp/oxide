@@ -52,20 +52,15 @@ wildcards = "deny"
 [advisories]
 version = 2
 yanked = "warn"
-# The DB lists a number of transitive crates as unmaintained / vulnerable
-# (Bincode, paste, rustls-pemfile, yaml-rust, several wasmtime/wasip3
-# advisories). Those are upstream transitive deps this workspace does not
-# pin or control, and cargo-deny's `check licenses advisories` invocation
-# in ci.yml fails the job on every one of them. Downgraded to warnings so
-# the gate stays usable; a future advisory in a crate WE pin still
-# surfaces in the log instead of the gate staying red on third-party noise.
-# cargo-deny PR #611 removed the per-kind `vulnerability`/`notice` lint
-# keys (they are errors by default now, selected via `ignore` below).
-# `unmaintained`/`unsound` take a scope filter instead of a lint level.
-# Both downgrade the transitive-advisory noise (see above) without
-# silencing advisories for crates we pin directly.
-unmaintained = "none"
-unsound = "none"
+# cargo-deny PR #611 removed the per-kind lint-level keys entirely —
+# `vulnerability`, `notice`, `unmaintained` and `unsound` are all errors by
+# default now, selected via `ignore` entries below. The transitive crates the
+# DB flags (Bincode, paste, rustls-pemfile, yaml-rust, several
+# wasmtime/wasip3 advisories) are upstream deps this workspace does not pin
+# or control; each one is named by its exact RUSTSEC id with a reachability
+# note, per the convention the two vulnerable entries below established.
+# A future advisory in a crate WE pin still surfaces in the log instead of
+# the gate staying red on third-party noise.
 
 # Two vulnerabilities remain that this workspace cannot fix by bumping a
 # pin, and both are recorded here instead of leaving the gate red:
@@ -82,9 +77,28 @@ unsound = "none"
 #    The advisory's fix requires rmcp >= 3.9.0, a major bump past the
 #    pinned 1.x line; until that upgrade lands the vulnerable client
 #    transport is not exposed (the CLI's MCP transport is stdio).
+#
+# Two unmaintained advisories (the cargo-deny PR #611 world: `unmaintained`
+# is an error selected via `ignore`, no blanket downgrade exists). Both are
+# direct workspace dependencies with no safe upgrade, named by exact id with
+# their reachability:
+#
+# 3. RUSTSEC-2025-0134 (rustls-pemfile unmaintained): direct dep of
+#    oxide-fw-server and oxide-fw-dispatch (Cargo.toml workspace entry).
+#    Reachability: PEM parsing runs once at TLS-config load
+#    (`server.tls`), over operator-controlled files — never on the
+#    request path. The functionality moved into rustls-pki-types >= 1.9;
+#    the swap is a tracked follow-up, not this gate's repair.
+# 4. RUSTSEC-2026-0543 (chrono unmaintained): direct dep (SPEC-19.1 /
+#    §19-B ISO-8601 cache timestamps) and transitive via object_store.
+#    Reachability: clock formatting for cache/audit timestamps only —
+#    no untrusted parsing on the request path. The jiff/time swap is a
+#    dedicated migration, recorded as a proposal in scorecard-r10.
 ignore = [
     { id = "RUSTSEC-2026-0235" },
     { id = "RUSTSEC-2026-0462" },
+    { id = "RUSTSEC-2025-0134" },
+    { id = "RUSTSEC-2026-0543" },
 ]
 
 [sources]
