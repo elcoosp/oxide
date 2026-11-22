@@ -1,0 +1,14 @@
+{
+  "plugin": "vite-tsconfig-paths@6.1.1",
+  "fixture": "tsconfig-app",
+  "adapter": "react",
+  "assert": [
+    {
+      "file": "dist/client/*.js",
+      "contains": "resolvedAlias"
+    }
+  ],
+  "hooks": [
+    "resolveId"
+  ]
+}
