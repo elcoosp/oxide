@@ -60,6 +60,15 @@ name = "trace"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F19: the per-route capability permission bench — `host_allowed`
+# (the wildcard predicate), `url_host` (the host extraction) and the
+# full fetch-path check (`url_host` + `is_net_allowed`). V8-free (the
+# predicate and the extractor are pure Rust in `perm.rs`).
+[[bench]]
+name = "perm"
+harness = false
+required-features = ["bench-util"]
+
 # M1: the V8-backend test targets ride the `v8` feature — `cargo test -p
 # oxide-fw-jshost --no-default-features` compiles zero V8 test binaries,
 # and the default/workspace build (which enables `v8`) runs them exactly
@@ -94,6 +103,16 @@ required-features = ["v8"]
 name = "trace_parent_tdd"
 required-features = ["v8"]
 
+# V2-F19: the per-route capability permission enforcement pins — the
+# `PermGuard` seed/clear cycle, the route→permission registry, and the
+# hostile fixture (a `setTimeout` created outside the request context
+# that calls `fetch`; Model 2's closure). The guard + registry pins need
+# no V8 runtime; the hostile fixture boots an isolate (`#[ignore]`-gated,
+# rides the `jshost-e2e` CI job).
+[[test]]
+name = "perm_tdd"
+required-features = ["v8"]
+
 # The multi-file snapshot build boots deno_core's snapshot machinery.
 [[test]]
 name = "snapshot_bundle_tdd"
@@ -102,6 +121,13 @@ required-features = ["v8"]
 # The walkthrough drives `v8_ops` (the ops table + trace-parent helper).
 [[example]]
 name = "trace_propagation"
+required-features = ["v8"]
+
+# V2-F19: the per-route capability permission walkthrough — the route
+# declaration, the PermGuard seed/clear cycle, the net/env/fs boundary
+# checks, the `*.` wildcard rule and the default posture.
+[[example]]
+name = "per_route_permissions"
 required-features = ["v8"]
 
 [package.metadata.docs.rs]
