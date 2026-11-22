@@ -1,0 +1,14 @@
+{
+  "plugin": "vite-plugin-solid@2.11.17",
+  "fixture": "solid-app",
+  "adapter": "solid",
+  "assert": [
+    {
+      "file": "dist/client/*.js",
+      "contains": "createSignal"
+    }
+  ],
+  "hooks": [
+    "transform"
+  ]
+}
