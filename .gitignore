@@ -86,3 +86,12 @@ upload/
 /.github/pr-body.md
 .github/pr-body.md
 ship.toml
+
+# V2-E05: the recorded plugin-compat dist trees under
+# conformance/plugins/logs/ are COMMITTED FIXTURES (the dry-run truth the
+# runner evaluates against), not build output. Un-ignore them despite the
+# global `dist` rule above (the parent dir must be re-included first).
+!conformance/plugins/logs/
+!conformance/plugins/logs/*/
+!conformance/plugins/logs/*/dist/
+!conformance/plugins/logs/*/dist/**
