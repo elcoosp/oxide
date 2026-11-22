@@ -8,8 +8,11 @@ use oxide_fw_graph::{
     CancelToken, CasKey, CasWriteMeta, Compute, ComputeCtx, ConfigTrackerImpl, ContentStore,
     ContentStoreExt, DemandGraph, EnvTrackerImpl, FsTrackerImpl, Input, NodeKey, NodeOutput,
 };
+// `write!` into the material `String` (clippy format_push_string: push_str +
+// format! → write! into the String via the fmt::Write trait).
 use oxide_fw_graph::{Result, err};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, RwLock};
@@ -95,7 +98,7 @@ impl Compute for FileCompute {
             let p = PathBuf::from(self.key.strip_prefix("n:").unwrap_or(self.key));
             let bytes = ctx.fs.read_file(&p)?;
             if self.file_in_material {
-                material.push_str(&format!("file={}", String::from_utf8_lossy(&bytes)));
+                let _ = write!(material, "file={}", String::from_utf8_lossy(&bytes));
             }
         }
         if self.reads_dir {
@@ -105,21 +108,21 @@ impl Compute for FileCompute {
                 .iter()
                 .map(|e| e.file_name().unwrap().to_string_lossy().into_owned())
                 .collect();
-            material.push_str(&format!("dir={names:?}"));
+            let _ = write!(material, "dir={names:?}");
         }
         if let Some(k) = self.reads_env {
-            material.push_str(&format!("env:{k}={:?}", ctx.env.get(k)));
+            let _ = write!(material, "env:{k}={:?}", ctx.env.get(k));
         }
         if let Some(k) = self.reads_config {
-            material.push_str(&format!("cfg:{k}={:?}", ctx.config.get(k)));
+            let _ = write!(material, "cfg:{k}={:?}", ctx.config.get(k));
         }
         if let Some((n, v)) = self.reads_tool {
             ctx.tool_version(n, v); // record the tracked input (§5.2)
-            material.push_str(&format!("tool:{n}@{v}"));
+            let _ = write!(material, "tool:{n}@{v}");
         }
         for d in &self.dep_on {
             let out = ctx.dep(d)?;
-            material.push_str(&format!("dep:{}@{}", d.0, out.hash));
+            let _ = write!(material, "dep:{}@{}", d.0, out.hash);
         }
         if let Some((steps, token)) = &self.cancel_after_steps {
             for i in 0..*steps {
@@ -133,7 +136,7 @@ impl Compute for FileCompute {
         Ok(NodeOutput {
             hash: blake3::hash(material.as_bytes()),
             artifact: None,
-            deps: Default::default(),
+            deps: BTreeSet::new(),
         })
     }
 }
@@ -142,7 +145,7 @@ fn counter() -> Arc<AtomicUsize> {
     Arc::new(AtomicUsize::new(0))
 }
 
-/// Static key string + NodeKey encoding an absolute FS path (`n:<abs path>`).
+/// Static key string + `NodeKey` encoding an absolute FS path (`n:<abs path>`).
 fn key_for(path: &std::path::Path) -> (&'static str, NodeKey) {
     let s: &'static str = Box::leak(format!("n:{}", path.display()).into_boxed_str());
     (s, NodeKey::new(s))
@@ -165,8 +168,8 @@ fn memoizes_repeat_gets() {
     let c = counter();
     let k = NodeKey::new("n:a");
     let comp = FileCompute::new("n:a", "a", c.clone());
-    let o1 = g.get(k.clone(), &comp).unwrap();
-    let o2 = g.get(k.clone(), &comp).unwrap();
+    let o1 = g.get(&k, &comp).unwrap();
+    let o2 = g.get(&k, &comp).unwrap();
     assert_eq!(o1.hash, o2.hash);
     assert_eq!(c.load(Ordering::SeqCst), 1, "second get must be a memo hit");
     assert_eq!(g.node_count(), 1);
@@ -185,7 +188,7 @@ fn single_flight_dedupes_concurrent_gets() {
         let (g, comp, barrier) = (g.clone(), comp.clone(), barrier.clone());
         handles.push(std::thread::spawn(move || {
             barrier.wait();
-            g.get(NodeKey::new("n:slow"), comp.as_ref())
+            g.get(&NodeKey::new("n:slow"), comp.as_ref())
         }));
     }
     for h in handles {
@@ -206,15 +209,15 @@ fn epoch_bump_on_invalidate_forces_recompute_of_unrelated_nodes() {
     let g = DemandGraph::new();
     let c = counter();
     let comp = FileCompute::new("n:x", "x", c.clone());
-    g.get(NodeKey::new("n:x"), &comp).unwrap();
+    g.get(&NodeKey::new("n:x"), &comp).unwrap();
     assert_eq!(c.load(Ordering::SeqCst), 1);
     let changed = g.invalidate(&[Input::ToolVersion {
         name: "nothing".into(),
         version: "0".into(),
     }]);
-    assert!(changed.is_empty());
+    assert_eq!(changed, [] as [oxide_fw_graph::NodeKey; 0]);
     assert_eq!(g.version(), 1);
-    g.get(NodeKey::new("n:x"), &comp).unwrap();
+    g.get(&NodeKey::new("n:x"), &comp).unwrap();
     assert_eq!(
         c.load(Ordering::SeqCst),
         2,
@@ -245,8 +248,8 @@ fn early_cutoff_spares_dependents_when_hash_unchanged() {
         Arc::new(FileCompute::new(ka, "const-a", ca.clone()).file_dep_only());
     g.register(a.clone(), comp_a.clone());
     let comp_b = FileCompute::new("n:b", "b", cb.clone()).dep(a.clone());
-    g.get(a.clone(), comp_a.as_ref()).unwrap();
-    g.get(b.clone(), &comp_b).unwrap();
+    g.get(&a, comp_a.as_ref()).unwrap();
+    g.get(&b, &comp_b).unwrap();
     assert_eq!(ca.load(Ordering::SeqCst), 1);
     assert_eq!(cb.load(Ordering::SeqCst), 1);
 
@@ -264,8 +267,8 @@ fn early_cutoff_spares_dependents_when_hash_unchanged() {
     );
     assert_eq!(cb.load(Ordering::SeqCst), 1, "B survives via early cutoff");
 
-    g.get(a.clone(), comp_a.as_ref()).unwrap();
-    g.get(b.clone(), &comp_b).unwrap();
+    g.get(&a, comp_a.as_ref()).unwrap();
+    g.get(&b, &comp_b).unwrap();
     assert_eq!(ca.load(Ordering::SeqCst), 2);
     assert_eq!(
         cb.load(Ordering::SeqCst),
@@ -283,24 +286,24 @@ fn hash_change_recomputes_the_whole_chain() {
     let (c1, c2, c3) = (counter(), counter(), counter());
     let (ka, a) = key_for(&f);
     let b = NodeKey::new("n:b");
-    let d = NodeKey::new("n:c");
+    let dep_key = NodeKey::new("n:c");
     let comp_a = FileCompute::new(ka, "a", c1.clone()).file();
     let comp_b = FileCompute::new("n:b", "b", c2.clone()).dep(a.clone());
     let comp_c = FileCompute::new("n:c", "c", c3.clone()).dep(b.clone());
-    let out_a1 = g.get(a.clone(), &comp_a).unwrap();
-    g.get(b.clone(), &comp_b).unwrap();
-    g.get(d.clone(), &comp_c).unwrap();
+    let out_a1 = g.get(&a, &comp_a).unwrap();
+    g.get(&b, &comp_b).unwrap();
+    g.get(&dep_key, &comp_c).unwrap();
 
     std::fs::write(&f, b"two").unwrap();
     let invalidated = g.invalidate(&[file_input(&f, b"two")]);
     assert_eq!(
         invalidated,
-        vec![a.clone(), b.clone(), d.clone()],
+        vec![a.clone(), b.clone(), dep_key.clone()],
         "cascade walks reverse deps transitively"
     );
-    let out_a2 = g.get(a.clone(), &comp_a).unwrap();
-    g.get(b.clone(), &comp_b).unwrap();
-    g.get(d.clone(), &comp_c).unwrap();
+    let out_a2 = g.get(&a, &comp_a).unwrap();
+    g.get(&b, &comp_b).unwrap();
+    g.get(&dep_key, &comp_c).unwrap();
     assert_eq!(
         (
             c1.load(Ordering::SeqCst),
@@ -325,15 +328,15 @@ fn node_dep_edge_invalidates_dependent_but_not_sibling() {
     let g = DemandGraph::new();
     let (ca, cb, cs) = (counter(), counter(), counter());
     let (ka, a) = key_for(&f);
-    let (ks, s) = key_for(&sib);
+    let (ks, sib_key) = key_for(&sib);
     let b = NodeKey::new("n:b");
     let comp_a = FileCompute::new(ka, "a", ca.clone()).file();
     let comp_b = FileCompute::new("n:b", "b", cb.clone()).dep(a.clone());
     // S reads a *different* file — a sibling, not a dependent.
     let comp_s = FileCompute::new(ks, "s", cs.clone()).file();
-    g.get(a.clone(), &comp_a).unwrap();
-    g.get(b.clone(), &comp_b).unwrap();
-    g.get(s.clone(), &comp_s).unwrap();
+    g.get(&a, &comp_a).unwrap();
+    g.get(&b, &comp_b).unwrap();
+    g.get(&sib_key, &comp_s).unwrap();
 
     std::fs::write(&f, b"dep-v2").unwrap();
     let invalidated = g.invalidate(&[file_input(&f, b"dep-v2")]);
@@ -342,9 +345,9 @@ fn node_dep_edge_invalidates_dependent_but_not_sibling() {
         vec![a.clone(), b.clone()],
         "sibling must not be invalidated"
     );
-    g.get(a.clone(), &comp_a).unwrap();
-    g.get(b.clone(), &comp_b).unwrap();
-    g.get(s.clone(), &comp_s).unwrap();
+    g.get(&a, &comp_a).unwrap();
+    g.get(&b, &comp_b).unwrap();
+    g.get(&sib_key, &comp_s).unwrap();
     assert_eq!(cs.load(Ordering::SeqCst), 1, "sibling must not recompute");
 }
 
@@ -362,7 +365,7 @@ fn dir_listing_change_invalidates() {
     let c = counter();
     let (kd, k) = key_for(&dir);
     let comp = FileCompute::new(kd, "listing", c.clone()).dir();
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     std::fs::write(dir.join("two.ts"), b"y").unwrap();
     let old_hash = blake3::hash(b"old-listing");
     let changed = g.invalidate(&[Input::DirListing {
@@ -370,7 +373,7 @@ fn dir_listing_change_invalidates() {
         listing_hash: old_hash,
     }]);
     assert_eq!(changed, vec![k.clone()]);
-    let out = g.get(k.clone(), &comp).unwrap();
+    let out = g.get(&k, &comp).unwrap();
     assert_eq!(c.load(Ordering::SeqCst), 2);
     // The new listing must be visible in the output material.
     let material = String::from_utf8_lossy(out.hash.as_bytes()).len();
@@ -388,7 +391,7 @@ fn env_var_change_invalidates() {
     let c = counter();
     let k = NodeKey::new("n:env");
     let comp = FileCompute::new("n:env", "envnode", c.clone()).env("OX_FEATURE");
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     env.write()
         .unwrap()
         .insert("OX_FEATURE".into(), "on".into());
@@ -397,7 +400,7 @@ fn env_var_change_invalidates() {
         value_hash: blake3::hash(b"on"),
     }]);
     assert_eq!(changed, vec![k.clone()]);
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     assert_eq!(c.load(Ordering::SeqCst), 2);
 }
 
@@ -411,7 +414,7 @@ fn config_key_change_invalidates() {
     let c = counter();
     let k = NodeKey::new("n:cfg");
     let comp = FileCompute::new("n:cfg", "cfgnode", c.clone()).config("server.port");
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     cfg.write()
         .unwrap()
         .insert("server.port".into(), serde_json::json!(4001));
@@ -420,7 +423,7 @@ fn config_key_change_invalidates() {
         value_hash: blake3::hash(b"4001"),
     }]);
     assert_eq!(changed, vec![k.clone()]);
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     assert_eq!(c.load(Ordering::SeqCst), 2);
 }
 
@@ -430,13 +433,13 @@ fn tool_version_change_invalidates() {
     let c = counter();
     let k = NodeKey::new("n:tool");
     let comp = FileCompute::new("n:tool", "toolnode", c.clone()).tool("svelte-compiler", "1.0.0");
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     let changed = g.invalidate(&[Input::ToolVersion {
         name: "svelte-compiler".into(),
         version: "1.1.0".into(),
     }]);
     assert_eq!(changed, vec![k.clone()]);
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     assert_eq!(c.load(Ordering::SeqCst), 2);
 }
 
@@ -454,7 +457,7 @@ fn cancel_token_aborts_mid_compute_and_clears() {
         token: g.cancel.clone(),
         armed: Arc::new(AtomicBool::new(true)),
     };
-    let e = g.get(k.clone(), &comp).unwrap_err();
+    let e = g.get(&k, &comp).unwrap_err();
     assert_eq!(e.0.code, "GRAPH-CANCEL");
     assert!(
         g.peek(&k).is_none(),
@@ -464,7 +467,7 @@ fn cancel_token_aborts_mid_compute_and_clears() {
 
     // Dev server never serves results from the cancelled window: gets fail at
     // the entry check until a fresh token state.
-    let e2 = g.get(k.clone(), &comp).unwrap_err();
+    let e2 = g.get(&k, &comp).unwrap_err();
     assert_eq!(e2.0.code, "GRAPH-CANCEL");
     assert_eq!(
         c.load(Ordering::SeqCst),
@@ -473,7 +476,7 @@ fn cancel_token_aborts_mid_compute_and_clears() {
     );
 
     g.cancel.reset();
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     assert_eq!(c.load(Ordering::SeqCst), 2);
     assert!(g.peek(&k).is_some());
 }
@@ -499,7 +502,7 @@ impl Compute for CancelMidCompute {
         Ok(NodeOutput {
             hash: blake3::hash(b"never"),
             artifact: None,
-            deps: Default::default(),
+            deps: BTreeSet::new(),
         })
     }
 }
@@ -510,7 +513,7 @@ fn demand_graph_cancel_clears_memoized_values() {
     let c = counter();
     let k = NodeKey::new("n:memo");
     let comp = FileCompute::new("n:memo", "m", c.clone());
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     assert!(g.peek(&k).is_some());
     g.cancel(); // graph-level cancel: token + memo wipe
     assert!(
@@ -518,7 +521,7 @@ fn demand_graph_cancel_clears_memoized_values() {
         "cancel() clears memoized values computed in the cancelled window"
     );
     g.cancel.reset();
-    g.get(k.clone(), &comp).unwrap();
+    g.get(&k, &comp).unwrap();
     assert_eq!(c.load(Ordering::SeqCst), 2);
 }
 
@@ -528,7 +531,7 @@ fn get_after_cancel_returns_graph_cancel_code() {
     g.cancel();
     let c = counter();
     let comp = FileCompute::new("n:any", "any", c.clone());
-    let e = g.get(NodeKey::new("n:any"), &comp).unwrap_err();
+    let e = g.get(&NodeKey::new("n:any"), &comp).unwrap_err();
     assert_eq!(e.0.code, "GRAPH-CANCEL");
     assert_eq!(c.load(Ordering::SeqCst), 0);
 }
@@ -601,7 +604,7 @@ fn ctx_dep_demands_registered_node_and_records_edge() {
     g.register(up.clone(), comp_up);
     g.register(down.clone(), comp_down.clone());
     // Only `down` is demanded; it pulls `up` through ctx.dep on demand.
-    g.get(down.clone(), comp_down.as_ref()).unwrap();
+    g.get(&down, comp_down.as_ref()).unwrap();
     assert_eq!(
         cu.load(Ordering::SeqCst),
         1,
@@ -616,16 +619,13 @@ fn ctx_dep_demands_registered_node_and_records_edge() {
         vec![up.clone(), down.clone()],
         "node-dep edge must invalidate the dependent"
     );
-    g.get(down.clone(), comp_down.as_ref()).unwrap();
+    g.get(&down, comp_down.as_ref()).unwrap();
     assert_eq!(cu.load(Ordering::SeqCst), 2);
     assert_eq!(cd.load(Ordering::SeqCst), 2);
 }
 
 #[test]
 fn ctx_dep_detects_cycles() {
-    let g = DemandGraph::new();
-    let a = NodeKey::new("n:c1");
-    let b = NodeKey::new("n:c2");
     struct Cycle;
     impl Compute for Cycle {
         fn compute(&self, ctx: &mut ComputeCtx) -> Result<NodeOutput> {
@@ -633,7 +633,7 @@ fn ctx_dep_detects_cycles() {
             Ok(NodeOutput {
                 hash: blake3::hash(b"c1"),
                 artifact: None,
-                deps: Default::default(),
+                deps: BTreeSet::new(),
             })
         }
     }
@@ -644,19 +644,21 @@ fn ctx_dep_detects_cycles() {
             Ok(NodeOutput {
                 hash: blake3::hash(b"c2"),
                 artifact: None,
-                deps: Default::default(),
+                deps: BTreeSet::new(),
             })
         }
     }
+    let g = DemandGraph::new();
+    let a = NodeKey::new("n:c1");
+    let b = NodeKey::new("n:c2");
     g.register(a.clone(), Arc::new(Cycle));
     g.register(b.clone(), Arc::new(Cycle2));
-    let e = g.get(a, &Cycle).unwrap_err();
+    let e = g.get(&a, &Cycle).unwrap_err();
     assert_eq!(e.0.code, "GRAPH-CYCLE");
 }
 
 #[test]
 fn ctx_dep_without_registry_errors() {
-    let g = DemandGraph::new();
     struct NeedsDep;
     impl Compute for NeedsDep {
         fn compute(&self, ctx: &mut ComputeCtx) -> Result<NodeOutput> {
@@ -664,11 +666,12 @@ fn ctx_dep_without_registry_errors() {
             Ok(NodeOutput {
                 hash: blake3::hash(b"x"),
                 artifact: None,
-                deps: Default::default(),
+                deps: BTreeSet::new(),
             })
         }
     }
-    let e = g.get(NodeKey::new("n:needs"), &NeedsDep).unwrap_err();
+    let g = DemandGraph::new();
+    let e = g.get(&NodeKey::new("n:needs"), &NeedsDep).unwrap_err();
     assert_eq!(e.0.code, "GRAPH-NO-COMPUTE");
 }
 
@@ -678,7 +681,7 @@ fn ctx_dep_without_registry_errors() {
 
 fn meta(ns: &[&str], kind: &'static str) -> CasWriteMeta {
     CasWriteMeta {
-        namespace: ns.iter().map(|s| s.to_string()).collect(),
+        namespace: ns.iter().map(std::string::ToString::to_string).collect(),
         kind,
     }
 }
@@ -751,7 +754,7 @@ fn cas_touch_extends_life_against_gc() {
         .touch(&k_cold, now - Duration::from_secs(3600))
         .unwrap();
     store.touch(&k_hot, now).unwrap();
-    let (removed, bytes) = store.gc(Duration::from_secs(1800), u64::MAX).unwrap();
+    let (removed, bytes) = store.gc(Duration::from_mins(30), u64::MAX).unwrap();
     assert_eq!(removed, 1, "only the stale entry is collected");
     assert!(bytes > 0);
     assert!(
@@ -812,7 +815,10 @@ fn cas_namespace_is_logical_not_physical() {
         store.list_namespace("compile/react").unwrap(),
         vec![k1.clone()]
     );
-    assert!(store.list_namespace("nope").unwrap().is_empty());
+    assert_eq!(
+        store.list_namespace("nope").unwrap(),
+        [] as [oxide_fw_graph::CasKey; 0]
+    );
 }
 
 #[test]
@@ -845,9 +851,9 @@ proptest::proptest! {
         let g = DemandGraph::new();
         let (kstr, k) = key_for(&f);
         let comp = FileCompute::new(kstr, Box::leak(tag.clone().into_boxed_str()), counter()).file();
-        let out = g.get(k, &comp).unwrap();
+        let out = g.get(&k, &comp).unwrap();
         let mut material = tag.clone();
-        material.push_str(&format!("file={content}"));
+        let _ = write!(material, "file={content}");
         proptest::prop_assert_eq!(out.hash, blake3::hash(material.as_bytes()));
     }
 }
@@ -856,8 +862,8 @@ proptest::proptest! {
 #[test]
 fn cfg_only_imports_resolve() {
     let _ = err("X", "y");
-    let _ = EnvTrackerImpl::new(Default::default());
-    let _ = ConfigTrackerImpl::new(Default::default());
+    let _ = EnvTrackerImpl::new(Arc::default());
+    let _ = ConfigTrackerImpl::new(Arc::default());
     let _: Option<B3> = None;
     let _: Vec<PathBuf> = Vec::new();
     let _ = FsTrackerImpl::new();
