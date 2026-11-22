@@ -1,0 +1,120 @@
+{
+  "generated_by": "scripts/plugin-compat.mjs --dry-run",
+  "count": 10,
+  "results": [
+    {
+      "plugin": "unplugin-icons",
+      "version": "24.0.0",
+      "adapter": "react",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    {
+      "plugin": "@mdx-js/rollup",
+      "version": "3.1.1",
+      "adapter": "react",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    {
+      "plugin": "vite-plugin-pwa",
+      "version": "2.0.0",
+      "adapter": "react",
+      "status": "unsupported-hook",
+      "unsupportedHooks": [
+        "configureServer"
+      ],
+      "asserts": {
+        "passed": 0,
+        "failed": 1
+      },
+      "note": "declares configureServer (bridge-unsupported; the plugin fails at load so its output never lands)"
+    },
+    {
+      "plugin": "@vitejs/plugin-react",
+      "version": "6.3.0",
+      "adapter": "react",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    {
+      "plugin": "vite-plugin-solid",
+      "version": "2.11.17",
+      "adapter": "solid",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    {
+      "plugin": "@sveltejs/vite-plugin-svelte",
+      "version": "7.3.1",
+      "adapter": "svelte",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    {
+      "plugin": "vite-plugin-svgr",
+      "version": "5.2.0",
+      "adapter": "react",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    {
+      "plugin": "@tailwindcss/vite",
+      "version": "4.3.5",
+      "adapter": "react",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    {
+      "plugin": "vite-tsconfig-paths",
+      "version": "6.1.1",
+      "adapter": "react",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    {
+      "plugin": "@vitejs/plugin-vue",
+      "version": "6.0.11",
+      "adapter": "vue",
+      "status": "pass",
+      "unsupportedHooks": [],
+      "asserts": {
+        "passed": 1,
+        "failed": 0
+      }
+    }
+  ],
+  "matrix": "| Plugin | Version | Adapter | Status | Unsupported hooks | Asserts | Note |\n| --- | --- | --- | --- | --- | --- | --- |\n| `@mdx-js/rollup` | `3.1.1` | react | pass | — | 1/1 | — |\n| `@sveltejs/vite-plugin-svelte` | `7.3.1` | svelte | pass | — | 1/1 | — |\n| `@tailwindcss/vite` | `4.3.5` | react | pass | — | 1/1 | — |\n| `@vitejs/plugin-react` | `6.3.0` | react | pass | — | 1/1 | — |\n| `@vitejs/plugin-vue` | `6.0.11` | vue | pass | — | 1/1 | — |\n| `unplugin-icons` | `24.0.0` | react | pass | — | 1/1 | — |\n| `vite-plugin-pwa` | `2.0.0` | react | unsupported-hook | configureServer | 0/1 | declares configureServer (bridge-unsupported; the plugin fails at load so its output never lands) |\n| `vite-plugin-solid` | `2.11.17` | solid | pass | — | 1/1 | — |\n| `vite-plugin-svgr` | `5.2.0` | react | pass | — | 1/1 | — |\n| `vite-tsconfig-paths` | `6.1.1` | react | pass | — | 1/1 | — |"
+}
