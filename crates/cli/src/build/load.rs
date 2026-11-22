@@ -99,8 +99,8 @@ pub(crate) async fn phase_load<'w>(
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
     }
-    let tree =
-        refine_render_modes_from_ast(&rootp, &cfg, scan_routes_with_plugins(&rootp, &cfg).await?);
+    let scanned = scan_routes_with_plugins(&rootp, &mut cfg).await?;
+    let tree = refine_render_modes_from_ast(&rootp, &cfg, scanned);
     let routes_root = rootp.join(&cfg.routes.dir);
     // §4.4: report top-level side effects that would break a V8 snapshot.
     emit_snapshot_lint(&cfg, &rootp, &tree, w)?;
