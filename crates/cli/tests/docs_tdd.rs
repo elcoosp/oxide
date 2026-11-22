@@ -295,7 +295,8 @@ fn page_registry_lists_the_reference_pages() {
             "cli.md",
             "config.md",
             "endpoints.md",
-            "errors.md"
+            "errors.md",
+            "plugin-compat.md"
         ],
         "the registry order is the write order — it must be stable and sorted"
     );
@@ -309,12 +310,51 @@ fn docs_gen_registry_paths() -> Vec<&'static str> {
 }
 
 #[test]
+fn plugin_compat_page_is_registered_at_the_docs_root() {
+    // V2-E05: plugin-compat.md is a top-level docs page (base ""), not under
+    // docs/reference/ — the published file stays where the compat_tdd pin +
+    // the README link expect it.
+    let page = docs_gen::generators()
+        .iter()
+        .find(|g| g.path() == "plugin-compat.md")
+        .expect("the plugin-compat generator is registered");
+    assert_eq!(page.base(), "", "plugin-compat.md writes to the docs root");
+}
+
+#[test]
+fn plugin_compat_page_embeds_the_matrix_and_the_hooks_table() {
+    use oxide_fw_plugin::compat_markdown_table;
+    let page = docs_gen::generators()
+        .iter()
+        .find(|g| g.path() == "plugin-compat.md")
+        .expect("the plugin-compat generator is registered")
+        .render()
+        .expect("plugin-compat page renders");
+    // The kind×hook table stays byte-identical (the compat_tdd pin's other
+    // half — held at the docs level too).
+    assert!(
+        page.contains(&compat_markdown_table()),
+        "plugin-compat.md embeds compat_markdown_table() byte-identical"
+    );
+    // The verified-plugins matrix renders from results.json (one source of
+    // truth). At least ten plugins verified (the §V2-E05 acceptance).
+    assert!(
+        page.contains("## Verified third-party plugins (§V2-E05)"),
+        "plugin-compat.md carries the verified-plugins section"
+    );
+    assert!(
+        page.contains("vite-plugin-svgr"),
+        "plugin-compat.md carries a verified-plugin row"
+    );
+}
+
+#[test]
 fn check_passes_on_the_committed_pages() {
-    let dir = repo_root().join("docs/reference");
+    let dir = repo_root().join("docs");
     let drift = docs_gen::check(&dir).expect("pages render");
     assert!(
         drift.is_empty(),
-        "docs/reference is stale — regenerate with `cargo run -p oxide-fw-cli -- docs generate`:\n{}",
+        "docs are stale — regenerate with `cargo run -p oxide-fw-cli -- docs generate`:\n{}",
         drift
             .iter()
             .map(|d| d.to_string())
