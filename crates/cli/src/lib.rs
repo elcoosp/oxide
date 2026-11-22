@@ -93,7 +93,12 @@ mod l0_cache;
 // internals stay crate-internal, the framework_shim shape).
 pub use l0_cache::{CachedResponse, L0Cache, NONCE_SENTINEL};
 pub mod loader_shim;
-mod modules_loader;
+/// §V2-E06: the `oxide add` config edit (span-based AST surgery on
+/// `oxide.config.ts`) + the package-manager detection table.
+pub mod module_config_edit;
+/// §V2-E06: the module loader — resolves `oxide.module` packages,
+/// enforces adapters, merges types/configDefaults/middlewares/serverFns.
+pub mod modules_loader;
 pub mod precompile;
 mod precompile_cache;
 mod record_wire;
