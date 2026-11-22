@@ -9,70 +9,13 @@
 //!
 //! Hex only at this display/filename boundary (D24): all in-memory comparisons
 //! and map keys are the 16 raw digest bytes ([`crate::key::KeyHash`]).
+//!
+//! `KeyStr`/`KeyHash` live in [`oxide_fw_edge_primitives::key`] (WP E09: the
+//! wasm32 edge build reuses them without linking `redb`/`tokio`); this module
+//! re-exports `KeyStr` byte-identical and keeps the cache-specific [`key_of`].
 
 use crate::key::KeyHash;
-
-/// 32 ASCII hex chars (a 128-bit blake3 prefix) on the stack. Derefs to `&str`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct KeyStr([u8; 32]);
-
-impl KeyStr {
-    /// The hex form as a borrowed `&str` (always valid ASCII/UTF-8).
-    pub fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.0).expect("hex is ascii")
-    }
-
-    /// The 16 raw digest bytes (for allocation-free map keys, D24).
-    /// (The stored form is self-hex-decoding; kept alongside the hex form so
-    /// both views stay in the 32-byte stack value.)
-    pub fn as_bytes128(&self) -> [u8; 16] {
-        let mut out = [0u8; 16];
-        for (i, pair) in self.0.as_chunks::<2>().0.iter().enumerate() {
-            out[i] = hexval(pair[0]) << 4 | hexval(pair[1]);
-        }
-        out
-    }
-
-    /// The hex form of a 16-byte digest — the constructor the D24
-    /// [`KeyHash`](crate::key::KeyHash) renders through. One hex table, so
-    /// the raw and hex views of a key cannot drift.
-    pub(crate) fn from_digest16(raw: &[u8; 16]) -> Self {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut out = [0u8; 32];
-        for (i, b) in raw.iter().enumerate() {
-            out[2 * i] = HEX[(b >> 4) as usize];
-            out[2 * i + 1] = HEX[(b & 15) as usize];
-        }
-        KeyStr(out)
-    }
-}
-
-impl std::ops::Deref for KeyStr {
-    type Target = str;
-    fn deref(&self) -> &str {
-        self.as_str()
-    }
-}
-
-impl std::fmt::Display for KeyStr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::fmt::Debug for KeyStr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-fn hexval(b: u8) -> u8 {
-    match b {
-        b'0'..=b'9' => b - b'0',
-        b'a'..=b'f' => b - b'a' + 10,
-        _ => 0,
-    }
-}
+pub use oxide_fw_edge_primitives::key::KeyStr;
 
 /// blake3 over `layer 0x00 route 0x00 params 0x00 vary 0x00 build_id`, hex of the
 /// first 16 digest bytes (128 bits) — the display form of the digest
@@ -135,17 +78,16 @@ mod tests {
         );
     }
 
+    /// `key_of` is the display form of the re-exported `KeyHash` (D24): the
+    /// 32-char hex is exactly `KeyHash::of_parts(...).hex()`. Pins the
+    /// delegation so the cache and the edge build cannot drift.
     #[test]
-    fn key_str_is_32_hex_chars_and_raw_round_trips() {
-        let k = key_of("L0", "routes/blog/[slug]/page", "{}", "", "build");
-        assert_eq!(k.as_str().len(), 32);
-        assert!(k.as_str().bytes().all(|b| b.is_ascii_hexdigit()));
-        let raw = k.as_bytes128();
-        assert_eq!(raw.len(), 16);
-        // Deterministic: same input, same raw bytes.
+    fn key_of_is_keyhash_hex() {
         assert_eq!(
-            raw,
-            key_of("L0", "routes/blog/[slug]/page", "{}", "", "build").as_bytes128()
+            key_of("L0", "routes/blog/[slug]/page", "{}", "", "build").as_str(),
+            KeyHash::of_parts("L0", "routes/blog/[slug]/page", "{}", "", "build")
+                .hex()
+                .as_str()
         );
     }
 }
