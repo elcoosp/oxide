@@ -37,7 +37,16 @@ s3 = ["dep:object_store"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-# V2-A02: this crate does not inherit the workspace lints yet (the recorded
-# dedicated hygiene pass adopts pedantic) — declared so the newer cargo
-# `missing_lints_inheritance` notice stays silent about the intent.
+# V2-A02 closing leg (M1): this crate now inherits the workspace lint policy
+# (`[workspace.lints.rust] warnings = "deny"` + `[workspace.lints.clippy]
+# pedantic = warn, priority = -1`). The 52 pre-existing pedantic findings are
+# cleared (the `Ord for Input` restructure to tag-first + OR-pattern merges
+# collapsed the `match_same_arms` cluster; `DemandGraph::get` now takes
+# `&NodeKey`; `invalidate`'s seeds walk extracted into `collect_seeds`; the
+# `missing_errors_doc`/`missing_panics_doc`/`must_use_candidate`/cast/map
+# findings fixed across cas/demand/lib/trackers + the test suite) with zero
+# `#[allow]` and no behavior change (tests green). The drift guard
+# (`crates/diagnostics/tests/lint_uniformity.rs` + `scripts/check-lint-uniformity.sh`)
+# fails if this table re-diverges.
 [lints]
+workspace = true
