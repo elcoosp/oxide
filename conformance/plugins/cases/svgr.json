@@ -1,0 +1,16 @@
+{
+  "plugin": "vite-plugin-svgr@5.2.0",
+  "fixture": "svgr-app",
+  "adapter": "react",
+  "assert": [
+    {
+      "file": "dist/client/*.js",
+      "contains": "createElement"
+    }
+  ],
+  "hooks": [
+    "transform",
+    "resolveId",
+    "load"
+  ]
+}
