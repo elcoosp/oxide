@@ -126,15 +126,16 @@ fn allows_live_on_full_cells() {
 
 #[test]
 fn warns_live_on_degraded_cells_with_the_documented_string() {
-    // Serverless and Edge are Degraded (the landed F05 ruling): a warning
-    // carrying the documented degradation string, never a refusal.
+    // The Serverless class is Degraded for Live (the landed F05 ruling): a
+    // warning carrying the documented degradation string, never a refusal.
+    // V2-E09 moved the Edge class (Cloudflare, CloudflarePages) from Degraded
+    // to Unsupported — `live: true` is refused there now (see
+    // [`refuses_live_on_edge_targets`]), so they no longer belong here.
     for t in [
         Target::Lambda,
         Target::Vercel,
         Target::VercelFunctions,
         Target::Netlify,
-        Target::Cloudflare,
-        Target::CloudflarePages,
     ] {
         let findings = check_config(
             &Report {
@@ -151,6 +152,44 @@ fn warns_live_on_degraded_cells_with_the_documented_string() {
         assert!(
             d.message.contains(reason),
             "warning carries the degradation string on {}: {}",
+            t.as_str(),
+            d.message
+        );
+    }
+}
+
+#[test]
+fn refuses_live_on_edge_targets() {
+    // V2-E09: the edge cannot hold long-lived SSE connections, so `live:
+    // true` is refused at build time for Edge targets (the matrix row is
+    // truthful — Unsupported, not a silent poll fallback). Cloudflare and
+    // CloudflarePages are Edge class; the refusal is the AST-LIV-001 error.
+    for t in [Target::Cloudflare, Target::CloudflarePages] {
+        let findings = check_config(
+            &Report {
+                live_routes: true,
+                ..Report::none()
+            },
+            t,
+        );
+        assert_eq!(codes(&findings), vec!["AST-LIV-001"], "on {}", t.as_str());
+        let d = &findings[0];
+        assert_eq!(
+            d.severity,
+            Severity::Error,
+            "edge refuses live on {}",
+            t.as_str()
+        );
+        assert!(
+            d.message.contains(t.as_str()),
+            "the refusal names the target `{}`: {}",
+            t.as_str(),
+            d.message
+        );
+        // The §18 refusal rule names the capability matrix.
+        assert!(
+            d.message.contains("does not support live loaders"),
+            "the refusal carries the §18 reason on {}: {}",
             t.as_str(),
             d.message
         );
