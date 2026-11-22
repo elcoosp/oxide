@@ -614,7 +614,7 @@ fn cloudflare_emits_complete_worker_package() {
         .collect();
     for expected in [
         "worker.js",
-        "edge.js",
+        "handler.js",
         "_routes.json",
         "wrangler.toml",
         "deploy.json",
@@ -624,16 +624,37 @@ fn cloudflare_emits_complete_worker_package() {
             "missing {expected}: {names:?}"
         );
     }
-    // The worker imports edge.js (not the never-written ./server/edge.js).
+    // The worker imports the glue (`./edge.js`, for init/matchRoute/applyRules)
+    // and the JS-fallback handler (`./handler.js`). The glue itself is only
+    // shipped when the wasm is present (see `cloudflare_ships_glue_with_wasm`).
     let worker = std::fs::read_to_string(out.join("worker.js")).unwrap();
     assert!(worker.contains("from \"./edge.js\""), "{worker}");
+    assert!(worker.contains("from \"./handler.js\""), "{worker}");
     assert!(!worker.contains("./server/edge.js"), "{worker}");
-    // edge.js is a real WinterCG handler with the JS fallbacks.
-    let edge = std::fs::read_to_string(out.join("edge.js")).unwrap();
-    assert!(edge.contains("export default { fetch: handler }"), "{edge}");
+    // V2-E09: the worker is the spec-shaped entry — init/matchRoute/applyRules,
+    // asset passthrough, KV L0 get/put with TTL, best-effort tag index.
+    assert!(worker.contains("init(env.EDGE)"), "{worker}");
+    assert!(worker.contains("applyRules("), "{worker}");
+    assert!(worker.contains("matchRoute("), "{worker}");
+    assert!(worker.contains("env.OXIDE_KV.put"), "{worker}");
+    assert!(worker.contains("expirationTtl: 60"), "{worker}");
+    assert!(worker.contains("indexTags"), "{worker}");
+    // handler.js is a real WinterCG handler with the JS fallbacks.
+    let handler = std::fs::read_to_string(out.join("handler.js")).unwrap();
     assert!(
-        edge.contains("export { cacheKey, mergeHead, encodeOdf }"),
-        "{edge}"
+        handler.contains("export default { fetch: handler }"),
+        "{handler}"
+    );
+    assert!(
+        handler.contains("export { cacheKey, mergeHead, encodeOdf }"),
+        "{handler}"
+    );
+    // V2-E09 / P0-1c: the handler's loader imports the glue (`./edge.js`),
+    // not the raw `./edge.wasm` — the wasm's `__wbindgen_*` imports need it.
+    assert!(handler.contains("await import(\"./edge.js\")"), "{handler}");
+    assert!(
+        !handler.contains("await import(\"./edge.wasm\")"),
+        "{handler}"
     );
     // The routes file excludes assets.
     let routes: serde_json::Value =
@@ -653,6 +674,57 @@ fn cloudflare_emits_complete_worker_package() {
     assert!(!wrangler.contains("[wasm_modules]"));
 }
 
+/// V2-E09 / P0-1c: when the CLI ships `edge.wasm` + `edge.js` (the glue) into
+/// the artifact `out_dir`, the Cloudflare emit copies BOTH into the deploy
+/// directory — the payload is functional (the Worker's `init(env.EDGE)`
+/// instantiates the wasm via the glue), no inert JS fallback.
+#[test]
+fn cloudflare_ships_glue_alongside_wasm_when_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let build_out = dir.path().join("build");
+    std::fs::create_dir_all(&build_out).unwrap();
+    std::fs::write(build_out.join("edge.wasm"), b"\0asm\x01\0\0\0FAKE").unwrap();
+    std::fs::write(
+        build_out.join("edge.js"),
+        b"export function init(){} export function matchRoute(){}",
+    )
+    .unwrap();
+    let mut art = artifact("b_glue", manifest_json());
+    art.out_dir = build_out;
+    let out = dir.path().join("deploy");
+    let written = emit(Target::Cloudflare, &art, &out).unwrap();
+    let names: Vec<String> = written
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        names.contains(&"edge.wasm".to_string()),
+        "wasm copied: {names:?}"
+    );
+    assert!(
+        names.contains(&"edge.js".to_string()),
+        "glue copied: {names:?}"
+    );
+    assert!(
+        names.contains(&"handler.js".to_string()),
+        "handler written: {names:?}"
+    );
+    assert!(
+        names.contains(&"worker.js".to_string()),
+        "worker written: {names:?}"
+    );
+    // The wrangler declares the wasm module binding (`env.EDGE`).
+    let wrangler = std::fs::read_to_string(out.join("wrangler.toml")).unwrap();
+    assert!(wrangler.contains("[wasm_modules]"), "{wrangler}");
+    assert!(wrangler.contains("edge = \"./edge.wasm\""), "{wrangler}");
+    // The glue is the wasm-bindgen output, not the handler.
+    let glue = std::fs::read_to_string(out.join("edge.js")).unwrap();
+    assert!(
+        glue.contains("export function init") || glue.contains("as default"),
+        "{glue}"
+    );
+}
+
 #[test]
 fn cloudflare_wrangler_declares_wasm_when_present() {
     let s = cloudflare_wrangler_toml("b_wasm", true);
@@ -669,6 +741,38 @@ fn edge_handler_js_is_deterministic_and_contains_build_id() {
     assert_eq!(a, b);
     assert!(a.contains("build_id: edge-xyz"));
     assert!(a.contains("edge_cache_key") || a.contains("cacheKey"));
+}
+
+/// V2-E09: the edge capability matrix rows are truthful (spec §V2-E09):
+/// `Live` Unsupported (the edge refuses `live: true` — no silent poll
+/// fallback), `RustFns` Unsupported (no V8 to host native fns), `Search`
+/// Unsupported (no in-process index), `Skew` Degraded (edge deploys
+/// propagate gradually; skew detection warns instead of blocking).
+#[test]
+fn edge_capability_rows_are_truthful_per_e09() {
+    use FeatureSupport::*;
+    for target in [Target::Cloudflare, Target::CloudflarePages] {
+        assert_eq!(
+            support(target, Capability::Live),
+            Unsupported,
+            "{target:?} Live must be Unsupported (no long-lived SSE on the edge)"
+        );
+        assert_eq!(
+            support(target, Capability::RustFns),
+            Unsupported,
+            "{target:?} RustFns must be Unsupported (no V8)"
+        );
+        assert_eq!(
+            support(target, Capability::Search),
+            Unsupported,
+            "{target:?} Search must be Unsupported (no in-process index)"
+        );
+        assert_eq!(
+            support(target, Capability::Skew),
+            Degraded,
+            "{target:?} Skew must be Degraded (gradual deploy propagation)"
+        );
+    }
 }
 
 /// P0-1: the edge handler's `mergeHead` must be JS-only. The Rust
