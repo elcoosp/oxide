@@ -1,0 +1,14 @@
+{
+  "plugin": "@sveltejs/vite-plugin-svelte@7.3.1",
+  "fixture": "svelte-app",
+  "adapter": "svelte",
+  "assert": [
+    {
+      "file": "dist/client/*.js",
+      "contains": "svelte_component"
+    }
+  ],
+  "hooks": [
+    "transform"
+  ]
+}
