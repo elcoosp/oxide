@@ -1,0 +1,95 @@
+# V2-R01 green transcript — every gate clean
+
+## 1. cargo fmt --all --check
+fmt exit=0
+
+## 2. cargo clippy -p oxide-fw-adapters --all-targets -- -D warnings -W clippy::pedantic
+warning: workspace (manifest) generated 1 warning
+    Checking oxide-fw-adapters v0.17.0 (/home/z/my-project/crates/adapters)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s
+clippy exit=0
+
+## 3. cargo test -p oxide-fw-adapters --test matrix_json (the drift guard)
+
+running 1 test
+test committed_matrix_json_matches_the_rust_functions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit=0
+
+## 4. node --test 'test/*.test.ts'  (from conformance/ — registry + skip engine + every client-runtime assertion)
+✔ config: react default export is callable (1.168376ms)
+✔ config: react createAdapter({ ssr: 'ir' }) returns byte-identical IR output (4.653011ms)
+✔ config: react createAdapter() defaults to real SSR — §14.1 literal (1.156772ms)
+✔ config: react real SSR needs no componentFor (resolver supplies components) (1.019543ms)
+✔ config: react createAdapter() with an explicit resolver renders that route (0.416402ms)
+✔ smoke configs: react is literal (no component imports/closure) (0.474551ms)
+✔ config: react default export accepts the smoke-app {compiler:true} shape (0.150433ms)
+✔ config: vue default export is callable (0.26047ms)
+✔ config: vue createAdapter({ ssr: 'ir' }) returns byte-identical IR output (2.074128ms)
+✔ config: vue createAdapter() defaults to real SSR — §14.1 literal (0.561886ms)
+✔ config: vue real SSR needs no componentFor (resolver supplies components) (0.368965ms)
+✔ config: vue createAdapter() with an explicit resolver renders that route (0.228122ms)
+✔ smoke configs: vue is literal (no component imports/closure) (0.167715ms)
+✔ config: vue default export accepts the smoke-app {compiler:true} shape (0.091142ms)
+✔ config: svelte default export is callable (0.356607ms)
+✔ config: svelte createAdapter({ ssr: 'ir' }) returns byte-identical IR output (1.931539ms)
+✔ config: svelte createAdapter() defaults to real SSR — §14.1 literal (0.39477ms)
+✔ config: svelte real SSR needs no componentFor (resolver supplies components) (0.236432ms)
+✔ config: svelte createAdapter() with an explicit resolver renders that route (0.346086ms)
+✔ smoke configs: svelte is literal (no component imports/closure) (0.168755ms)
+✔ config: svelte default export accepts the smoke-app {compiler:true} shape (0.100268ms)
+✔ config: solid default export is callable (0.275737ms)
+✔ config: solid createAdapter({ ssr: 'ir' }) returns byte-identical IR output (1.982031ms)
+✔ config: solid createAdapter() defaults to real SSR — §14.1 literal (0.447357ms)
+✔ config: solid real SSR needs no componentFor (resolver supplies components) (0.206241ms)
+✔ config: solid createAdapter() with an explicit resolver renders that route (0.164839ms)
+✔ smoke configs: solid is literal (no component imports/closure) (0.171354ms)
+✔ config: solid default export accepts the smoke-app {compiler:true} shape (0.18662ms)
+✔ conformance: react passes every §22 assertion (113.412543ms)
+✔ conformance: vue passes every §22 assertion (81.714439ms)
+✔ conformance: svelte passes every §22 assertion (80.407511ms)
+✔ conformance: solid passes every §22 assertion (80.154059ms)
+✔ registry: react/binary — zero blockers, zero unexplained skips (151.802991ms)
+✔ registry: react/node — zero blockers, zero unexplained skips (119.186498ms)
+✔ registry: vue/binary — zero blockers, zero unexplained skips (92.990286ms)
+✔ registry: vue/node — zero blockers, zero unexplained skips (87.633899ms)
+✔ registry: svelte/binary — zero blockers, zero unexplained skips (94.198861ms)
+✔ registry: svelte/node — zero blockers, zero unexplained skips (89.541386ms)
+✔ registry: solid/binary — zero blockers, zero unexplained skips (91.9399ms)
+✔ registry: solid/node — zero blockers, zero unexplained skips (90.448801ms)
+✔ registry: the C25–C47 set is complete and registered in spec order (0.67774ms)
+✔ registry: the v0.1 set is migrated (no v0.1 assertion was dropped) (0.478019ms)
+✔ skip engine: an Unsupported capability skips with a recorded reason (0.345784ms)
+✔ skip engine: a ci-bound assertion skips with the spec + CI job (0.289563ms)
+ℹ tests 44
+ℹ pass 44
+ℹ fail 0
+ℹ skipped 0
+
+## 5. node conformance/run.ts --adapter react --target binary (the consumer example)
+  ⊘ C35: ci-bound: executes via tests/playwright/tests/conformance-c35-live-revalidate.spec.ts in the playwright CI job
+  ⊘ C38: ci-bound: executes via tests/playwright/tests/conformance-c38-brownout.spec.ts in the playwright CI job
+  ⊘ C39: ci-bound: executes via tests/skew.sh in the jshost-e2e CI job
+  ⊘ C40: ci-bound: executes via tests/playwright/tests/conformance-c40-rust-server-fn.spec.ts in the playwright CI job
+  ⊘ C44: ci-bound: executes via tests/playwright/tests/conformance-c44-record-replay.spec.ts in the playwright CI job
+  ⊘ C47: ci-bound: executes via tests/playwright/tests/conformance-c47-hmr-input-state.spec.ts in the playwright CI job
+
+ALL GREEN — release not blocked (§V2-R01).
+
+## 6. node conformance/bench.ts (registry dispatch + skip engine, before/after)
+Oxide conformance §V2-R01 bench — registry dispatch + skip engine
+  assertions: 52
+  cells: 8 (=4 adapters × 2 targets)
+  iterations per cell: 5000
+
+  before (per-adapter, no skip):  3.862 ms/cell × 5000 iters
+  after  (per-cell × skipStatus): 5.622 ms/cell × 5000 iters
+  after  per-assertion per-iter:  21 ns
+
+  total before: 30.895 ms   total after: 44.974 ms
+  the skip engine adds ~1.760 ms/cell over the v0.1 loop
+
+## 7. #[allow]/#[expect]/cfg_attr(allow) grep (must be empty)
+grep exit=1 (1=empty=good)
