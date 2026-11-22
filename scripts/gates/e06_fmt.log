@@ -1,0 +1,238 @@
+Diff in /home/z/my-project/oxide/crates/cli/benches/module_api.rs:8:
+ //! The bench is gated behind `bench-util` (the V2-F18 pattern: plain
+ //! `cargo test` never pays the criterion build).
+ 
+-use criterion::{black_box, criterion_group, criterion_main, Criterion};
++use criterion::{Criterion, black_box, criterion_group, criterion_main};
+ use oxide_fw_cli::module_config_edit::add_module_to_config;
+ use oxide_fw_cli::modules_loader::{resolve_one, to_manifest};
+ use std::hint::black_box as bb;
+Diff in /home/z/my-project/oxide/crates/cli/examples/module_add.rs:58:
+     let pkg_dir = rootp.join("node_modules").join(&module);
+     let resolved = resolve_one(&pkg_dir, module.clone()).expect("module resolves");
+     println!("  name:        {}", resolved.name);
++    println!("  adapters:    [{}]", resolved.adapters.join(", "));
+     println!(
+-        "  adapters:    [{}]",
+-        resolved.adapters.join(", ")
+-    );
+-    println!(
+         "  routes_dir:  {}",
+         resolved
+             .routes_dir
+Diff in /home/z/my-project/oxide/crates/cli/examples/module_add.rs:82:
+     println!("  hooks:   [{}]", manifest.hooks.join(", "));
+     println!(
+         "  config_defaults keys: [{}]",
+-        manifest.config_defaults.keys().cloned().collect::<Vec<_>>().join(", ")
++        manifest
++            .config_defaults
++            .keys()
++            .cloned()
++            .collect::<Vec<_>>()
++            .join(", ")
+     );
+ 
+     // 4. The adapters enforcement (loud refusal on a mismatch).
+Diff in /home/z/my-project/oxide/crates/cli/src/commands/author.rs:66:
+                 w,
+                 "  fix: add `{adapter}` to the module's `adapters` declaration, or"
+             );
+-            outln!(w, "       remove the module from `modules: []` in oxide.config.ts");
++            outln!(
++                w,
++                "       remove the module from `modules: []` in oxide.config.ts"
++            );
+         }
+     }
+ 
+Diff in /home/z/my-project/oxide/crates/cli/src/commands/author.rs:105:
+                     if let Err(e) = std::fs::write(&config_ts, &edit.bytes) {
+                         outln!(w, "warn: could not edit oxide.config.ts: {e}");
+                     } else {
+-                        outln!(w, "[ok] added `{module}` to oxide.config.ts (import + modules[])");
++                        outln!(
++                            w,
++                            "[ok] added `{module}` to oxide.config.ts (import + modules[])"
++                        );
+                     }
+                 }
+             }
+Diff in /home/z/my-project/oxide/crates/cli/src/lib.rs:93:
+ // internals stay crate-internal, the framework_shim shape).
+ pub use l0_cache::{CachedResponse, L0Cache, NONCE_SENTINEL};
+ pub mod loader_shim;
+-/// §V2-E06: the module loader — resolves `oxide.module` packages,
+-/// enforces adapters, merges types/configDefaults/middlewares/serverFns.
+-pub mod modules_loader;
+ /// §V2-E06: the `oxide add` config edit (span-based AST surgery on
+ /// `oxide.config.ts`) + the package-manager detection table.
+ pub mod module_config_edit;
+Diff in /home/z/my-project/oxide/crates/cli/src/lib.rs:102:
++/// §V2-E06: the module loader — resolves `oxide.module` packages,
++/// enforces adapters, merges types/configDefaults/middlewares/serverFns.
++pub mod modules_loader;
+ pub mod precompile;
+ mod precompile_cache;
+ mod record_wire;
+Diff in /home/z/my-project/oxide/crates/cli/src/module_config_edit.rs:54:
+ /// (a dynamic config the editor cannot edit safely). The fix names the
+ /// two lines to paste. `MOD-CONFIG-PARSE` when the file does not parse
+ /// as a config (no `defineConfig` and no `export default`).
+-pub fn add_module_to_config(src: &str, module: &str, alias: Option<&str>) -> Result<ConfigEdit, OxideError> {
++pub fn add_module_to_config(
++    src: &str,
++    module: &str,
++    alias: Option<&str>,
++) -> Result<ConfigEdit, OxideError> {
+     let alias = alias.unwrap_or(default_alias_for(module));
+     let import_added = !has_import(src, module);
+     let module_added = !has_modules_entry(src, module);
+Diff in /home/z/my-project/oxide/crates/cli/src/module_config_edit.rs:103:
+     // 2. Insert/append the modules-array element. Operate on `out` (offsets
+     //    shift by the import insert). Re-find the defineConfig open in
+     //    the new bytes.
+-    let cfg_start_new = find_define_config_open(&out).expect("defineConfig still present after import insert");
++    let cfg_start_new =
++        find_define_config_open(&out).expect("defineConfig still present after import insert");
+     let cfg_obj_open = find_first_char(&out, cfg_start_new, '{').ok_or_else(|| {
+         OxideError::from(Diagnostic::error(
+             "MOD-CONFIG-PARSE",
+Diff in /home/z/my-project/oxide/crates/cli/src/module_config_edit.rs:167:
+ /// True when `src` already imports `module` (idempotency check). Uses
+ /// `scan_import_spans` so a string in a comment does not false-positive.
+ fn has_import(src: &str, module: &str) -> bool {
+-    scan_import_spans(src)
+-        .iter()
+-        .any(|s| s.specifier == module)
++    scan_import_spans(src).iter().any(|s| s.specifier == module)
+ }
+ 
+ /// True when `src`'s `modules:` array already lists `module`.
+Diff in /home/z/my-project/oxide/crates/cli/src/module_config_edit.rs:402:
+ pub fn default_alias_for(module: &str) -> &str {
+     let trimmed = module.strip_prefix('@').unwrap_or(module);
+     let last = trimmed.rsplit('/').next().unwrap_or("");
+-    if last.is_empty() {
+-        DEFAULT_ALIAS
+-    } else {
+-        last
+-    }
++    if last.is_empty() { DEFAULT_ALIAS } else { last }
+ }
+ 
+ #[cfg(test)]
+Diff in /home/z/my-project/oxide/crates/cli/src/module_config_edit.rs:424:
+ 
+     #[test]
+     fn adds_import_and_modules_entry_idempotently() {
+-        let edit = add_module_to_config(FIXTURE_STATIC, "@oxide/analytics", Some("analytics")).unwrap();
++        let edit =
++            add_module_to_config(FIXTURE_STATIC, "@oxide/analytics", Some("analytics")).unwrap();
+         assert!(edit.import_added);
+         assert!(edit.module_added);
+-        assert!(edit.bytes.contains("import analytics from '@oxide/analytics'"));
++        assert!(
++            edit.bytes
++                .contains("import analytics from '@oxide/analytics'")
++        );
+         assert!(edit.bytes.contains("modules: ['@oxide/analytics']"));
+         // Round-trip: a second call is a no-op.
+-        let edit2 = add_module_to_config(&edit.bytes, "@oxide/analytics", Some("analytics")).unwrap();
++        let edit2 =
++            add_module_to_config(&edit.bytes, "@oxide/analytics", Some("analytics")).unwrap();
+         assert!(!edit2.import_added);
+         assert!(!edit2.module_added);
+         assert_eq!(edit2.bytes, edit.bytes);
+Diff in /home/z/my-project/oxide/crates/cli/src/module_config_edit.rs:438:
+ 
+     #[test]
+     fn preserves_comments_and_unrelated_code() {
+-        let edit = add_module_to_config(FIXTURE_STATIC, "@oxide/analytics", Some("analytics")).unwrap();
++        let edit =
++            add_module_to_config(FIXTURE_STATIC, "@oxide/analytics", Some("analytics")).unwrap();
+         assert!(edit.bytes.contains("// project config"));
+         assert!(edit.bytes.contains("// routes live under src/routes"));
+         assert!(edit.bytes.contains("framework: { adapter: 'react' }"));
+Diff in /home/z/my-project/oxide/crates/cli/src/module_config_edit.rs:452:
+         let edit = add_module_to_config(src, "@oxide/analytics", Some("analytics")).unwrap();
+         assert!(edit.bytes.contains("@oxide/tailwind"));
+         assert!(edit.bytes.contains("@oxide/analytics"));
+-        assert!(edit.bytes.contains("modules: ['@oxide/tailwind'], '@oxide/analytics'"));
++        assert!(
++            edit.bytes
++                .contains("modules: ['@oxide/tailwind'], '@oxide/analytics'")
++        );
+     }
+ 
+     #[test]
+Diff in /home/z/my-project/oxide/crates/cli/src/module_config_edit.rs:461:
+         let err = add_module_to_config(src, "@oxide/analytics", Some("analytics")).unwrap_err();
+         let msg = err.0.message.clone();
+         assert!(msg.contains("MOD-CONFIG-DYNAMIC"), "{msg}");
+-        assert!(err.0.fix.as_ref().unwrap().contains("add `modules: ['@oxide/analytics']`"));
+-        assert!(err.0.fix.as_ref().unwrap().contains("convert the config to a static"));
++        assert!(
++            err.0
++                .fix
++                .as_ref()
++                .unwrap()
++                .contains("add `modules: ['@oxide/analytics']`")
++        );
++        assert!(
++            err.0
++                .fix
++                .as_ref()
++                .unwrap()
++                .contains("convert the config to a static")
++        );
+     }
+ 
+     #[test]
+Diff in /home/z/my-project/oxide/crates/cli/src/modules_loader.rs:195:
+             a.iter()
+                 .filter_map(|x| {
+                     let file = x.get("file")?.as_str()?.to_string();
+-                    let scope = x
+-                        .get("scope")
+-                        .and_then(|s| s.as_str())
+-                        .map(str::to_string);
++                    let scope = x.get("scope").and_then(|s| s.as_str()).map(str::to_string);
+                     Some(ModuleMiddleware {
+                         file: PathBuf::from(file),
+                         scope,
+Diff in /home/z/my-project/oxide/crates/cli/src/modules_loader.rs:549:
+ /// Schema entry is in `crates/config/src/schema.rs`).
+ pub fn merge_config_defaults(cfg: &mut OxideConfig, mods: &[ResolvedModule]) {
+     for m in mods {
+-        let Some(defaults) = &m.config_defaults else { continue };
++        let Some(defaults) = &m.config_defaults else {
++            continue;
++        };
+         let key = sanitize_name(&m.name);
+         let existing = cfg
+             .modules_config
+Diff in /home/z/my-project/oxide/crates/cli/src/modules_loader.rs:566:
+ /// `ModuleManifest` so the plugin registry and the loader agree on the
+ /// shape (the loader writes the manifest, the registry reads it).
+ pub fn to_manifest(m: &ResolvedModule) -> oxide_fw_plugin::ModuleManifest {
+-    use oxide_fw_plugin::{
+-        ModuleMiddlewareEntry, ModuleServerFnEntry, ModuleTypeEntry,
+-    };
++    use oxide_fw_plugin::{ModuleMiddlewareEntry, ModuleServerFnEntry, ModuleTypeEntry};
+     oxide_fw_plugin::ModuleManifest {
+         name: m.name.clone(),
+         adapters: m.adapters.clone(),
+Diff in /home/z/my-project/oxide/crates/cli/src/serve/start.rs:233:
+     // (and `None` for a route with no `page.server.ts`), and the §11 L0 layer
+     // cannot tell a static route from a dynamic one.
+     let scanned = scan_routes(&rootp, &mut cfg, stack.tooling_pool.as_ref()).await?;
+-    let tree = std::sync::Arc::new(refine_render_modes_from_ast(
+-        &rootp,
+-        &cfg,
+-        scanned,
+-    ));
++    let tree = std::sync::Arc::new(refine_render_modes_from_ast(&rootp, &cfg, scanned));
+ 
+     // Native ESM dev server (Phase 1): build the shared state the dispatch
+     // intercept uses to serve `/src/*` and `/@*` as transformed ESM. Opt-in
