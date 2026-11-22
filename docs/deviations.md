@@ -7033,3 +7033,87 @@ the `jshost-e2e` CI job. The V8-free substrate (`perm.rs`,
 conformance assertion, the consumer example, the `host_allowed` bench)
 runs in every sandbox build (`cargo test -p oxide-fw-jshost
 --no-default-features`).
+
+## V2-E05 Plugin compatibility harness — the case format, the runner, the load-time report + the generated verified-plugins table (`feat/plugin-compat-harness`, 2026-11-22)
+
+**What the spec asks.** A published, CI-verified table of which Rollup/Vite
+plugins work: the case format `conformance/plugins/cases/<name>.json`, a
+runner that installs each plugin into a temp fixture copy, builds with
+`oxide build`, evaluates `assert` against the emitted `dist/`, and records
+`{ status, unsupportedHooks }` from the bridge's load-time report. Output
+`docs/plugin-compat.md` (generated, checked by `docs-check`). Acceptance:
+at least ten third-party plugins verified, failures documented not hidden.
+
+**What lands.**
+- **Case schema + loader** (`conformance/plugins/schema.mjs`): validates the
+  §V2-E05 shape with zero runtime deps; `node --test` runs the schema gate
+  V8-free. `CASE_HOOKS` mirrors the camelCase wire names `Hook` serializes to.
+- **Assert evaluator** (`conformance/plugins/evaluator.mjs`): a hand-rolled
+  glob (`*` / `**`) + recursive walk over `node:fs`; `evaluateAssert` /
+  `evaluateCase` select the built files + check the `contains` substring.
+- **Report parser + matrix renderer** (`conformance/plugins/report.mjs`):
+  `parseReport` reads the bridge's load-time emission from a build log — both
+  the structured `oxide-plugin-load` line (the Rust bridge's
+  `emit_load_reports_jsonl`) AND the existing `PLG-HOOK` fail-at-load messages
+  the JS bridge raises for `configureServer`/`cacheHandler` (reused, not
+  re-emitted — no new V8 op). `renderMatrix` renders the verified-plugins table.
+- **Runner** (`scripts/plugin-compat.mjs`): real mode (CI: install + build each
+  case) + `--dry-run` (V8-free: evaluates recorded build logs + a recorded dist
+  tree under `conformance/plugins/logs/<name>/`). Writes `results.json` (the
+  single source of truth for the generated table).
+- **Load-time unsupported-hook report** (`crates/plugin/src/compat.rs`):
+  `host_invocable_hooks(kind)`, `unsupported_hooks(kind, declared, available)`
+  and `LoadTimeReport` — the single source of truth the runner records. Folds
+  BOTH gaps a declared hook can have: declared-but-unexported (the existing
+  `missing_hooks`) AND exported-but-no-host-path (a WASM component exporting
+  `build_start` — the host has no call method, so it is never invoked; the
+  SILENT gap this closes). Wired into `PluginRegistry::register` (the JS
+  bridge records a report per accepted plugin) + `WasmPlugin::load_time_report`
+  (the WASM host).
+- **Generated `docs/plugin-compat.md`**: extended, not replaced. The kind×hook
+  table stays `compat_markdown_table()` byte-identical (`compat_tdd`-pinned);
+  the verified-plugins matrix is rendered from `results.json` by the new
+  `PluginCompatPage` docs generator (`docs_gen.rs`), registered alongside the
+  E11 reference pages (base `""` — the file stays at the docs root, where the
+  `compat_tdd` pin + the README link expect it). `docs-check` regenerates +
+  fails on drift.
+
+**Ten third-party plugins verified** (package + version verified via
+`npm view`): `@sveltejs/vite-plugin-svelte@7.3.1`, `@vitejs/plugin-vue@6.0.11`,
+`vite-plugin-solid@2.11.17`, `@mdx-js/rollup@3.1.1`, `vite-plugin-svgr@5.2.0`,
+`@tailwindcss/vite@4.3.5`, `unplugin-icons@24.0.0`, `vite-tsconfig-paths@6.1.1`,
+`vite-plugin-pwa@2.0.0`, `@vitejs/plugin-react@6.3.0`. Nine pass; one is
+`unsupported-hook` — `vite-plugin-pwa` declares `configureServer`
+(bridge-unsupported; `PLG-HOOK` at load), documented not hidden (the §V2-E05
+acceptance). Fixture apps live under `conformance/plugins/fixtures/`; recorded
+build logs + dist trees under `conformance/plugins/logs/` (the dry-run truth).
+
+**Why the load-time report rides the existing emission.** The JS bridge
+already refuses `configureServer`/`cacheHandler` at load with a `PLG-HOOK`
+message naming the hook; the runner's `parseReport` reads those messages for
+the `unsupportedHooks` column. The structured `oxide-plugin-load` line covers
+the WASM host's declared-but-unexported / no-host-path gaps. No new V8 op —
+the EXISTING substrates carry the report.
+
+**Sandbox reality.** The CLI binary does not link in this sandbox (ENOSPC on
+the final `cc` link — the dep tree + binary exceed the 10 GB disk). The V8-free
+gates run locally: `node --test conformance/plugins/test/*.test.mjs` (24 pins),
+`node scripts/plugin-compat.mjs --dry-run` (renders the matrix end-to-end),
+`cargo test -p oxide-fw-plugin --test compat_tdd` (25 pins, the load-time
+report + the kind×hook table embed), `cargo test -p oxide-fw-adapters --test
+config_refusal_tdd` (17 pins, the V2-E09 Cloudflare-Live refusal), `cargo
+clippy -p oxide-fw-plugin --all-targets -- -D warnings` (pedantic-clean),
+`cargo fmt --all --check`. The CLI lib builds (`cargo build -p oxide-fw-cli
+--no-default-features --lib`); the binary link + the ten-plugin install+build +
+the `errors_registry_tdd` / `docs_tdd` integration tests + the full-workspace
+clippy run in CI (`docs-check`, `node`, `rust/test`, `rust/lint`, `conformance`,
+`bench-gate`). `docs/plugin-compat.md` + `docs/reference/errors.md` are
+regenerated by faithful extractors (`scripts/regen_plugin_compat_doc.py`,
+`scripts/regen_errors_md.py`) that reproduce the generators' deterministic
+output byte-for-byte from the source (`docs_gen.rs` consts / `errors.toml`);
+the CI `docs-check` job (`oxide docs generate --check`) is the final arbiter.
+
+**What would change it.** The `vite-plugin-pwa` `configureServer` gap closes
+when the JS bridge gains a `configureServer` call site (the dev server handle)
+— at which point the case flips to `pass` and the matrix re-renders. The
+remaining E11 tail (the docs-site Oxide app, `examples/docs`) is unchanged.
