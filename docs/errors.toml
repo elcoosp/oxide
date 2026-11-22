@@ -255,6 +255,10 @@ fix = "set `images.avifSpeed` to a whole number in 1..=10 (the default is 6)"
 message = "`framework.compilerBackend` must be one of `auto`, `native`, `node` — got `{got}`"
 fix = "set `framework.compilerBackend` to `auto` (the default), `native` or `node`"
 
+[CFG-CHECK]
+message = "`check.typecheck` must be one of `tsgo`, `oxlint`, `tsrs`, `tsc`, `off` — got `{got}`"
+fix = "set `check.typecheck` to `tsgo` (the default), `oxlint`, `tsrs` (experimental), `tsc` or `off`"
+
 [CFG-DEPLOY]
 message = "the `deploy` section carries a bad knob: {msg}"
 fix = "spell the section `deploy: { skewWindow: '15m', generations: 3 }` — the window grammar is `<n>s|m|h|d`, plain integers are seconds"
@@ -414,6 +418,10 @@ fix = "fix the entry the diagnostic names (the format is `[CODE]` + `message`/`f
 [DOC-003]
 message = "a docs/reference page is missing or stale against the running binary"
 fix = "regenerate with `cargo run -p oxide-fw-cli -- docs generate`"
+
+[DOC-004]
+message = "conformance/plugins/results.json: {msg}"
+fix = "re-run `node scripts/plugin-compat.mjs --dry-run` to refresh results.json"
 
 [DSP-101]
 message = "a middleware staged a reserved locals key (`session`, `locale` or `experiments`)"
@@ -750,6 +758,10 @@ fix = "Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type 
 message = "native function payload did not convert: {e}"
 fix = "The client stub sends JSON args; the host converts to ODF at the boundary — check the args shape against the generated types"
 
+[RFN-LOAD]
+message = "the build secret is unavailable; the native server functions stay unmounted"
+fix = "ensure the build secret is readable, or drop `.oxide/rust` to run on the JS pool"
+
 [RFN-PANIC]
 message = "a native function panicked; the host answers 500 and the library never unwinds across the boundary"
 fix = "Inspect the server log for the panic backtrace; panics are a bug in the function body"
@@ -824,6 +836,14 @@ fix = "Serve the module's value as JSON (the schema crate parses values, not TS)
 
 [SEC-SESSION]
 message = "a session codec needs at least one key (security.sessionKeys)"
+
+[SKW-POOL]
+message = "the promoted generation has no worker pool; the boot pool keeps serving every generation"
+fix = "the generation's pool failed to boot — inspect the serve log; the boot pool covers until the window closes"
+
+[SKW-SNAPSHOT]
+message = "skew: a generation's loader sources could not be frozen; the two-pool route step stays inert and the boot handles serve every generation"
+fix = "inspect the snapshot error in the serve log; the generation downgrades to acceptance-only"
 
 [SNAP-002]
 message = "top-level side effect"
