@@ -37,6 +37,7 @@ const KNOWN_KEYS: &[&str] = &[
     "static",
     "plugins",
     "modules",
+    "modulesConfig",
     "extends",
     "environments",
     "dev",
@@ -57,6 +58,7 @@ const KNOWN_KEYS: &[&str] = &[
     "llms",
     "record",
     "check",
+    "permissions",
 ];
 
 /// Environment variables allowed to override config (§14.2), as dotted paths.
@@ -493,6 +495,13 @@ fn validate(value: &Value, framework_source: &str) -> Result<()> {
     // typed boundary.
     if let Some(v) = map.get("check") {
         validate_check(v)?;
+    }
+    // V2-F19: the per-route capability grant gets the raw-`Value` treatment
+    // — a bad `permissions.default` spelling, a non-array `net`/`env`/`fs`,
+    // or an unknown key names the valid shape (CFG-PERM) instead of a
+    // bare serde type error at the typed boundary.
+    if let Some(v) = map.get("permissions") {
+        validate_permissions(v)?;
     }
     if let Some(Value::Array(rules)) = map.get("rules") {
         for rule in rules {
@@ -1246,6 +1255,64 @@ fn cfg_check(got: &str) -> OxideError {
         ),
     );
     d.fix = Some("set `check.typecheck` to `tsgo` (the default), `oxlint`, `tsrs` (experimental), `tsc` or `off`".into());
+    OxideError(Box::new(d))
+}
+
+/// V2-F19: the `permissions` section's raw-`Value` validator. The typed
+/// parse (`PermissionsConfig`) enforces `deny_unknown_fields`, so an
+/// unknown key surfaces there — but a bad `default` spelling, a
+/// non-array `net`/`env`/`fs`, or a non-string item gets the `CFG-PERM`
+/// diagnostic naming the valid shape BEFORE the typed boundary, so the
+/// error reads as a config mistake, not a serde type error.
+fn validate_permissions(value: &Value) -> Result<()> {
+    let Value::Object(map) = value else {
+        return Ok(()); // not an object — the typed parse reports the shape
+    };
+    // The section's keys are exactly `default`, `net`, `env`, `fs` — a
+    // typo'd knob cannot silently widen the grant (the raw pass names
+    // the four valid knobs before the typed `deny_unknown_fields`
+    // boundary surfaces a bare `CFG-SCHEMA`).
+    for (key, _) in map {
+        if key != "default" && key != "net" && key != "env" && key != "fs" {
+            return Err(cfg_permissions(&format!(
+                "`permissions` carries the knob `{key}` — the section's keys are `default`, `net`, `env` and `fs`"
+            )));
+        }
+    }
+    if let Some(v) = map.get("default") {
+        let bad = match v {
+            Value::String(s) if matches!(s.as_str(), "allow" | "deny") => None,
+            other => Some(match other {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }),
+        };
+        if let Some(got) = bad {
+            return Err(cfg_permissions(&format!(
+                "`permissions.default` must be `allow` or `deny` — got `{got}`"
+            )));
+        }
+    }
+    for key in ["net", "env", "fs"] {
+        if let Some(v) = map.get(key) {
+            // `null` is allowed (unrestricted); an array of strings is the
+            // allow-list; anything else is a shape error.
+            if !v.is_null() && !matches!(v, Value::Array(a) if a.iter().all(Value::is_string)) {
+                return Err(cfg_permissions(&format!(
+                    "`permissions.{key}` must be an array of strings (or null) — got {v}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The `CFG-PERM` diagnostic for a bad `permissions` value (V2-F19).
+fn cfg_permissions(msg: &str) -> OxideError {
+    let mut d = Diagnostic::error("CFG-PERM", msg);
+    d.fix = Some(
+        "set `permissions` to { default: 'allow'|'deny', net: string[]|null, env: string[]|null, fs: string[]|null }".into(),
+    );
     OxideError(Box::new(d))
 }
 
