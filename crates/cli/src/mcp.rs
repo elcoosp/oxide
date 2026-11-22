@@ -266,8 +266,8 @@ impl McpTool for RoutesListTool {
         cx: &McpCx,
         _args: serde_json::Value,
     ) -> Result<CallToolResult, ErrorData> {
-        let cfg = super::load_config_or_default(&cx.root, "development");
-        let tree = super::scan_routes(&cx.root, &cfg, None)
+        let mut cfg = super::load_config_or_default(&cx.root, "development");
+        let tree = super::scan_routes(&cx.root, &mut cfg, None)
             .await
             .map_err(|e| ErrorData::internal_error(format!("scan failed: {e}"), None))?;
 
@@ -347,8 +347,8 @@ impl McpTool for RouteExplainTool {
         let Some(route) = arg_str(&args, "route") else {
             return Err(ErrorData::invalid_params("missing `route` argument", None));
         };
-        let cfg = super::load_config_or_default(&cx.root, "development");
-        let tree = super::scan_routes(&cx.root, &cfg, None)
+        let mut cfg = super::load_config_or_default(&cx.root, "development");
+        let tree = super::scan_routes(&cx.root, &mut cfg, None)
             .await
             .map_err(|e| ErrorData::internal_error(format!("scan failed: {e}"), None))?;
 
