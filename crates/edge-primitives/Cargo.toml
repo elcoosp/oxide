@@ -1,0 +1,24 @@
+[package]
+description = "The V8-free pure primitives the wasm32 edge build reuses: SSE framing, heap-free cache keys, and the chunk-safe nonce splicer. Extracted from the server/cache/render crates so the wasm dependency graph stays lean (no tokio/redb/lol_html)."
+keywords = ["wasm", "edge-computing", "webassembly", "sse", "cache-keys"]
+categories = ["wasm", "web-programming"]
+authors.workspace = true
+name = "oxide-fw-edge-primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+blake3 = { workspace = true }
+memchr = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
