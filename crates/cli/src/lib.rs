@@ -50,6 +50,14 @@ pub use oxide_fw_dispatch::route_ctx::LayoutLoadSpec;
 /// `oxide-fw-core-wasm` still gets the accelerated edge path.
 /// Regenerated via `scripts/regen-edge-wasm.sh` (WP-C2, deviation 6).
 static EDGE_WASM_BYTES: &[u8] = include_bytes!("../resources/edge.wasm");
+
+/// V2-E09 / P0-1c: the wasm-bindgen `--target web` glue (`edge.js`) that
+/// satisfies the wasm's `__wbindgen_*` imports and exposes the
+/// `#[wasm_bindgen]` exports (`match_route`, `apply_rules`, `odp1_apply`,
+/// `sse_frame`, `key_str`, `nonce_splice`, …). Shipped alongside
+/// [`EDGE_WASM_BYTES`] so the Worker's loader can `await init(wasm)` and the
+/// payload is functional — no inert JS fallback for a shipped payload.
+static EDGE_GLUE_JS: &[u8] = include_bytes!("../resources/edge.js");
 use oxide_fw_config::OxideConfig;
 use oxide_fw_router::RouteTree;
 use std::collections::BTreeMap;
