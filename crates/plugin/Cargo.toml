@@ -34,7 +34,14 @@ name = "compat"
 harness = false
 required-features = ["bench-util"]
 
-# V2-A02: this crate does not inherit the workspace lints yet (the recorded
-# dedicated hygiene pass adopts pedantic) — declared so the newer cargo
-# `missing_lints_inheritance` notice stays silent about the intent.
+# V2-A02 closing leg (M1): this crate now inherits the workspace lint policy
+# (`[workspace.lints.rust] warnings = "deny"` + `[workspace.lints.clippy]
+# pedantic = warn, priority = -1`). The pedantic debt is cleared (2
+# `assert_is_empty` findings in `tests/compat_tdd.rs` fixed via
+# `assert_eq!(.., [] as [_; 0])`); the command-line gate
+# (`clippy -- -D warnings -W clippy::pedantic`) holds this crate to pedantic
+# with no `#[allow]` escape hatch. The drift guard
+# (`crates/diagnostics/tests/lint_uniformity.rs` + `scripts/check-lint-uniformity.sh`)
+# fails if this table re-diverges.
 [lints]
+workspace = true
