@@ -1,0 +1,30 @@
+# config_refusal Live-degradation gate transcript — RED (ADDITIVE)
+
+The red→green pin for the §18 config-key refusal seam's Live-degradation
+warning (`crates/adapters/tests/config_refusal_tdd.rs`). Recorded under
+`scripts/gates/`.
+
+## RED — the Live-degradation pin drifted from the landed R02 matrix
+
+At HEAD (`fb50199`), `warns_live_on_degraded_cells_with_the_documented_string`
+is RED: it iterates `[Lambda, Vercel, VercelFunctions, Netlify, Cloudflare,
+CloudflarePages]` expecting every cell to be Degraded (a warning), but V2-E09
+moved the Edge class (Cloudflare, CloudflarePages) from Degraded to
+Unsupported — `support(Cloudflare, Live) == Unsupported` (the edge cannot
+hold long-lived SSE connections; `live: true` is refused at build time, not a
+silent poll fallback). For those two targets `check_config` produces an
+`AST-LIV-001` ERROR (refusal), so `d.severity == Severity::Warning` fails.
+
+    $ git rev-parse HEAD
+    fb5019949993383b3c17b5a3a7c670b171fdf294
+    $ grep -n "Cloudflare," crates/adapters/tests/config_refusal_tdd.rs
+    138:        Target::Cloudflare,
+    139:        Target::CloudflarePages,
+    # both listed under the Degraded-warning iteration — the drift
+    $ grep -n "V2-E09" crates/adapters/src/lib.rs
+    # "V2-E09: the edge cannot hold long-lived SSE connections ... `live:
+    #  true` is refused at build time for edge targets — the matrix row is
+    #  truthful (Unsupported), not a silent poll fallback."
+
+The matrix (the landed R02 truth) is correct; the TEST drifted. Correct
+whichever side drifted → the test.
