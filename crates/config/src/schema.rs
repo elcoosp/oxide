@@ -111,6 +111,7 @@ pub fn config_schema() -> Value {
             },
             "content": content_schema(),
             "check": check_schema(),
+            "permissions": permissions_schema(),
             "static": static_schema(),
                 }
     })
@@ -129,6 +130,42 @@ fn check_schema() -> Value {
                 "type": "string",
                 "enum": ["tsgo", "oxlint", "tsrs", "tsc", "off"],
                 "description": "V2-C11: the typecheck backend `oxide check` runs. `tsgo` (the default) runs `tsgo --noEmit`; `oxlint` runs `oxlint --type-aware --type-check` (it orchestrates the Go-based tsgolint — `oxide doctor` says so); `tsrs` is opt-in and experimental; `tsc` runs plain `tsc --noEmit`; `off` skips the typecheck arm. A bad spelling fails the load with CFG-CHECK."
+            }
+        }
+    })
+}
+
+/// Schema fragment for the `permissions` section (V2-F19). The
+/// per-route capability grant: `default` (allow/deny), `net`
+/// (host-pattern allow-list with the `*.` label-boundary wildcard),
+/// `env` (env-var-name allow-list), `fs` (fs-path-prefix allow-list).
+/// `None` on a field means unrestricted; an empty array means deny-all
+/// for that capability. A bad shape fails the load with `CFG-PERM`.
+#[must_use]
+fn permissions_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "default": {
+                "type": "string",
+                "enum": ["allow", "deny"],
+                "description": "V2-F19: the default posture when a route declares no `permissions` block. `allow` (the v0.2 default) permits every capability; `deny` is the opt-in so an undeclared route gets no capability by default."
+            },
+            "net": {
+                "type": ["array", "null"],
+                "items": { "type": "string" },
+                "description": "V2-F19: the host-pattern allow-list for `fetch`. `null` = unrestricted; `[]` = no host. A `*.internal` pattern matches `api.internal` (label-boundary, not bare suffix)."
+            },
+            "env": {
+                "type": ["array", "null"],
+                "items": { "type": "string" },
+                "description": "V2-F19: the env-var-name allow-list for `process.env` reads. `null` = unrestricted; `[]` = no name. Names match exactly (case-sensitive)."
+            },
+            "fs": {
+                "type": ["array", "null"],
+                "items": { "type": "string" },
+                "description": "V2-F19: the fs-path-prefix allow-list for file reads. `null` = unrestricted; `[]` = no path. A `./data` entry allows `./data/anything` (prefix match, `./`-normalized)."
             }
         }
     })
@@ -981,6 +1018,7 @@ mod tests {
             "modules",
             "modulesConfig",
             "search",
+            "permissions",
         ] {
             assert!(props.contains_key(expected), "missing {expected}");
         }
