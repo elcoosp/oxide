@@ -152,6 +152,29 @@ pub fn declares_search_schema(source: &str) -> bool {
     })
 }
 
+/// V2-F19: whether a `page.server.ts` source declares `permissions` as a
+/// `const` export — the per-route capability grant (`{ net, env, fs }`).
+///
+/// Mirrors [`declares_search_schema`] exactly: line-based,
+/// `strip_prefix` + a token-boundary check so a longer name (such as
+/// `permissionsV2` or `permissionsPolicy`) or a `function` export does not
+/// match. The scan is token-boundary honest (the same precedent
+/// [`declares_search_schema`] sets) — never a regex over the source.
+#[must_use]
+pub fn declares_permissions(source: &str) -> bool {
+    source.lines().any(|line| {
+        let t = line.trim_start();
+        t.strip_prefix("export const permissions")
+            .is_some_and(|rest| {
+                let after = rest.trim_start();
+                // `= { net, env, fs }` (an initializer), `: PermType = …`
+                // (a typed initializer), or a bare end — but never another
+                // identifier character (a longer binding name).
+                after.is_empty() || after.starts_with('=') || after.starts_with(':')
+            })
+    })
+}
+
 /// `fmt::Write` to a `String` is infallible; every generated-type append
 /// goes through `write!` so the emitters read like the code they produce.
 fn w(dts: &mut String, args: std::fmt::Arguments<'_>) {
