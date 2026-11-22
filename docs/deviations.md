@@ -182,6 +182,22 @@ deliberately deferred, and why:
    new crate is therefore run as
    `cargo clippy --no-deps -p oxide-fw-dispatch --all-targets
    --all-features -- -D warnings -W clippy::pedantic`.
+
+   *(Status — 2026-11-22: the hygiene pass has BEGUN. The net-new
+   lint-uniformity drift guard landed
+   (`crates/diagnostics/tests/lint_uniformity.rs` +
+   `scripts/check-lint-uniformity.sh`): every workspace member's Cargo.toml
+   must inherit `[lints] workspace = true`, and the guard fails the suite
+   the moment a crate re-introduces a divergent own-table or a new member
+   opts out. `oxide-fw-plugin` (2 findings) and `oxide-fw-graph` (52
+   findings) are pedantic-clean and opted in — the drift guard is GREEN for
+   17 of 23 members and RED for the 6 remaining divergent crates
+   (`dev`, `bundler`, `cache`, `server`, `jshost`, `cli`; ~570 findings
+   total). See the "V2-A02 closing leg" record at the tail of this file for
+   the per-crate finding counts and the remaining clearance plan. The five
+   per-session clippy-deferral postscripts below (the F47→F69 records that
+   each named "the dedicated hygiene pass owns it") now point forward to
+   this record instead of an open-ended deferral.)*
 4. **The dispatch bench ids are not in the criterion baseline.**
    `baseline-v01.json` / `after-wave-b.json` cover the Wave B ids only;
    registering the new `url/*` and `ctx_table/*` ids belongs to the same
@@ -7117,3 +7133,78 @@ the CI `docs-check` job (`oxide docs generate --check`) is the final arbiter.
 when the JS bridge gains a `configureServer` call site (the dev server handle)
 — at which point the case flips to `pass` and the matrix re-renders. The
 remaining E11 tail (the docs-site Oxide app, `examples/docs`) is unchanged.
+
+## V2-A02 closing leg — the workspace lint-uniformity drift guard + the first two crates cleared (2026-11-22)
+
+**The architectural seam.** The workspace's lint policy lives once, at the
+root (`[workspace.lints.rust] warnings = "deny"` + `[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }`). Until this leg, 8 of 23
+workspace members carried a bare `[lints]` table (header only, no
+`workspace = true`) — a silent opt-out of pedantic that was the documented
+reason the workspace clippy gate stayed RED across five sessions (the F47→F69
+postscripts above each named "the dedicated hygiene pass owns it"). This leg
+replaces the 8 divergent own-tables with ONE workspace lint contract,
+enforced by a net-new drift guard that makes re-deferral impossible.
+
+**The net-new capability.** `crates/diagnostics/tests/lint_uniformity.rs`
+mirrors the `matrix_json.rs` / `compat_tdd.rs` drift-guard shape: it parses
+every workspace member's `Cargo.toml` (enumerated from the root
+`[workspace] members` array), extracts the `[lints]` table body, and asserts
+it is exactly `workspace = true` — failing the suite the moment a crate
+re-introduces a divergent own-table (a `[lints.clippy]`/`[lints.rust]`
+override) or a new member opts out (a bare header or a missing table). The
+companion `scripts/check-lint-uniformity.sh` is the CI-callable form (the
+`rust/lint` job can invoke it before `cargo clippy --workspace` so a
+re-introduced divergent table is caught even when the offending crate's own
+clippy pass is environment-blocked). Both name every offender with the
+one-line fix.
+
+**The honest RED baseline (per-crate pedantic finding counts).** Captured by
+running `cargo clippy -p <crate> [--no-default-features] --all-targets --
+-D warnings -W clippy::pedantic` over each divergent crate
+(`scripts/gates/clippy_red_<crate>.log`, rolled up in
+`scripts/gates/clippy_red.log`):
+
+| crate | findings (RED) | status |
+| --- | --- | --- |
+| oxide-fw-plugin | 2 | **cleared** (2 `assert_is_empty` in `tests/compat_tdd.rs` → `assert_eq!(.., [] as [_; 0])`); opted in |
+| oxide-fw-graph | 52 | **cleared** (the `Ord for Input` restructure to tag-first + OR-pattern merges collapsed the `match_same_arms` cluster; `DemandGraph::get` now takes `&NodeKey`; `invalidate`'s seeds walk extracted into `collect_seeds`; the `missing_errors_doc`/`missing_panics_doc`/`must_use_candidate`/`cast_possible_truncation`/`map_unwrap_or`/`needless_pass_by_value`/`too_many_lines`/`default_trait_access`/`explicit_iter_loop`/`doc_markdown`/`uninlined_format_args`/`format_push_string`/`items_after_statements`/`many_single_char_names`/`assert_is_empty`/`duration_suboptimal_units` findings fixed across cas/demand/lib/trackers + the test suite + the example); opted in |
+| oxide-fw-dev | 59 | **remaining** (bare table unchanged) |
+| oxide-fw-bundler | 102 | **remaining** (bare table unchanged) |
+| oxide-fw-cache | 102 | **remaining** (bare table unchanged) — the F63 record's 237 re-counted to 102 on rustc 1.100.0's lint set |
+| oxide-fw-server | 102 | **remaining** (bare table unchanged) |
+| oxide-fw-jshost | 102 | **remaining** (bare table unchanged; V8-gated — `--no-default-features` makes the clippy pass V8-free) |
+| oxide-fw-cli | 106 | **remaining** (bare table unchanged; V8-gated — `--no-default-features` makes the clippy pass V8-free) |
+
+`oxide-fw-assets` (58 findings) is opted-in (`[lints] workspace = true`) but
+holds pre-existing pedantic debt the hygiene pass has not yet swept — a
+separate gate-breaker from the 8 divergent crates, recorded not repaired
+here (the 2026-11-21 postscript above names it).
+
+**The chunked-clearance discipline (the ENOSPC fix).** The per-crate
+`cargo clippy -p <crate>` pass links no binaries and fits the 10 GB disk;
+`cargo clean -p <crate>` between crates keeps `target/` under the peak. The
+V8 crates (`oxide-fw-jshost`, `oxide-fw-cli`) run `--no-default-features` —
+the `v8` feature gates the deno_core/bindgen chain (libclang), and the
+v8-gated test/example targets carry `required-features = ["v8"]` so
+`--all-targets` skips them. `oxide-fw-assets` runs default features (`avif`
+default-off → no nasm/rav1e).
+
+**The drift-guard TDD arc.** Written RED first (it failed on all 8 divergent
+tables — `scripts/gates/lint_uniformity_red.log`); transitions GREEN as each
+crate opts in. Today it is GREEN for 17 of 23 members (the 15 already-opted-in
+crates + plugin + graph) and RED for the 6 remaining divergent crates. The
+full green transcript for plugin (`scripts/gates/clippy_green_plugin.log`)
+and graph (`scripts/gates/clippy_green_graph.log`) record the zero-finding
+clippy + the `cargo test -p <crate>` no-behavior-change proof.
+
+**What remains.** The 6 remaining divergent crates (~570 findings total) are
+the next hygiene-pass legs, cleared crate-by-crate in dependency order
+(`dev`, `bundler`, `cache`, `server`, `jshost`, `cli`) with the same
+chunked-pedantic-clearance discipline; each opts in only AFTER its
+`cargo clippy -p <crate> --all-targets -- -D warnings -W clippy::pedantic`
+exits 0. The unified gate (`cargo clippy --workspace --all-targets
+--all-features -- -D warnings -W clippy::pedantic`) goes green when the last
+crate opts in; the CI `rust/lint` job (`cargo clippy --workspace --all-targets
+-- -D warnings`) is the final arbiter. No `#[allow]`/`#[expect]`/lint
+downgrade landed or is planned — every finding is fixed at its source.
