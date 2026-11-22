@@ -1,0 +1,15 @@
+{
+  "plugin": "vite-plugin-pwa@2.0.0",
+  "fixture": "pwa-app",
+  "adapter": "react",
+  "assert": [
+    {
+      "file": "dist/client/*.js",
+      "contains": "registerSW"
+    }
+  ],
+  "hooks": [
+    "transform",
+    "configureServer"
+  ]
+}
