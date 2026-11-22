@@ -13,6 +13,11 @@ repository.workspace = true
 [dependencies]
 oxide-fw-adapters = { workspace = true }
 oxide-fw-diagnostics = { workspace = true }
+# V2-F19: the typed permission policy (`PermissionSet`, `PermissionDefault`,
+# `host_allowed`) lives in the V8-free half of `oxide-fw-jshost` (`perm.rs`);
+# the config layer deserializes into it directly so there is one grant shape,
+# not two. `default-features = false` keeps config V8-free (no deno_core).
+oxide-fw-jshost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
