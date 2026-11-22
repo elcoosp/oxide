@@ -137,6 +137,15 @@ jobs:
           echo "        partially closed. Either ship edge.js glue or record"
           echo "        the inert state in the deviation status."
           exit 1
+      - name: Enforce the 400 KB gzip wasm budget (V2-E09)
+        # spec §V2-E09: "wasm-opt -Oz, budget 400 KB gzip, enforced by
+        # budgets". The committed artifact is pre-optimized by
+        # scripts/regen-edge-wasm.sh; binaryen is installed best-effort so the
+        # gate re-runs -Oz when present and measures the lean artifact either
+        # way. The gate itself always runs (exit 1 on overage).
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq binaryen >/dev/null 2>&1 || true
+          bash scripts/check-edge-wasm-budget.sh
   node:
     runs-on: ubuntu-latest
     steps:
