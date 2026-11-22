@@ -446,6 +446,18 @@ fix = "Check the store backend's availability — the stage degrades loud-then-r
 [EDGE-101]
 message = "routes manifest must be an array of route rows or {\"routes\": [...]} (router typegen §8.3)"
 
+[EDGE-103]
+message = "routes manifest is not valid JSON: {e}"
+fix = "Re-emit routes.json via `oxide build` (the router typegen §8.3) and redeploy"
+
+[EDGE-104]
+message = "rules table is not valid JSON: {e}"
+fix = "Re-emit the native rules table via `oxide build` and redeploy"
+
+[EDGE-105]
+message = "base value is not valid JSON: {e}"
+fix = "The ODP1 patch apply received a base value that is not valid JSON; re-encode the base snapshot"
+
 [FN-BAD-REQUEST]
 message = "the server-function envelope is malformed (the 400 dispatch class)"
 fix = "Send the envelope shape `/_oxide/fn/<id>` documents"
