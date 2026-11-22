@@ -1,0 +1,37 @@
+# errors_registry gate transcript — RED (ADDITIVE)
+
+The red→green pin for the §V2-K error-code registry coverage gate
+(`crates/cli/tests/errors_registry_tdd.rs`). Recorded under `scripts/gates/`.
+
+## RED — four codes raised in source but absent from `docs/errors.toml`
+
+At HEAD (`fb50199`), `registry_covers_every_production_code_literal` is RED:
+four codes are raised in production source but missing from the registry
+file (so the page does not carry them, and the coverage gate fails).
+
+    $ git rev-parse HEAD
+    fb5019949993383b3c17b5a3a7c670b171fdf294
+    $ for c in CFG-CHECK RFN-LOAD SKW-POOL SKW-SNAPSHOT; do
+        grep -q "^\[$c\]" docs/errors.toml || echo "$c MISSING from docs/errors.toml"
+      done
+    CFG-CHECK MISSING from docs/errors.toml
+    RFN-LOAD MISSING from docs/errors.toml
+    SKW-POOL MISSING from docs/errors.toml
+    SKW-SNAPSHOT MISSING from docs/errors.toml
+
+The live call sites:
+
+- `CFG-CHECK` — `crates/config/src/layer.rs:1252` (`cfg_check`, the bad
+  `check.typecheck` spelling, V2-C11).
+- `RFN-LOAD` — `crates/cli/src/endpoints/dispatchers.rs:220` +
+  `crates/dev/src/server_lib.rs:351` (the build-secret unavailable warn;
+  the native server functions stay unmounted, the JS pool answers).
+- `SKW-POOL` — `crates/cli/src/serve/start.rs:1640` (the promoted generation
+  has no worker pool; the boot pool keeps serving).
+- `SKW-SNAPSHOT` — `crates/cli/src/serve/start.rs:1302,1646` (a generation's
+  loader sources could not be frozen; the two-pool route step stays inert).
+
+`CMP-NAT-001` is already `spec_only = false` (absent flag → default false)
+and has a live call site (`crates/compiler/src/native/mod.rs:359`) — already
+correct, no change. `docs/reference/errors.md` is also stale (the `MOD-*`
+codes are in `errors.toml` but missing from the rendered page).
