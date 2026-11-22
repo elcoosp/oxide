@@ -230,7 +230,7 @@ pub(crate) async fn route_data_response_inner(
             needs_parent: spec.needs_parent,
         });
     }
-    if let (Some(runner), Some(mp), Some(rid)) = (loader_runner, module_path, route_id) {
+    if let (Some(_runner), Some(mp), Some(rid)) = (loader_runner, module_path, route_id) {
         // The page node. The normalized id (no `/page` suffix) is what
         // user `load(event)` implementations expect to see.
         let route_for_loader = rid.strip_suffix("/page").unwrap_or(rid).to_string();
@@ -279,7 +279,7 @@ pub(crate) async fn route_data_response_inner(
         // across both legs. Recorded before the result is consumed —
         // the mark records even when a load short-circuited.
         let wall_start = std::time::Instant::now();
-        let (result, mut outcomes) =
+        let (result, outcomes) =
             run_load_graph_outcomes(std::sync::Arc::clone(runner), nodes, &[]).await;
         if let Some(rec) = waterfall
             && outcomes.elapsed_ms.len() > 1
@@ -395,7 +395,7 @@ pub(crate) async fn route_data_response_inner(
             }
         }
     }
-    let mut data_path_session_cookie = layout_session_cookie;
+    let data_path_session_cookie = layout_session_cookie;
 
     let route_label = route_id
         .map(|r| r.strip_suffix("/page").unwrap_or(r).to_string())
