@@ -6408,6 +6408,7 @@ dependencies = [
  "moka",
  "object_store",
  "oxide-fw-diagnostics",
+ "oxide-fw-edge-primitives",
  "redb",
  "redis",
  "ring",
@@ -6530,6 +6531,8 @@ name = "oxide-fw-core-wasm"
 version = "0.17.0"
 dependencies = [
  "blake3",
+ "criterion",
+ "oxide-fw-edge-primitives",
  "oxide-fw-odf",
  "oxide-fw-router",
  "serde",
@@ -6588,6 +6591,14 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "oxide-fw-edge-primitives"
+version = "0.17.0"
+dependencies = [
+ "blake3",
+ "memchr",
 ]
 
 [[package]]
@@ -6676,6 +6687,7 @@ dependencies = [
  "memchr",
  "oxide-fw-config",
  "oxide-fw-diagnostics",
+ "oxide-fw-edge-primitives",
  "serde",
  "serde_json",
  "tokio",
@@ -6750,6 +6762,7 @@ dependencies = [
  "oxide-fw-cache",
  "oxide-fw-config",
  "oxide-fw-diagnostics",
+ "oxide-fw-edge-primitives",
  "oxide-fw-odf",
  "oxide-fw-render",
  "oxide-fw-router",
