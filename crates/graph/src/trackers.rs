@@ -13,6 +13,8 @@ use std::sync::{Arc, RwLock};
 pub struct FsTrackerImpl;
 
 impl FsTrackerImpl {
+    /// Construct the real-filesystem tracker.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
