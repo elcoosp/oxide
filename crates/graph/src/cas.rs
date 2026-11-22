@@ -26,20 +26,29 @@ const NS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("oxide-cas-
 pub struct CasKey(pub [u8; 32]);
 
 impl CasKey {
+    /// Compute the content-addressed key (blake3) of `data`.
+    #[must_use]
     pub fn of(data: &[u8]) -> Self {
         let mut h = blake3::Hasher::new();
         h.update(data);
         Self(*h.finalize().as_bytes())
     }
+    /// Lowercase hex encoding of the 32-byte key (64 chars).
+    #[must_use]
     pub fn hex(&self) -> String {
-        self.0.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write as _;
+        let mut s = String::with_capacity(self.0.len() * 2);
+        for b in &self.0 {
+            let _ = write!(s, "{b:02x}");
+        }
+        s
     }
 }
 
 /// Metadata recorded in the CAS index for a write (§5.4 cache keys include
 /// versions, option hashes, target and tracked env — carried as the namespace).
 pub struct CasWriteMeta {
-    /// e.g. ["transform", "svelte-compiler", "1.2.3"] — part of the logical namespace.
+    /// e.g. `["transform", "svelte-compiler", "1.2.3"]` — part of the logical namespace.
     pub namespace: Vec<String>,
     pub kind: &'static str,
 }
@@ -68,6 +77,11 @@ pub struct ContentStore {
 
 impl ContentStore {
     /// Open (creating dirs + redb index as needed) at `root` (default `.oxide/cache`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `CAS-IO` if the blobs directory cannot be created, and `CAS-DB`
+    /// if the redb index or its tables cannot be opened or committed.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         std::fs::create_dir_all(root.join("blobs")).map_err(|e| {
@@ -89,6 +103,11 @@ impl ContentStore {
     }
 
     /// Store bytes; returns the content key. Idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CAS-IO` on blob write/sync/rename failure, `CAS-DB` on index
+    /// transaction or namespace-list serialization failure.
     pub fn put(&self, data: &[u8], meta: &CasWriteMeta) -> Result<CasKey> {
         let key = CasKey::of(data);
         let compressed = zstd::bulk::compress(data, 3).map_err(ioerr)?;
@@ -148,6 +167,12 @@ impl ContentStore {
     }
 
     /// Fetch bytes by key, verifying the hash on load (§17.2), decompressing zstd.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CAS-DB` if the index lookup fails, `CAS-CORRUPT` if the blob
+    /// file is missing, fails to decompress, or fails blake3 verification, and
+    /// `CAS-IO` on a non-`NotFound` read error.
     pub fn get(&self, key: &CasKey) -> Result<Option<Vec<u8>>> {
         if self.lookup_entry(key)?.is_none() {
             return Ok(None);
@@ -181,6 +206,12 @@ impl ContentStore {
     }
 
     /// Last-use timestamp for GC (§5.4 "garbage collection by last-use time and size cap").
+    ///
+    /// # Errors
+    ///
+    /// Returns `CAS-DB` on index transaction failure, `CAS-NO-ENTRY` if `key`
+    /// is not in the index, and a serialization error (coded `CAS-DB`) if the
+    /// index entry cannot be (de)serialized.
     pub fn touch(&self, key: &CasKey, now: SystemTime) -> Result<()> {
         let hex = key.hex();
         let ms = to_ms(now);
@@ -205,7 +236,7 @@ impl ContentStore {
                 None => {
                     return Err(err(
                         "CAS-NO-ENTRY",
-                        format!("touch: key {} is not in the index", hex),
+                        format!("touch: key {hex} is not in the index"),
                     ));
                 }
             }
@@ -217,9 +248,14 @@ impl ContentStore {
     /// GC: drop entries unused for `max_idle` or when total size exceeds `max_bytes`.
     /// Returns (removed entries, bytes reclaimed). Size pressure evicts in
     /// last-use order (LRU first).
+    ///
+    /// # Errors
+    ///
+    /// Returns `CAS-DB` on index read/write transaction failure or index entry
+    /// (de)serialization failure.
     pub fn gc(&self, max_idle: Duration, max_bytes: u64) -> Result<(usize, u64)> {
         let now = now_ms();
-        let idle_ms = max_idle.as_millis() as u64;
+        let idle_ms = u64::try_from(max_idle.as_millis()).unwrap_or(u64::MAX);
 
         let mut all: Vec<(String, IndexEntry)> = Vec::new();
         {
@@ -300,6 +336,11 @@ impl ContentStore {
     }
 
     /// Total stored bytes (for tests + `oxide cache stats`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `CAS-DB` on index read failure or index entry deserialization
+    /// failure.
     pub fn total_bytes(&self) -> Result<u64> {
         let txn = self.index.begin_read().map_err(dberr)?;
         let t = txn.open_table(INDEX_TABLE).map_err(dberr)?;
@@ -314,6 +355,10 @@ impl ContentStore {
 
     /// Keys recorded under a namespace (§5.4: namespaces are logical listings
     /// over one content-addressed blob pool).
+    ///
+    /// # Errors
+    ///
+    /// Returns `CAS-DB` on index read failure.
     pub fn list_namespace(&self, namespace: &str) -> Result<Vec<CasKey>> {
         let txn = self.index.begin_read().map_err(dberr)?;
         let nst = txn.open_table(NS_TABLE).map_err(dberr)?;
@@ -356,6 +401,11 @@ impl ContentStore {
     /// The key is the blake3 of the **sealed** bytes, so the plain
     /// [`ContentStore::get`] path stays valid — it verifies the blob against
     /// the key without knowing the envelope exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GRAPH-ARTIFACT` if the envelope serialization fails, plus any
+    /// error [`ContentStore::put`] returns (`CAS-IO`/`CAS-DB`).
     pub fn put_sealed(
         &self,
         kind: crate::artifacts::ArtifactKind,
@@ -373,6 +423,12 @@ impl ContentStore {
     /// A caller whose cache may contain pre-envelope (raw) blobs should fall
     /// back to [`ContentStore::get`] on `GRAPH-CORRUPT` — the key is still
     /// valid, only the format differs.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Ok(None)` when the key is absent. Otherwise returns any error
+    /// [`ContentStore::get`] yields, plus `GRAPH-CORRUPT` when the envelope
+    /// fails to open or its `archived_hash` does not match the body.
     pub fn get_sealed(&self, key: &CasKey) -> Result<Option<crate::artifacts::ArtifactEnvelope>> {
         let Some(bytes) = self.get(key)? else {
             return Ok(None);
@@ -386,6 +442,10 @@ pub trait ContentStoreExt {
     /// On-disk blob path for a key.
     fn blob_path(&self, key: &CasKey) -> PathBuf;
     /// Compressed size recorded in the index for a key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CAS-DB` on index read failure.
     fn stored_bytes(&self, key: &CasKey) -> Result<u64>;
     /// Number of blob files under `root/blobs`.
     fn blob_file_count(&self) -> usize;
@@ -409,7 +469,7 @@ impl ContentStoreExt for ContentStore {
         for shard in shards.flatten() {
             if let Ok(files) = std::fs::read_dir(shard.path()) {
                 n += files
-                    .filter(|e| e.as_ref().map(|e| e.path().is_file()).unwrap_or(false))
+                    .filter(|e| e.as_ref().is_ok_and(|e| e.path().is_file()))
                     .count();
             }
         }
@@ -423,8 +483,7 @@ fn now_ms() -> u64 {
 
 fn to_ms(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 fn key_from_hex(hex: &str) -> Option<CasKey> {
@@ -442,11 +501,11 @@ fn dberr<E: std::fmt::Display>(e: E) -> OxideError {
     err("CAS-DB", format!("redb: {e}"))
 }
 
-fn ioerr(e: std::io::Error) -> OxideError {
+fn ioerr(e: impl std::fmt::Display) -> OxideError {
     err("CAS-IO", format!("io: {e}"))
 }
 
-fn jsonerr(e: serde_json::Error) -> OxideError {
+fn jsonerr(e: impl std::fmt::Display) -> OxideError {
     err("CAS-DB", format!("index serialization: {e}"))
 }
 
@@ -508,8 +567,8 @@ mod tests {
         assert_eq!(hex.len(), 64);
         assert_eq!(key_from_hex(&hex), Some(key.clone()));
         assert_eq!(key_from_hex("zz"), None);
-        let _tmp = tempfile::tempdir().unwrap();
-        let store = ContentStore::open(_tmp.path()).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(tmp.path()).unwrap();
         let p = store.blob_path(&key);
         assert!(p.to_string_lossy().ends_with(&format!("{hex}.zst")));
     }
@@ -529,9 +588,9 @@ mod tests {
             .unwrap();
         assert_eq!(store.list_namespace("ns").unwrap(), vec![k.clone()]);
         store
-            .touch(&k, SystemTime::now() - Duration::from_secs(3600))
+            .touch(&k, SystemTime::now() - Duration::from_hours(1))
             .unwrap();
-        store.gc(Duration::from_secs(1800), u64::MAX).unwrap();
-        assert!(store.list_namespace("ns").unwrap().is_empty());
+        store.gc(Duration::from_mins(30), u64::MAX).unwrap();
+        assert_eq!(store.list_namespace("ns").unwrap(), Vec::<CasKey>::new());
     }
 }
