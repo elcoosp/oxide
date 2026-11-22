@@ -37,6 +37,10 @@ pub struct ArtifactEnvelope {
 }
 
 /// Serialize an artifact body + kind to the on-disk envelope.
+///
+/// # Errors
+///
+/// Returns `GRAPH-ARTIFACT` if rkyv serialization of the envelope fails.
 pub fn seal(kind: ArtifactKind, body: Vec<u8>) -> Result<Vec<u8>> {
     let hash = blake3::hash(&body);
     let env = ArtifactEnvelope {
@@ -53,11 +57,25 @@ pub fn seal(kind: ArtifactKind, body: Vec<u8>) -> Result<Vec<u8>> {
 }
 
 /// Deserialize + verify the archived hash against a fresh blake3 of the body.
+///
+/// # Errors
+///
+/// Returns `GRAPH-CORRUPT` on a truncated header or body, an rkyv access or
+/// deserialize failure, or an `archived_hash` mismatch (a tampered or
+/// bit-flipped body).
 pub fn open(bytes: &[u8]) -> Result<ArtifactEnvelope> {
     if bytes.len() < 8 {
         return Err(err("GRAPH-CORRUPT", "artifact: truncated header"));
     }
-    let len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let header: [u8; 8] = bytes[..8]
+        .try_into()
+        .map_err(|_| err("GRAPH-CORRUPT", "artifact: header is not 8 bytes"))?;
+    let len = usize::try_from(u64::from_le_bytes(header)).map_err(|e| {
+        err(
+            "GRAPH-CORRUPT",
+            format!("artifact: length overflows usize: {e}"),
+        )
+    })?;
     if bytes.len() < 8 + len {
         return Err(err(
             "GRAPH-CORRUPT",
