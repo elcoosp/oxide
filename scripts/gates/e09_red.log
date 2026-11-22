@@ -1,0 +1,43 @@
+V2-E09 edge completion — RED transcript (pre-implementation state at base 38da2cad)
+
+The two verified-MISSING legs and their red state before this milestone:
+
+1. Payload inert (P0-1c): the committed `crates/cli/resources/edge.wasm` imports
+   `__wbindgen_*` (7 imports) but `scripts/regen-edge-wasm.sh` deleted the
+   `edge.js` glue (`rm -f crates/cli/resources/edge.js`), so the wasm cannot
+   instantiate. The adapters loader (`edge_handler_js`) did
+   `await import("./edge.wasm")` + `wasm = mod.default ?? mod`; `mod.default`
+   is the (absent) glue's init, so `useWasm` always threw → silent JS fallback.
+   The CI `wasm32-edge` B3 step passed only because docs/deviations.md marked
+   deviation 6 "partially closed (payload inert)" — the payload shipped but
+   nobody ran it.
+
+   $ strings crates/cli/resources/edge.wasm | grep -c __wbindgen_
+   7
+   $ ls crates/cli/resources/edge.js
+   ls: cannot access 'crates/cli/resources/edge.js': No such file or directory
+
+2. Missing core-wasm exports: `oxide-fw-core-wasm` exported only
+   `edge_cache_key`, `merge_head`, `merge_head_structured`, `encode_odf`,
+   `decode_odf`, `edge_manifest_routes`. The spec §V2-E09 work list —
+   `match_route`, `apply_rules`, `odp1_apply`, `sse_frame`, `key_str`,
+   `nonce_splice` — was entirely absent (no bindings, no mirror tests).
+
+   $ cargo test -p oxide-fw-core-wasm e09_mirror 2>&1 | tail -2
+   error[E0425]: cannot find function `match_route` in this scope
+   ... (the mirror tests cannot compile against the missing exports)
+
+3. No spec-shaped worker.js: `cloudflare_worker_entry` was a 6-line delegate
+   (`import handler from "./edge.js"; export default { fetch }`) — no
+   `init`/`matchRoute`/`applyRules`, no asset passthrough, no KV L0 get/put,
+   no tag index.
+
+4. No 400 KB gzip budget gate: `scripts/check-edge-wasm-budget.sh` did not
+   exist; the `wasm32-edge` CI job had no budget step.
+
+5. Capability matrix: `support(Cloudflare, Live)` returned `Degraded`
+   (a silent poll fallback), contradicting the spec's "Live Unsupported".
+
+The mirror tests, bench, and example cannot run (red) until the exports,
+extraction homes, glue, worker, and budget gate land. See e09_green.log for
+the green cycle.
