@@ -31,30 +31,45 @@ use oxide_fw_adapters::{
     Capability, FeatureSupport, Target, capability_markdown_table, degradation, support,
 };
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
+use oxide_fw_plugin::compat_markdown_table;
 
 type Result<T> = std::result::Result<T, OxideError>;
 
-/// One rendered reference page: a stable path under `docs/reference/` and
-/// its deterministic bytes.
+/// One rendered docs page: a stable path (relative to the docs root) and its
+/// deterministic bytes. Most pages live under `docs/reference/`; the
+/// `base` field names the subdirectory (`"reference"` or `""` for a top-level
+/// docs page like `plugin-compat.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedPage {
-    /// The file name under `docs/reference/` (e.g. `capabilities.md`).
+    /// The subdirectory under the docs root (`"reference"` or `""`).
+    pub base: &'static str,
+    /// The file name under `base` (e.g. `capabilities.md`, `plugin-compat.md`).
     pub path: &'static str,
     /// The page bytes (a UTF-8 markdown document).
     pub content: String,
 }
 
-/// One `docs/reference/` page generator: a stable path and a
-/// deterministic render (spec v0.2 §V2-E11).
+/// One docs page generator: a stable path and a deterministic render
+/// (spec v0.2 §V2-E11). Most pages write under `docs/reference/`; a generator
+/// whose page lives at the docs root overrides [`ReferenceGenerator::base`]
+/// to return `""`.
 ///
 /// Implemented by the page structs in this module ([`CapabilitiesPage`],
-/// [`ConfigPage`], [`CliPage`]) and registered in [`generators`]. A
-/// fixture implementing this trait is also the seam's test vocabulary —
-/// the same shape the `ConfigFeatureReport` seam uses.
+/// [`ConfigPage`], [`CliPage`], [`PluginCompatPage`]) and registered in
+/// [`generators`]. A fixture implementing this trait is also the seam's test
+/// vocabulary — the same shape the `ConfigFeatureReport` seam uses.
 pub trait ReferenceGenerator: Sync {
-    /// The file name the page writes under `docs/reference/`.
+    /// The file name the page writes under its [`base`] dir.
     #[must_use]
     fn path(&self) -> &'static str;
+
+    /// The subdirectory under the docs root the page writes to. Defaults to
+    /// `"reference"`; a top-level docs page (e.g. `plugin-compat.md`)
+    /// overrides this to `""` so it writes to `docs/<path>` directly.
+    #[must_use]
+    fn base(&self) -> &'static str {
+        "reference"
+    }
 
     /// Render the page. Deterministic: identical bytes on every call for
     /// a given set of crate versions — `--check` compares bytes, so any
@@ -73,6 +88,7 @@ static CLI_PAGE: CliPage = CliPage;
 static CONFIG_PAGE: ConfigPage = ConfigPage;
 static ENDPOINTS_PAGE: EndpointsPage = EndpointsPage;
 static ERRORS_PAGE: ErrorsPage = ErrorsPage;
+static PLUGIN_COMPAT_PAGE: PluginCompatPage = PluginCompatPage;
 
 /// The registry slice itself, so `generators` hands out a true
 /// `&'static` (a body-literal array would be a temporary).
@@ -82,6 +98,7 @@ static GENERATORS: &[&dyn ReferenceGenerator] = &[
     &CONFIG_PAGE,
     &ENDPOINTS_PAGE,
     &ERRORS_PAGE,
+    &PLUGIN_COMPAT_PAGE,
 ];
 
 /// The registry, in write order (alphabetical by page path, so the
@@ -103,6 +120,7 @@ pub fn generate_all() -> Result<Vec<GeneratedPage>> {
         .iter()
         .map(|g| {
             Ok(GeneratedPage {
+                base: g.base(),
                 path: g.path(),
                 content: g.render()?,
             })
@@ -111,8 +129,11 @@ pub fn generate_all() -> Result<Vec<GeneratedPage>> {
 }
 
 /// The `--check` gate: render every page and compare against the bytes on
-/// disk under `dir`. Returns one `DOC-003` [`Diagnostic`] per stale or
-/// missing page (empty — clean — is the CI `docs-check` pass condition).
+/// disk. `dir` is the docs root; each page resolves to
+/// `dir/<base>/<path>` (`base` is `"reference"` for the reference pages, `""`
+/// for a top-level page like `plugin-compat.md`). Returns one `DOC-003`
+/// [`Diagnostic`] per stale or missing page (empty — clean — is the CI
+/// `docs-check` pass condition).
 ///
 /// Read-only against the filesystem — the gate can run anywhere (CI,
 /// tests, a contributor's machine) without touching the tree.
@@ -125,7 +146,7 @@ pub fn generate_all() -> Result<Vec<GeneratedPage>> {
 pub fn check(dir: &Path) -> Result<Vec<Diagnostic>> {
     let mut findings = Vec::new();
     for g in generators() {
-        let path = dir.join(g.path());
+        let path = dir.join(g.base()).join(g.path());
         let fresh = g.render()?;
         let stale = match std::fs::read_to_string(&path) {
             Ok(on_disk) => on_disk != fresh,
@@ -797,4 +818,228 @@ fn enum_values(a: &clap::builder::Arg) -> String {
         let _ = writeln!(out, "| `{} = {}` | {help} |", a.get_id(), v.get_name());
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// plugin-compat.md — the §V2-E05 page (the kind×hook table + the verified
+// third-party plugins matrix). Top-level (not under docs/reference/), so it
+// overrides `base()` to `""` and writes to `docs/plugin-compat.md`.
+// ---------------------------------------------------------------------------
+
+/// The runner's recorded results — the single source of truth for the
+/// verified-plugins table (§V2-E05). Embedded (not read at runtime) so the
+/// page render stays pure and the binary documents the matrix of the exact
+/// build it was compiled from; `docs-check` fails on drift when the runner
+/// refreshes it.
+const PLUGIN_COMPAT_RESULTS: &str = include_str!("../../../conformance/plugins/results.json");
+
+/// The `DOC-004` diagnostic: the runner's results payload is malformed (the
+/// committed `conformance/plugins/results.json` is not the `{ results, matrix }`
+/// shape the runner writes). A render that cannot read its source cannot be
+/// checked, and the error is the work list — re-run
+/// `node scripts/plugin-compat.mjs --dry-run`.
+fn doc_004(msg: &str) -> OxideError {
+    OxideError::from(
+        Diagnostic::error(
+            "DOC-004",
+            format!("conformance/plugins/results.json: {msg}"),
+        )
+        .with_fix(DOC_004_FIX),
+    )
+}
+
+const DOC_004_FIX: &str =
+    "re-run `node scripts/plugin-compat.mjs --dry-run` to refresh results.json";
+
+/// Extract the verified-plugins matrix markdown from the runner's results.
+/// The runner renders the table (`report.mjs::renderMatrix`) and stores it
+/// as the `matrix` field; this page embeds it verbatim — one source of truth.
+fn plugin_compat_matrix() -> Result<String> {
+    let v: serde_json::Value = serde_json::from_str(PLUGIN_COMPAT_RESULTS)
+        .map_err(|e| doc_004(&format!("invalid JSON — {e}")))?;
+    let matrix = v
+        .get("matrix")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| doc_004("missing `matrix` string field"))?;
+    Ok(matrix.to_string())
+}
+
+/// The prose before the kind×hook table — verbatim from the published page
+/// (header, status legend, the Kinds table, the `## Hooks` heading). The
+/// table itself is [`compat_markdown_table()`], so a support flip is a code
+/// change plus a regenerate, never a prose edit.
+const PLUGIN_COMPAT_PRE: &str = "\
+# Plugin compatibility (SPEC-15.3)
+
+Oxide plugins come in three kinds (SPEC §15.1). This table documents which
+hooks each kind supports and whether the support is wired end-to-end
+(load → invoke → result consumed) or only partially implemented.
+
+The hooks table below is **generated, not hand-maintained**:
+`oxide_fw_plugin::compat_markdown_table()` renders it from the
+kind × hook support model (`compat`), and
+`crates/plugin/tests/compat_tdd.rs::plugin_compat_doc_embeds_the_generated_table`
+pins this file to the render byte-for-byte — a support flip is a code change
+plus a table re-embed, never a silent prose edit. The verified-plugins table
+below is generated from `conformance/plugins/results.json` (the compat
+runner's recorded output) and pinned by `docs-check` (regenerate with
+`oxide docs generate`).
+
+**Status legend:**
+
+- ✅ **wired** — the hook is invoked by the pipeline and its result is used
+- 🟡 **partial** — the host can call the hook, but a call site is still
+  missing (today: the WASM `load`/`resolveId` ABI is callable through
+  `WasmPlugin`'s `call_load_hook`/`call_resolve_hook`; the CLI wire that feeds
+  them into the bundler's `BundleOptions.load_hook`/`resolve_hook` is pending)
+- 🚫 **unsupported** — no host path. For the JS bridge — and for
+  `configureServer`/`cacheHandler` on every non-native kind — declaring it
+  fails at load (`PLG-HOOK`); a WASM declaration of any other hook loads but
+  nothing ever invokes it
+- n/a — the kind does not expose this hook
+
+## Kinds
+
+| Kind | What it is | Host |
+|---|---|---|
+| `js` | A Node ESM module exporting hook functions; runs in the tooling pool. | `plugin:load` / `plugin:call` (Node and V8 backends) |
+| `wasm` | A `wasmtime` component satisfying `oxide:plugin/hooks@0.1.0`. | `oxide_plugin::WasmPlugin` |
+| `native` | A built-in implementation (images, fonts, i18n, mdx). | Rust crate |
+
+## Hooks
+
+";
+
+/// The prose after the verified-plugins table (the argument-shape table, the
+/// route/middleware pool note, the partial-cell explanation, the testing
+/// surface and the load-failure rules). Verbatim from the published page
+/// except the testing-surface list now carries the V2-E05 node suite +
+/// runner + dry-run consumer example.
+const PLUGIN_COMPAT_POST: &str = "\
+## Argument shape
+
+JS hooks are positional on the plugin side, as in Vite. The Rust bridge sends
+a named object, and the worker maps it through a documented table:
+
+| Hook | Arguments |
+|---|---|
+| `transform` | `code, id` |
+| `resolveId` | `specifier, from` |
+| `load` | `id` |
+| `renderChunk` | `file, code` |
+| `generateBundle` | `files` |
+| `transformHtml` | `route, html` |
+| `config`, `configResolved` | `config` |
+| `buildStart` | — |
+| `buildEnd` | `result` |
+| `handleHotUpdate` | `ctx` |
+| other single-argument hooks | the one payload value |
+
+The WASM component ABI mirrors the same shapes with canonical names
+(kebab-case — the component model refuses underscore extern names):
+`transform: func(code: string) -> string`,
+`load: func(specifier: string) -> option<string>` and
+`resolve-id: func(specifier: string, from: string) -> option<string>`.
+A `none` return declines — the next plugin, or the default, wins.
+
+## Route and middleware pools
+
+`routes` and `serverMiddleware` run during `scan_routes`. A lazily-created
+tooling pool is passed by `build`, `dev` (boot and HMR rescan), `start`/serve,
+`routes`, `analyze`, and `check`. A project that declares neither hook never
+starts an extra Node child.
+
+## What \"partial\" means concretely
+
+WASM `transform` is wired end to end. WASM `load`/`resolveId` are the 🟡
+rows: the host speaks their ABI (`call_load_hook`/`call_resolve_hook`, the
+object-safe `HookHost` seam carries both), string fixtures exercise them
+end to end, and the remaining half is the CLI wire that composes a loaded
+component into `BundleOptions.load_hook`/`resolve_hook` alongside the JS
+bridge's hooks. Native plugins are feature backends selected by config
+(`images`, `fonts`, `i18n`, `mdx`, `tailwind`, `manifest`); they do not
+participate in the JS hook chain.
+
+Declaring a bridge-unsupported hook (`configureServer`, `cacheHandler`) at
+load time is a **fail-at-load** today for both JS plugins and WASM manifests
+(`PLG-HOOK` naming the plugin + hook + this table). A WASM component that
+declares a hook its bytes do not export (or export in an uncallable shape)
+**loads** — the host records the gap (`available_hooks`/`missing_hooks`,
+folded into the `LoadTimeReport` the compat runner records as
+`unsupportedHooks`) and the call site skips the hook it cannot invoke.
+
+## Testing the compat surface
+
+- `crates/plugin/tests/compat_tdd.rs` — the support matrix, the generated
+  table's byte-identical embed, the WASM `load`/`resolveId`/string
+  `transform` ABI end to end, and the V2-E05 load-time `unsupported_hooks` +
+  `LoadTimeReport` pins
+- `crates/plugin/tests/wasm_tdd.rs` — WASM hook export probing + transform
+- `crates/plugin/benches/compat.rs` — the matrix fold + render cost
+  (`cargo bench -p oxide-fw-plugin --features bench-util -- compat`)
+- `crates/plugin/examples/compat_matrix.rs` — the walkthrough
+  (`cargo run -p oxide-fw-plugin --example compat_matrix`)
+- `conformance/plugins/test/*.test.mjs` — the V2-E05 node --test gate: the
+  case schema, the assert evaluator, and the report parser (zero deps,
+  V8-free; `node --test conformance/plugins/test/*.test.mjs`)
+- `scripts/plugin-compat.mjs` — the runner (`--dry-run` evaluates recorded
+  build logs V8-free; the consumer example:
+  `node scripts/plugin-compat.mjs --dry-run --out -` prints the matrix)
+- `crates/cli/tests.rs::build_transform_hook_*` — JS-side `transform`
+- `crates/cli/src/tests.rs` — route/middleware hook fixtures and adapters
+- `crates/jshost/tests/integration.rs::v8_plugin_ops_*` — V8 `plugin:load` /
+  `plugin:call` parity, including positional argument order
+
+## Plugin kinds and load failure
+
+- A `js` plugin that declares only unsupported hooks **loads fine**; the
+  pipeline just never calls it.
+- A `wasm` plugin that declares a bridge-unsupported hook fails at load
+  (`PLG-HOOK`); a declared-but-unexported hook loads and rides
+  `missing_hooks()` until a call site would need it.
+- A `native` plugin whose `name` is not a known built-in fails at config
+  load (`CFG-PLUGIN`).
+
+These rules keep a misconfigured plugin visible without breaking a build
+that would have silently ignored it.
+";
+
+/// The §V2-E05 plugin-compat page: the kind×hook table (generated from the
+/// compat model) plus the verified third-party plugins matrix (generated from
+/// the runner's `results.json`). One source of truth, never hand-maintained:
+/// `oxide docs generate` writes this file, `docs-check` fails on drift.
+pub struct PluginCompatPage;
+
+impl ReferenceGenerator for PluginCompatPage {
+    fn path(&self) -> &'static str {
+        "plugin-compat.md"
+    }
+
+    /// Top-level (`docs/plugin-compat.md`), not under `docs/reference/`.
+    fn base(&self) -> &'static str {
+        ""
+    }
+
+    fn render(&self) -> Result<String> {
+        let mut out = String::new();
+        out.push_str(PLUGIN_COMPAT_PRE);
+        out.push_str(&compat_markdown_table());
+        out.push_str("\n## Verified third-party plugins (§V2-E05)\n\n");
+        out.push_str(
+            "The compat runner (`scripts/plugin-compat.mjs`) installs each \
+             plugin into a temp copy of its fixture, builds with `oxide build`, \
+             evaluates the case's `assert` against the emitted `dist/`, and \
+             records `{ status, unsupportedHooks }` from the bridge's \
+             load-time report (`oxide_fw_plugin::LoadTimeReport`). The matrix \
+             below is generated from `conformance/plugins/results.json` — the \
+             runner's recorded output — so the published table is the exact \
+             set the runner verified. Failures are documented, not hidden \
+             (the §V2-E05 acceptance: at least ten third-party plugins \
+             verified).\n\n",
+        );
+        out.push_str(&plugin_compat_matrix()?);
+        out.push_str("\n\n");
+        out.push_str(PLUGIN_COMPAT_POST);
+        Ok(out)
+    }
 }
