@@ -6520,6 +6520,7 @@ version = "0.17.0"
 dependencies = [
  "oxide-fw-adapters",
  "oxide-fw-diagnostics",
+ "oxide-fw-jshost",
  "serde",
  "serde_json",
  "tempfile",
