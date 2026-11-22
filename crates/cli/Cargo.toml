@@ -95,6 +95,21 @@ name = "l0_conditional"
 harness = false
 required-features = ["bench-util"]
 
+# V2-E06: the Module API v1 bench — the config-edit path on a fixture
+# config and the manifest resolution (`resolve_one` → `to_manifest`).
+# Behind the same `bench-util` opt-in (plain `cargo test` never pays the
+# criterion build).
+[[bench]]
+name = "module_api"
+harness = false
+required-features = ["bench-util"]
+
+# V2-E06: the `module_add` consumer example — a V8-free end-to-end
+# walkthrough of the config edit + manifest resolution against the
+# fixture app under `tests/fixtures/analytics-app/`.
+[[example]]
+name = "module_add"
+
 [dependencies]
 chrono = { workspace = true }
 oxc_resolver = { workspace = true }
