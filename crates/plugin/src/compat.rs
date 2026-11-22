@@ -151,3 +151,160 @@ pub fn compat_markdown_table() -> String {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// V2-E05: the load-time unsupported-hook report (the runner's
+// `unsupportedHooks`). The bridge already refuses `configureServer`/
+// `cacheHandler` at load (`PLG-HOOK`); the gap this closes is the SILENT
+// one — a plugin declaring a hook the host simply does not invoke (a WASM
+// component declaring `buildStart`, which the bridge accepts but no host
+// call site feeds). The model below is the single source of truth the
+// compat runner records and the published verified-plugins table renders.
+// ---------------------------------------------------------------------------
+
+/// The hooks the host can actually *invoke* for `kind` — the `Wired` and
+/// `Partial` cells of [`compat`] (a `Partial` hook is host-callable; the
+/// call site that feeds it is the remaining half, but the host speaks the
+/// ABI). A declared hook outside this set has no host path, so a plugin
+/// declaring it is reported at load (not silently dropped).
+///
+/// - `Js`: every bridge-supported hook (the JS bridge calls every declared
+///   hook the bridge supports).
+/// - `Wasm`: `transform`, `load`, `resolveId` (the three the [`WasmPlugin`]
+///   host has typed call methods for).
+/// - `Native`: none (feature backends never cross the bridge — `n/a`).
+#[must_use]
+pub fn host_invocable_hooks(kind: PluginKind) -> Vec<Hook> {
+    HOOKS
+        .iter()
+        .copied()
+        .filter(|h| {
+            matches!(
+                compat(kind, *h),
+                SupportLevel::Wired | SupportLevel::Partial
+            )
+        })
+        .collect()
+}
+
+/// The declared hooks the host will **not** invoke — the runner's
+/// `unsupportedHooks` list (§V2-E05). A declared hook is supported iff it
+/// is *available* (exported in a callable shape for WASM; declared for JS,
+/// where the bridge calls every declared hook) AND *host-invocable* (in
+/// [`host_invocable_hooks`]). Everything else the host skips is reported.
+///
+/// Native plugins never cross the bridge (§15.1 kind 1), so their report is
+/// empty — the feature gate is the unit, not a bridge hook.
+///
+/// # Examples
+///
+/// ```
+/// use oxide_fw_plugin::{Hook, PluginKind, unsupported_hooks};
+/// // A JS plugin declaring `configureServer` (bridge-unsupported) + `transform`.
+/// let declared = [Hook::ConfigureServer, Hook::Transform];
+/// assert_eq!(unsupported_hooks(PluginKind::Js, &declared, &declared),
+///            vec![Hook::ConfigureServer]);
+/// // A WASM plugin that declares `buildStart` (host has no call path) +
+/// // `transform` (exported): `buildStart` is the silent gap this reports.
+/// assert_eq!(unsupported_hooks(PluginKind::Wasm,
+///             &[Hook::BuildStart, Hook::Transform],
+///             &[Hook::Transform]),
+///            vec![Hook::BuildStart]);
+/// ```
+#[must_use]
+pub fn unsupported_hooks(kind: PluginKind, declared: &[Hook], available: &[Hook]) -> Vec<Hook> {
+    if kind == PluginKind::Native {
+        return Vec::new();
+    }
+    let invocable = host_invocable_hooks(kind);
+    declared
+        .iter()
+        .copied()
+        .filter(|h| !(available.contains(h) && invocable.contains(h)))
+        .collect()
+}
+
+/// The load-time report for one loaded plugin (§V2-E05): the declared hooks
+/// the host will not invoke (`unsupported_hooks`) and the subset it wires
+/// into the chain. The compat runner records this as `{ status,
+/// unsupportedHooks }`; the published verified-plugins table renders the
+/// `unsupportedHooks` column from it.
+///
+/// Serialized camelCase so the runner's report parser reads the exact
+/// `unsupportedHooks`/`wiredHooks` field names the spec names, and the
+/// `Hook` values ride their camelCase wire names (`configureServer`,
+/// `transform`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadTimeReport {
+    /// The plugin name (the manifest/config `name`).
+    pub plugin: String,
+    /// The plugin kind (`js` / `wasm` / `native`).
+    pub kind: PluginKind,
+    /// Declared hooks the host will not invoke — the runner's
+    /// `unsupportedHooks`.
+    pub unsupported_hooks: Vec<Hook>,
+    /// Declared hooks the host wires into the chain (available AND
+    /// host-invocable).
+    pub wired_hooks: Vec<Hook>,
+}
+
+impl LoadTimeReport {
+    /// Build the report for one loaded plugin. `declared` is the manifest's
+    /// hook list; `available` is what the host actually observed — for a JS
+    /// plugin the bridge calls every declared hook, so pass `declared` again;
+    /// for a WASM component pass [`crate::WasmPlugin::available_hooks`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oxide_fw_plugin::{Hook, PluginKind, LoadTimeReport};
+    /// let r = LoadTimeReport::new(
+    ///     PluginKind::Js, "my-plug",
+    ///     &[Hook::Transform, Hook::ConfigureServer],
+    ///     &[Hook::Transform, Hook::ConfigureServer]);
+    /// assert_eq!(r.unsupported_hooks, vec![Hook::ConfigureServer]);
+    /// assert_eq!(r.wired_hooks, vec![Hook::Transform]);
+    /// ```
+    #[must_use]
+    pub fn new(
+        kind: PluginKind,
+        name: impl Into<String>,
+        declared: &[Hook],
+        available: &[Hook],
+    ) -> Self {
+        let unsupported = unsupported_hooks(kind, declared, available);
+        let wired = if kind == PluginKind::Native {
+            Vec::new()
+        } else {
+            let invocable = host_invocable_hooks(kind);
+            declared
+                .iter()
+                .copied()
+                .filter(|h| available.contains(h) && invocable.contains(h))
+                .collect()
+        };
+        Self {
+            plugin: name.into(),
+            kind,
+            unsupported_hooks: unsupported,
+            wired_hooks: wired,
+        }
+    }
+
+    /// Whether the host wires every declared hook (no unsupported gap).
+    #[must_use]
+    pub fn is_fully_wired(&self) -> bool {
+        self.unsupported_hooks.is_empty()
+    }
+
+    /// The structured JSON the runner parses from the build log. The line the
+    /// bridge emits is `oxide-plugin-load<TAB><this json>`; the runner's
+    /// `parseReport` scans for that prefix (and falls back to the existing
+    /// `PLG-HOOK` messages the JS bridge raises for `configureServer`/
+    /// `cacheHandler`).
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| String::from("{}"))
+    }
+}
