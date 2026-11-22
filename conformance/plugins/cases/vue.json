@@ -1,0 +1,14 @@
+{
+  "plugin": "@vitejs/plugin-vue@6.0.11",
+  "fixture": "vue-app",
+  "adapter": "vue",
+  "assert": [
+    {
+      "file": "dist/client/*.js",
+      "contains": "_createVNode"
+    }
+  ],
+  "hooks": [
+    "transform"
+  ]
+}
