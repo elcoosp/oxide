@@ -15,7 +15,10 @@ use std::collections::BTreeMap;
 
 mod compat;
 mod wasm;
-pub use compat::{HOOKS, SupportLevel, compat, compat_markdown_table};
+pub use compat::{
+    HOOKS, LoadTimeReport, SupportLevel, compat, compat_markdown_table, host_invocable_hooks,
+    unsupported_hooks,
+};
 pub use wasm::{WasmPlugin, hook_export_name};
 
 /// The object-safe host-side hook surface (§15.1: one hook model for all
@@ -162,6 +165,12 @@ pub enum PluginKind {
 pub struct PluginRegistry {
     pub plugins: Vec<PluginDescriptor>,
     pub load_errors: Vec<Diagnostic>,
+    /// V2-E05: the load-time unsupported-hook report for every registered
+    /// plugin (the runner's `unsupportedHooks`). A plugin that passes the
+    /// bridge-unsupported check still lands a report — the SILENT gaps (a
+    /// WASM component declaring a hook with no host call path) surface here,
+    /// not at runtime. `register` records one entry per accepted plugin.
+    pub reports: Vec<LoadTimeReport>,
 }
 
 impl PluginRegistry {
@@ -190,6 +199,19 @@ impl PluginRegistry {
                 }
             }
         }
+        // V2-E05: record the load-time unsupported-hook report. For a JS
+        // plugin the bridge calls every declared hook, so `available` is
+        // the declared set; the model's `unsupported_hooks` then names the
+        // bridge-unsupported ones (the same set `PLG-HOOK` would refuse —
+        // recorded here for the compat runner even when a plugin slips past
+        // the fail-at-load gate, e.g. a WASM component declaring a hook the
+        // host has no call path for). Same-name replacement updates the
+        // prior report in place (the registry's slot rule).
+        let report = LoadTimeReport::new(plugin.kind, &plugin.name, &plugin.hooks, &plugin.hooks);
+        match self.reports.iter_mut().find(|r| r.plugin == plugin.name) {
+            Some(slot) => *slot = report,
+            None => self.reports.push(report),
+        }
         match self.plugins.iter_mut().find(|p| p.name == plugin.name) {
             Some(slot) => *slot = plugin,
             None => self.plugins.push(plugin),
@@ -217,6 +239,29 @@ impl PluginRegistry {
     #[must_use]
     pub fn has_errors(&self) -> bool {
         !self.load_errors.is_empty()
+    }
+
+    /// V2-E05: the load-time unsupported-hook report for every registered
+    /// plugin (the runner's `unsupportedHooks`). One entry per accepted
+    /// plugin, in registration order; same-name replacements overwrite in
+    /// place (the registry's slot rule).
+    #[must_use]
+    pub fn load_reports(&self) -> &[LoadTimeReport] {
+        &self.reports
+    }
+
+    /// V2-E05: the structured log lines the bridge emits at load time —
+    /// `oxide-plugin-load\t<json>` per plugin. The compat runner's
+    /// `parseReport` scans the build log for this prefix; the existing
+    /// `PLG-HOOK` messages cover the fail-at-load arm for JS plugins that
+    /// declare `configureServer`/`cacheHandler` (the runner reads both).
+    #[must_use]
+    pub fn emit_load_reports_jsonl(&self) -> String {
+        self.reports
+            .iter()
+            .map(|r| format!("oxide-plugin-load\t{}", r.to_json()))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
