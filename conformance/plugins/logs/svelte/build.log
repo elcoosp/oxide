@@ -1,0 +1,3 @@
+oxide build: starting
+oxide-plugin-load	{"plugin": "@sveltejs/vite-plugin-svelte", "kind": "js", "unsupportedHooks": [], "wiredHooks": ["transform"]}
+oxide build: wrote dist/client/index.js
