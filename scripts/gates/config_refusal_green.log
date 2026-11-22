@@ -1,0 +1,30 @@
+# config_refusal Live-degradation gate transcript — GREEN (ADDITIVE)
+
+The red→green pin for the §18 config-key refusal seam's Live-degradation
+warning. Companion to `config_refusal_red.log`.
+
+## GREEN — the pin matches the landed R02 matrix
+
+`warns_live_on_degraded_cells_with_the_documented_string` now iterates ONLY
+the Serverless class (Lambda, Vercel, VercelFunctions, Netlify — Degraded for
+Live, the F05 ruling); the new `refuses_live_on_edge_targets` asserts
+Cloudflare + CloudflarePages (Edge → Unsupported per V2-E09) produce the
+`AST-LIV-001` ERROR with the §18 reason ("does not support live loaders").
+
+    $ cargo test -p oxide-fw-adapters --test config_refusal_tdd
+    test refuses_live_on_static ... ok
+    test refuses_live_on_edge_targets ... ok
+    test refuses_search_on_edge ... ok
+    test refuses_rust_fns_on_every_non_native_target ... ok
+    test the_matrix_row_agrees_with_the_refusal_wiring ... ok
+    test severity_split_on_a_degraded_target ... ok
+    test the_seam_consults_the_matrix_not_a_private_table ... ok
+    test warns_degraded_search_on_node ... ok
+    test warns_live_on_degraded_cells_with_the_documented_string ... ok
+    ...
+    test result: ok. 17 passed; 0 failed; 0 ignored
+
+The degradation string the warning carries is still
+`degradation(target, Capability::Live)` — the single source of truth — for
+every Serverless target. The Edge refusal is now an honest ERROR, not a
+silently-misread warning.
