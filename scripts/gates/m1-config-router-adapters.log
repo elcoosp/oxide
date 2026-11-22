@@ -1,0 +1,163 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+ Downloading crates ...
+  Downloaded mintex v0.1.4
+  Downloaded quick-error v1.2.3
+  Downloaded thousands v0.2.0
+  Downloaded fnv v1.0.7
+  Downloaded rustc-hash v1.1.0
+  Downloaded rand_xorshift v0.5.0
+  Downloaded lazy_static v1.5.1
+  Downloaded wait-timeout v0.2.1
+  Downloaded cfg_aliases v0.2.2
+  Downloaded proc-macro-crate v3.5.0
+  Downloaded toml_datetime v1.1.2+spec-1.1.0
+  Downloaded bit-set v0.11.1
+  Downloaded rusty-fork v0.3.1
+  Downloaded unarray v0.1.4
+  Downloaded core_detect v1.0.0
+  Downloaded bit-vec v0.10.1
+  Downloaded dhat v0.3.3
+  Downloaded rustc-demangle v0.1.28
+  Downloaded borsh-derive v1.8.1
+  Downloaded chacha20 v0.10.2
+  Downloaded console v0.16.6
+  Downloaded addr2line v0.27.1
+  Downloaded toml_parser v1.1.5+spec-1.1.0
+  Downloaded similar v2.7.0
+  Downloaded backtrace v0.3.77
+  Downloaded borsh v1.8.1
+  Downloaded toml_edit v0.25.17+spec-1.1.0
+  Downloaded rand v0.10.3
+  Downloaded insta v1.49.0
+  Downloaded winnow v1.0.4
+  Downloaded proptest v1.12.0
+  Downloaded gimli v0.34.0
+  Downloaded object v0.40.0
+   Compiling rand_core v0.10.1
+   Compiling getrandom v0.4.3
+   Compiling oxide-fw-adapters v0.17.0 (/home/z/my-project/oxide/crates/adapters)
+   Compiling uuid v1.29.0
+   Compiling moka v0.12.16
+   Compiling regex-syntax v0.8.11
+   Compiling oxide-fw-cache v0.17.0 (/home/z/my-project/oxide/crates/cache)
+   Compiling aho-corasick v1.1.5
+   Compiling oxide-fw-jshost v0.17.0 (/home/z/my-project/oxide/crates/jshost)
+   Compiling regex-automata v0.4.18
+   Compiling oxide-fw-config v0.17.0 (/home/z/my-project/oxide/crates/config)
+   Compiling regex v1.13.1
+   Compiling criterion v0.8.2
+   Compiling console v0.16.6
+   Compiling similar v2.7.0
+   Compiling ptr_meta_derive v0.3.2
+   Compiling ptr_meta v0.3.2
+   Compiling rancor v0.1.3
+   Compiling insta v1.49.0
+   Compiling bytecheck_derive v0.8.3
+   Compiling simdutf8 v0.1.5
+   Compiling bytecheck v0.8.3
+   Compiling munge_macro v0.4.7
+   Compiling gimli v0.34.0
+   Compiling munge v0.4.7
+   Compiling rend v0.5.4
+   Compiling addr2line v0.27.1
+   Compiling object v0.40.0
+   Compiling wait-timeout v0.2.1
+   Compiling rkyv_derive v0.8.18
+   Compiling fnv v1.0.7
+   Compiling bit-vec v0.10.1
+   Compiling quick-error v1.2.3
+   Compiling rustc-demangle v0.1.28
+   Compiling rusty-fork v0.3.1
+   Compiling bit-set v0.11.1
+   Compiling rkyv v0.8.18
+   Compiling backtrace v0.3.77
+   Compiling rand v0.10.3
+   Compiling chacha20 v0.10.2
+   Compiling rand_xorshift v0.5.0
+   Compiling memmap2 v0.9.12
+   Compiling mintex v0.1.4
+   Compiling core_detect v1.0.0
+   Compiling unarray v0.1.4
+   Compiling subtle v2.6.1
+   Compiling thousands v0.2.0
+   Compiling lazy_static v1.5.1
+   Compiling rustc-hash v1.1.0
+   Compiling proptest v1.12.0
+   Compiling dhat v0.3.3
+   Compiling oxide-fw-router v0.17.0 (/home/z/my-project/oxide/crates/router)
+    Finished `test` profile [unoptimized] target(s) in 48.71s
+     Running unittests src/lib.rs (target/debug/build/oxide-fw-adapters/d37a3747297547d0/out/oxide_fw_adapters-d37a3747297547d0)
+
+running 31 tests
+test delta::tests::immutable_prefixes_classify_the_bundler_trees ... ok
+test delta::tests::build_id_validation_accepts_the_a04_shape_only ... ok
+test tests::capability_matrix_binary_is_all_full ... ok
+test delta::tests::plan_of_identical_maps_is_all_keep ... ok
+test tests::capability_matrix_cloudflare_exact ... ok
+test tests::capability_matrix_docker_matches_binary ... ok
+test tests::capability_matrix_node_deno_bun_match ... ok
+test tests::capability_matrix_serverless_targets_match ... ok
+test tests::capability_matrix_static_exact ... ok
+test tests::cloudflare_emits_complete_worker_package ... ok
+test tests::cloudflare_wrangler_declares_wasm_when_present ... ok
+test tests::cloudflare_ships_glue_alongside_wasm_when_present ... ok
+test tests::degradation_explains_degraded_only ... ok
+test tests::dockerfile_every_instruction_starts_its_own_line ... ok
+test tests::dockerfile_user_is_on_its_own_line ... ok
+test tests::dockerfile_is_deterministic_distroless_nonroot_healthcheck ... ok
+test tests::edge_capability_rows_are_truthful_per_e09 ... ok
+test tests::edge_handler_js_is_deterministic_and_contains_build_id ... ok
+test tests::edge_merge_head_is_js_only ... ok
+test tests::emit_binary_writes_manifests_deploy_json_and_readme ... ok
+test tests::emit_cloudflare_writes_worker_wrangler_and_deploy ... ok
+test tests::emit_deno_bun_write_server_ts_wrapper ... ok
+test tests::emit_headers_sections_and_ordering ... ok
+test tests::emit_docker_writes_dockerfile_and_deploy ... ok
+test tests::emit_redirects_lines_with_status_default ... ok
+test tests::emit_node_writes_entry_package_and_deploy_json ... ok
+test tests::emit_refuses_unsupported_capability_naming_target_and_feature ... ok
+test tests::emit_serverless_targets_write_handler_and_configs ... ok
+test tests::emit_static_copies_prerendered_and_emits_headers_redirects ... ok
+test tests::js_entries_are_deterministic_and_reference_handler_contract ... ok
+test tests::emit_static_refuses_dynamic_route_without_prerender ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/config_refusal_tdd.rs (target/debug/build/oxide-fw-adapters/e9809009766f1084/out/config_refusal_tdd-e9809009766f1084)
+
+running 16 tests
+test allows_live_on_full_cells ... ok
+test allows_fonts_used_when_every_route_is_static ... ok
+test allows_rust_fns_on_native_targets ... ok
+test allows_search_on_native_targets ... ok
+test every_target_with_an_empty_report_has_no_findings ... ok
+test finding_order_is_deterministic ... ok
+test fonts_rule_needs_both_halves ... ok
+test refuses_fonts_used_with_non_static_routes_on_every_target ... ok
+test refuses_live_on_static ... ok
+test refuses_rust_fns_on_every_non_native_target ... ok
+test refuses_search_on_edge ... ok
+test severity_split_on_a_degraded_target ... ok
+test the_matrix_row_agrees_with_the_refusal_wiring ... ok
+test the_seam_consults_the_matrix_not_a_private_table ... ok
+test warns_degraded_search_on_node ... ok
+test warns_live_on_degraded_cells_with_the_documented_string ... FAILED
+
+failures:
+
+---- warns_live_on_degraded_cells_with_the_documented_string stdout ----
+
+thread 'warns_live_on_degraded_cells_with_the_documented_string' (26977) panicked at crates/adapters/tests/config_refusal_tdd.rs:148:9:
+assertion `left == right` failed: degraded on cloudflare
+  left: Error
+ right: Warning
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    warns_live_on_degraded_cells_with_the_documented_string
+
+test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p oxide-fw-adapters --test config_refusal_tdd`
