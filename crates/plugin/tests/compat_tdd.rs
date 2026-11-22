@@ -452,7 +452,10 @@ fn unsupported_hooks_names_the_bridge_refused_ones_for_js() {
     );
     // A clean JS plugin (no bridge-unsupported hook) reports nothing.
     let clean = [Hook::Transform, Hook::ResolveId, Hook::Load];
-    assert!(unsupported_hooks(PluginKind::Js, &clean, &clean).is_empty());
+    assert_eq!(
+        unsupported_hooks(PluginKind::Js, &clean, &clean),
+        [] as [oxide_fw_plugin::Hook; 0]
+    );
 }
 
 #[test]
@@ -473,7 +476,10 @@ fn unsupported_hooks_folds_both_wasm_gaps() {
 fn unsupported_hooks_is_empty_for_native() {
     // Native plugins never cross the bridge — the report is a no-op.
     let declared = [Hook::Transform, Hook::ConfigureServer];
-    assert!(unsupported_hooks(PluginKind::Native, &declared, &declared).is_empty());
+    assert_eq!(
+        unsupported_hooks(PluginKind::Native, &declared, &declared),
+        [] as [oxide_fw_plugin::Hook; 0]
+    );
 }
 
 #[test]
