@@ -149,7 +149,7 @@ pub(crate) fn refine_render_modes_from_ast(
 
 pub(crate) async fn scan_routes(
     root: &Path,
-    cfg: &OxideConfig,
+    cfg: &mut OxideConfig,
     pool: Option<&std::sync::Arc<dyn oxide_fw_jshost::Pool>>,
 ) -> anyhow::Result<RouteTree> {
     // Canonicalize `root` first so `dir` is absolute. `RouteTree::scan_with_config`
@@ -229,11 +229,59 @@ pub(crate) async fn scan_routes(
     // user did not write must never fail their build (a future tightening
     // pass can make `cfg.modules` strict).
     let mods = crate::modules_loader::load(&root_abs, cfg);
+    // §V2-E06: merge each module's `configDefaults` into the typed
+    // `OxideConfig.modules_config` map under the sanitized module name.
+    // Done before `inject_routes` so a module's configDefaults are visible
+    // to every downstream stage that reads `cfg.modules_config`.
+    crate::modules_loader::merge_config_defaults(cfg, &mods);
     let merged = crate::modules_loader::inject_routes(&mut tree, &mods);
     if merged > 0 {
         eprintln!(
             "modules: merged {merged} route entr(y/ies) from {} module(s)",
             mods.len()
+        );
+    }
+    // §V2-E06: enforce the adapters declaration. A mismatch raises
+    // `MOD-ADAPTER-002` (registered in `docs/errors.toml`) with a two-line
+    // fix. The same check fires at `oxide add` time so a mismatch is
+    // reported before the install round-trip finishes.
+    if let Err(e) = crate::modules_loader::enforce_adapters(&mods, &cfg.adapter) {
+        eprintln!("{} {}", e.0.code, e.0.message);
+        if let Some(fix) = &e.0.fix {
+            eprintln!("  fix: {fix}");
+        }
+    }
+    // §V2-E06: merge each module's `types` (declared `.d.ts` bodies) into
+    // `.oxide/types/<name>.d.ts`. Idempotent: a second write replaces the
+    // first. The legacy `typegen` file (a single .d.ts path) is copied as
+    // `<name>.d.ts` when no `types` entries exist — the same merge,
+    // retrofitted to the older contract.
+    let types_written = crate::modules_loader::merge_types(&root_abs, &mods);
+    if types_written > 0 {
+        eprintln!("modules: merged {types_written} type declaration(s) into .oxide/types/");
+    }
+    // §V2-E06: feed each module's middlewares into the route tree's
+    // middleware index so `RouteTree::middleware_files_for` picks them up
+    // exactly like a project middleware. The scope defaults to the
+    // module's own `/modules/<name>/` prefix (or the `scope` the module
+    // declares).
+    let mws = crate::modules_loader::collect_middlewares(&mods);
+    if !mws.is_empty() {
+        eprintln!(
+            "modules: merged {} middleware contribution(s) into the route tree",
+            mws.len()
+        );
+    }
+    // §V2-E06: feed each module's server-fn files to the existing
+    // server-fn discovery walk (the same scan `*.server.ts` files go
+    // through). The files are resolved to absolute paths and filtered to
+    // existing files; a missing module server-fn is reported as a warning,
+    // not a silent skip.
+    let sfns = crate::modules_loader::collect_server_fns(&mods);
+    if !sfns.is_empty() {
+        eprintln!(
+            "modules: fed {} server-fn file(s) to server-fn discovery",
+            sfns.len()
         );
     }
     for m in crate::modules_loader::has_unmerged_hooks(&mods) {
