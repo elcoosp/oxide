@@ -270,6 +270,18 @@ pub struct OxideConfig {
     /// typed parse).
     #[serde(default)]
     pub check: CheckConfig,
+    /// V2-F19 (§V2-F19): the `permissions` section — the per-route
+    /// capability grant. `permissions.default = 'allow' | 'deny'` (v0.2
+    /// ships allow-all; deny-by-default is the opt-in) plus the
+    /// `net`/`env`/`fs` allow-lists a route's `export const permissions`
+    /// in `page.server.ts` overrides per route. The typed policy lives
+    /// in `oxide_fw_jshost::perm::PermissionSet`; this config carries
+    /// the global default posture and the global allow-lists a route
+    /// inherits when it declares none. A bad shape fails the load with
+    /// `CFG-PERM` (the raw-`Value` validation pass runs before the
+    /// typed parse).
+    #[serde(default)]
+    pub permissions: PermissionsConfig,
 }
 
 /// V2-C11 (§V2-C11): the `check` knobs. Unknown keys are rejected
@@ -301,6 +313,62 @@ pub enum TypecheckBackend {
     Tsc,
     /// Skip the typecheck arm entirely.
     Off,
+}
+
+/// V2-F19 (§V2-F19): the `permissions` section — the global default
+/// posture and the global allow-lists a route inherits when it declares
+/// no `export const permissions` in `page.server.ts`. Unknown keys are
+/// rejected (`deny_unknown_fields`, enforced by the `CFG-PERM` pass) so
+/// a typo'd knob cannot silently widen the grant.
+///
+/// The per-route override is `export const permissions = { net, env, fs }`
+/// in `page.server.ts` (scanned by `declares_permissions`); the typed
+/// policy a route's grant deserializes into is
+/// `oxide_fw_jshost::perm::PermissionSet`. This config carries the
+/// global default (`permissions.default`) and the global lists a route
+/// falls back to — `None` on every field means unrestricted (the v0.2
+/// default-allow stance).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "camelCase", default)]
+pub struct PermissionsConfig {
+    /// The default posture when a route declares no `permissions` block.
+    /// v0.2 ships `allow` (the honest "no opt-in yet" stance); `deny` is
+    /// the opt-in a security-conscious app sets so an undeclared route
+    /// gets no capability by default. Mirrors
+    /// `oxide_fw_jshost::perm::PermissionDefault`.
+    pub default: oxide_fw_jshost::perm::PermissionDefault,
+    /// `net: ['api.stripe.com', '*.internal']` — the global host-pattern
+    /// allow-list a route inherits. `None` = unrestricted (the field is
+    /// absent); an empty `Vec` = no host (deny-all for net, the explicit
+    /// arm). The host match uses
+    /// `oxide_fw_jshost::perm::host_allowed`'s `*.` label-boundary rule.
+    pub net: Option<Vec<String>>,
+    /// `env: ['STRIPE_KEY']` — the global env-var-name allow-list.
+    /// `None` = unrestricted; `Some([])` = no name. Names match exactly
+    /// (case-sensitive — env names are).
+    pub env: Option<Vec<String>>,
+    /// `fs: ['./data']` — the global fs-path-prefix allow-list. `None` =
+    /// unrestricted; `Some([])` = no path. A `./data` entry allows
+    /// `./data/anything` (prefix match, `./`-normalized).
+    pub fs: Option<Vec<String>>,
+}
+
+impl PermissionsConfig {
+    /// The typed grant this config implies — the global allow-lists as a
+    /// `PermissionSet`, for the dispatcher to seed when a route declares
+    /// no per-route override. The `default` posture is carried separately
+    /// (the `PermissionSet`'s `None` fields are unrestricted regardless;
+    /// `default = Deny` is the opt-in that makes an absent field deny-all
+    /// rather than unrestricted — the dispatcher applies it by seeding
+    /// `Some([])` for absent fields when `default == Deny`).
+    #[must_use]
+    pub fn to_permission_set(&self) -> oxide_fw_jshost::perm::PermissionSet {
+        oxide_fw_jshost::perm::PermissionSet {
+            net: self.net.clone(),
+            env: self.env.clone(),
+            fs: self.fs.clone(),
+        }
+    }
 }
 
 /// V2-F14 (Appendix V2.L): the `offline` knobs. Unknown keys are
@@ -737,6 +805,7 @@ impl Default for OxideConfig {
             deploy: DeployConfig::default(),
             offline: OfflineConfig::default(),
             check: CheckConfig::default(),
+            permissions: PermissionsConfig::default(),
         }
     }
 }
