@@ -45,6 +45,11 @@ pub mod trace;
 // SPEC-02 / §4.6.3: the V8-free Node-backend selection classifier (the
 // pure half the client bundle path consults; see the module docs).
 pub mod node_compat;
+// V2-F19: the per-route capability permission policy substrate — pure
+// Rust (no V8), so the host-match unit pins run in every
+// `--no-default-features` build. The V8-bound enforcement half (the
+// `PermGuard` RAII, the per-op deny sites) lives in `v8_ops`.
+pub mod perm;
 // M1 (capability matrix): the embedded V8 isolate (deno_core) rides the
 // non-default `v8` feature; the Node worker backend and the snapshot
 // data model below are feature-independent.
@@ -73,6 +78,13 @@ pub use loader_host::{
     MiddlewareOutcome, RevalidateEvent, ServerFnError, ServerFnHost, SocketHost, SocketOutcome,
 };
 pub use tooling_pool::{ModuleCall, ToolingModules};
+// V2-F19: the per-route capability permission policy (re-exported so the
+// dispatcher, the CLI and the consumer example reach the grant types
+// without a second `mod` declaration).
+pub use perm::{
+    PermissionDefault, PermissionSet, any_route_denies_net, host_allowed, route_permissions,
+    set_route_permissions, url_host,
+};
 
 pub type Result<T> = std::result::Result<T, OxideError>;
 
@@ -2066,6 +2078,20 @@ fn spawn_v8_worker(
                             // late fetches during a pending render propagate
                             // too.
                             let _trace_parent = crate::v8_ops::TraceParentGuard::for_call(&input);
+                            // V2-F19: the per-route capability permission
+                            // grant rides this call's route (the
+                            // dispatcher records `request_id` →
+                            // `PermissionSet` via `set_route_permissions`
+                            // before calling into the isolate). The guard
+                            // seeds the `PERM_CTX` thread-local the
+                            // `op_oxide_fetch` / `op_oxide_env_get` /
+                            // `op_oxide_fs_read` boundary checks consult,
+                            // and clears it on drop — a previous call's
+                            // grant never leaks into the next. It stays
+                            // alive through the streaming drive so late
+                            // fetches during a pending render are checked
+                            // too (the same scope as the trace guard).
+                            let _perm = crate::v8_ops::PermGuard::for_call(&input);
                             let res = v8_dispatch(&mut js, &entry, &input).await;
                             // PERF-03: if this call opened a streaming render,
                             // hand the receiver to the caller FIRST, then drive
@@ -4213,6 +4239,32 @@ async fn op_dispatch(
                 .get("url")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| err("JSH-OP", "fetch requires a string `url`"))?;
+            // V2-F19 (D35): on Node the enforcement is ADVISORY — the
+            // runtime cannot sandbox a violation, so a denied host emits
+            // a structured `tracing::warn!` (code `PRM-001`, the host)
+            // and the fetch proceeds. The matrix records `permissions`
+            // as `degraded` on `node`/`deno`/`bun` for this reason. The
+            // Native (V8) path hard-blocks via `op_oxide_fetch`'s
+            // `check_net`; this Node arm is the advisory twin.
+            if let Some(host) = crate::perm::url_host(url) {
+                // The Node worker does not carry the per-call PERM_CTX
+                // thread-local (that is V8-only); the advisory reads the
+                // route→grant registry the dispatcher populated. The
+                // route is not on `op_dispatch`'s args, so the advisory
+                // checks the global registry's grants against the host —
+                // a warn fires when ANY registered route's grant would
+                // deny the host (the conservative posture; the runtime
+                // cannot attribute the call to a single route on this
+                // path).
+                if crate::perm::any_route_denies_net(&host) {
+                    tracing::warn!(
+                        target: "oxide::perm",
+                        code = "PRM-001",
+                        host = %host,
+                        "Node advisory: a route's permissions grant denies fetch to `{host}` (D35: the runtime cannot sandbox, the fetch proceeds)"
+                    );
+                }
+            }
             let body = args
                 .get("body_b64")
                 .and_then(|v| v.as_str())
