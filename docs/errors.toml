@@ -602,6 +602,26 @@ fix = "Check the path's permissions and re-run `oxide migrate`"
 message = "rename target {to} already exists; the migration would overwrite it"
 fix = "Resolve the collision (the source is {from}), or apply in a clean git tree"
 
+[MOD-ADAPTER]
+message = "module `{name}` supports adapters [{adapters}] but the project adapter is `{adapter}` (§15.4)"
+fix = "add `{adapter}` to the module's `adapters` declaration, or remove the module from `modules: []` in oxide.config.ts"
+
+[MOD-ADAPTER-001]
+message = "module `{name}` supports adapters [{adapters}] but the host adapter is `{adapter}` (§V2-E06)"
+fix = "add `{adapter}` to the module's `adapters` declaration, or\n  remove the module from `modules: []` in oxide.config.ts"
+
+[MOD-ADAPTER-002]
+message = "module `{name}` declares adapters [{adapters}] but the project adapter is `{adapter}` (§V2-E06)"
+fix = "add `{adapter}` to the module's `adapters` declaration, or\n  remove the module from `modules: []` in oxide.config.ts"
+
+[MOD-CONFIG-DYNAMIC]
+message = "oxide.config.ts does not call `defineConfig({ … })` with an object literal — the editor cannot safely edit a dynamic config (§V2-E06)"
+fix = "add `modules: ['{module}']` to the `defineConfig({ … })` object literal manually, or\n  convert the config to a static `export default defineConfig({ … })` shape"
+
+[MOD-CONFIG-PARSE]
+message = "oxide.config.ts calls `defineConfig(` but the object literal is malformed (§V2-E06)"
+fix = "repair the config's `defineConfig({ … })` shape so the editor can locate the `modules:` key"
+
 [NOT-FOUND]
 message = "JSH-ACTION"
 
