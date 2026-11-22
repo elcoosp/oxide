@@ -1,0 +1,19 @@
+# M1(a) RED baseline — per-crate pedantic finding counts
+# Captured: 2026-11-22T18:08:45Z  rustc rustc 1.100.0 (0ef1bc386 2026-11-09)
+# Command: cargo clippy -p <crate> [--no-default-features] --all-targets -- -D warnings -W clippy::pedantic
+# (jshost + cli run --no-default-features: V8-free; assets default: avif off, nasm-free)
+# The count is 'error:' lines minus the 'could not compile' summary
+# (excludes the Cargo.toml manifest warning and the build-failed notice).
+
+crate      findings   exit
+-----      --------   ----
+graph      56         ?
+bundler    102        ?
+cache      123        ?
+dev        59         ?
+plugin     2          ?
+server     102        ?
+jshost     102        ?
+cli        106        ?
+assets     62         ?
+TOTAL      714       
