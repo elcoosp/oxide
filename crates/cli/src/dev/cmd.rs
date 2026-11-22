@@ -196,7 +196,7 @@ pub(crate) async fn cmd_dev(
     if let Err(e) = crate::native_plugins::parse_native_plugins(&cfg) {
         anyhow::bail!("{} {}", e.0.code, e.0.message);
     }
-    let tree = scan_routes_with_plugins(&rootp, &cfg).await?;
+    let tree = scan_routes_with_plugins(&rootp, &mut cfg).await?;
     // §16.5: emit content entries before the server starts so a dev loader's
     // first `getCollection` call works without a prior `oxide build`.
     emit_content_search_indexes(&rootp, &cfg, &rootp.join("dist"), w)?;
@@ -1671,7 +1671,14 @@ pub(crate) async fn cmd_dev(
                         // the client still sees something.
                         let routes_dir = rootp.join(&cfg.routes.dir);
                         if path.starts_with(&routes_dir) {
-                            match scan_routes(&rootp, &cfg, hmr_pool.as_ref()).await {
+                            // §V2-E06: scan_routes now takes `&mut OxideConfig`
+                            // so the module-configDefaults merge lands. The HMR
+                            // rescan clones the captured cfg (cheap; the watch
+                            // closure borrows it) — a per-rescan clone is the
+                            // documented trade for not threading `&mut` through
+                            // the watch closure.
+                            let mut rescan_cfg = cfg.clone();
+                            match scan_routes(&rootp, &mut rescan_cfg, hmr_pool.as_ref()).await {
                                 Ok(fresh) => {
                                     let refined = refine_render_modes_from_ast(&rootp, &cfg, fresh);
                                     let new_tree = std::sync::Arc::new(refined);
