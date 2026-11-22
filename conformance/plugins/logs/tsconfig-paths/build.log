@@ -1,0 +1,3 @@
+oxide build: starting
+oxide-plugin-load	{"plugin": "vite-tsconfig-paths", "kind": "js", "unsupportedHooks": [], "wiredHooks": ["resolveId"]}
+oxide build: wrote dist/client/index.js
