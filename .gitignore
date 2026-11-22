@@ -84,3 +84,5 @@ upload/
 # The ship delivery files (per-session, never committed)
 /ship.toml
 /.github/pr-body.md
+.github/pr-body.md
+ship.toml
