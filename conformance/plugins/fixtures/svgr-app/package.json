@@ -1,0 +1,15 @@
+{
+  "name": "svgr-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "V2-E05 plugin-compat fixture for vite-plugin-svgr@5.2.0 \u2014 a minimal oxide app the runner copies, installs the plugin into, and builds.",
+  "scripts": {
+    "build": "oxide build"
+  },
+  "dependencies": {
+    "vite-plugin-svgr": "^5.2.0",
+    "@oxide-fw/react": "workspace:*",
+    "@oxide-fw/core": "workspace:*"
+  }
+}
