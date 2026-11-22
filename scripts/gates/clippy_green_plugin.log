@@ -1,0 +1,15 @@
+# M1(b) GREEN transcript — oxide-fw-plugin (2 findings → 0)
+# rustc rustc 1.100.0 (0ef1bc386 2026-11-09)
+# $ cargo clippy -p oxide-fw-plugin --all-targets -- -D warnings -W clippy::pedantic
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.22s
+EXIT=0
+
+# $ cargo test -p oxide-fw-plugin
+test crates/plugin/src/wasm.rs - wasm::WasmPlugin::load_time_report (line 252) - compile ... ok
+test crates/plugin/src/compat.rs - compat::LoadTimeReport::new (line 260) ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.50s; merged doctests compilation took 0.50s
