@@ -19,8 +19,8 @@
 //! provides.
 
 use oxide_fw_plugin::{
-    Hook, HookHost, PluginKind, SupportLevel, WasmPlugin, WasmPluginManifest, compat,
-    compat_markdown_table,
+    Hook, HookHost, LoadTimeReport, PluginKind, PluginRegistry, SupportLevel, WasmPlugin,
+    WasmPluginManifest, compat, compat_markdown_table, host_invocable_hooks, unsupported_hooks,
 };
 
 /// `unwrap_err` needs the Ok type to be `Debug`; wasmtime handles are not.
@@ -406,4 +406,167 @@ fn wasm_wrong_shape_load_errors_cleanly() {
     let e = err_of(plugin.call_load_hook("./x.ts"));
     assert_eq!(e.0.code, "PLG-WASM");
     assert!(e.0.message.contains("load"), "{}", e.0.message);
+}
+
+// ---------- V2-E05: the load-time unsupported-hook report ----------
+
+/// Build a [`oxide_fw_plugin::PluginDescriptor`] for the registry pins.
+fn descriptor(name: &str, kind: PluginKind, hooks: Vec<Hook>) -> oxide_fw_plugin::PluginDescriptor {
+    oxide_fw_plugin::PluginDescriptor {
+        name: name.into(),
+        kind,
+        enforce: None,
+        hooks,
+        options: serde_json::json!({}),
+        supported_adapters: vec![],
+    }
+}
+
+#[test]
+fn host_invocable_hooks_matches_the_compat_model() {
+    // The host can invoke exactly the Wired + Partial cells of `compat`.
+    let js = host_invocable_hooks(PluginKind::Js);
+    assert!(js.contains(&Hook::Transform));
+    assert!(js.contains(&Hook::ResolveId));
+    assert!(!js.contains(&Hook::ConfigureServer));
+    assert!(!js.contains(&Hook::CacheHandler));
+    let wasm = host_invocable_hooks(PluginKind::Wasm);
+    assert_eq!(wasm.len(), 3, "wasm host invokes transform/load/resolveId");
+    assert!(wasm.contains(&Hook::Transform));
+    assert!(wasm.contains(&Hook::Load));
+    assert!(wasm.contains(&Hook::ResolveId));
+    assert!(
+        host_invocable_hooks(PluginKind::Native).is_empty(),
+        "native plugins never cross the bridge"
+    );
+}
+
+#[test]
+fn unsupported_hooks_names_the_bridge_refused_ones_for_js() {
+    // A JS plugin declaring `configureServer` + `transform`: the bridge
+    // refuses `configureServer` (PLG-HOOK); the model names it unsupported.
+    let declared = [Hook::ConfigureServer, Hook::Transform];
+    assert_eq!(
+        unsupported_hooks(PluginKind::Js, &declared, &declared),
+        vec![Hook::ConfigureServer]
+    );
+    // A clean JS plugin (no bridge-unsupported hook) reports nothing.
+    let clean = [Hook::Transform, Hook::ResolveId, Hook::Load];
+    assert!(unsupported_hooks(PluginKind::Js, &clean, &clean).is_empty());
+}
+
+#[test]
+fn unsupported_hooks_folds_both_wasm_gaps() {
+    // Gap 1: declared-but-unexported (`buildStart` is not in `available`).
+    // Gap 2: exported-but-no-host-path is covered by the same filter — a
+    // declared hook not in the host-invocable set {transform,load,resolveId}.
+    // Here `buildStart` is both unexported AND not host-invocable.
+    let declared = [Hook::Transform, Hook::BuildStart];
+    let available = [Hook::Transform];
+    assert_eq!(
+        unsupported_hooks(PluginKind::Wasm, &declared, &available),
+        vec![Hook::BuildStart]
+    );
+}
+
+#[test]
+fn unsupported_hooks_is_empty_for_native() {
+    // Native plugins never cross the bridge — the report is a no-op.
+    let declared = [Hook::Transform, Hook::ConfigureServer];
+    assert!(unsupported_hooks(PluginKind::Native, &declared, &declared).is_empty());
+}
+
+#[test]
+fn load_time_report_partitions_declared_hooks() {
+    let r = LoadTimeReport::new(
+        PluginKind::Js,
+        "p",
+        &[Hook::Transform, Hook::ConfigureServer, Hook::CacheHandler],
+        &[Hook::Transform, Hook::ConfigureServer, Hook::CacheHandler],
+    );
+    assert_eq!(
+        r.unsupported_hooks,
+        vec![Hook::ConfigureServer, Hook::CacheHandler]
+    );
+    assert_eq!(r.wired_hooks, vec![Hook::Transform]);
+    assert!(!r.is_fully_wired());
+    // A fully-wired plugin reports no gap.
+    let clean = LoadTimeReport::new(PluginKind::Js, "p", &[Hook::Transform], &[Hook::Transform]);
+    assert!(clean.is_fully_wired());
+}
+
+#[test]
+fn load_time_report_json_uses_camel_case_hook_names() {
+    // The runner's `parseReport` reads camelCase hook names + the
+    // `unsupportedHooks`/`wiredHooks` field names the spec names.
+    let r = LoadTimeReport::new(
+        PluginKind::Js,
+        "vite-plugin-x",
+        &[Hook::Transform, Hook::ConfigureServer],
+        &[Hook::Transform, Hook::ConfigureServer],
+    );
+    let json = r.to_json();
+    assert!(json.contains("\"plugin\":\"vite-plugin-x\""), "{json}");
+    assert!(json.contains("\"kind\":\"js\""), "{json}");
+    assert!(
+        json.contains("\"unsupportedHooks\":[\"configureServer\"]"),
+        "{json}"
+    );
+    assert!(json.contains("\"wiredHooks\":[\"transform\"]"), "{json}");
+}
+
+#[test]
+fn wasm_load_time_report_records_the_silent_gap() {
+    // A component exporting `transform` only, declaring `transform` +
+    // `buildStart`: `buildStart` has no host call path → the report names
+    // it (not silently dropped). This is the V2-E05 acceptance: a plugin
+    // declaring a hook the host does not invoke is reported at load time.
+    let plugin = WasmPlugin::load(
+        TRANSFORM_STRING_WAT.as_bytes(),
+        manifest(vec![Hook::Transform, Hook::BuildStart]),
+        None,
+    )
+    .unwrap();
+    let report = plugin.load_time_report();
+    assert_eq!(report.kind, PluginKind::Wasm);
+    assert_eq!(report.unsupported_hooks, vec![Hook::BuildStart]);
+    assert_eq!(report.wired_hooks, vec![Hook::Transform]);
+}
+
+#[test]
+fn registry_records_a_load_report_per_accepted_plugin() {
+    // `register` lands a report even for a clean plugin (the SILENT gap
+    // substrate); same-name replacement overwrites the report in place.
+    let mut reg = PluginRegistry::default();
+    reg.register(descriptor("a", PluginKind::Js, vec![Hook::Transform]));
+    reg.register(descriptor(
+        "b",
+        PluginKind::Js,
+        vec![Hook::ResolveId, Hook::Load],
+    ));
+    let reports = reg.load_reports();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[0].plugin, "a");
+    assert!(reports[0].is_fully_wired());
+    assert_eq!(reports[1].plugin, "b");
+    assert!(reports[1].is_fully_wired());
+    // Replacement overwrites in place (the registry's slot rule).
+    reg.register(descriptor("a", PluginKind::Js, vec![Hook::ConfigureServer]));
+    // `configureServer` fails the bridge check → not added, but the prior
+    // report for `a` is unchanged (register returns before recording).
+    assert_eq!(reg.load_reports().len(), 2);
+    assert_eq!(reg.load_reports()[0].plugin, "a");
+}
+
+#[test]
+fn registry_emit_load_reports_jsonl_carries_the_prefix() {
+    let mut reg = PluginRegistry::default();
+    reg.register(descriptor("a", PluginKind::Js, vec![Hook::Transform]));
+    let out = reg.emit_load_reports_jsonl();
+    assert!(
+        out.starts_with("oxide-plugin-load\t"),
+        "the runner scans the build log for this prefix"
+    );
+    assert!(out.contains("\"plugin\":\"a\""), "{out}");
+    assert!(out.contains("\"unsupportedHooks\":[]"), "{out}");
 }
