@@ -226,16 +226,14 @@ pub(crate) async fn start_server_inner_full(
         }
         cfg
     };
+    let mut cfg = cfg;
     set_session_ttl(cfg.security.session_ttl_secs);
     // §10.1: refine inferred render modes from the AST, exactly as `oxide build`
     // does — otherwise the live server sees the scanner's line-oriented guess
     // (and `None` for a route with no `page.server.ts`), and the §11 L0 layer
     // cannot tell a static route from a dynamic one.
-    let tree = std::sync::Arc::new(refine_render_modes_from_ast(
-        &rootp,
-        &cfg,
-        scan_routes(&rootp, &cfg, stack.tooling_pool.as_ref()).await?,
-    ));
+    let scanned = scan_routes(&rootp, &mut cfg, stack.tooling_pool.as_ref()).await?;
+    let tree = std::sync::Arc::new(refine_render_modes_from_ast(&rootp, &cfg, scanned));
 
     // Native ESM dev server (Phase 1): build the shared state the dispatch
     // intercept uses to serve `/src/*` and `/@*` as transformed ESM. Opt-in
