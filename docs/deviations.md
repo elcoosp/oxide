@@ -71,13 +71,17 @@ wasm call silently returned `[]`, so every edge response had an empty head.
 exposed as its own export. That is `merge_head_structured`; the flat export
 remains a different, intentionally-unrouted API.
 
-## Edge wasm build requires self-hosting layout (P0-1c) — partially closed (payload inert)
+## Edge wasm build requires self-hosting layout (P0-1c) — closed (payload functional)
 
-**Status.** Partially closed — Rust implementation and payload ship, but the payload is inert. `crates/cli/resources/edge.wasm` is the wasm-bindgen-processed artifact with `__wbindgen_*` imports; the corresponding `edge.js` glue that would satisfy those imports is deleted by `scripts/regen-edge-wasm.sh` (`rm -f .../edge.js`) and not committed. The loader (`crates/adapters/src/lib.rs:905`) does `await import("./edge.wasm")` and expects `mod.default` to be the callable interface — which only the missing glue provides. `useWasm` catches the instantiation error and silently falls back to the semantically-identical JS path.
+**Status.** Closed — the wasm-bindgen `--target web` glue (`crates/cli/resources/edge.js`) ships alongside the processed wasm (`crates/cli/resources/edge.wasm`), and the adapters Cloudflare loader imports the glue + `init(env.EDGE)` so the wasm actually instantiates. `scripts/regen-edge-wasm.sh` no longer `rm -f`s the glue (it keeps `edge.js`, runs `wasm-opt -Oz` when available, and renames `edge_bg.wasm` → `edge.wasm`); the stale `-p oxide-core-wasm` crate name is fixed to `-p oxide-fw-core-wasm` (and the artifact path `oxide_fw_core_wasm.wasm`). The CLI embeds the glue (`EDGE_GLUE_JS`) and emits it to `<dist>/edge.js` next to `edge.wasm`; the adapters Cloudflare/Pages emit copies both into the deploy directory alongside the spec-shaped `worker.js` (V2-E09: `init`/`matchRoute`/`applyRules`, asset passthrough, KV L0 get/put with TTL 60, best-effort tag index). No silent JS fallback for a shipped payload: the Worker logs an `init` failure rather than swallowing it; the JS-only `handler.js` dispatches only when `env.EDGE` is absent.
 
-Effect: an `oxide build` for Cloudflare deploys a payload nobody runs. The JS fallback is correct (BLAKE3 key parity verified earlier); the acceleration is what's missing.
+The wasm32-edge CI step `Assert committed wasm is either functional or documented inert (B3)` now resolves through the functional path: `edge.wasm` imports `__wbindgen_*` and `edge.js` is committed alongside it. The 400 KB gzip budget is enforced by `scripts/check-edge-wasm-budget.sh` (wasm-opt -Oz when on PATH, gzip measurement either way) wired as a CI step in the `wasm32-edge` job; the committed artifact ships at ~148 KB gzip (router's `scan`/`regex` features are omitted from the wasm build — see the deviation below).
 
-**To unclose:** ship the `.js` glue alongside `edge.wasm` and change the loader to `await import("./edge.js")`. The wasm32-edge CI step `Assert committed wasm is either functional or documented inert` fails until the two cases are reconciled.
+**History.** Previously "partially closed (payload inert)": the glue was deleted by the regen script and the loader did `await import("./edge.wasm")` expecting `mod.default` to be the callable interface, which only the missing glue provides; `useWasm` caught the instantiation error and silently fell back to the semantically-identical JS path. An `oxide build` for Cloudflare deployed a payload nobody ran. The JS fallback was correct (BLAKE3 key parity verified); the acceleration was what was missing.
+
+## Edge wasm omits router `scan`/`regex` features (V2-E09) — closed (lean dep graph)
+
+**Status.** Closed — `oxide-fw-router` gates `regex` (the matcher's `:name{regex}` param-constraint path) and `scan` (the route-file scanner + its regex) behind default-on features; `oxide-fw-core-wasm` builds with `default-features = false` so the wasm32 edge build omits both. The edge consumes `routes.json` (never scans files) and a constrained param matches as a superset (the constraint validation is the native dispatcher's job). This keeps the wasm under the 400 KB gzip budget (148 KB vs the 464 KB with `scan`+`regex` linked) without a parallel matcher. The host workspace build still unifies the features on via the CLI/server; router's own tests run with the default feature set.
 
 ## `<Defer>` for `suspense: 'core'` adapters — closed (§7.1)
 
