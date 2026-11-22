@@ -15,6 +15,7 @@ async-trait = { workspace = true }
 oxide-fw-diagnostics = { workspace = true }
 oxide-fw-router = { workspace = true }
 oxide-fw-render = { workspace = true }
+oxide-fw-edge-primitives = { workspace = true }
 oxide-fw-config = { workspace = true }
 # V2-F56: the static plane's conditional decision rides the cache crate's
 # canonical comparison (`conditional_response`, RFC 9110 §13) — the seam
