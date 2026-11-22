@@ -114,7 +114,9 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
   rule held row by row) and its generated `endpoints.md` reference page
   (the E11 generator's fifth page).
 - The v0.2 Release Wave (2026-11-16): **R01** the §22 conformance set is
-  29 assertions × 4 adapters and verified green from a clean checkout
+  the v0.1 assertions (migrated into the `conformance/assertions/` registry)
+  + C25–C47, dispatched through the R02 capability-skip engine; verified
+  green from a clean checkout
   (`pnpm install` + a `packages/core` build — which surfaced and fixed two
   committed `@oxide-fw/core` build-blockers: the `tsdown.config.mjs`
   missing comma after the `search` entry and `boot.ts` importing
@@ -685,9 +687,11 @@ build's route scan owns the component graph:
 
 - `cargo test --workspace` — Rust crates
 - `node --test packages/*/test/*.test.ts` — TS adapter + runtime packages
-- `node --test conformance/test/*.test.ts` — 29 assertions × 4 adapters
-  (`pnpm -C conformance test`; the four v0.2 drafts cover E02/F01/E04/F09,
-  C09 + F11 ride the jshost-e2e acceptance scripts)
+- `node --test conformance/test/*.test.ts` — the §V2-R01 registry: the v0.1
+  set (migrated) + C25–C47, × 4 adapters × {binary, node} via the capability-
+  skip engine (`pnpm -C conformance test`; client-runtime assertions run
+  V8-free against the fake DOM; server-bound C25–C30/C33–C35/C38–C40/C44/C47
+  ride the `playwright`/`jshost-e2e` specs)
 - `pnpm --filter @oxide/playwright test` — real-browser E2E over
   `oxide start` (requires `pnpm --filter @oxide/playwright install-browsers`
   once, then a built `examples/smoke-app-react`)
