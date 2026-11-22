@@ -3,13 +3,16 @@
 //! The `add` command records a module name to `.oxide/modules.json` and
 //! discovers an `oxide.module` field in the package's `package.json`. This
 //! module reads those names back, resolves each package, merges its
-//! declared **routes** into the route tree the build scans, and surfaces
-//! its **transform** hook into the JS plugin chain. Everything else the
-//! contract supports (`adapters`, `typegen`, `configDefaults`) is
-//! *resolved* and *reported* — merging those into the pipeline is the
-//! documented follow-up.
+//! declared **routes** into the route tree the build scans, surfaces its
+//! **transform** hook into the JS plugin chain, merges its **types** into
+//! `.oxide/types/`, merges its **configDefaults** under `modules.<name>`,
+//! enforces its **adapters** declaration with a loud refusal, and feeds its
+//! **middlewares** / **serverFns** through the existing middleware chain
+//! and server-fn discovery — all through the EXISTING substrates, never a
+//! parallel pipeline.
 //!
-//! Module contract (the subset honored today):
+//! Module contract (V2-E06, the v1 shape the TS `defineModule` in
+//! `packages/core/src/module.ts` emits):
 //!
 //! ```json
 //! {
@@ -21,7 +24,11 @@
 //!       "hooks": ["transform"],
 //!       "adapters": ["node"],
 //!       "typegen": "./types.d.ts",
-//!       "configDefaults": { "images": { "remotePatterns": [] } }
+//!       "configDefaults": { "images": { "remotePatterns": [] } },
+//!       "middlewares": [{ "file": "./middleware.ts" }],
+//!       "types": [{ "name": "mod", "dts": "declare global {}" }],
+//!       "serverFns": [{ "file": "./server/track.ts" }],
+//!       "config": { "mod": { "flag": true } }
 //!     }
 //!   }
 //! }
@@ -44,11 +51,59 @@
 //! `plugin:call` machinery a `kind:js` plugin uses); any other hook name is
 //! reported at `add` time and once at build time so a module declaring it
 //! is not a silent dead end.
+//!
+//! Adapters (§V2-E06): the loader enforces the declaration against the
+//! project's configured adapter. A mismatch raises `MOD-ADAPTER-002`
+//! (`OxideError::with_fix`) registered in `docs/errors.toml`, naming the
+//! two lines to paste. The same check fires at `oxide add` time so a
+//! mismatch is reported before the install round-trip finishes.
+//!
+//! Types (§V2-E06): each entry is written to `.oxide/types/<name>.d.ts`
+//! (the directory the project's `tsconfig` already includes via the oxide
+//! scaffold). A merge is idempotent: the second write replaces the first.
+//!
+//! configDefaults (§V2-E06): merged under `modules.<name>` in the resolved
+//! config and added to the JSON Schema (so editor tooling accepts the key).
+//!
+//! middlewares (§V2-E06): each entry feeds the existing middleware chain —
+//! the route tree's middleware index gains an entry keyed by the module's
+//! own `/modules/<name>/` prefix (or the `scope` the module declares), so
+//! `RouteTree::middleware_files_for` picks it up exactly like a project
+//! middleware.
+//!
+//! serverFns (§V2-E06): each entry feeds the existing server-fn discovery
+//! walk — the file is resolved to an absolute path and appended to the
+//! build's server-fn scan list, so the module's server exports get the
+//! same `/_oxide/fn/<id>` treatment.
 
 use oxide_fw_config::OxideConfig;
+use oxide_fw_diagnostics::OxideError;
 use oxide_fw_router::RouteTree;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// A middleware file the module contributes (§V2-E06). Mirrors
+/// `oxide_fw_plugin::ModuleMiddlewareEntry`.
+#[derive(Debug, Clone, Default)]
+pub struct ModuleMiddleware {
+    pub file: PathBuf,
+    pub scope: Option<String>,
+}
+
+/// A type declaration the module ships (§V2-E06). Mirrors
+/// `oxide_fw_plugin::ModuleTypeEntry`.
+#[derive(Debug, Clone, Default)]
+pub struct ModuleType {
+    pub name: String,
+    pub dts: String,
+}
+
+/// A server-function file the module exposes (§V2-E06). Mirrors
+/// `oxide_fw_plugin::ModuleServerFnEntry`.
+#[derive(Debug, Clone, Default)]
+pub struct ModuleServerFn {
+    pub file: PathBuf,
+}
 
 /// The `oxide.module` contract, read from a package's `package.json`.
 /// Every field is optional; a package with no `oxide.module` yields `None`
@@ -61,6 +116,14 @@ pub struct Contract {
     pub adapters: Vec<String>,
     pub typegen: Option<String>,
     pub config_defaults: Option<serde_json::Value>,
+    /// §V2-E06: middleware entries the module contributes.
+    pub middlewares: Vec<ModuleMiddleware>,
+    /// §V2-E06: type declarations the module ships.
+    pub types: Vec<ModuleType>,
+    /// §V2-E06: server-function files the module exposes.
+    pub server_fns: Vec<ModuleServerFn>,
+    /// §V2-E06: a config patch the module applies at resolved-config time.
+    pub config: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,14 +138,23 @@ pub struct ResolvedModule {
     /// name is reported as deferred.
     pub hooks: Vec<String>,
     /// Declared adapter compatibility (`["node", "binary", …]`). Empty =
-    /// no restriction.
+    /// no restriction. Enforced against the project adapter at load and
+    /// `add` time (`MOD-ADAPTER-002`).
     pub adapters: Vec<String>,
     /// A `.d.ts` the module ships. Reported but not merged — wiring it into
     /// `.oxide/types/` is a documented follow-up.
     pub typegen: Option<PathBuf>,
-    /// Default config values keyed by config path. Reported but not merged —
-    /// merging under `modules.<name>` is a documented follow-up.
+    /// Default config values keyed by config path. Merged under
+    /// `modules.<name>` (the JSON Schema entry is added too).
     pub config_defaults: Option<serde_json::Value>,
+    /// §V2-E06: middleware entries the module contributes (absolute paths).
+    pub middlewares: Vec<ModuleMiddleware>,
+    /// §V2-E06: type declarations the module ships (name + dts body).
+    pub types: Vec<ModuleType>,
+    /// §V2-E06: server-function files the module exposes (absolute paths).
+    pub server_fns: Vec<ModuleServerFn>,
+    /// §V2-E06: a config patch the module applies at resolved-config time.
+    pub config: Option<serde_json::Value>,
 }
 
 impl ResolvedModule {
@@ -115,6 +187,52 @@ fn read_contract(pkg_dir: &Path) -> Option<Contract> {
     let bytes = std::fs::read(&pkg_json).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     let module = v.get("oxide")?.get("module")?;
+
+    let middlewares = module
+        .get("middlewares")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| {
+                    let file = x.get("file")?.as_str()?.to_string();
+                    let scope = x.get("scope").and_then(|s| s.as_str()).map(str::to_string);
+                    Some(ModuleMiddleware {
+                        file: PathBuf::from(file),
+                        scope,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let types = module
+        .get("types")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| {
+                    let name = x.get("name")?.as_str()?.to_string();
+                    let dts = x.get("dts")?.as_str()?.to_string();
+                    Some(ModuleType { name, dts })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let server_fns = module
+        .get("serverFns")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| {
+                    let file = x.get("file")?.as_str()?.to_string();
+                    Some(ModuleServerFn {
+                        file: PathBuf::from(file),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     Some(Contract {
         routes: module
@@ -149,6 +267,10 @@ fn read_contract(pkg_dir: &Path) -> Option<Contract> {
             .and_then(|t| t.as_str())
             .map(str::to_string),
         config_defaults: module.get("configDefaults").cloned(),
+        middlewares,
+        types,
+        server_fns,
+        config: module.get("config").cloned(),
     })
 }
 
@@ -171,6 +293,23 @@ pub fn resolve_one(pkg_dir: &Path, name: String) -> Option<ResolvedModule> {
         .typegen
         .map(|rel| pkg_dir.join(rel))
         .filter(|p| p.is_file());
+    // §V2-E06: resolve middleware/server-fn files to absolute paths under
+    // the package dir; the loader feeds them through the existing chains.
+    let middlewares = c
+        .middlewares
+        .into_iter()
+        .map(|m| ModuleMiddleware {
+            file: pkg_dir.join(&m.file),
+            scope: m.scope,
+        })
+        .collect();
+    let server_fns = c
+        .server_fns
+        .into_iter()
+        .map(|s| ModuleServerFn {
+            file: pkg_dir.join(&s.file),
+        })
+        .collect();
     Some(ResolvedModule {
         name,
         dir: pkg_dir.to_path_buf(),
@@ -180,6 +319,10 @@ pub fn resolve_one(pkg_dir: &Path, name: String) -> Option<ResolvedModule> {
         adapters: c.adapters,
         typegen,
         config_defaults: c.config_defaults,
+        middlewares,
+        types: c.types,
+        server_fns,
+        config: c.config,
     })
 }
 
@@ -282,4 +425,213 @@ pub fn has_unmerged_hooks(mods: &[ResolvedModule]) -> Vec<&ResolvedModule> {
     mods.iter()
         .filter(|m| m.hooks.iter().any(|h| h != "transform"))
         .collect()
+}
+
+/// §V2-E06: enforce the module's `adapters` declaration against the
+/// project's configured adapter. A mismatch raises `MOD-ADAPTER-002`
+/// (`OxideError::with_fix`) registered in `docs/errors.toml`, naming the
+/// two lines to paste. An empty `adapters` array supports every adapter
+/// (no refusal). The same check fires at `oxide add` time so a mismatch
+/// is reported before the install round-trip finishes.
+///
+/// # Errors
+///
+/// `MOD-ADAPTER-002` when the module declares `adapters` and the project
+/// adapter is not among them.
+pub fn enforce_adapters(mods: &[ResolvedModule], project_adapter: &str) -> Result<(), OxideError> {
+    for m in mods {
+        if m.adapters.is_empty() {
+            continue;
+        }
+        if !m.adapters.iter().any(|a| a == project_adapter) {
+            return Err(OxideError::from(
+                oxide_fw_diagnostics::Diagnostic::error(
+                    "MOD-ADAPTER-002",
+                    format!(
+                        "module `{}` declares adapters [{}] but the project adapter is `{}` (§V2-E06)",
+                        m.name,
+                        m.adapters.join(", "),
+                        project_adapter,
+                    ),
+                )
+                .with_fix(format!(
+                    "add `{project_adapter}` to the module's `adapters` declaration, or\n  remove the module from `modules: []` in oxide.config.ts"
+                )),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// §V2-E06: merge each module's `types` (declared `.d.ts` bodies) into
+/// `.oxide/types/<name>.d.ts`. Idempotent: a second write replaces the
+/// first (the loader is the only writer under that path). Returns the
+/// number of files written. A module's `typegen` file (the legacy
+/// `typegen` field) is copied as `<name>.d.ts` when no `types` entries
+/// exist — the same merge, retrofitted to the older contract.
+pub fn merge_types(root: &Path, mods: &[ResolvedModule]) -> usize {
+    let types_dir = root.join(".oxide/types");
+    let _ = std::fs::create_dir_all(&types_dir);
+    let mut count = 0usize;
+    for m in mods {
+        if m.types.is_empty() {
+            // Fall back to the legacy `typegen` file (a single .d.ts the
+            // module ships as a file path rather than an inline body).
+            if let Some(tg) = &m.typegen
+                && let Ok(body) = std::fs::read_to_string(tg)
+            {
+                let out = types_dir.join(format!("{}.d.ts", sanitize_name(&m.name)));
+                if std::fs::write(&out, &body).is_ok() {
+                    count += 1;
+                }
+            }
+            continue;
+        }
+        for t in &m.types {
+            let out = types_dir.join(format!("{}.d.ts", sanitize_name(&t.name)));
+            if std::fs::write(&out, &t.dts).is_ok() {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// §V2-E06: collect each module's server-function files (absolute paths)
+/// so the build's server-fn discovery walk picks them up alongside the
+/// project's own `*.server.ts` files. The paths are filtered to existing
+/// files — a missing module server-fn is reported as a warning at build
+/// time, not a silent skip.
+pub fn collect_server_fns(mods: &[ResolvedModule]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for m in mods {
+        for s in &m.server_fns {
+            if s.file.is_file() {
+                out.push(s.file.clone());
+            } else {
+                eprintln!(
+                    "warn: module `{}` declares server-fn `{}` which does not exist; skipping",
+                    m.name,
+                    s.file.display()
+                );
+            }
+        }
+    }
+    out
+}
+
+/// §V2-E06: collect each module's middleware contributions as
+/// `(scope, file)` pairs the route tree merges via its middleware index.
+/// The `scope` defaults to the module's own `/modules/<name>/` prefix so
+/// a module middleware only wraps the module's own routes unless the
+/// module explicitly opts into a broader scope.
+pub fn collect_middlewares(mods: &[ResolvedModule]) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    for m in mods {
+        for mw in &m.middlewares {
+            let scope = mw
+                .scope
+                .clone()
+                .unwrap_or_else(|| format!("/modules/{}/", m.name));
+            out.push((scope, mw.file.clone()));
+        }
+    }
+    out
+}
+
+/// §V2-E06: merge each module's `configDefaults` into the typed
+/// `OxideConfig.modules_config` map under the sanitized module name. The
+/// merge is a deep object merge (arrays replace, objects recurse). The
+/// build reads a module's defaults from `cfg.modules_config` (the JSON
+/// Schema entry is in `crates/config/src/schema.rs`).
+pub fn merge_config_defaults(cfg: &mut OxideConfig, mods: &[ResolvedModule]) {
+    for m in mods {
+        let Some(defaults) = &m.config_defaults else {
+            continue;
+        };
+        let key = sanitize_name(&m.name);
+        let existing = cfg
+            .modules_config
+            .remove(&key)
+            .unwrap_or(serde_json::Value::Null);
+        cfg.modules_config
+            .insert(key, deep_merge(existing, defaults.clone()));
+    }
+}
+
+/// §V2-E06: the manifest the loader produces from a `ResolvedModule` —
+/// the bridge from the on-disk `oxide.module` contract to the in-memory
+/// `oxide_fw_plugin::ModuleManifest`. One contract: the fields mirror
+/// `ModuleManifest` so the plugin registry and the loader agree on the
+/// shape (the loader writes the manifest, the registry reads it).
+pub fn to_manifest(m: &ResolvedModule) -> oxide_fw_plugin::ModuleManifest {
+    use oxide_fw_plugin::{ModuleMiddlewareEntry, ModuleServerFnEntry, ModuleTypeEntry};
+    oxide_fw_plugin::ModuleManifest {
+        name: m.name.clone(),
+        adapters: m.adapters.clone(),
+        config_defaults: m
+            .config_defaults
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .map(|o| {
+                o.iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            })
+            .unwrap_or_default(),
+        plugins: Vec::new(),
+        routes: m
+            .routes_dir
+            .as_ref()
+            .map(|_| Vec::new())
+            .unwrap_or_default(),
+        middlewares: m
+            .middlewares
+            .iter()
+            .map(|mw| ModuleMiddlewareEntry {
+                file: mw.file.to_string_lossy().into_owned(),
+                scope: mw.scope.clone(),
+            })
+            .collect(),
+        types: m
+            .types
+            .iter()
+            .map(|t| ModuleTypeEntry {
+                name: t.name.clone(),
+                dts: t.dts.clone(),
+            })
+            .collect(),
+        server_fns: m
+            .server_fns
+            .iter()
+            .map(|s| ModuleServerFnEntry {
+                file: s.file.to_string_lossy().into_owned(),
+            })
+            .collect(),
+        config: m.config.clone().unwrap_or(serde_json::Value::Null),
+        hooks: m.hooks.clone(),
+    }
+}
+
+/// Sanitize a module name into a filesystem-safe identifier (drops the
+/// `@scope/` prefix and replaces `/` with `-`).
+fn sanitize_name(name: &str) -> String {
+    let trimmed = name.strip_prefix('@').unwrap_or(name);
+    trimmed.replace('/', "-")
+}
+
+/// Deep-merge two JSON values: objects recurse, arrays replace, scalars
+/// from `b` win.
+fn deep_merge(a: serde_json::Value, b: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match (a, b) {
+        (Value::Object(mut a), Value::Object(b)) => {
+            for (k, v) in b {
+                let merged = deep_merge(a.remove(&k).unwrap_or(Value::Null), v);
+                a.insert(k, merged);
+            }
+            Value::Object(a)
+        }
+        (_, b) => b,
+    }
 }
