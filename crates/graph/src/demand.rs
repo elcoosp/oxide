@@ -192,6 +192,8 @@ pub struct DemandGraph {
 }
 
 impl DemandGraph {
+    /// Construct a `DemandGraph` with the default factories (real FS, empty env/config).
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -210,6 +212,11 @@ impl DemandGraph {
 
     /// Point the graph at a mutable env-var map (testable; real deployments
     /// wire `std::env` here).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the env-factory write lock is poisoned (a holder panicked
+    /// while holding the guard).
     pub fn set_env_source(&self, vars: Arc<RwLock<BTreeMap<String, String>>>) {
         *self
             .env_factory
@@ -220,6 +227,11 @@ impl DemandGraph {
     }
 
     /// Point the graph at a mutable config map.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the config-factory write lock is poisoned (a holder panicked
+    /// while holding the guard).
     pub fn set_config_source(&self, values: Arc<RwLock<BTreeMap<String, serde_json::Value>>>) {
         *self
             .config_factory
@@ -232,6 +244,11 @@ impl DemandGraph {
     }
 
     /// Override the file-system tracker factory (defaults to real FS reads).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the fs-factory write lock is poisoned (a holder panicked
+    /// while holding the guard).
     pub fn set_fs_factory(&self, f: FsFactory) {
         *self
             .fs_factory
@@ -250,14 +267,24 @@ impl DemandGraph {
 
     /// Get (or compute) a node. `version` is an epoch counter bumped by invalidation;
     /// nodes computed in an older epoch are recomputed.
-    pub fn get(&self, key: NodeKey, compute: &dyn Compute) -> Result<Arc<NodeOutput>> {
+    ///
+    /// # Errors
+    ///
+    /// Returns `GRAPH-CANCEL` if the current build window was cancelled, plus
+    /// any error the registered `compute` returns when a recomputation is needed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal `dashmap`/`Mutex`/`Condvar` guard is poisoned (a
+    /// holder panicked while holding the lock).
+    pub fn get(&self, key: &NodeKey, compute: &dyn Compute) -> Result<Arc<NodeOutput>> {
         if self.cancel.is_cancelled() {
             return Err(err(
                 "GRAPH-CANCEL",
                 "get rejected: the current build window was cancelled; reset the CancelToken to continue",
             ));
         }
-        if let Some(out) = self.fresh(&key) {
+        if let Some(out) = self.fresh(key) {
             return Ok(out);
         }
         // Single flight: join an in-flight computation or become its owner.
@@ -280,7 +307,7 @@ impl DemandGraph {
             dashmap::mapref::entry::Entry::Vacant(v) => {
                 // Another thread may have finished between our memo check and
                 // this insert — re-check before claiming ownership.
-                if let Some(out) = self.fresh(&key) {
+                if let Some(out) = self.fresh(key) {
                     drop(v);
                     return Ok(out);
                 }
@@ -292,13 +319,13 @@ impl DemandGraph {
                 t
             }
         };
-        let result = self.compute_and_memoize(&key, compute);
+        let result = self.compute_and_memoize(key, compute);
         {
             let mut guard = task.state.lock().expect("demand task state lock poisoned");
             *guard = TaskState::Done(Arc::new(clone_result(&result)));
             task.cv.notify_all();
         }
-        self.in_flight.remove(&key);
+        self.in_flight.remove(key);
         result
     }
 
@@ -312,10 +339,35 @@ impl DemandGraph {
         use rayon::prelude::*;
         jobs.into_par_iter()
             .map(|(k, c)| {
-                let r = self.get(k.clone(), c.as_ref());
+                let r = self.get(&k, c.as_ref());
                 (k, r)
             })
             .collect()
+    }
+
+    /// Collect the seed set for an invalidation: every node that observed one
+    /// of `changed` directly (via the input index) plus, for `Input::Node`
+    /// changes, the changed node's reverse dependents (they observed the node's
+    /// old output). Extracted from `invalidate` so that body stays under the
+    /// pedantic line budget without obscuring the 5-step walk.
+    fn collect_seeds(&self, changed: &[Input]) -> BTreeSet<NodeKey> {
+        let mut seeds: BTreeSet<NodeKey> = BTreeSet::new();
+        for inp in changed {
+            match inp {
+                Input::Node(k, _) => {
+                    seeds.insert(k.clone());
+                    if let Some(rdeps) = self.reverse_deps.get(k) {
+                        seeds.extend(rdeps.value().iter().cloned());
+                    }
+                }
+                other => {
+                    if let Some(set) = self.input_index.get(&InputId::of(other)) {
+                        seeds.extend(set.value().iter().cloned());
+                    }
+                }
+            }
+        }
+        seeds
     }
 
     /// Invalidate nodes whose recorded inputs changed; returns the invalidated keys.
@@ -338,22 +390,7 @@ impl DemandGraph {
         let prev_epoch = new_epoch - 1;
 
         // 1. Seeds: nodes that observed one of the changed inputs.
-        let mut seeds: BTreeSet<NodeKey> = BTreeSet::new();
-        for inp in changed {
-            match inp {
-                Input::Node(k, _) => {
-                    seeds.insert(k.clone());
-                    if let Some(rdeps) = self.reverse_deps.get(k) {
-                        seeds.extend(rdeps.value().iter().cloned());
-                    }
-                }
-                other => {
-                    if let Some(set) = self.input_index.get(&InputId::of(other)) {
-                        seeds.extend(set.value().iter().cloned());
-                    }
-                }
-            }
-        }
+        let seeds = self.collect_seeds(changed);
 
         // Reported set: seeds plus everything that actually lost or changed its
         // memo. Early-cut survivors outside the seed set are excluded.
@@ -445,7 +482,7 @@ impl DemandGraph {
         //    input index produced exactly the matching seeds) and they were
         //    fresh before this bump. Dep-free nodes and already-stale nodes keep
         //    their old epoch and recompute on the next `get` (§5.6 safety net).
-        for kv in self.nodes.iter() {
+        for kv in &self.nodes {
             let k = kv.key();
             if closure.contains(k) || kv.value().deps.is_empty() {
                 continue;
@@ -597,7 +634,7 @@ impl DemandGraph {
                     ),
                 )
             })?;
-        let out = self.get(key.clone(), compute.as_ref())?;
+        let out = self.get(key, compute.as_ref())?;
         ctx.deps
             .borrow_mut()
             .insert(Input::Node(key.clone(), out.hash));
@@ -605,42 +642,36 @@ impl DemandGraph {
     }
 
     fn make_fs(&self) -> Box<dyn FileTracker> {
-        self.fs_factory
-            .read()
-            .unwrap()
-            .as_ref()
-            .map(|f| f())
-            .unwrap_or_else(|| Box::new(crate::FsTrackerImpl::new()))
+        self.fs_factory.read().unwrap().as_ref().map_or_else(
+            || Box::new(crate::FsTrackerImpl::new()) as Box<dyn FileTracker>,
+            |f| f(),
+        )
     }
 
     fn make_env(&self) -> Box<dyn EnvTracker> {
-        self.env_factory
-            .read()
-            .unwrap()
-            .as_ref()
-            .map(|f| f())
-            .unwrap_or_else(|| Box::new(crate::EnvTrackerImpl::new(Default::default())))
+        self.env_factory.read().unwrap().as_ref().map_or_else(
+            || Box::new(crate::EnvTrackerImpl::new(Arc::default())) as Box<dyn EnvTracker>,
+            |f| f(),
+        )
     }
 
     fn make_config(&self) -> Box<dyn ConfigTracker> {
-        self.config_factory
-            .read()
-            .unwrap()
-            .as_ref()
-            .map(|f| f())
-            .unwrap_or_else(|| Box::new(crate::ConfigTrackerImpl::new(Default::default())))
+        self.config_factory.read().unwrap().as_ref().map_or_else(
+            || Box::new(crate::ConfigTrackerImpl::new(Arc::default())) as Box<dyn ConfigTracker>,
+            |f| f(),
+        )
     }
 }
 
 /// Kahn topological order over intra-closure node-dep edges, deterministic via
-/// BTreeMaps. Nodes whose memo is missing contribute no edges and are ordered
+/// `BTreeMap`s. Nodes whose memo is missing contribute no edges and are ordered
 /// by key.
 fn topo_order(closure: &BTreeSet<NodeKey>, nodes: &DashMap<NodeKey, NodeOutput>) -> Vec<NodeKey> {
     let mut indegree: BTreeMap<NodeKey, usize> = closure.iter().map(|k| (k.clone(), 0)).collect();
     let mut dependents: BTreeMap<NodeKey, Vec<NodeKey>> = BTreeMap::new();
     for k in closure {
         if let Some(out) = nodes.get(k) {
-            for d in out.value().deps.iter() {
+            for d in &out.value().deps {
                 if let Input::Node(dep, _) = d
                     && closure.contains(dep)
                     && dep != k
