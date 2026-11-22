@@ -8,36 +8,23 @@ pub(crate) async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| PathBuf::from(root));
     let modules_path = rootp.join(".oxide/modules.json");
 
-    // SPEC-15.4 / §19-B: install the module unless the caller opted out
-    // (`OXIDE_ADD_NO_INSTALL=1`) — tests use the opt-out with a
-    // pre-populated `node_modules/<mod>/package.json` to exercise the
-    // contract-discovery half without a network round-trip.
+    // §V2-E06: detect the project's package manager from its lockfile
+    // (the `module_config_edit::detect_pm_from_root` table — one source of
+    // truth, replacing the inline if-chain).
     let no_install = std::env::var_os("OXIDE_ADD_NO_INSTALL").is_some();
     if !no_install {
-        // Detect the project's package manager from its lockfile.
-        // The tuple is `(&str, Vec<&str>)`. Explicit types keep the
-        // compiler from inferring among `AsRef<[u8]>`, `AsRef<Path>`, etc.
-        let pm: (&str, Vec<&str>) = if rootp.join("pnpm-lock.yaml").is_file() {
-            ("pnpm", vec!["add", module])
-        } else if rootp.join("yarn.lock").is_file() {
-            ("yarn", vec!["add", module])
-        } else if rootp.join("bun.lockb").is_file() {
-            ("bun", vec!["add", module])
-        } else {
-            // npm is the fallback (also covers a project with no lockfile).
-            ("npm", vec!["install", module])
-        };
-        outln!(w, "installing {} via {}", module, pm.0);
-        let status = tokio::process::Command::new(pm.0)
-            .args(&pm.1)
+        let pm = crate::module_config_edit::detect_pm_from_root(&rootp);
+        let (cmd, args) = crate::module_config_edit::pm_install_command(pm, module);
+        outln!(w, "installing {} via {}", module, cmd);
+        let status = tokio::process::Command::new(cmd)
+            .args(&args)
             .current_dir(&rootp)
             .status()
             .await
-            .map_err(|e| anyhow::anyhow!("spawn `{} {}`: {e}", pm.0, module))?;
+            .map_err(|e| anyhow::anyhow!("spawn `{cmd} {}`: {e}", module))?;
         if !status.success() {
             anyhow::bail!(
-                "`{} {}` exited {}; not recording the module",
-                pm.0,
+                "`{cmd} {}` exited {}; not recording the module",
                 module,
                 status.code().unwrap_or(-1),
             );
@@ -58,6 +45,34 @@ pub(crate) async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::
     }
     let resolved = crate::modules_loader::resolve_one(&node_mods, module.to_string());
 
+    // §V2-E06: enforce the adapters declaration LOUDLY at `add` time so
+    // a mismatch is reported before the install round-trip finishes. The
+    // build re-checks the same way (`enforce_adapters`); the error code
+    // `MOD-ADAPTER-002` is registered in `docs/errors.toml`.
+    if let Some(m) = &resolved
+        && !m.adapters.is_empty()
+    {
+        let cfg = load_config_or_default(&rootp, "development");
+        let adapter = cfg.adapter.as_str();
+        if !m.adapters.iter().any(|a| a == adapter) {
+            outln!(
+                w,
+                "err MOD-ADAPTER-002: module `{}` declares adapters [{}] but the project adapter is `{}`",
+                module,
+                m.adapters.join(", "),
+                adapter,
+            );
+            outln!(
+                w,
+                "  fix: add `{adapter}` to the module's `adapters` declaration, or"
+            );
+            outln!(
+                w,
+                "       remove the module from `modules: []` in oxide.config.ts"
+            );
+        }
+    }
+
     // Persist to `.oxide/modules.json` (what `audit` reads).
     let mut list: Vec<String> = read_json(&modules_path)
         .and_then(|v| v.as_array().cloned())
@@ -76,10 +91,44 @@ pub(crate) async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::
     std::fs::write(&modules_path, serde_json::to_string_pretty(&list)? + "\n")?;
     outln!(w, "[ok] added {module} to .oxide/modules.json");
 
-    // §15-E: report what the module actually contributes. Routes and the
-    // transform hook ARE merged now; everything else is enumerated as
-    // resolved-but-deferred so a user is never promised a merge that does
-    // not happen yet.
+    // §V2-E06: edit `oxide.config.ts` to add the import + the `modules: [...]`
+    // array element. Idempotent, comment-preserving, refuses a dynamic
+    // config with the two-line fix. The edit is best-effort: a missing
+    // config file is not an error (the modules.json record is enough for
+    // the build to pick the module up); a dynamic config is reported with
+    // the fix, not a hard failure.
+    let config_ts = rootp.join("oxide.config.ts");
+    if config_ts.is_file()
+        && let Ok(src) = std::fs::read_to_string(&config_ts)
+    {
+        let alias = crate::module_config_edit::default_alias_for(module);
+        match crate::module_config_edit::add_module_to_config(&src, module, Some(alias)) {
+            Ok(edit) => {
+                if edit.import_added || edit.module_added {
+                    if let Err(e) = std::fs::write(&config_ts, &edit.bytes) {
+                        outln!(w, "warn: could not edit oxide.config.ts: {e}");
+                    } else {
+                        outln!(
+                            w,
+                            "[ok] added `{module}` to oxide.config.ts (import + modules[])"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                outln!(w, "{} {}", e.0.code, e.0.message);
+                if let Some(fix) = &e.0.fix {
+                    outln!(w, "  fix: {fix}");
+                }
+            }
+        }
+    }
+
+    // §15-E: report what the module actually contributes. Every v1 field
+    // is WIRED now — types merge into `.oxide/types/`, configDefaults merge
+    // under `modules.<name>`, middlewares feed the chain, serverFns feed
+    // server-fn discovery, adapters are enforced. The report names the
+    // wiring honestly (no "deferred" wording for v1 contributions).
     match &resolved {
         None => {
             outln!(
@@ -144,20 +193,24 @@ pub(crate) async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::
             if !m.adapters.is_empty() {
                 outln!(w, "    adapters: {}", m.adapters.join(", "));
                 let cfg = load_config_or_default(&rootp, "development");
-                if !m.adapters.iter().any(|a| a == &cfg.adapter) {
+                let adapter = cfg.adapter.as_str();
+                if !m.adapters.iter().any(|a| a == adapter) {
                     outln!(
                         w,
                         "    warn MOD-ADAPTER: module supports [{}], project adapter is `{}`",
                         m.adapters.join(", "),
-                        cfg.adapter,
+                        adapter,
                     );
                 }
             }
-            if m.typegen.is_some() {
+            if !m.types.is_empty() {
                 outln!(
                     w,
-                    "    typegen: present (not merged — deferred to a follow-up)"
+                    "    types: {} (merged into .oxide/types/)",
+                    m.types.len()
                 );
+            } else if m.typegen.is_some() {
+                outln!(w, "    typegen: present (merged into .oxide/types/)");
             }
             // J2: a native plugin's `enables()` is consulted here so
             // `oxide add` reports which features the project's plugin set
@@ -173,19 +226,41 @@ pub(crate) async fn cmd_add(root: &str, module: &str, w: Writer<'_>) -> anyhow::
                     outln!(w, "    native plugins: {}", enabled.join(", "));
                 }
             }
-            if m.config_defaults.is_some() {
+            if !m.middlewares.is_empty() {
                 outln!(
                     w,
-                    "    configDefaults: present (not merged — deferred to a follow-up)"
+                    "    middlewares: {} (merged into the route tree's middleware index)",
+                    m.middlewares.len()
                 );
+            }
+            if !m.server_fns.is_empty() {
+                outln!(
+                    w,
+                    "    serverFns: {} (fed to server-fn discovery)",
+                    m.server_fns.len()
+                );
+            }
+            if m.config_defaults.is_some() {
+                let key = crate::module_config_edit::default_alias_for(module);
+                outln!(
+                    w,
+                    "    configDefaults: present (merged under modules.{key})"
+                );
+            }
+            // §V2-E06: resolve the module into the unified `ModuleManifest`
+            // the plugin registry and loader agree on — one contract, not
+            // two. The manifest's hook count is the loader's view of which
+            // hooks the module's plugins contribute.
+            let manifest = crate::modules_loader::to_manifest(m);
+            if !manifest.hooks.is_empty() {
+                outln!(w, "    manifest hooks: {}", manifest.hooks.join(", "));
             }
         }
     }
     outln!(
         w,
         "next steps: `oxide build` / `oxide dev` will pick up `{module}` from \
-         .oxide/modules.json automatically. To enable it explicitly in config, \
-         add it to `modules: []` in oxide.config.ts"
+         .oxide/modules.json automatically"
     );
     Ok(0)
 }
