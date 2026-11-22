@@ -1,0 +1,57 @@
+# V2-E05 gate transcript — RED (M1)
+
+The red→green cycle for the plugin compatibility harness (WP V2-E05).
+Recorded under `scripts/gates/` per the house TDD rule.
+
+## RED — E05 missing at HEAD (`fb50199`)
+
+Before this WP, every E05 leg was absent (verified by direct code read at the
+clone, after F19 merged):
+
+- `conformance/plugins/` — does NOT exist (no case format, no schema, no
+  loader, no fixtures, no recorded logs, no results.json).
+- `scripts/plugin-compat.mjs` — does NOT exist (no runner, no `--dry-run`).
+- `crates/plugin/src/compat.rs` — no `unsupported_hooks`, no
+  `host_invocable_hooks`, no `LoadTimeReport` (the load-time report model
+  the runner records as `unsupportedHooks`). The WASM host's `missing_hooks()`
+  covers declared-but-unexported only; the SILENT gap (a WASM component
+  declaring a hook the host has no call path for) is not reported.
+- `crates/plugin/src/lib.rs` — `PluginRegistry` has no `reports` field, no
+  `load_reports()` / `emit_load_reports_jsonl()` (the bridge emits no
+  load-time report line the runner can parse).
+- `crates/plugin/src/wasm.rs` — no `WasmPlugin::load_time_report()`.
+- `crates/cli/src/docs_gen.rs` — no `PluginCompatPage` generator; the
+  reference-page registry has no `base()` override; `docs/plugin-compat.md`
+  is hand-maintained prose + the embedded kind×hook table (no verified-plugins
+  matrix, not wired into `docs-check`).
+- `docs/plugin-compat.md` — no `## Verified third-party plugins` section.
+- `crates/cli/tests/docs_tdd.rs` — no `plugin_compat_page_*` pin; the
+  registry-list expected array has no `plugin-compat.md`.
+- `docs/errors.toml` — no `CFG-CHECK`, `RFN-LOAD`, `SKW-POOL`, `SKW-SNAPSHOT`
+  (raised in source but absent from the registry → `errors_registry_tdd` RED).
+- `crates/adapters/tests/config_refusal_tdd.rs` —
+  `warns_live_on_degraded_cells_with_the_documented_string` lists Cloudflare +
+  CloudflarePages as Degraded, but V2-E09 made the Edge class Live
+  `Unsupported` → the pin is RED (the refusal is an error, not a warning).
+
+Commands (the verification at HEAD):
+
+    $ git rev-parse HEAD
+    fb5019949993383b3c17b5a3a7c670b171fdf294
+    $ test ! -d conformance/plugins && echo "conformance/plugins MISSING"
+    conformance/plugins MISSING
+    $ test ! -f scripts/plugin-compat.mjs && echo "runner MISSING"
+    runner MISSING
+    $ ! grep -q "unsupported_hooks" crates/plugin/src/compat.rs && echo "model MISSING"
+    model MISSING
+    $ ! grep -q "PluginCompatPage" crates/cli/src/docs_gen.rs && echo "generator MISSING"
+    generator MISSING
+    $ ! grep -q "## Verified third-party plugins" docs/plugin-compat.md && echo "verified table MISSING"
+    verified table MISSING
+    $ ! grep -q "CFG-CHECK" docs/errors.toml && echo "CFG-CHECK MISSING from registry"
+    CFG-CHECK MISSING from registry
+    $ node --test conformance/plugins/test/*.test.mjs  # no test dir → no tests
+    # (the node suite did not exist)
+
+The acceptance (Part I §24.1 item 6: ten third-party plugins verified) is
+not met: zero cases, zero verified plugins.
