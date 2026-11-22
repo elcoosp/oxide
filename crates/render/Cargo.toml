@@ -12,6 +12,7 @@ repository.workspace = true
 
 [dependencies]
 oxide-fw-diagnostics = { workspace = true }
+oxide-fw-edge-primitives = { workspace = true }
 lol_html = { workspace = true }
 bytes = { workspace = true }
 # V2-B08 phase 2: the chunk-safe `NonceSplicer` (spec-verbatim) finds the
