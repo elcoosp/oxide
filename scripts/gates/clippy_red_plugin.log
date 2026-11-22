@@ -1,0 +1,174 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+ Downloading crates ...
+  Downloaded arbitrary v1.5.0
+  Downloaded addr2line v0.26.1
+  Downloaded cranelift-srcgen v0.135.10
+  Downloaded pulley-macros v48.0.10
+  Downloaded wat v1.262.0
+  Downloaded multiversion_no_op v1.0.0
+  Downloaded wasmtime-internal-jit-debug v48.0.10
+  Downloaded id-arena v2.3.0
+  Downloaded cranelift-native v0.135.10
+  Downloaded wasmtime-internal-jit-icache-coherence v48.0.10
+  Downloaded cranelift-codegen-shared v0.135.10
+  Downloaded wasmtime-internal-versioned-export-macros v48.0.10
+  Downloaded leb128fmt v0.1.0
+  Downloaded wasmtime-internal-component-util v48.0.10
+  Downloaded cranelift-control v0.135.10
+  Downloaded memfd v0.6.6
+  Downloaded cranelift-bitset v0.135.10
+  Downloaded target-lexicon v0.13.5
+  Downloaded cranelift-entity v0.135.10
+  Downloaded wasm-metadata v0.254.2
+  Downloaded wasmtime-internal-unwinder v48.0.10
+  Downloaded cranelift-bforest v0.135.10
+  Downloaded rustc-demangle v0.1.28
+  Downloaded wasmtime-internal-fiber v48.0.10
+  Downloaded wasmtime-internal-wit-bindgen v48.0.10
+  Downloaded cranelift-assembler-x64 v0.135.10
+  Downloaded cranelift-assembler-x64-meta v0.135.10
+  Downloaded cpp_demangle v0.5.1
+  Downloaded cranelift-frontend v0.135.10
+  Downloaded wasmtime-internal-core v48.0.10
+  Downloaded pulley-interpreter v48.0.10
+  Downloaded wasmprinter v0.254.2
+  Downloaded wasm-encoder v0.254.2
+  Downloaded wasm-encoder v0.262.0
+  Downloaded cranelift-codegen-meta v0.135.10
+  Downloaded bumpalo v3.20.3
+  Downloaded cranelift-isle v0.135.10
+  Downloaded regalloc2 v0.15.2
+  Downloaded libm v0.2.16
+  Downloaded itertools v0.14.0
+  Downloaded wast v262.0.0
+  Downloaded wit-parser v0.254.2
+  Downloaded wasmparser v0.262.0
+  Downloaded wasmtime-internal-component-macro v48.0.10
+  Downloaded wasmparser v0.254.2
+  Downloaded wasmtime-internal-cranelift v48.0.10
+  Downloaded wit-component v0.254.2
+  Downloaded wasmtime-environ v48.0.10
+  Downloaded gimli v0.33.0
+  Downloaded object v0.39.1
+  Downloaded encoding_rs v0.8.42
+  Downloaded wasmtime v48.0.10
+  Downloaded cranelift-codegen v0.135.10
+   Compiling syn v2.0.119
+   Compiling libm v0.2.16
+   Compiling foldhash v0.2.0
+   Compiling hashbrown v0.17.1
+   Compiling wasmtime-internal-core v48.0.10
+   Compiling log v0.4.34
+   Compiling cranelift-srcgen v0.135.10
+   Compiling cranelift-assembler-x64-meta v0.135.10
+    Checking indexmap v2.14.2
+   Compiling pulley-macros v48.0.10
+    Checking cranelift-bitset v0.135.10
+   Compiling serde_core v1.0.229
+   Compiling heck v0.5.0
+    Checking crypto-common v0.1.7
+   Compiling wasmtime-internal-versioned-export-macros v48.0.10
+    Checking fnv v1.0.7
+    Checking hashbrown v0.16.1
+    Checking allocator-api2 v0.2.21
+   Compiling cranelift-isle v0.135.10
+   Compiling target-lexicon v0.13.5
+    Checking bumpalo v3.20.3
+    Checking gimli v0.33.0
+    Checking digest v0.10.7
+   Compiling pulley-interpreter v48.0.10
+    Checking cranelift-entity v0.135.10
+    Checking cobs v0.3.0
+    Checking smallvec v1.16.4
+   Compiling equivalent v1.0.3
+   Compiling cranelift-codegen-shared v0.135.10
+    Checking leb128fmt v0.1.0
+    Checking sha2 v0.10.9
+   Compiling cranelift-codegen-meta v0.135.10
+    Checking postcard v1.1.3
+    Checking cranelift-bforest v0.135.10
+   Compiling cranelift-assembler-x64 v0.135.10
+   Compiling bitflags v2.13.2
+   Compiling anyhow v1.0.104
+   Compiling semver v1.0.28
+   Compiling cranelift-codegen v0.135.10
+   Compiling wasmparser v0.254.2
+    Checking arbitrary v1.5.0
+   Compiling cpp_demangle v0.5.1
+   Compiling serde v1.0.229
+   Compiling object v0.39.1
+    Checking rustc-hash v2.1.3
+    Checking regalloc2 v0.15.2
+    Checking cranelift-control v0.135.10
+   Compiling zmij v1.0.23
+   Compiling itoa v1.0.18
+    Checking termcolor v1.4.1
+   Compiling wasm-encoder v0.254.2
+   Compiling serde_json v1.0.154
+    Checking wasmprinter v0.254.2
+    Checking wasmtime-internal-component-util v48.0.10
+   Compiling id-arena v2.3.0
+    Checking rustc-demangle v0.1.28
+   Compiling rustix v1.1.6
+    Checking wasmtime-environ v48.0.10
+   Compiling wit-parser v0.254.2
+   Compiling wasm-metadata v0.254.2
+   Compiling zerocopy-derive v0.8.63
+   Compiling wasmtime-internal-unwinder v48.0.10
+    Checking zerocopy v0.8.63
+   Compiling wit-component v0.254.2
+   Compiling encoding_rs v0.8.42
+    Checking wasm-encoder v0.262.0
+   Compiling wasmtime-internal-jit-debug v48.0.10
+   Compiling wasmtime-internal-fiber v48.0.10
+   Compiling wasmtime-internal-component-macro v48.0.10
+   Compiling wasmtime-internal-cranelift v48.0.10
+    Checking wast v262.0.0
+    Checking half v2.7.1
+   Compiling wasmtime-internal-wit-bindgen v48.0.10
+    Checking cranelift-frontend v0.135.10
+    Checking cranelift-native v0.135.10
+    Checking itertools v0.14.0
+   Compiling wasmtime v48.0.10
+   Compiling multiversion_no_op v1.0.0
+    Checking simdutf8 v0.1.5
+    Checking wat v1.262.0
+    Checking ciborium-ll v0.2.2
+    Checking rayon v1.12.0
+    Checking memfd v0.6.6
+    Checking wasmtime-internal-jit-icache-coherence v48.0.10
+    Checking addr2line v0.26.1
+    Checking ciborium v0.2.2
+    Checking criterion v0.8.2
+    Checking oxide-fw-plugin v0.17.0 (/home/z/my-project/oxide/crates/plugin)
+error: used `assert!` to check that a value is empty
+   --> crates/plugin/tests/compat_tdd.rs:455:5
+    |
+455 |     assert!(unsupported_hooks(PluginKind::Js, &clean, &clean).is_empty());
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#assert_is_empty
+    = note: `-D clippy::assert-is-empty` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assert_is_empty)]`
+help: use `assert_eq!` to show the value on failure
+    |
+455 -     assert!(unsupported_hooks(PluginKind::Js, &clean, &clean).is_empty());
+455 +     assert_eq!(unsupported_hooks(PluginKind::Js, &clean, &clean), [] as [oxide_fw_plugin::Hook; 0]);
+    |
+
+error: used `assert!` to check that a value is empty
+   --> crates/plugin/tests/compat_tdd.rs:476:5
+    |
+476 |     assert!(unsupported_hooks(PluginKind::Native, &declared, &declared).is_empty());
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#assert_is_empty
+help: use `assert_eq!` to show the value on failure
+    |
+476 -     assert!(unsupported_hooks(PluginKind::Native, &declared, &declared).is_empty());
+476 +     assert_eq!(unsupported_hooks(PluginKind::Native, &declared, &declared), [] as [oxide_fw_plugin::Hook; 0]);
+    |
+
+error: could not compile `oxide-fw-plugin` (test "compat_tdd") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
