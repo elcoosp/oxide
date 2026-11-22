@@ -6,10 +6,13 @@ hooks each kind supports and whether the support is wired end-to-end
 
 The hooks table below is **generated, not hand-maintained**:
 `oxide_fw_plugin::compat_markdown_table()` renders it from the
-kind × hook support model ([`compat`]), and
+kind × hook support model (`compat`), and
 `crates/plugin/tests/compat_tdd.rs::plugin_compat_doc_embeds_the_generated_table`
 pins this file to the render byte-for-byte — a support flip is a code change
-plus a table re-embed, never a silent prose edit.
+plus a table re-embed, never a silent prose edit. The verified-plugins table
+below is generated from `conformance/plugins/results.json` (the compat
+runner's recorded output) and pinned by `docs-check` (regenerate with
+`oxide docs generate`).
 
 **Status legend:**
 
@@ -56,6 +59,23 @@ plus a table re-embed, never a silent prose edit.
 | `renderHead` | 15.2 | ✅ | 🚫 | n/a | Merges meta/link/style/script into the render head. |
 | `cacheHandler` | 15.2 | 🚫 | 🚫 | n/a | Selects the cache backend before the stack is built. |
 
+## Verified third-party plugins (§V2-E05)
+
+The compat runner (`scripts/plugin-compat.mjs`) installs each plugin into a temp copy of its fixture, builds with `oxide build`, evaluates the case's `assert` against the emitted `dist/`, and records `{ status, unsupportedHooks }` from the bridge's load-time report (`oxide_fw_plugin::LoadTimeReport`). The matrix below is generated from `conformance/plugins/results.json` — the runner's recorded output — so the published table is the exact set the runner verified. Failures are documented, not hidden (the §V2-E05 acceptance: at least ten third-party plugins verified).
+
+| Plugin | Version | Adapter | Status | Unsupported hooks | Asserts | Note |
+| --- | --- | --- | --- | --- | --- | --- |
+| `@mdx-js/rollup` | `3.1.1` | react | pass | — | 1/1 | — |
+| `@sveltejs/vite-plugin-svelte` | `7.3.1` | svelte | pass | — | 1/1 | — |
+| `@tailwindcss/vite` | `4.3.5` | react | pass | — | 1/1 | — |
+| `@vitejs/plugin-react` | `6.3.0` | react | pass | — | 1/1 | — |
+| `@vitejs/plugin-vue` | `6.0.11` | vue | pass | — | 1/1 | — |
+| `unplugin-icons` | `24.0.0` | react | pass | — | 1/1 | — |
+| `vite-plugin-pwa` | `2.0.0` | react | unsupported-hook | configureServer | 0/1 | declares configureServer (bridge-unsupported; the plugin fails at load so its output never lands) |
+| `vite-plugin-solid` | `2.11.17` | solid | pass | — | 1/1 | — |
+| `vite-plugin-svgr` | `5.2.0` | react | pass | — | 1/1 | — |
+| `vite-tsconfig-paths` | `6.1.1` | react | pass | — | 1/1 | — |
+
 ## Argument shape
 
 JS hooks are positional on the plugin side, as in Vite. The Rust bridge sends
@@ -93,7 +113,7 @@ starts an extra Node child.
 
 WASM `transform` is wired end to end. WASM `load`/`resolveId` are the 🟡
 rows: the host speaks their ABI (`call_load_hook`/`call_resolve_hook`, the
-object-safe [`HookHost`] seam carries both), string fixtures exercise them
+object-safe `HookHost` seam carries both), string fixtures exercise them
 end to end, and the remaining half is the CLI wire that composes a loaded
 component into `BundleOptions.load_hook`/`resolve_hook` alongside the JS
 bridge's hooks. Native plugins are feature backends selected by config
@@ -104,19 +124,27 @@ Declaring a bridge-unsupported hook (`configureServer`, `cacheHandler`) at
 load time is a **fail-at-load** today for both JS plugins and WASM manifests
 (`PLG-HOOK` naming the plugin + hook + this table). A WASM component that
 declares a hook its bytes do not export (or export in an uncallable shape)
-**loads** — the host records the gap (`available_hooks`/`missing_hooks`) and
-the call site skips the hook it cannot invoke.
+**loads** — the host records the gap (`available_hooks`/`missing_hooks`,
+folded into the `LoadTimeReport` the compat runner records as
+`unsupportedHooks`) and the call site skips the hook it cannot invoke.
 
 ## Testing the compat surface
 
 - `crates/plugin/tests/compat_tdd.rs` — the support matrix, the generated
-  table's byte-identical embed, and the WASM `load`/`resolveId`/string
-  `transform` ABI end to end
+  table's byte-identical embed, the WASM `load`/`resolveId`/string
+  `transform` ABI end to end, and the V2-E05 load-time `unsupported_hooks` +
+  `LoadTimeReport` pins
 - `crates/plugin/tests/wasm_tdd.rs` — WASM hook export probing + transform
 - `crates/plugin/benches/compat.rs` — the matrix fold + render cost
   (`cargo bench -p oxide-fw-plugin --features bench-util -- compat`)
 - `crates/plugin/examples/compat_matrix.rs` — the walkthrough
   (`cargo run -p oxide-fw-plugin --example compat_matrix`)
+- `conformance/plugins/test/*.test.mjs` — the V2-E05 node --test gate: the
+  case schema, the assert evaluator, and the report parser (zero deps,
+  V8-free; `node --test conformance/plugins/test/*.test.mjs`)
+- `scripts/plugin-compat.mjs` — the runner (`--dry-run` evaluates recorded
+  build logs V8-free; the consumer example:
+  `node scripts/plugin-compat.mjs --dry-run --out -` prints the matrix)
 - `crates/cli/tests.rs::build_transform_hook_*` — JS-side `transform`
 - `crates/cli/src/tests.rs` — route/middleware hook fixtures and adapters
 - `crates/jshost/tests/integration.rs::v8_plugin_ops_*` — V8 `plugin:load` /
