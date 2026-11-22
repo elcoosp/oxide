@@ -308,8 +308,16 @@ impl WasmPluginManifest {
     }
 }
 
-/// A module (`defineModule`, §15.4): distributable bundle of hooks, routes,
-/// middleware, config defaults and typegen.
+/// A module (`defineModule`, §15.4 / §V2-E06): distributable bundle of
+/// hooks, routes, middleware, plugins, types, config defaults, server
+/// functions and typegen.
+///
+/// One contract: this is the manifest `crates/cli/src/modules_loader.rs`
+/// consumes from `package.json#oxide.module` (whether written by hand or
+/// emitted by the TS `defineModule` in `packages/core/src/module.ts`). The
+/// v1 fields (`middlewares`, `types`, `server_fns`, `config`) are wired
+/// through the EXISTING middleware chain, server-fn discovery and plugin
+/// registry — there is no second pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModuleManifest {
     pub name: String,
@@ -320,4 +328,54 @@ pub struct ModuleManifest {
     pub plugins: Vec<PluginDescriptor>,
     #[serde(default)]
     pub routes: Vec<String>,
+    /// §V2-E06: middleware files the module contributes. Each is merged
+    /// into the route tree's middleware index under the module's own
+    /// `/modules/<name>/` prefix (or the `scope` the module declares).
+    #[serde(default)]
+    pub middlewares: Vec<ModuleMiddlewareEntry>,
+    /// §V2-E06: type declarations the module ships. Each is written to
+    /// `.oxide/types/<name>.d.ts` so the project's editor picks it up.
+    #[serde(default)]
+    pub types: Vec<ModuleTypeEntry>,
+    /// §V2-E06: server-function files the module exposes. Each feeds the
+    /// existing server-fn discovery walk (`scan_server_fns`) so a module's
+    /// server exports get the same `/_oxide/fn/<id>` treatment.
+    #[serde(default)]
+    pub server_fns: Vec<ModuleServerFnEntry>,
+    /// §V2-E06: a config patch the module applies at resolved-config time
+    /// (deep-merged under `modules.<name>`).
+    #[serde(default)]
+    pub config: serde_json::Value,
+    /// §V2-E06: hook labels contributed by the module's plugins. Sorted +
+    /// deduped by the TS `defineModule`; the loader compares against the
+    /// merged/deferred table.
+    #[serde(default)]
+    pub hooks: Vec<String>,
+}
+
+/// A middleware file the module contributes (§V2-E06).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModuleMiddlewareEntry {
+    /// Package-relative file path (e.g. `"./middleware.ts"`).
+    pub file: String,
+    /// Optional scope; defaults to the module's own `/modules/<name>/` prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+}
+
+/// A type declaration the module ships (§V2-E06).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModuleTypeEntry {
+    /// Logical name (e.g. `analytics`).
+    pub name: String,
+    /// The `.d.ts` body.
+    #[serde(rename = "dts")]
+    pub dts: String,
+}
+
+/// A server-function file the module exposes (§V2-E06).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModuleServerFnEntry {
+    /// Package-relative file path (e.g. `"./server/track.ts"`).
+    pub file: String,
 }
