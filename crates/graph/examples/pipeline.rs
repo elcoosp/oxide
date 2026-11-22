@@ -40,7 +40,7 @@ impl Compute for ConfigCompute {
         Ok(NodeOutput {
             hash: blake3::hash(mode.as_bytes()),
             artifact: None,
-            deps: Default::default(),
+            deps: std::collections::BTreeSet::new(),
         })
     }
 }
@@ -60,7 +60,7 @@ impl Compute for BundleCompute {
         Ok(NodeOutput {
             hash: blake3::hash(mixed.as_bytes()),
             artifact: None,
-            deps: Default::default(),
+            deps: std::collections::BTreeSet::new(),
         })
     }
 }
@@ -80,7 +80,7 @@ fn main() {
 
     println!("== 1. demand: get(bundle) computes config first, then bundle ==");
     let first = graph
-        .get(bundle_key.clone(), bundle.as_ref())
+        .get(&bundle_key, bundle.as_ref())
         .expect("first compute");
     println!(
         "  bundle hash {} | nodes {}",
@@ -90,9 +90,7 @@ fn main() {
 
     println!("== 2. memoization: the same get answers without recomputing ==");
     let version_before = graph.version();
-    let again = graph
-        .get(bundle_key.clone(), bundle.as_ref())
-        .expect("memo hit");
+    let again = graph.get(&bundle_key, bundle.as_ref()).expect("memo hit");
     assert_eq!(first.hash, again.hash, "memo-fresh answer is identical");
     assert_eq!(
         version_before,
@@ -108,13 +106,13 @@ fn main() {
         key: "OXIDE_EXAMPLE_MODE".to_string(),
         value_hash: blake3::hash(mode.as_bytes()),
     }]);
-    println!("  invalidated: {:?}", invalidated);
+    println!("  invalidated: {invalidated:?}");
     assert_eq!(
         invalidated.len(),
         2,
         "the observer AND its downstream node both drop"
     );
-    let recomputed = graph.get(bundle_key, bundle.as_ref()).expect("recompute");
+    let recomputed = graph.get(&bundle_key, bundle.as_ref()).expect("recompute");
     assert_ne!(first.hash, recomputed.hash, "the fresh computation moves");
     println!("  bundle hash {} (was {})", recomputed.hash, first.hash);
 }
