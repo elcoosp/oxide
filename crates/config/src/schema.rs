@@ -89,6 +89,11 @@ pub fn config_schema() -> Value {
                 "items": { "type": "string" },
                 "description": "§15.4: distributable modules to install."
             },
+            "modulesConfig": {
+                "type": "object",
+                "additionalProperties": { "type": "object", "additionalProperties": true },
+                "description": "§V2-E06: per-module config defaults (merged from each module's `oxide.module.configDefaults` under `modules.<name>`). The key is the sanitized module name (`@scope/pkg` → `scope-pkg`)."
+            },
             "extends": {
                 "type": "array",
                 "items": { "type": "string" },
@@ -974,6 +979,7 @@ mod tests {
             "static",
             "plugins",
             "modules",
+            "modulesConfig",
             "search",
         ] {
             assert!(props.contains_key(expected), "missing {expected}");
