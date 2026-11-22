@@ -1,0 +1,936 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+ Downloading crates ...
+  Downloaded snapfire_fsr_mdx v0.2.3
+  Downloaded unicode-id v0.3.7
+  Downloaded markdown v1.0.0
+    Checking zerovec v0.11.9
+    Checking litemap v0.8.3
+    Checking zerotrie v0.2.5
+    Checking indexmap v2.14.2
+    Checking tinystr v0.8.5
+    Checking potential_utf v0.1.6
+    Checking icu_collections v2.4.0
+    Checking icu_locale_core v2.4.0
+   Compiling serde_json v1.0.154
+    Checking icu_provider v2.4.0
+    Checking icu_locale_fallback v2.4.0
+    Checking icu_segmenter v2.4.0
+    Checking oxc_data_structures v0.155.0
+    Checking oxc_allocator v0.155.0
+   Compiling rustix v1.1.6
+    Checking oxc_str v0.155.0
+    Checking flate2 v1.1.10
+    Checking oxc_span v0.155.0
+    Checking fixed_decimal v0.7.3
+   Compiling onig_sys v69.9.3
+    Checking textwrap v0.16.4
+    Checking icu_calendar v2.4.0
+    Checking icu_properties v2.4.0
+    Checking oxc_diagnostics v0.155.0
+    Checking icu_normalizer v2.4.0
+    Checking ahash v0.7.8
+    Checking icu_decimal v2.4.0
+    Checking icu_plurals v2.4.0
+    Checking icu_time v2.4.0
+    Checking terminal_size v0.4.4
+    Checking polycool v0.4.0
+   Compiling ptr_meta_derive v0.1.4
+    Checking miniz_oxide v0.8.9
+    Checking fdeflate v0.3.7
+    Checking icu_pattern v0.5.1
+   Compiling cssparser-macros v0.7.1
+    Checking arrayref v0.3.9
+    Checking bit-vec v0.8.0
+   Compiling rkyv v0.7.46
+    Checking strsim v0.11.1
+    Checking roxmltree v0.20.0
+    Checking outref v0.1.0
+    Checking simd-abstraction v0.7.1
+    Checking clap_builder v4.6.7
+    Checking fontconfig-parser v0.5.8
+   Compiling clap_derive v4.6.7
+    Checking bit-set v0.8.0
+    Checking tiny-skia-path v0.12.0
+    Checking cssparser v0.37.0
+    Checking icu_datetime v2.4.0
+    Checking png v0.18.1
+    Checking ptr_meta v0.1.4
+    Checking kurbo v0.13.1
+   Compiling darling v0.24.1
+    Checking icu_list v2.4.0
+    Checking icu_locale v2.4.0
+    Checking oxc_syntax v0.155.0
+    Checking icu_casemap v2.4.0
+    Checking icu_collator v2.4.0
+   Compiling parcel_selectors v0.28.3
+    Checking slotmap v1.1.1
+    Checking hashbrown v0.12.3
+    Checking oxc_regular_expression v0.155.0
+   Compiling prettyplease v0.3.0
+   Compiling rkyv_derive v0.7.46
+   Compiling ahash v0.8.12
+    Checking phf_shared v0.11.3
+    Checking memmap2 v0.9.12
+    Checking quick-xml v0.42.0
+    Checking seahash v4.1.0
+    Checking weezl v0.1.12
+    Checking quick-error v2.0.1
+    Checking matches v0.1.10
+    Checking zune-core v0.5.3
+    Checking byteorder-lite v0.1.0
+   Compiling unicode-segmentation v1.13.3
+    Checking color_quant v1.1.0
+    Checking linked-hash-map v0.5.6
+    Checking yaml-rust v0.4.5
+   Compiling convert_case v0.6.0
+    Checking gif v0.14.2
+    Checking image-webp v0.2.4
+    Checking zune-jpeg v0.5.15
+    Checking data-url v0.1.1
+    Checking plist v1.10.3
+    Checking fontdb v0.24.0
+    Checking phf v0.11.3
+   Compiling bon-macros v3.10.3
+    Checking oxc_ast v0.155.0
+    Checking icu v2.4.0
+    Checking svgtypes v0.16.1
+    Checking clap v4.6.7
+    Checking fancy-regex v0.16.2
+    Checking onig v6.5.3
+    Checking base64-simd v0.7.0
+    Checking formatjs_icu_skeleton_parser v0.1.2
+    Checking skrifa v0.44.0
+    Checking harfrust v0.12.0
+    Checking unicode-normalization v0.1.26
+    Checking half v2.7.1
+    Checking simplecss v0.2.2
+    Checking roxmltree v0.21.2
+    Checking bincode v1.3.3
+    Checking unicode-bidi v0.3.18
+    Checking unicode-script v0.5.8
+    Checking unicode-vo v0.1.0
+    Checking xmlwriter v0.1.0
+    Checking pxfm v0.1.30
+    Checking deunicode v1.6.2
+    Checking data-url v0.3.2
+    Checking pico-args v0.5.0
+    Checking imagesize v0.15.0
+    Checking vlq v0.5.1
+    Checking parcel_sourcemap v2.1.1
+    Checking usvg v0.48.1
+    Checking moxcms v0.8.1
+    Checking syntect v5.3.0
+    Checking slug v0.1.6
+    Checking ciborium-ll v0.2.2
+    Checking caseless v0.2.2
+    Checking formatjs_icu_messageformat_parser v1.1.1
+    Checking oxc_ecmascript v0.155.0
+    Checking bon v3.10.3
+   Compiling lightningcss-derive v1.0.0-alpha.43
+    Checking dashmap v5.5.3
+    Checking tiny-skia v0.12.0
+    Checking cssparser-color v0.5.0
+    Checking read-fonts v0.45.1
+    Checking rgb v0.8.53
+    Checking itertools v0.10.5
+    Checking serde-content v0.1.2
+    Checking entities v1.0.1
+    Checking typed-arena v2.0.2
+    Checking const-str v1.1.0
+    Checking shell-words v1.1.1
+    Checking unicode_categories v0.1.1
+    Checking xdg v2.5.2
+    Checking data-encoding v2.11.1
+   Compiling pastey v0.1.1
+    Checking unicode-id v0.3.7
+    Checking blake3 v1.8.7
+    Checking lol_html v3.0.3
+    Checking markdown v1.0.0
+    Checking lightningcss v1.0.0-alpha.72
+    Checking skrifa v0.48.0
+    Checking comrak v0.42.0
+    Checking tokio v1.54.1
+    Checking oxc_parser v0.155.0
+    Checking tracing v0.1.44
+    Checking resvg v0.48.1
+    Checking image v0.25.10
+    Checking formatjs_icu_messageformat v0.3.1
+    Checking ciborium v0.2.2
+    Checking oxide-fw-diagnostics v0.17.0 (/home/z/my-project/oxide/crates/diagnostics)
+    Checking tinytemplate v1.2.1
+    Checking tempfile v3.27.0
+    Checking snapfire_fsr_mdx v0.2.3
+    Checking criterion v0.8.2
+    Checking oxide-fw-assets v0.17.0 (/home/z/my-project/oxide/crates/assets)
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/content.rs:224:1
+    |
+224 | / pub fn parse_content_entry_with_format(
+225 | |     path: &Path,
+226 | |     source: &str,
+227 | |     _format: ContentFormat,
+228 | | ) -> Result<ContentEntry> {
+    | |_________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+    = note: `-D clippy::missing-errors-doc` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::missing_errors_doc)]`
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/content.rs:234:1
+    |
+234 | pub fn parse_mdx_source(path: &Path, source: &str) -> Result<(ContentEntry, MdxCompileRequest)> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/content_collection.rs:108:1
+    |
+108 | pub fn scan_collection(cfg: &CollectionConfig) -> Result<Collection> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: case-sensitive file extension comparison
+   --> crates/assets/src/content_collection.rs:322:26
+    |
+322 |             let is_doc = lower.ends_with(".md") || lower.ends_with(".mdx");
+    |                          ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+    = note: `-D clippy::case-sensitive-file-extension-comparisons` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::case_sensitive_file_extension_comparisons)]`
+help: use std::path::Path
+    |
+322 ~             let is_doc = std::path::Path::new(&lower)
+323 +                 .extension()
+324 ~                 .is_some_and(|ext| ext.eq_ignore_ascii_case("md")) || lower.ends_with(".mdx");
+    |
+
+error: case-sensitive file extension comparison
+   --> crates/assets/src/content_collection.rs:322:52
+    |
+322 |             let is_doc = lower.ends_with(".md") || lower.ends_with(".mdx");
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+help: use std::path::Path
+    |
+322 ~             let is_doc = lower.ends_with(".md") || std::path::Path::new(&lower)
+323 +                 .extension()
+324 ~                 .is_some_and(|ext| ext.eq_ignore_ascii_case("mdx"));
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/content_collection.rs:506:1
+    |
+506 | pub fn search_index_to_json(idx: &SearchIndex) -> Result<String> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/assets/src/content_typegen.rs:34:1
+   |
+34 | / pub fn write_content_dts(
+35 | |     collections: &[TypedCollection<'_>],
+36 | |     out_path: &std::path::Path,
+37 | | ) -> Result<()> {
+   | |_______________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: these match arms have identical bodies
+   --> crates/assets/src/content_typegen.rs:206:9
+    |
+206 |         serde_json::Value::String(_) => FieldType::String,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+214 |         _ => FieldType::String,
+    |         ^^^^^^^^^^^^^^^^^^^^^^ the wildcard arm
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_same_arms
+    = note: `-D clippy::match-same-arms` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::match_same_arms)]`
+help: otherwise remove the non-wildcard arm
+    |
+206 -         serde_json::Value::String(_) => FieldType::String,
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/route_search.rs:155:1
+    |
+155 | pub fn route_search_index_to_json(idx: &RouteSearchIndex) -> crate::Result<String> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/assets/src/font_metrics.rs:37:1
+   |
+37 | pub fn read_metrics(bytes: &[u8]) -> Result<FontMetric> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/i18n.rs:351:5
+    |
+351 |     pub fn format(&self, locale: &str, template: &str, values: &IcuValues) -> Result<String> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: these match arms have identical bodies
+   --> crates/assets/src/i18n.rs:378:17
+    |
+378 |                 formatjs_icu_messageformat::ErrorCode::Parse => "AST-I18N",
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+382 |                 _ => "AST-I18N",
+    |                 ^^^^^^^^^^^^^^^ the wildcard arm
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_same_arms
+help: otherwise remove the non-wildcard arm
+    |
+378 -                 formatjs_icu_messageformat::ErrorCode::Parse => "AST-I18N",
+    |
+
+error: these match arms have identical bodies
+   --> crates/assets/src/i18n.rs:379:17
+    |
+379 |                 formatjs_icu_messageformat::ErrorCode::MissingValue => "AST-I18N-ARG",
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+380 |                 formatjs_icu_messageformat::ErrorCode::InvalidValueType => "AST-I18N-TYPE",
+381 |                 formatjs_icu_messageformat::ErrorCode::InvalidValue => "AST-I18N-ARG",
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_same_arms
+help: otherwise merge the patterns into a single arm
+    |
+379 ~                 formatjs_icu_messageformat::ErrorCode::MissingValue | formatjs_icu_messageformat::ErrorCode::InvalidValue => "AST-I18N-ARG",
+380 |                 formatjs_icu_messageformat::ErrorCode::InvalidValueType => "AST-I18N-TYPE",
+381 ~                 _ => "AST-I18N",
+    |
+
+error: wildcard matches only a single variant and will also match any future added variants
+   --> crates/assets/src/i18n.rs:382:17
+    |
+382 |                 _ => "AST-I18N",
+    |                 ^ help: try: `formatjs_icu_messageformat::ErrorCode::Formatter`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_wildcard_for_single_variants
+    = note: `-D clippy::match-wildcard-for-single-variants` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::match_wildcard_for_single_variants)]`
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/i18n.rs:418:1
+    |
+418 | pub fn format_icu_message(locale: &str, template: &str, values: &IcuValues) -> Result<String> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/i18n.rs:430:5
+    |
+430 | /     pub fn format_icu(
+431 | |         &self,
+432 | |         locale: &str,
+433 | |         key: &str,
+434 | |         default: &str,
+435 | |         values: &BTreeMap<String, serde_json::Value>,
+436 | |     ) -> Result<String> {
+    | |_______________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/i18n.rs:730:1
+    |
+730 | pub fn load_catalog_from_dir(locales_root: &std::path::Path) -> Result<Catalog> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: this could be rewritten as `let...else`
+   --> crates/assets/src/i18n.rs:775:13
+    |
+775 | /             let body = match fs::read_to_string(&file) {
+776 | |                 Ok(b) => b,
+777 | |                 Err(_) => continue,
+778 | |             };
+    | |______________^ help: consider writing: `let Ok(body) = fs::read_to_string(&file) else { continue };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#manual_let_else
+    = note: `-D clippy::manual-let-else` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::manual_let_else)]`
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/i18n.rs:836:1
+    |
+836 | pub fn write_messages_dts(cat: &Catalog, out_path: &std::path::Path) -> Result<()> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: long literal lacking separators
+   --> crates/assets/src/i18n.rs:522:37
+    |
+522 |         let s = format_number("en", 1234567.0);
+    |                                     ^^^^^^^^^ help: consider: `1_234_567.0`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unreadable_literal
+    = note: `-D clippy::unreadable-literal` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unreadable_literal)]`
+
+error: casting `f64` to `u32` may truncate the value
+  --> crates/assets/src/images.rs:65:13
+   |
+65 |             (f64::from(oh) * f64::from(w) / f64::from(ow)).round() as u32,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+   = note: `-D clippy::cast-possible-truncation` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::cast_possible_truncation)]`
+
+error: casting `f64` to `u32` may lose the sign of the value
+  --> crates/assets/src/images.rs:65:13
+   |
+65 |             (f64::from(oh) * f64::from(w) / f64::from(ow)).round() as u32,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+   = note: `-D clippy::cast-sign-loss` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::cast_sign_loss)]`
+
+error: casting `f64` to `u32` may truncate the value
+  --> crates/assets/src/images.rs:68:13
+   |
+68 |             (f64::from(ow) * f64::from(h) / f64::from(oh)).round() as u32,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+
+error: casting `f64` to `u32` may lose the sign of the value
+  --> crates/assets/src/images.rs:68:13
+   |
+68 |             (f64::from(ow) * f64::from(h) / f64::from(oh)).round() as u32,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+
+error: casting `f64` to `u32` may truncate the value
+   --> crates/assets/src/images.rs:225:13
+    |
+225 |     let h = ((f64::from(oh) * f64::from(w) / f64::from(ow)).round() as u32).max(1);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+
+error: casting `f64` to `u32` may lose the sign of the value
+   --> crates/assets/src/images.rs:225:13
+    |
+225 |     let h = ((f64::from(oh) * f64::from(w) / f64::from(ow)).round() as u32).max(1);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+
+error: casting `u32` to `f32` may cause a loss of precision (`u32` is 32 bits wide, but `f32`'s mantissa is only 23 bits wide)
+  --> crates/assets/src/og_backend.rs:44:18
+   |
+44 |         let sx = width as f32 / size.width().max(1.0);
+   |                  ^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_precision_loss
+   = note: `-D clippy::cast-precision-loss` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::cast_precision_loss)]`
+
+error: casting `u32` to `f32` may cause a loss of precision (`u32` is 32 bits wide, but `f32`'s mantissa is only 23 bits wide)
+  --> crates/assets/src/og_backend.rs:45:18
+   |
+45 |         let sy = height as f32 / size.height().max(1.0);
+   |                  ^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_precision_loss
+
+error: this function's return value is unnecessarily wrapped by `Result`
+  --> crates/assets/src/og_backend.rs:56:1
+   |
+56 | fn build_svg(tree: &serde_json::Value, width: u32, height: u32) -> Result<String> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unnecessary_wraps
+   = note: `-D clippy::unnecessary-wraps` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::unnecessary_wraps)]`
+help: remove `Result` from the return type...
+   |
+56 - fn build_svg(tree: &serde_json::Value, width: u32, height: u32) -> Result<String> {
+56 + fn build_svg(tree: &serde_json::Value, width: u32, height: u32) -> std::string::String {
+   |
+help: ...and then remove the surrounding `Ok()` from returning expressions
+   |
+81 -     Ok(svg)
+81 +     svg
+   |
+
+error: `format!(..)` appended to existing `String`
+  --> crates/assets/src/og_backend.rs:63:5
+   |
+63 | /     svg.push_str(&format!(
+64 | |         "<svg xmlns=\"http://www.w3.org/2000/svg\" \
+65 | |          xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
+66 | |          width=\"{width}\" height=\"{height}\" \
+67 | |          viewBox=\"0 0 {width} {height}\">"
+68 | |     ));
+   | |______^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+   = note: `-D clippy::format-push-string` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+   |
+63 ~     let _ = write!(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" \
+64 +          xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
+65 +          width=\"{width}\" height=\"{height}\" \
+66 ~          viewBox=\"0 0 {width} {height}\">");
+   |
+
+error: `format!(..)` appended to existing `String`
+  --> crates/assets/src/og_backend.rs:69:5
+   |
+69 | /     svg.push_str(&format!(
+70 | |         "<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"{}\"/>",
+71 | |         escape_attr(bg)
+72 | |     ));
+   | |______^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+   |
+69 ~     let _ = write!(svg, "<rect x=\"0\" y=\"0\" width=\"{width}\" height=\"{height}\" fill=\"{}\"/>",
+70 ~         escape_attr(bg));
+   |
+
+error: `format!(..)` appended to existing `String`
+  --> crates/assets/src/og_backend.rs:95:17
+   |
+95 | /                 svg.push_str(&format!(
+96 | |                     "<rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" \
+97 | |                      rx=\"{radius}\" ry=\"{radius}\" fill=\"{}\"/>",
+98 | |                     escape_attr(fill)
+99 | |                 ));
+   | |__________________^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+   |
+95 ~                 let _ = write!(svg, "<rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" \
+96 +                      rx=\"{radius}\" ry=\"{radius}\" fill=\"{}\"/>",
+97 ~                     escape_attr(fill));
+   |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/og_backend.rs:101:17
+    |
+101 | /                 svg.push_str(&format!(
+102 | |                     "<rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" fill=\"{}\"/>",
+103 | |                     escape_attr(fill)
+104 | |                 ));
+    | |__________________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+101 ~                 let _ = write!(svg, "<rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" fill=\"{}\"/>",
+102 ~                     escape_attr(fill));
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/og_backend.rs:123:13
+    |
+123 | /             svg.push_str(&format!(
+124 | |                 "<text x=\"{x}\" y=\"{y}\" font-size=\"{size}\" \
+125 | |                  font-family=\"{}\" font-weight=\"{weight}\" fill=\"{}\" \
+126 | |                  text-anchor=\"{anchor}\">{}</text>",
+...   |
+129 | |                 escape_text(text)
+130 | |             ));
+    | |______________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+123 ~             let _ = write!(svg, "<text x=\"{x}\" y=\"{y}\" font-size=\"{size}\" \
+124 +                  font-family=\"{}\" font-weight=\"{weight}\" fill=\"{}\" \
+125 +                  text-anchor=\"{anchor}\">{}</text>",
+126 +                 escape_attr(family),
+127 +                 escape_attr(fill),
+128 ~                 escape_text(text));
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/og_backend.rs:137:17
+    |
+137 | /                 svg.push_str(&format!(
+138 | |                     "<image x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" \
+139 | |                      xlink:href=\"{}\" preserveAspectRatio=\"xMidYMid slice\"/>",
+140 | |                     escape_attr(href)
+141 | |                 ));
+    | |__________________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+137 ~                 let _ = write!(svg, "<image x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" \
+138 +                      xlink:href=\"{}\" preserveAspectRatio=\"xMidYMid slice\"/>",
+139 ~                     escape_attr(href));
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/assets/src/lib.rs:90:1
+   |
+90 | pub fn parse_asset_query(specifier: &str) -> Result<AssetQuery> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/lib.rs:129:5
+    |
+129 |     fn transform(&self, input: &CssInput) -> Result<CssOutput>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: possible intra-doc link using quotes instead of backticks
+   --> crates/assets/src/lib.rs:139:37
+    |
+139 |     /// browserslist targets, e.g. ["chrome 100", "safari 15"].
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_link_with_quotes
+    = note: `-D clippy::doc-link-with-quotes` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::doc_link_with_quotes)]`
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/lib.rs:232:5
+    |
+232 |     fn process(&self, req: ImageRequest) -> Result<ImageResult>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/lib.rs:319:1
+    |
+319 | pub fn parse_image_request(query: &str) -> Result<ImageEndpointRequest> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: casting `u32` to `u8` may truncate the value
+   --> crates/assets/src/lib.rs:366:32
+    |
+366 |                 quality = Some(q as u8);
+    |                                ^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+366 -                 quality = Some(q as u8);
+366 +                 quality = Some(u8::try_from(q));
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/lib.rs:464:5
+    |
+464 |     fn bundle(&self, spec: &FontSpec) -> Result<FontBundle>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: this function has too many lines (107/100)
+   --> crates/assets/src/lib.rs:492:5
+    |
+492 |     fn bundle(&self, spec: &FontSpec) -> Result<FontBundle> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#too_many_lines
+    = note: `-D clippy::too-many-lines` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:565:17
+    |
+565 |                 css.push_str(&format!("  font-family: '{}';\n", spec.family));
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+565 -                 css.push_str(&format!("  font-family: '{}';\n", spec.family));
+565 +                 let _ = write!(css, "  font-family: '{}';\n", spec.family);
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:567:21
+    |
+567 |                     css.push_str(&format!("  font-weight: {w};\n"));
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+567 -                     css.push_str(&format!("  font-weight: {w};\n"));
+567 +                     let _ = write!(css, "  font-weight: {w};\n");
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:569:17
+    |
+569 |                 css.push_str(&format!("  font-style: {style};\n"));
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+569 -                 css.push_str(&format!("  font-style: {style};\n"));
+569 +                 let _ = write!(css, "  font-style: {style};\n");
+    |
+
+error: these match arms have identical bodies
+   --> crates/assets/src/lib.rs:582:25
+    |
+582 |                         Some("woff2") => "woff2",
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+586 |                         _ => "woff2",
+    |                         ^^^^^^^^^^^^ the wildcard arm
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_same_arms
+help: otherwise remove the non-wildcard arm
+    |
+582 -                         Some("woff2") => "woff2",
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:588:21
+    |
+588 |                     css.push_str(&format!("  src: url(/fonts/{name}) format('{fmt}');\n"));
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+588 -                     css.push_str(&format!("  src: url(/fonts/{name}) format('{fmt}');\n"));
+588 +                     let _ = write!(css, "  src: url(/fonts/{name}) format('{fmt}');\n");
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:600:9
+    |
+600 |         css.push_str(&format!("  font-family: '{}-fallback';\n", spec.family));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+600 -         css.push_str(&format!("  font-family: '{}-fallback';\n", spec.family));
+600 +         let _ = write!(css, "  font-family: '{}-fallback';\n", spec.family);
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:604:17
+    |
+604 |                 css.push_str(&format!("  size-adjust: {:.2}%;\n", o.size_adjust));
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+604 -                 css.push_str(&format!("  size-adjust: {:.2}%;\n", o.size_adjust));
+604 +                 let _ = write!(css, "  size-adjust: {:.2}%;\n", o.size_adjust);
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:605:17
+    |
+605 |                 css.push_str(&format!("  ascent-override: {:.2}%;\n", o.ascent_override));
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+605 -                 css.push_str(&format!("  ascent-override: {:.2}%;\n", o.ascent_override));
+605 +                 let _ = write!(css, "  ascent-override: {:.2}%;\n", o.ascent_override);
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:606:17
+    |
+606 | /                 css.push_str(&format!(
+607 | |                     "  descent-override: {:.2}%;\n",
+608 | |                     o.descent_override
+609 | |                 ));
+    | |__________________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+606 ~                 let _ = write!(css, "  descent-override: {:.2}%;\n",
+607 ~                     o.descent_override);
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:610:17
+    |
+610 | /                 css.push_str(&format!(
+611 | |                     "  line-gap-override: {:.2}%;\n",
+612 | |                     o.line_gap_override
+613 | |                 ));
+    | |__________________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+610 ~                 let _ = write!(css, "  line-gap-override: {:.2}%;\n",
+611 ~                     o.line_gap_override);
+    |
+
+error: assigning the result of `Clone::clone()` may be inefficient
+   --> crates/assets/src/lib.rs:695:9
+    |
+695 |         head.json_ld = self.json_ld.clone();
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use `clone_from()`: `head.json_ld.clone_from(&self.json_ld)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#assigning_clones
+    = note: `-D clippy::assigning-clones` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assigning_clones)]`
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:717:9
+    |
+717 |         s.push_str(&format!("<url><loc>{}</loc></url>\n", xml_escape(u)));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+717 -         s.push_str(&format!("<url><loc>{}</loc></url>\n", xml_escape(u)));
+717 +         let _ = write!(s, "<url><loc>{}</loc></url>\n", xml_escape(u));
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:737:13
+    |
+737 |             s.push_str(&format!("User-agent: {agent}\nDisallow: {rule}\n"));
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+737 -             s.push_str(&format!("User-agent: {agent}\nDisallow: {rule}\n"));
+737 +             let _ = write!(s, "User-agent: {agent}\nDisallow: {rule}\n");
+    |
+
+error: `format!(..)` appended to existing `String`
+   --> crates/assets/src/lib.rs:741:9
+    |
+741 |         s.push_str(&format!("Sitemap: {sm}\n"));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+741 -         s.push_str(&format!("Sitemap: {sm}\n"));
+741 +         let _ = write!(s, "Sitemap: {sm}\n");
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/lib.rs:760:5
+    |
+760 |     fn render(&self, tree: &serde_json::Value, width: u32, height: u32) -> Result<Vec<u8>>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/assets/src/lib.rs:781:1
+    |
+781 | pub fn parse_content_entry(path: &Path, source: &str) -> Result<ContentEntry> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: could not compile `oxide-fw-assets` (lib) due to 58 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: casting `u32` to `u8` may truncate the value
+  --> crates/assets/src/tests.rs:93:13
+   |
+93 |             (x * 255 / w.max(1)) as u8,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+   |
+93 -             (x * 255 / w.max(1)) as u8,
+93 +             u8::try_from(x * 255 / w.max(1)),
+   |
+
+error: casting `u32` to `u8` may truncate the value
+  --> crates/assets/src/tests.rs:94:13
+   |
+94 |             (y * 255 / h.max(1)) as u8,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+   |
+94 -             (y * 255 / h.max(1)) as u8,
+94 +             u8::try_from(y * 255 / h.max(1)),
+   |
+
+error: consider adding a `;` to the last statement for consistent formatting
+   --> crates/assets/src/tests.rs:149:13
+    |
+149 |             assert_eq!(out.diagnostics, [] as [oxide_fw_diagnostics::Diagnostic; 0])
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: add a `;` here: `assert_eq!(out.diagnostics, [] as [oxide_fw_diagnostics::Diagnostic; 0]);`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#semicolon_if_nothing_returned
+    = note: `-D clippy::semicolon-if-nothing-returned` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::semicolon_if_nothing_returned)]`
+
+error: could not compile `oxide-fw-assets` (lib test) due to 62 previous errors
