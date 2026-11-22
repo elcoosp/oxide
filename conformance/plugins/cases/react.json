@@ -1,0 +1,14 @@
+{
+  "plugin": "@vitejs/plugin-react@6.3.0",
+  "fixture": "react-app",
+  "adapter": "react",
+  "assert": [
+    {
+      "file": "dist/client/*.js",
+      "contains": "_jsx"
+    }
+  ],
+  "hooks": [
+    "transform"
+  ]
+}
