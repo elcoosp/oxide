@@ -29,12 +29,13 @@ import c44 from './c44.ts'
 import c45 from './c45.ts'
 import c46 from './c46.ts'
 import c47 from './c47.ts'
+import c48 from './c48.ts'
 
 /** Every registered assertion, in stable order: the v0.1 set first (the §22
- *  contract), then C25–C47 (the §V2-R01 feature set, in spec-table order). */
+ *  contract), then C25–C48 (the §V2-R01 feature set, in spec-table order). */
 export const ALL_ASSERTIONS: readonly Assertion[] = [
   ...V01_ASSERTIONS,
-  c25, c26, c27, c28, c29, c30, c31, c32, c33, c34, c35, c36, c37, c38, c39, c40, c41, c42, c43, c44, c45, c46, c47,
+  c25, c26, c27, c28, c29, c30, c31, c32, c33, c34, c35, c36, c37, c38, c39, c40, c41, c42, c43, c44, c45, c46, c47, c48,
 ]
 
 /** Look up an assertion by its stable id. */
