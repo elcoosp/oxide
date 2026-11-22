@@ -6812,3 +6812,83 @@ pinned by the compiler on a V8-capable host.
 **Tailwind acceptance rides CI.** The spec's `oxide add @oxide/tailwind` styled-output acceptance needs pnpm + the native build (the `@oxide-fw/tailwind` runtime invokes Tailwind's Rust scanner) — that ride the `node` and `test` CI jobs (named below). The `@oxide/analytics` first-party module is the V8-free acceptance this leg ships.
 
 **Follow-ups closed (the loader's own doc).** The `modules_loader.rs` doc comment's "resolved and reported — merging is the documented follow-up" lines for `adapters`/`typegen`/`configDefaults` are GONE; the module's `addMiddleware`/`addServerFn` contributions are wired (no longer "deferred"). The `cmd_add` report's "configDefaults: present (not merged — deferred to a follow-up)" line is now "configDefaults: present (merged under modules.<name>)".
+
+## V2-R01 Conformance v2 — the assertion registry + the capability-skip engine (this diff, 2026-11-22)
+
+**The milestone.** The §22 suite (one assertion set × four adapters) becomes a
+registry: the v0.1 set (29 entries — the §22 contract + the E02/F01/E04/F09
+drafts + the prefetch/out-of-order additions) is migrated into
+`conformance/assertions/v01.ts` WITHOUT changing a single check (`runSuite`
+still runs them for the `conformance.test.ts` guard — green), and every
+C25–C47 feature assertion lands as a per-id file
+(`conformance/assertions/c25.ts … c47.ts`). The registry
+(`conformance/assertions/index.ts`) collects them; `run.ts` gains `--adapter`
+and `--target` flags and runs the cross product `{react,vue,svelte,solid} ×
+{binary, node}`, printing a PASS/FAIL/SKIP(reason) table per cell.
+
+**The capability-skip engine (wired to the EXISTING R02 matrix — not a
+second table).** `conformance/assertions/skip.ts` reads the matrix through
+`conformance/assertions/capability.ts`, a TS bridge over
+`conformance/matrix.json` — a JSON export generated from
+`oxide_adapters::capability_matrix` by the new
+`crates/adapters/examples/dump_matrix.rs` example (ONE source of truth). The
+drift guard is `crates/adapters/tests/matrix_json.rs`: it reloads the
+committed JSON and asserts every target × capability cell matches the Rust
+`support`/`degradation` functions, so a Rust-side row change cannot land
+without the TS bridge moving too. The rule (spec §V2-R01): Unsupported for the
+tested target → SKIP(reason); Degraded → runs (the detail may carry the
+documented degradation); Full → runs, a failure is a release blocker. The
+capability truth wins over the execution surface — a capability-Unsupported
+skip is recorded BEFORE the ci-bound dimension, so the table shows WHY
+(capability), not just WHERE (CI job). The runner exits non-zero on any
+Full/baseline failure AND on any UNEXPLAINED skip; explained skips
+(target-not-applicable, ci-bound, capability-unsupported) do not block.
+
+**Every C25–C47 assertion pinned to the landed feature runtime.** The
+client-runtime half (C31 mixed islands / F01, C32 replay / F03, C36 ODF PATCH /
+F06, C37 resumable stream / F07, C41 search / F09, C42 prefetch / F13, C43
+offline outbox / F14, C45 chunk integrity / E04, C46 typed-route href / E02)
+runs NOW via `node --test` against the fake DOM (zero runtime deps) — the same
+modules apps ship (`packages/core/src/client/{replay,outbox,resume,live,
+prefetch,searchEngine,tt,odf-decode}.ts`, `islands.ts`, `href.ts`). The
+server-bound half (C25–C30 build/middleware/prerender / A04–A07, C33
+experiments / F04, C34 why-dynamic / F16, C35 live / F05, C38 brownout / F12,
+C39 skew / F10, C40 rust-fn / F08, C44 record-replay / F15, C47 HMR / E01) is
+implemented as registry entries whose `ci` field names the Playwright spec
+(`tests/playwright/tests/conformance-cXX-*.spec.ts`) or shell script
+(`tests/conformance-c34-why-dynamic.sh`; C39 rides the existing
+`tests/skew.sh`) + the CI job (`playwright` / `jshost-e2e`) that executes
+them. NO assertion is left unimplemented — a CI-bound assertion is a written,
+registered spec with a recorded execution surface, not a TODO.
+
+**The local-vs-CI split, explicit per assertion.** `surface: 'client'` runs
+in the node runner (V8-free fake DOM); `surface: 'ci'` skips ci-bound in the
+node runner (explained) and executes in its named CI job. The node suite
+(`node --test 'test/*.test.ts'`) is 44/44 green: the v0.1 set × 4 adapters
+(conformance.test.ts), the registry × the cross product (registry.test.ts — 8
+cells, zero blockers, zero unexplained skips), and the config-surface guard.
+The consumer example `node conformance/run.ts --adapter react --target binary`
+prints the capability-aware table end-to-end (38/52 pass, 14 ci-bound skips
+explained, 0 fail, exit 0).
+
+**The bench + the drift guard + the example.** `conformance/bench.ts` is a
+cheap node bench over the registry dispatch + skip engine (assertion
+resolution per adapter×target cell) with before/after numbers — the skip
+engine adds ~1.8 ms/cell over the v0.1 per-adapter loop (21 ns per assertion
+per iter). The drift guard (`crates/adapters/tests/matrix_json.rs`) is
+`cargo test`-green; the matrix example is `cargo clippy -p oxide-fw-adapters
+--all-targets -- -D warnings -W clippy::pedantic`-clean (zero `#[allow]`/
+`#[expect]` in the new code). The consumer example is documented in
+`conformance/README.md`.
+
+**Doc drift fixed.** `docs/architecture.md`'s testing section said "29
+assertions × 4 adapters" (the pre-R01 count); it now reflects the registry
+(the v0.1 set migrated + C25–C47, dispatched through the capability-skip
+engine). The spec's §V2-R01 row's Implementation paragraph is updated to
+name the landed registry seam.
+
+**M2 deferred.** The workspace clippy gate restore (chunked per-crate,
+opt-in `[lints] workspace = true` for the crates with their own lint table +
+cli) is M2 — deferred because M1 consumed the session. The pre-existing
+pedantic debt in untouched crates (the assets crate's 61 manual findings)
+stays RED at HEAD, documented in the postscript above, not hidden.
