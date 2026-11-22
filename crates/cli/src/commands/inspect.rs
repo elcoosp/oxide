@@ -151,7 +151,7 @@ pub(crate) fn write_routes_reasons(
 /// The pool is created lazily: a project with no such plugin pays nothing.
 pub(crate) async fn scan_routes_with_plugins(
     root: &Path,
-    cfg: &OxideConfig,
+    cfg: &mut OxideConfig,
 ) -> anyhow::Result<RouteTree> {
     if !plugin_declares_any(root, cfg, &["routes", "serverMiddleware"]) {
         return scan_routes(root, cfg, None).await;
@@ -168,13 +168,13 @@ pub(crate) async fn scan_routes_with_plugins(
 /// `.oxide/types/` (routes.d.ts + routes.json, §8.3).
 pub(crate) async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
-    let cfg = load_config_or_default(&rootp, "development");
+    let mut cfg = load_config_or_default(&rootp, "development");
     // §10.1: same AST refinement `cmd_build` uses, so the table shows the
     // authoritative mode rather than the scanner's line-oriented guess.
     // (Without it, a loader with `'…cookies…'` in a string literal reads
     // as dynamic here while the build treats it as static.)
-    let tree =
-        refine_render_modes_from_ast(&rootp, &cfg, scan_routes_with_plugins(&rootp, &cfg).await?);
+    let scanned = scan_routes_with_plugins(&rootp, &mut cfg).await?;
+    let tree = refine_render_modes_from_ast(&rootp, &cfg, scanned);
     let i18n_for_typegen: Option<&[String]> = match cfg.i18n.strategy.as_str() {
         "none" => None,
         _ if cfg.i18n.locales.is_empty() => None,
@@ -229,8 +229,8 @@ pub(crate) async fn cmd_routes(root: &str, w: Writer<'_>) -> anyhow::Result<i32>
 /// zeros otherwise. Exit 1 when any route is over budget.
 pub(crate) async fn cmd_analyze(root: &str, w: Writer<'_>) -> anyhow::Result<i32> {
     let rootp = PathBuf::from(root);
-    let cfg = load_config_or_default(&rootp, "production");
-    let tree = scan_routes_with_plugins(&rootp, &cfg).await?;
+    let mut cfg = load_config_or_default(&rootp, "production");
+    let tree = scan_routes_with_plugins(&rootp, &mut cfg).await?;
     let manifest =
         read_json(&rootp.join("dist/client/client.manifest.json")).unwrap_or(serde_json::json!({}));
     let manifest_routes = manifest
@@ -413,8 +413,8 @@ pub(crate) async fn cmd_check(root: &str, w: Writer<'_>) -> anyhow::Result<i32> 
             ok = false;
         }
     }
-    let cfg = load_config_or_default(&rootp, "development");
-    match scan_routes_with_plugins(&rootp, &cfg).await {
+    let mut cfg = load_config_or_default(&rootp, "development");
+    match scan_routes_with_plugins(&rootp, &mut cfg).await {
         Ok(tree) => outln!(w, "routes: OK ({} entries)", tree.entries.len()),
         Err(e) => {
             outln!(w, "routes: {e:#}");
@@ -611,8 +611,8 @@ pub(crate) async fn cmd_why_route(
 ) -> anyhow::Result<i32> {
     let _span = tracing::info_span!("cli_why_route", route = %route_id).entered();
     let rootp = PathBuf::from(root);
-    let cfg = load_config_or_default(&rootp, "development");
-    let tree = scan_routes_with_plugins(&rootp, &cfg).await?;
+    let mut cfg = load_config_or_default(&rootp, "development");
+    let tree = scan_routes_with_plugins(&rootp, &mut cfg).await?;
     let entry = find_route_entry(&tree, route_id).ok_or_else(|| {
         anyhow::anyhow!("no route matches `{route_id}` (run `oxide routes` to list the route ids)")
     })?;
