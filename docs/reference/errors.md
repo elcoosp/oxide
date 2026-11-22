@@ -81,6 +81,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CFG-001` | unknown config key `framwork` | did you mean `framework`? |
 | `CFG-AVIF` | `images.avifSpeed` must be a whole number in 1..=10 (ravif's encoder speed) — got `{got}` | set `images.avifSpeed` to a whole number in 1..=10 (the default is 6) |
 | `CFG-BACKEND` | `framework.compilerBackend` must be one of `auto`, `native`, `node` — got `{got}` | set `framework.compilerBackend` to `auto` (the default), `native` or `node` |
+| `CFG-CHECK` | `check.typecheck` must be one of `tsgo`, `oxlint`, `tsrs`, `tsc`, `off` — got `{got}` | set `check.typecheck` to `tsgo` (the default), `oxlint`, `tsrs` (experimental), `tsc` or `off` |
 | `CFG-DEPLOY` | the `deploy` section carries a bad knob: {msg} | spell the section `deploy: { skewWindow: '15m', generations: 3 }` — the window grammar is `<n>s\|m\|h\|d`, plain integers are seconds |
 | `CFG-EXTENDS` | extends chain too deep at `{spec}` (cycle?) | — |
 | `CFG-IO` | read {}: {e} | — |
@@ -126,6 +127,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DOC-001` | config keys carry no schema description; the page refuses to render (E11 acceptance) | add a `description` in `crates/config/src/schema.rs`, then regenerate the pages |
 | `DOC-002` | docs/errors.toml carries an entry the strict registry format rejects (the diagnostic names the line) | fix the entry the diagnostic names (the format is `[CODE]` + `message`/`fix`/`spec_only`) |
 | `DOC-003` | a docs/reference page is missing or stale against the running binary | regenerate with `cargo run -p oxide-fw-cli -- docs generate` |
+| `DOC-004` | conformance/plugins/results.json: {msg} | re-run `node scripts/plugin-compat.mjs --dry-run` to refresh results.json |
 | `DSP-101` | a middleware staged a reserved locals key (`session`, `locale` or `experiments`) | Rename the key; reserved keys are owned by the core |
 | `DSP-110` | invalid experiment definition (traffic outside 0-100, or fewer than two variants) | Fix the `experiments` entry |
 | `DSP-111` | invalid `live` section (keepaliveSeconds/maxSubscribers/maxRerunsPerSecond below 1, or perIpMax above maxSubscribers) | Fix the `live` section |
@@ -183,6 +185,14 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `MIG-DETECT` | no migratable framework detected in {root} (the signature surface: package.json dependency names, next.config.*, nuxt.config.*, svelte.config.js with `kit`) | Point `oxide migrate` at the project root, or migrate by hand — supported: sveltekit, next, nuxt, vite |
 | `MIG-IO` | {what}: {e} | Check the path's permissions and re-run `oxide migrate` |
 | `MIG-TARGET` | rename target {to} already exists; the migration would overwrite it | Resolve the collision (the source is {from}), or apply in a clean git tree |
+| `MOD-ADAPTER` | module `{name}` supports adapters [{adapters}] but the project adapter is `{adapter}` (§15.4) | add `{adapter}` to the module's `adapters` declaration, or remove the module from `modules: []` in oxide.config.ts |
+| `MOD-ADAPTER-001` | module `{name}` supports adapters [{adapters}] but the host adapter is `{adapter}` (§V2-E06) | add `{adapter}` to the module's `adapters` declaration, or
+  remove the module from `modules: []` in oxide.config.ts |
+| `MOD-ADAPTER-002` | module `{name}` declares adapters [{adapters}] but the project adapter is `{adapter}` (§V2-E06) | add `{adapter}` to the module's `adapters` declaration, or
+  remove the module from `modules: []` in oxide.config.ts |
+| `MOD-CONFIG-DYNAMIC` | oxide.config.ts does not call `defineConfig({ … })` with an object literal — the editor cannot safely edit a dynamic config (§V2-E06) | add `modules: ['{module}']` to the `defineConfig({ … })` object literal manually, or
+  convert the config to a static `export default defineConfig({ … })` shape |
+| `MOD-CONFIG-PARSE` | oxide.config.ts calls `defineConfig(` but the object literal is malformed (§V2-E06) | repair the config's `defineConfig({ … })` shape so the editor can locate the `modules:` key |
 | `NOT-FOUND` | JSH-ACTION | — |
 | `ODF-CYCLE` | reference expansion exceeds the {MAX_DEPTH}-level limit | — |
 | `ODF-DEPTH` | value is nested deeper than the {MAX_DEPTH}-level limit | — |
@@ -220,6 +230,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `RFN-002` | `*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08) | Use Binary or Docker, or remove the Rust functions |
 | `RFN-003` | native function library failed to load: {e} | Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type = ["cdylib"]` shape) |
 | `RFN-004` | native function payload did not convert: {e} | The client stub sends JSON args; the host converts to ODF at the boundary — check the args shape against the generated types |
+| `RFN-LOAD` | the build secret is unavailable; the native server functions stay unmounted | ensure the build secret is readable, or drop `.oxide/rust` to run on the JS pool |
 | `RFN-PANIC` | a native function panicked; the host answers 500 and the library never unwinds across the boundary | Inspect the server log for the panic backtrace; panics are a bug in the function body |
 | `RFN-TYPES` | the native function types payload did not parse: {e} | Rebuild the user crate with the matching `oxide-rustfn` version |
 | `RND-INJECT` | html injection failed: {e} | — |
@@ -242,6 +253,8 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `SCHEMA-001` | SCHEMA-002 | — |
 | `SCHEMA-002` | the config module's value is not JSON (the schema crate's parse class) | Serve the module's value as JSON (the schema crate parses values, not TS) |
 | `SEC-SESSION` | a session codec needs at least one key (security.sessionKeys) | — |
+| `SKW-POOL` | the promoted generation has no worker pool; the boot pool keeps serving every generation | the generation's pool failed to boot — inspect the serve log; the boot pool covers until the window closes |
+| `SKW-SNAPSHOT` | skew: a generation's loader sources could not be frozen; the two-pool route step stays inert and the boot handles serve every generation | inspect the snapshot error in the serve log; the generation downgrades to acceptance-only |
 | `SNAP-002` | top-level side effect | create connections lazily |
 | `SNP-FORMAT` | snapshot format {} is not supported (expected {}) | — |
 | `SNP-PANIC` | snapshot builder thread panicked | — |
