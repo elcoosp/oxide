@@ -1,0 +1,100 @@
+V2-E09 edge completion — GREEN transcript (the red→green cycle closed)
+
+All gates run V8-free on the host (the sandbox has no V8/workerd toolchain —
+the wasm32 release build, the wrangler/workerd e2e, and the full-workspace
+nextest run in CI; see .github/pr-body.md "not-run").
+
+## core-wasm exports + native-mirror tests (host)
+
+$ cargo test -p oxide-fw-core-wasm --lib
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured
+
+The 18 `e09_mirror_tests` reuse the SAME vectors as the substrate's own tests:
+match_route (router `index.rs`/`rules.rs` fixtures), apply_rules (router
+`rules.rs` redirect 308 / rewrite / headers-merge), odp1_apply (odf
+`patch_tdd.rs` Set/Del/Splice append/prepend/middle/truncate), sse_frame
+(server `live_tdd`), key_str (cache `keyhash`), nonce_splice (render `splice`).
+
+## extraction homes (host) — sse_frame / KeyHash / NonceSplicer
+
+$ cargo test -p oxide-fw-edge-primitives --lib
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured
+
+server/cache/render re-export their item byte-identical; their tests pass
+through the re-export:
+$ cargo test -p oxide-fw-router --lib          # 84 passed
+$ cargo test -p oxide-fw-cache key            # ok (matches_canonical_display)
+$ cargo test -p oxide-fw-server sse_frame     # sse_frame_multiline_data ok
+
+## wasm32 release build gate
+
+$ cargo build -p oxide-fw-core-wasm --target wasm32-unknown-unknown --release
+Finished `release` profile [optimized] target(s) in 34.57s
+$ ls -la target/wasm32-unknown-unknown/release/oxide_fw_core_wasm.wasm
+1622102 bytes (raw cdylib)
+
+## glue + budget (functional payload, ≤ 400 KB gzip)
+
+$ wasm-bindgen target/wasm32-unknown-unknown/release/oxide_fw_core_wasm.wasm \
+    --target web --out-name edge --out-dir crates/cli/resources
+$ wasm-opt -Oz crates/cli/resources/edge_bg.wasm -o crates/cli/resources/edge_bg.wasm
+$ mv crates/cli/resources/edge_bg.wasm crates/cli/resources/edge.wasm
+$ grep -oE "export function [a-zA-Z0-9_]+" crates/cli/resources/edge.js
+export function apply_rules / decode_odf / edge_cache_key / encode_odf /
+key_str / match_route / merge_head / merge_head_structured / nonce_splice /
+odp1_apply / sse_frame   (11 exports — the 6 new + 5 existing)
+
+$ bash scripts/check-edge-wasm-budget.sh
+edge wasm budget gate (raw (wasm-opt not on PATH; the regen script applies -Oz when present))
+  artifact: crates/cli/resources/edge.wasm
+  raw size:   352251 bytes
+  gzip size:  147745 bytes
+  budget:     409600 bytes (400 KB gzip)
+PASS: gzip size 147745 ≤ budget 409600
+
+## CI B3 step reconciliation
+
+edge.wasm imports __wbindgen_* (7) AND edge.js glue is committed alongside it
+→ "B3: wasm glue committed alongside edge.wasm — payload functional" (exit 0).
+The "partially closed" deviation arm is superseded (docs/deviations.md P0-1c
+now "closed (payload functional)").
+
+## adapters — worker spec shape + glue copy + capability rows
+
+$ cargo test -p oxide-fw-adapters --lib
+test result: ok. 31 passed; 0 failed
+
+cloudflare_emits_complete_worker_package: worker contains `init(env.EDGE)`,
+`applyRules(`, `matchRoute(`, `env.OXIDE_KV.put`, `expirationTtl: 60`,
+`indexTags`; handler.js loader `await import("./edge.js")` (the glue), not
+`./edge.wasm`.
+cloudflare_ships_glue_alongside_wasm_when_present: edge.wasm + edge.js +
+handler.js + worker.js all copied; wrangler `[wasm_modules] edge = "./edge.wasm"`.
+edge_capability_rows_are_truthful_per_e09: Cloudflare Live=Unsupported,
+RustFns=Unsupported, Search=Unsupported, Skew=Degraded.
+
+## criterion bench over the new pure exports
+
+$ cargo bench -p oxide-fw-core-wasm --bench edge_ops
+edge_match_route   time:   [3.1405 µs 3.1422 µs 3.1442 µs]
+edge_apply_rules   time:   [2.0541 µs 2.0597 µs 2.0681 µs]
+edge_odp1_apply    time:   [4.6794 µs 4.6822 µs 4.6851 µs]
+
+## consumer example (end-to-end on the host)
+
+$ cargo run -p oxide-fw-core-wasm --example edge_ops
+match_route('/blog/hello') -> {"id":"routes/blog/[slug]/page","params":{"slug":"hello"},"score":6}
+apply_rules('/old')       -> {"redirect":"/new","status":308}
+odp1_apply round-trip     -> {"count":3,"title":"v2"}
+sse_frame('data', 7, …)   -> "event: data\nid: 7\ndata: line1\ndata: line2\n\n"
+key_str('L0', …)          -> dacaf123f5f1d73f2b24b0349b2a70d3 (32 hex, matches native L0)
+nonce_splice(…)           -> <script nonce="SENTINEL"></script>
+V2-E09 edge ops: all four end-to-end calls succeeded.
+
+## clippy + fmt (touched crates)
+
+$ cargo clippy -p oxide-fw-edge-primitives -p oxide-fw-core-wasm -p oxide-fw-router \
+    -p oxide-fw-adapters --all-targets -- -D warnings
+Finished (zero warnings)
+$ cargo fmt -p oxide-fw-{core-wasm,edge-primitives,router,adapters,cache,render,server} -- --check
+(clean)
