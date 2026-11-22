@@ -6892,3 +6892,144 @@ opt-in `[lints] workspace = true` for the crates with their own lint table +
 cli) is M2 — deferred because M1 consumed the session. The pre-existing
 pedantic debt in untouched crates (the assets crate's 61 manual findings)
 stays RED at HEAD, documented in the postscript above, not hidden.
+
+## V2-F19 per-route capability permissions — the spike outcome + Model 2 adoption (2026-11-22)
+
+**The question.** Can `net`, `fs` and `env` be enforced per route inside a
+shared, interleaving isolate, or does a detached timer (a `setTimeout`
+created outside the request context) leak across routes and bypass the
+grant table? The spec's §V2-F19 row carries the two candidate models:
+Model 1 (attribute by request — a thread-local seeded per call) and
+Model 2 (isolate per profile — the pool keyed by the route's permission-
+profile hash).
+
+**The spike.** The decision record
+(`docs/decisions/F19-permissions.md`) carries the question, the
+timebox, and the written kill criteria: (1) a bypass Model 2 cannot
+close (a detached timer firing after the per-call guard dropped, with
+the wrong route's grant), and (2) isolate-count growth > 3× for typical
+apps. Model 1 was prototyped on `op_oxide_fetch` + the `process.env`
+Proxy (backed by `op_oxide_env_get`) + the `node:fs.readFile` shim
+(backed by `op_oxide_fs_read`); the hostile fixture
+(`crates/jshost/tests/perm_tdd.rs`) is the red→green pin.
+
+**The outcome — Model 2 adopted.** Model 1's bypass is structural: the
+`PermGuard` RAII (mirroring the `TraceParentGuard` precedent at
+`crates/jshost/src/v8_ops.rs:91`) seeds a `PERM_CTX` thread-local per
+call and clears it on drop; a `setTimeout` created outside the request
+context fires on a worker thread whose `PERM_CTX` is `None` (cleared by
+the previous call's drop), and under default-allow-all `None` means
+unrestricted — the fetch succeeds. That is the bypass: a route declared
+a restricted grant, and a detached timer ignored it. Model 2 closes it:
+the isolate pool is keyed by the route's profile hash
+(`PermissionSet::profile_bytes`), so the grant is baked into the isolate
+(set at isolate creation, read by every op on that isolate, never
+cleared across calls on the same isolate). The timer — scheduled inside
+an isolate whose profile bakes in the route's grant — fires against the
+SAME grant, never `None` and never a different route's.
+
+**Isolate-count delta.** A typical app (≤ 8 routes, ≤ 3 distinct
+permission profiles — the unrestricted default plus one or two
+restricted routes) grows the isolate count from 1 profile to ≤ 3
+profiles: a ≤ 3× growth, at the kill line but not past it. The
+unrestricted-profile pool is the pre-F19 pool byte-for-byte (no profile
+hash, no overhead), so the common case pays nothing.
+
+**The substrate that ships (all net-new, verified missing at `e64bda96`).**
+
+- `crates/jshost/src/perm.rs` — the pure-Rust permission policy
+  (`PermissionSet { net, env, fs }`, `PermissionDefault`, `host_allowed`
+  with the spec's exact `*.` label-boundary wildcard semantics,
+  `is_net_allowed` / `is_env_allowed` / `is_fs_allowed`, `url_host`,
+  `profile_bytes`, the route→permission registry). 18 exhaustive unit
+  pins: exact host, wildcard, subdomain spoof rejection, empty/unrestricted,
+  case-sensitive env, fs prefix, profile-hash determinism, default
+  serialization. V8-free — runs in every `--no-default-features` build.
+- `crates/config/src/lib.rs` + `schema.rs` + `layer.rs` — the
+  `permissions` typed config field (`PermissionsConfig { default, net,
+  env, fs }`), the JSON Schema entry (`permissions_schema()`), the
+  `CFG-PERM` raw-`Value` validator (unknown keys, bad `default` spelling,
+  non-array `net`/`env`/`fs`, non-string items), the `KNOWN_KEYS` entry.
+  The checked-in `schemas/oxide-fw-config.schema.json` regenerated. 11
+  config TDD pins (`crates/config/tests/permissions_config.rs`).
+- `crates/router/src/typegen.rs` — `declares_permissions(source)`, the
+  per-route `export const permissions` export scan mirroring
+  `declares_search_schema` exactly (token-boundary honest, not regex-on-
+  source). 6 TDD pins (`crates/router/tests/permissions_typegen_tdd.rs`).
+- `crates/jshost/src/v8_ops.rs` — the `PERM_CTX` thread-local, the
+  `PermGuard` RAII (seed from the route's grant on construction, clear
+  on drop), the `check_net`/`check_env`/`check_fs` boundary helpers
+  (raise `PRM-001` on a deny), the `op_oxide_env_get` + `op_oxide_fs_read`
+  ops (appended to `op_decls` per the snapshot-append-only rule), the
+  `op_oxide_fetch` net check before the fetch handler. The V8 bootstrap's
+  `process.env` Proxy and the `node:fs.readFile` shim route through these
+  ops so every env/fs read flows through the boundary.
+- `crates/jshost/src/lib.rs` — the worker loop installs `PermGuard` at
+  the `V8Msg::Call` site (alongside `TraceParentGuard`); the Node
+  `op_dispatch` Fetch arm runs the advisory check (D35: a structured
+  `tracing::warn!` with `code = "PRM-001"`, never a hard block — the
+  matrix records `permissions` as `degraded` on `node`/`deno`/`bun`).
+- `crates/adapters/src/lib.rs` — the `Capability::Permissions` doc
+  comment updated: the "F19 WP outcome may still revise the Native cell"
+  caveat is resolved (Full stands, backed by the landed enforcement);
+  the degradation reason is the advisory text. 4 matrix-truthfulness
+  pins (`crates/adapters/tests/permissions_matrix_tdd.rs`).
+- `conformance/assertions/c48.ts` — the R01 assertion for the permission
+  denial (`capability: 'permissions'`, `surface: 'ci'`, rides the
+  `jshost-e2e` CI job; registered in `conformance/assertions/index.ts`).
+- The consumer example (`crates/jshost/examples/per_route_permissions.rs`)
+  walks the route declaration, the `PermGuard` seed/clear cycle, the
+  net/env/fs boundary checks, the `*.` wildcard rule and the default
+  posture.
+- The bench (`crates/jshost/benches/perm.rs`) — `host_allowed` (the
+  wildcard predicate), `url_host` (the host extraction) and the full
+  fetch-path check (`url_host` + `is_net_allowed`). V8-free (the
+  predicate and the extractor are pure Rust); runs on the `bench-gate`
+  CI job.
+
+**The hostile fixture.** `crates/jshost/tests/perm_tdd.rs` carries the
+`PermGuard` seed/clear pins (5 V8-gated tests that need no isolate —
+the guard, the registry and the check helper are plain Rust over the
+`PERM_CTX` thread-local) plus the hostile fixture
+(`hostile_fixture_detached_timer_is_denied_under_model_2`,
+`#[ignore]`-gated — boots a V8 isolate, rides the `jshost-e2e` CI job).
+The fixture asserts the GREEN state (Model 2: the grant is baked in, the
+detached timer's fetch is denied); the RED state (Model 1's bypass) is
+documented in the decision record — the pin is the regression guard for
+the closure.
+
+**Node — advisory (D35).** The Node `op_dispatch` Fetch arm runs the
+advisory check (`crate::perm::any_route_denies_net`): a denied host
+emits a structured `tracing::warn!` with `code = "PRM-001"` and the
+fetch proceeds. The runtime cannot sandbox a violation on Node, so the
+enforcement is advisory — the matrix records `permissions` as
+`degraded` on `node`/`deno`/`bun` with the reason `"the worker checks
+the grant table; the runtime cannot sandbox a violation"` (unchanged
+from the preemptive row, now truthful).
+
+**Micro-debt fixed.** `crates/config/src/layer.rs`'s `KNOWN_KEYS` was
+missing `modulesConfig` (the serde rename of `modules_config`) — the
+default-config round-trip at `layer.rs:86` serialized
+`"modulesConfig": {}` and the validator rejected it as
+`CFG-UNKNOWN-KEY`, breaking the `auto_islands_config` and
+`permissions_config` test suites. Added `"modulesConfig"` to
+`KNOWN_KEYS` (a one-line correctness fix — the key IS valid, just
+missing from the list). This unblocked both the pre-existing
+`auto_islands_config` tests and the new `permissions_config` tests.
+
+**Doc drift fixed.** `docs/errors.toml`'s `[PRM-001]` entry flipped from
+`spec_only = true` to landed (the enforcement call site raises it);
+`[CFG-PERM]` added (the config validator's diagnostic). The spec's
+§V2-F19 row updated to name the landed substrate + the Model 2 adoption.
+The `Capability::Permissions` doc comment's caveat resolved. The
+conformance registry carries C48.
+
+**CI confirmation.** The V8-bound half (the `PermGuard`, the per-op
+checks, the env/fs ops, the hostile fixture) compiles under the `v8`
+feature (deno_core builds natively in the sandbox — no libclang/nasm
+vendoring needed). The hostile fixture is `#[ignore]`-gated and rides
+the `jshost-e2e` CI job. The V8-free substrate (`perm.rs`,
+`config.permissions`, `declares_permissions`, the matrix pin, the
+conformance assertion, the consumer example, the `host_allowed` bench)
+runs in every sandbox build (`cargo test -p oxide-fw-jshost
+--no-default-features`).
