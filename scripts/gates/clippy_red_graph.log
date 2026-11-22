@@ -1,0 +1,724 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+    Checking oxide-fw-graph v0.17.0 (/home/z/my-project/oxide/crates/graph)
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/graph/src/artifacts.rs:40:1
+   |
+40 | pub fn seal(kind: ArtifactKind, body: Vec<u8>) -> Result<Vec<u8>> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+   = note: `-D clippy::missing-errors-doc` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::missing_errors_doc)]`
+
+error: docs for function which may panic missing `# Panics` section
+  --> crates/graph/src/artifacts.rs:56:1
+   |
+56 | pub fn open(bytes: &[u8]) -> Result<ArtifactEnvelope> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: first possible panic found here
+  --> crates/graph/src/artifacts.rs:60:34
+   |
+60 |     let len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+   |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+   = note: `-D clippy::missing-panics-doc` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::missing_panics_doc)]`
+
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/graph/src/artifacts.rs:56:1
+   |
+56 | pub fn open(bytes: &[u8]) -> Result<ArtifactEnvelope> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: casting `u64` to `usize` may truncate the value on targets with 32-bit wide pointers
+  --> crates/graph/src/artifacts.rs:60:15
+   |
+60 |     let len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+   = note: `-D clippy::cast-possible-truncation` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::cast_possible_truncation)]`
+help: ... or use `try_from` and handle the error accordingly
+   |
+60 -     let len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+60 +     let len = usize::try_from(u64::from_le_bytes(bytes[..8].try_into().unwrap()));
+   |
+
+error: this method could have a `#[must_use]` attribute
+  --> crates/graph/src/cas.rs:29:12
+   |
+29 |     pub fn of(data: &[u8]) -> Self {
+   |            ^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+   = note: `-D clippy::must-use-candidate` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::must_use_candidate)]`
+help: add the attribute
+   |
+29 ~     #[must_use]
+30 ~     pub fn of(data: &[u8]) -> Self {
+   |
+
+error: this method could have a `#[must_use]` attribute
+  --> crates/graph/src/cas.rs:34:12
+   |
+34 |     pub fn hex(&self) -> String {
+   |            ^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+   |
+34 ~     #[must_use]
+35 ~     pub fn hex(&self) -> String {
+   |
+
+error: use of `format!` to build up a string from an iterator
+  --> crates/graph/src/cas.rs:35:9
+   |
+35 |         self.0.iter().map(|b| format!("{b:02x}")).collect()
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: call `fold` instead
+  --> crates/graph/src/cas.rs:35:23
+   |
+35 |         self.0.iter().map(|b| format!("{b:02x}")).collect()
+   |                       ^^^
+help: ... and use the `write!` macro here
+  --> crates/graph/src/cas.rs:35:31
+   |
+35 |         self.0.iter().map(|b| format!("{b:02x}")).collect()
+   |                               ^^^^^^^^^^^^^^^^^^
+   = note: this can be written more efficiently by appending to a `String` directly
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_collect
+   = note: `-D clippy::format-collect` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::format_collect)]`
+
+error: possible intra-doc link using quotes instead of backticks
+  --> crates/graph/src/cas.rs:42:15
+   |
+42 |     /// e.g. ["transform", "svelte-compiler", "1.2.3"] — part of the logical namespace.
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_link_with_quotes
+   = note: `-D clippy::doc-link-with-quotes` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::doc_link_with_quotes)]`
+
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/graph/src/cas.rs:71:5
+   |
+71 |     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/graph/src/cas.rs:92:5
+   |
+92 |     pub fn put(&self, data: &[u8], meta: &CasWriteMeta) -> Result<CasKey> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/cas.rs:151:5
+    |
+151 |     pub fn get(&self, key: &CasKey) -> Result<Option<Vec<u8>>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/cas.rs:184:5
+    |
+184 |     pub fn touch(&self, key: &CasKey, now: SystemTime) -> Result<()> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: variables can be used directly in the `format!` string
+   --> crates/graph/src/cas.rs:208:25
+    |
+208 |                         format!("touch: key {} is not in the index", hex),
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#uninlined_format_args
+    = note: `-D clippy::uninlined-format-args` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::uninlined_format_args)]`
+help: change this to
+    |
+208 -                         format!("touch: key {} is not in the index", hex),
+208 +                         format!("touch: key {hex} is not in the index"),
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/cas.rs:220:5
+    |
+220 |     pub fn gc(&self, max_idle: Duration, max_bytes: u64) -> Result<(usize, u64)> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: casting `u128` to `u64` may truncate the value
+   --> crates/graph/src/cas.rs:222:23
+    |
+222 |         let idle_ms = max_idle.as_millis() as u64;
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+222 -         let idle_ms = max_idle.as_millis() as u64;
+222 +         let idle_ms = u64::try_from(max_idle.as_millis());
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/cas.rs:303:5
+    |
+303 |     pub fn total_bytes(&self) -> Result<u64> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/cas.rs:317:5
+    |
+317 |     pub fn list_namespace(&self, namespace: &str) -> Result<Vec<CasKey>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/cas.rs:359:5
+    |
+359 | /     pub fn put_sealed(
+360 | |         &self,
+361 | |         kind: crate::artifacts::ArtifactKind,
+362 | |         body: &[u8],
+363 | |         meta: &CasWriteMeta,
+364 | |     ) -> Result<CasKey> {
+    | |_______________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/cas.rs:376:5
+    |
+376 |     pub fn get_sealed(&self, key: &CasKey) -> Result<Option<crate::artifacts::ArtifactEnvelope>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/cas.rs:389:5
+    |
+389 |     fn stored_bytes(&self, key: &CasKey) -> Result<u64>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: called `map(<f>).unwrap_or(false)` on a `Result` value
+   --> crates/graph/src/cas.rs:412:33
+    |
+412 |                     .filter(|e| e.as_ref().map(|e| e.path().is_file()).unwrap_or(false))
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+    = note: `-D clippy::map-unwrap-or` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::map_unwrap_or)]`
+help: use `is_ok_and(<f>)` instead
+    |
+412 -                     .filter(|e| e.as_ref().map(|e| e.path().is_file()).unwrap_or(false))
+412 +                     .filter(|e| e.as_ref().is_ok_and(|e| e.path().is_file()))
+    |
+
+error: called `map(<f>).unwrap_or(<a>)` on a `Result` value
+   --> crates/graph/src/cas.rs:425:5
+    |
+425 | /     t.duration_since(UNIX_EPOCH)
+426 | |         .map(|d| d.as_millis() as u64)
+427 | |         .unwrap_or(0)
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+    |
+426 -         .map(|d| d.as_millis() as u64)
+427 -         .unwrap_or(0)
+426 +         .map_or(0, |d| d.as_millis() as u64)
+    |
+
+error: casting `u128` to `u64` may truncate the value
+   --> crates/graph/src/cas.rs:426:18
+    |
+426 |         .map(|d| d.as_millis() as u64)
+    |                  ^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+426 -         .map(|d| d.as_millis() as u64)
+426 +         .map(|d| u64::try_from(d.as_millis()))
+    |
+
+error: this argument is passed by value, but not consumed in the function body
+   --> crates/graph/src/cas.rs:445:13
+    |
+445 | fn ioerr(e: std::io::Error) -> OxideError {
+    |             ^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+    = note: `-D clippy::needless-pass-by-value` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider taking a reference instead
+    |
+445 | fn ioerr(e: &std::io::Error) -> OxideError {
+    |             +
+
+error: this argument is passed by value, but not consumed in the function body
+   --> crates/graph/src/cas.rs:449:15
+    |
+449 | fn jsonerr(e: serde_json::Error) -> OxideError {
+    |               ^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+    |
+449 | fn jsonerr(e: &serde_json::Error) -> OxideError {
+    |               +
+
+error: this method could have a `#[must_use]` attribute
+   --> crates/graph/src/demand.rs:195:12
+    |
+195 |     pub fn new() -> Self {
+    |            ^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+195 ~     #[must_use]
+196 ~     pub fn new() -> Self {
+    |
+
+error: docs for function which may panic missing `# Panics` section
+   --> crates/graph/src/demand.rs:213:5
+    |
+213 |     pub fn set_env_source(&self, vars: Arc<RwLock<BTreeMap<String, String>>>) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates/graph/src/demand.rs:214:10
+    |
+214 |           *self
+    |  __________^
+215 | |             .env_factory
+216 | |             .write()
+217 | |             .expect("demand env factory lock poisoned") = Some(Arc::new(move || {
+    | |_______________________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+error: docs for function which may panic missing `# Panics` section
+   --> crates/graph/src/demand.rs:223:5
+    |
+223 |     pub fn set_config_source(&self, values: Arc<RwLock<BTreeMap<String, serde_json::Value>>>) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates/graph/src/demand.rs:224:10
+    |
+224 |           *self
+    |  __________^
+225 | |             .config_factory
+226 | |             .write()
+227 | |             .expect("demand config factory lock poisoned") = Some(Arc::new(move || {
+    | |__________________________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+error: docs for function which may panic missing `# Panics` section
+   --> crates/graph/src/demand.rs:235:5
+    |
+235 |     pub fn set_fs_factory(&self, f: FsFactory) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates/graph/src/demand.rs:236:10
+    |
+236 |           *self
+    |  __________^
+237 | |             .fs_factory
+238 | |             .write()
+239 | |             .expect("demand fs factory lock poisoned") = Some(f);
+    | |______________________________________________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+error: docs for function which may panic missing `# Panics` section
+   --> crates/graph/src/demand.rs:253:5
+    |
+253 |     pub fn get(&self, key: NodeKey, compute: &dyn Compute) -> Result<Arc<NodeOutput>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates/graph/src/demand.rs:268:33
+    |
+268 |                 let mut guard = t.state.lock().expect("demand task state lock poisoned");
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/demand.rs:253:5
+    |
+253 |     pub fn get(&self, key: NodeKey, compute: &dyn Compute) -> Result<Arc<NodeOutput>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: this argument is passed by value, but not consumed in the function body
+   --> crates/graph/src/demand.rs:253:28
+    |
+253 |     pub fn get(&self, key: NodeKey, compute: &dyn Compute) -> Result<Arc<NodeOutput>> {
+    |                            ^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+    |
+253 |     pub fn get(&self, key: &NodeKey, compute: &dyn Compute) -> Result<Arc<NodeOutput>> {
+    |                            +
+
+error: this function has too many lines (101/100)
+   --> crates/graph/src/demand.rs:336:5
+    |
+336 |     pub fn invalidate(&self, changed: &[Input]) -> Vec<NodeKey> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#too_many_lines
+    = note: `-D clippy::too-many-lines` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
+
+error: it is more concise to loop over references to containers instead of using explicit iteration methods
+   --> crates/graph/src/demand.rs:448:19
+    |
+448 |         for kv in self.nodes.iter() {
+    |                   ^^^^^^^^^^^^^^^^^ help: to write this more concisely, try: `&self.nodes`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#explicit_iter_loop
+    = note: `-D clippy::explicit-iter-loop` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::explicit_iter_loop)]`
+
+error: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+   --> crates/graph/src/demand.rs:608:9
+    |
+608 | /         self.fs_factory
+609 | |             .read()
+610 | |             .unwrap()
+611 | |             .as_ref()
+612 | |             .map(|f| f())
+613 | |             .unwrap_or_else(|| Box::new(crate::FsTrackerImpl::new()))
+    | |_____________________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: try
+    |
+608 ~         self.fs_factory
+609 +             .read()
+610 +             .unwrap()
+611 +             .as_ref().map_or_else(|| Box::new(crate::FsTrackerImpl::new()), |f| f())
+    |
+
+error: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+   --> crates/graph/src/demand.rs:617:9
+    |
+617 | /         self.env_factory
+618 | |             .read()
+619 | |             .unwrap()
+620 | |             .as_ref()
+621 | |             .map(|f| f())
+622 | |             .unwrap_or_else(|| Box::new(crate::EnvTrackerImpl::new(Default::default())))
+    | |________________________________________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: try
+    |
+617 ~         self.env_factory
+618 +             .read()
+619 +             .unwrap()
+620 +             .as_ref().map_or_else(|| Box::new(crate::EnvTrackerImpl::new(Default::default())), |f| f())
+    |
+
+error: calling `Arc::default()` is more clear than this expression
+   --> crates/graph/src/demand.rs:622:68
+    |
+622 |             .unwrap_or_else(|| Box::new(crate::EnvTrackerImpl::new(Default::default())))
+    |                                                                    ^^^^^^^^^^^^^^^^^^ help: try: `Arc::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+    = note: `-D clippy::default-trait-access` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::default_trait_access)]`
+
+error: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+   --> crates/graph/src/demand.rs:626:9
+    |
+626 | /         self.config_factory
+627 | |             .read()
+628 | |             .unwrap()
+629 | |             .as_ref()
+630 | |             .map(|f| f())
+631 | |             .unwrap_or_else(|| Box::new(crate::ConfigTrackerImpl::new(Default::default())))
+    | |___________________________________________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: try
+    |
+626 ~         self.config_factory
+627 +             .read()
+628 +             .unwrap()
+629 +             .as_ref().map_or_else(|| Box::new(crate::ConfigTrackerImpl::new(Default::default())), |f| f())
+    |
+
+error: calling `Arc::default()` is more clear than this expression
+   --> crates/graph/src/demand.rs:631:71
+    |
+631 |             .unwrap_or_else(|| Box::new(crate::ConfigTrackerImpl::new(Default::default())))
+    |                                                                       ^^^^^^^^^^^^^^^^^^ help: try: `Arc::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+error: item in documentation is missing backticks
+   --> crates/graph/src/demand.rs:636:5
+    |
+636 | /// BTreeMaps. Nodes whose memo is missing contribute no edges and are ordered
+    |     ^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+    = note: `-D clippy::doc-markdown` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::doc_markdown)]`
+help: try
+    |
+636 - /// BTreeMaps. Nodes whose memo is missing contribute no edges and are ordered
+636 + /// `BTreeMaps`. Nodes whose memo is missing contribute no edges and are ordered
+    |
+
+error: it is more concise to loop over references to containers instead of using explicit iteration methods
+   --> crates/graph/src/demand.rs:643:22
+    |
+643 |             for d in out.value().deps.iter() {
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^ help: to write this more concisely, try: `&out.value().deps`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#explicit_iter_loop
+
+error: this method could have a `#[must_use]` attribute
+  --> crates/graph/src/trackers.rs:16:12
+   |
+16 |     pub fn new() -> Self {
+   |            ^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+   |
+16 ~     #[must_use]
+17 ~     pub fn new() -> Self {
+   |
+
+error: these match arms have identical bodies
+   --> crates/graph/src/lib.rs:130:13
+    |
+130 | /             (
+131 | |                 Input::Env {
+132 | |                     key: a,
+133 | |                     value_hash: ha,
+...   |
+138 | |                 },
+139 | |             ) => a.cmp(b).then(hash_bytes(ha).cmp(&hash_bytes(hb))),
+    | |___________________________________________________________________^
+140 | /             (
+141 | |                 Input::ConfigKey {
+142 | |                     key: a,
+143 | |                     value_hash: ha,
+...   |
+148 | |                 },
+149 | |             ) => a.cmp(b).then(hash_bytes(ha).cmp(&hash_bytes(hb))),
+    | |___________________________________________________________________^
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_same_arms
+    = note: `-D clippy::match-same-arms` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::match_same_arms)]`
+help: otherwise merge the patterns into a single arm
+    |
+130 |             (
+...
+138 |                 },
+139 ~             ) | (
+140 +                 Input::ConfigKey {
+141 +                     key: a,
+142 +                     value_hash: ha,
+143 +                 },
+144 +                 Input::ConfigKey {
+145 +                     key: b,
+146 +                     value_hash: hb,
+147 +                 },
+148 ~             ) => a.cmp(b).then(hash_bytes(ha).cmp(&hash_bytes(hb))),
+149 ~             (
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/lib.rs:204:5
+    |
+204 |     fn compute(&self, ctx: &mut ComputeCtx) -> Result<NodeOutput>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: the following explicit lifetimes could be elided: 'a
+   --> crates/graph/src/lib.rs:226:6
+    |
+226 | impl<'a> ComputeCtx<'a> {
+    |      ^^             ^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#elidable_lifetime_names
+    = note: `-D clippy::elidable-lifetime-names` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::elidable_lifetime_names)]`
+help: elide the lifetimes
+    |
+226 - impl<'a> ComputeCtx<'a> {
+226 + impl ComputeCtx<'_> {
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/lib.rs:232:5
+    |
+232 |     pub fn dep(&self, key: &NodeKey) -> Result<Arc<NodeOutput>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/lib.rs:238:5
+    |
+238 |     pub fn check_cancel(&self) -> Result<()> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/lib.rs:286:5
+    |
+286 |     fn read_file(&mut self, path: &Path) -> Result<Vec<u8>>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/graph/src/lib.rs:288:5
+    |
+288 |     fn list_dir(&mut self, path: &Path) -> Result<Vec<PathBuf>>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: this method could have a `#[must_use]` attribute
+   --> crates/graph/src/lib.rs:306:12
+    |
+306 |     pub fn new() -> Self {
+    |            ^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+306 ~     #[must_use]
+307 ~     pub fn new() -> Self {
+    |
+
+error: this method could have a `#[must_use]` attribute
+   --> crates/graph/src/lib.rs:312:12
+    |
+312 |     pub fn is_cancelled(&self) -> bool {
+    |            ^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+312 ~     #[must_use]
+313 ~     pub fn is_cancelled(&self) -> bool {
+    |
+
+error: item in documentation is missing backticks
+   --> crates/graph/src/lib.rs:322:5
+    |
+322 | /// RemoteCache trait (§5.4): HTTP/S3 for CI; read-through by default,
+    |     ^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+    |
+322 - /// RemoteCache trait (§5.4): HTTP/S3 for CI; read-through by default,
+322 + /// `RemoteCache` trait (§5.4): HTTP/S3 for CI; read-through by default,
+    |
+
+error: could not compile `oxide-fw-graph` (lib) due to 52 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: used underscore-prefixed binding
+   --> crates/graph/src/cas.rs:512:40
+    |
+512 |         let store = ContentStore::open(_tmp.path()).unwrap();
+    |                                        ^^^^
+    |
+note: binding is defined here
+   --> crates/graph/src/cas.rs:511:13
+    |
+511 |         let _tmp = tempfile::tempdir().unwrap();
+    |             ^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#used_underscore_binding
+    = note: `-D clippy::used-underscore-binding` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::used_underscore_binding)]`
+
+error: constructing a `Duration` using a smaller unit when a larger unit would be more readable
+   --> crates/graph/src/cas.rs:534:18
+    |
+534 |         store.gc(Duration::from_secs(1800), u64::MAX).unwrap();
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#duration_suboptimal_units
+    = note: `-D clippy::duration-suboptimal-units` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::duration_suboptimal_units)]`
+help: try using `Duration::from_mins`
+    |
+534 -         store.gc(Duration::from_secs(1800), u64::MAX).unwrap();
+534 +         store.gc(Duration::from_mins(30), u64::MAX).unwrap();
+    |
+
+error: used `assert!` to check that a value is empty
+   --> crates/graph/src/cas.rs:535:9
+    |
+535 |         assert!(store.list_namespace("ns").unwrap().is_empty());
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#assert_is_empty
+    = note: `-D clippy::assert-is-empty` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assert_is_empty)]`
+help: use `assert_eq!` to show the value on failure
+    |
+535 -         assert!(store.list_namespace("ns").unwrap().is_empty());
+535 +         assert_eq!(store.list_namespace("ns").unwrap(), [] as [cas::CasKey; 0]);
+    |
+
+error: item in documentation is missing backticks
+   --> crates/graph/src/lib.rs:456:18
+    |
+456 |     /// SPEC-04: HttpRemoteCache round-trips against a tiny in-process HTTP
+    |                  ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+    |
+456 -     /// SPEC-04: HttpRemoteCache round-trips against a tiny in-process HTTP
+456 +     /// SPEC-04: `HttpRemoteCache` round-trips against a tiny in-process HTTP
+    |
+
+error: could not compile `oxide-fw-graph` (lib test) due to 56 previous errors
