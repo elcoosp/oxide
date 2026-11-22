@@ -331,8 +331,12 @@ pub fn support(t: Target, c: Capability) -> FeatureSupport {
         },
         Capability::Live => match class(t) {
             K::Native | K::NodeLike => F,
-            K::Edge | K::Serverless => D,
-            K::Static => U,
+            // V2-E09: the edge cannot hold long-lived SSE connections
+            // (Workers stream responses but do not guarantee persistence), so
+            // `live: true` is refused at build time for edge targets — the
+            // matrix row is truthful (Unsupported), not a silent poll fallback.
+            K::Serverless => D,
+            K::Static | K::Edge => U,
         },
         Capability::MixedIslands => match class(t) {
             K::Native | K::NodeLike | K::Static | K::Serverless => F,
@@ -494,9 +498,9 @@ pub fn degradation(target: Target, cap: Capability) -> Option<&'static str> {
         (Target::Lambda | Target::Vercel | Target::VercelFunctions | Target::Netlify, Live) => {
             "serverless functions cannot hold long-lived SSE connections; the client falls back to transport: 'poll'"
         }
-        (Target::Cloudflare | Target::CloudflarePages, Live) => {
-            "Workers stream responses but do not guarantee long-lived connections; the client falls back to transport: 'poll'"
-        }
+        // V2-E09: Cloudflare Live is now Unsupported (the edge refuses
+        // `live: true` at build time — see `support`), so no Degraded reason
+        // arm exists for it; the §18 refusal rule covers the Unsupported cell.
         // V2-R02: the v0.2 Degraded cells (every `D` in `support` must have
         // a reason — `every_degraded_cell_documents_its_reason` pins it).
         (Target::Cloudflare | Target::CloudflarePages, MixedIslands) => {
@@ -709,7 +713,7 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                 &cloudflare_worker_entry(build_id),
             )?);
             written.push(write_file(
-                out_dir.join("edge.js"),
+                out_dir.join("handler.js"),
                 &edge_handler_js(build_id),
             )?);
             // `_routes.json`: bypass the Worker for static assets so the CDN
@@ -748,6 +752,17 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                     )
                 })?;
                 written.push(write_bytes(out_dir.join("edge.wasm"), &bytes)?);
+                // V2-E09 / P0-1c: ship the wasm-bindgen glue (`edge.js`) alongside
+                // the wasm so the Worker's `init(env.EDGE)` instantiates it — the
+                // payload is functional, no inert JS fallback.
+                let glue = artifact.out_dir.join("edge.js");
+                let glue_bytes = std::fs::read(&glue).map_err(|e| {
+                    err(
+                        "ADP-IO",
+                        format!("edge.js glue missing at {}: {e}", glue.display()),
+                    )
+                })?;
+                written.push(write_bytes(out_dir.join("edge.js"), &glue_bytes)?);
             }
             written.push(write_deploy(out_dir, target, build_id, "worker.js")?);
         }
@@ -763,7 +778,7 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                 &cloudflare_worker_entry(build_id),
             )?);
             written.push(write_file(
-                out_dir.join("edge.js"),
+                out_dir.join("handler.js"),
                 &edge_handler_js(build_id),
             )?);
             written.push(write_json(
@@ -795,6 +810,15 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
                     )
                 })?;
                 written.push(write_bytes(out_dir.join("edge.wasm"), &bytes)?);
+                // V2-E09 / P0-1c: ship the wasm-bindgen glue alongside the wasm.
+                let glue = artifact.out_dir.join("edge.js");
+                let glue_bytes = std::fs::read(&glue).map_err(|e| {
+                    err(
+                        "ADP-IO",
+                        format!("edge.js glue missing at {}: {e}", glue.display()),
+                    )
+                })?;
+                written.push(write_bytes(out_dir.join("edge.js"), &glue_bytes)?);
             }
             written.push(write_deploy(out_dir, target, build_id, "_worker.js")?);
         }
@@ -1253,18 +1277,86 @@ pub fn dockerfile(embed: bool) -> String {
 /// Deterministic; interpolates the `build_id` into a provenance comment.
 #[must_use]
 pub fn cloudflare_worker_entry(build_id: &str) -> String {
-    // Raw string + replace (not `\`-continuation): a `\` at end of line
-    // strips the next line's leading whitespace, which silently un-indents the
-    // emitted JS. The `edge_handler_js` function below uses this same pattern.
-    let tpl = r#"// Oxide Cloudflare Workers entry (§18, §2 D18). build_id: __BUILD_ID__
-// WinterCG-compatible: `edge.js` dispatches through the web-standard
-// handler contract `(Request) => Promise<Response>`.
-import handler from "./edge.js";
+    // V2-E09 spec-shaped entry (docs/spec-v0.2-draft.md §V2-E09): the Worker
+    // imports the wasm-bindgen glue (`edge.js` — `init`/`matchRoute`/`applyRules`)
+    // and the JS-fallback handler (`handler.js`). When the `EDGE` wasm module
+    // binding is present (`[wasm_modules]` in wrangler.toml) the Worker
+    // instantiates it once and dispatches through the Rust matcher + rules
+    // engine; when it is absent the JS-only handler dispatches. No silent JS
+    // fallback for a shipped payload: an init failure is logged, not swallowed.
+    let tpl = r#"// Oxide Cloudflare Workers entry (§18, §2 D18, §V2-E09). build_id: __BUILD_ID__
+// WinterCG-compatible: the web-standard handler contract
+// `(req: Request, env, ctx) => Promise<Response>`.
+import { init, matchRoute, applyRules } from "./edge.js";
+import handler from "./handler.js";
+
+let ready = null;
+
+// Best-effort KV tag index (§V2-E09): one KV key per tag listing the L0 keys
+// that carry it. Capped at 4096 entries per tag and 16 tags per response — the
+// index is eventually consistent (KV list lags), documented as best effort.
+const TAG_INDEX_CAP = 4096;
+const TAG_INDEX_MAX_TAGS = 16;
+async function indexTags(env, l0Key, tagsHeader) {
+  if (!env.OXIDE_KV || !tagsHeader) return;
+  const tags = tagsHeader.split(",").map((t) => t.trim()).filter(Boolean);
+  for (const tag of tags.slice(0, TAG_INDEX_MAX_TAGS)) {
+    const idxKey = "tag:" + tag;
+    const list = await env.OXIDE_KV.get(idxKey, "json").catch(() => null);
+    const next = Array.isArray(list) ? list : [];
+    if (!next.includes(l0Key)) next.push(l0Key);
+    if (next.length > TAG_INDEX_CAP) next.shift();
+    await env.OXIDE_KV.put(idxKey, JSON.stringify(next), { expirationTtl: 3600 });
+  }
+}
 
 export default {
-  async fetch(request, env, ctx) {
-    const response = await handler(request, env, ctx);
-    return response ?? new Response("Not Found", { status: 404 });
+  async fetch(req, env, ctx) {
+    const url = new URL(req.url);
+    // Shipped payload: instantiate the wasm once (no silent JS fallback).
+    if (env.EDGE) {
+      try {
+        ready ??= init(env.EDGE);
+        await ready;
+      } catch (e) {
+        console.error("[oxide edge] wasm init failed for a shipped payload:", e);
+        ready = null;
+      }
+    }
+    if (env.EDGE && ready) {
+      // §12.1: native rules (redirects/rewrites/headers) in Rust before any JS.
+      const rule = applyRules(url.pathname, req.headers.get("accept-language") ?? "");
+      if (rule && rule.redirect) {
+        return Response.redirect(new URL(rule.redirect, url), rule.status || 308);
+      }
+      // Asset passthrough: Cloudflare ASSETS binding serves static assets
+      // directly (also bypassed via _routes.json at the CDN).
+      if (env.ASSETS) {
+        const asset = await env.ASSETS.fetch(req);
+        if (asset.status !== 404) return asset;
+      }
+      const m = matchRoute(url.pathname);
+      if (!m) return new Response("Not Found", { status: 404 });
+      // KV L0 get/put with TTL (§V2-E09): `l0:<route id>:<search>`.
+      if (env.OXIDE_KV) {
+        const key = "l0:" + m.id + ":" + url.search;
+        const hit = await env.OXIDE_KV.get(key, "arrayBuffer");
+        if (hit) {
+          return new Response(hit, {
+            headers: { "content-type": "text/html; charset=utf-8", "x-oxide-cache": "HIT" },
+          });
+        }
+        const res = await handler(req, env, ctx);
+        if (res.ok) {
+          const body = await res.clone().arrayBuffer();
+          ctx.waitUntil(env.OXIDE_KV.put(key, body, { expirationTtl: 60 }));
+          ctx.waitUntil(indexTags(env, key, res.headers.get("x-oxide-tags")));
+        }
+        return res;
+      }
+    }
+    // No wasm shipped (or init failed): the JS-only handler dispatches.
+    return handler(req, env, ctx) ?? new Response("Not Found", { status: 404 });
   },
 };
 "#;
@@ -1295,11 +1387,17 @@ const EDGE_FALLBACK_JS: &str = r#"// Oxide edge handler (spec §18, §2 D18). bu
 
 let wasm = null;
 try {
-  // Cloudflare binds wasm as an ESM module when `wrangler.toml` declares it.
-  const mod = await import("./edge.wasm");
-  wasm = mod.default ?? mod;
+  // V2-E09 / P0-1c: import the wasm-bindgen glue (`edge.js`) — the wasm's
+  // `__wbindgen_*` imports need it. The Worker calls `init(env.EDGE)` before
+  // dispatch (see `cloudflare_worker_entry`), so the glue's named exports
+  // (`edge_cache_key`, `encode_odf`, …) are live by the time `useWasm` runs;
+  // before init they throw and `useWasm` falls back to the JS implementation
+  // below. No silent fallback for a SHIPPED payload: the Worker logs an
+  // init failure; this catch only fires when the glue itself is absent.
+  const mod = await import("./edge.js");
+  wasm = mod;
 } catch {
-  // No wasm: JS fallbacks cover the same three functions.
+  // No glue shipped: JS fallbacks cover the same functions.
   wasm = null;
 }
 
