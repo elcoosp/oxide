@@ -25,6 +25,11 @@ pub(crate) fn compile_edge_wasm(_root: &Path, dist: &Path) -> anyhow::Result<Opt
     std::fs::create_dir_all(dist)?;
     let out = dist.join("edge.wasm");
     std::fs::write(&out, EDGE_WASM_BYTES)?;
+    // V2-E09 / P0-1c: ship the wasm-bindgen `--target web` glue alongside the
+    // wasm so the Worker's loader can `await init(wasm)` — the payload is
+    // functional (no inert JS fallback). The adapters Cloudflare emit copies
+    // both into the deploy directory.
+    std::fs::write(dist.join("edge.js"), EDGE_GLUE_JS)?;
     Ok(Some(out))
 }
 
