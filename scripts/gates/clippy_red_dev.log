@@ -1,0 +1,1007 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+ Downloading crates ...
+  Downloaded inotify-sys v0.1.8
+  Downloaded asn1-rs-impl v0.2.0
+  Downloaded asn1-rs-derive v0.6.0
+  Downloaded libloading v0.8.9
+  Downloaded local-ip-address v0.5.7
+  Downloaded deranged v0.5.9
+  Downloaded bit-vec v0.9.1
+  Downloaded time-core v0.1.9
+  Downloaded rusticata-macros v4.1.0
+  Downloaded num-conv v0.2.2
+  Downloaded neli-proc-macros v0.1.4
+  Downloaded powerfmt v0.2.1
+  Downloaded data-encoding v2.11.1
+  Downloaded inotify v0.11.5
+  Downloaded oid-registry v0.8.1
+  Downloaded zeroize v1.9.1
+  Downloaded synstructure v0.13.2
+  Downloaded thiserror-impl v1.0.69
+  Downloaded notify-types v2.2.0
+  Downloaded thiserror v1.0.69
+  Downloaded neli v0.6.5
+  Downloaded yasna v0.6.0
+  Downloaded time-macros v0.2.32
+  Downloaded der-parser v10.0.0
+  Downloaded pem v4.0.0
+  Downloaded rustls-pki-types v1.15.1
+  Downloaded notify v8.2.1
+  Downloaded rcgen v0.14.10
+  Downloaded asn1-rs v0.7.2
+  Downloaded qrcode v0.14.1
+  Downloaded minimal-lexical v0.2.1
+  Downloaded x509-parser v0.18.1
+  Downloaded num-bigint v0.4.8
+  Downloaded nom v7.1.3
+  Downloaded time v0.3.55
+  Downloaded syn v1.0.109
+    Checking serde v1.0.229
+    Checking compact_str v0.10.0
+    Checking oxc_estree v0.155.0
+    Checking smallvec v1.16.4
+   Compiling cc v1.10.0
+    Checking ropey v1.6.1
+    Checking oxc_data_structures v0.155.0
+    Checking oxc_allocator v0.155.0
+    Checking oxc_str v0.155.0
+    Checking oxc_span v0.155.0
+    Checking icu_segmenter v2.4.0
+   Compiling serde_json v1.0.154
+    Checking textwrap v0.16.4
+    Checking oxc_index v5.0.0
+    Checking indexmap v2.14.2
+    Checking oxc_diagnostics v0.155.0
+    Checking oxc_syntax v0.155.0
+    Checking oxc_regular_expression v0.155.0
+    Checking log v0.4.34
+   Compiling serde_core v1.0.229
+    Checking parking_lot_core v0.9.12
+   Compiling syn v1.0.109
+    Checking miniz_oxide v0.9.1
+    Checking oxc_ast v0.155.0
+    Checking postcard v1.1.3
+    Checking tracing-core v0.1.36
+   Compiling inotify-sys v0.1.8
+    Checking futures-util v0.3.34
+    Checking oxc_ecmascript v0.155.0
+    Checking oxc_ast_visit v0.155.0
+    Checking oxc_semantic v0.155.0
+    Checking tracing v0.1.44
+    Checking oxc-browserslist v5.0.1
+    Checking mio v1.2.4
+    Checking oxide-fw-diagnostics v0.17.0 (/home/z/my-project/oxide/crates/diagnostics)
+   Compiling blake3 v1.8.7
+   Compiling ring v0.17.14
+    Checking num-conv v0.2.2
+   Compiling thiserror v1.0.69
+    Checking powerfmt v0.2.1
+    Checking time-core v0.1.9
+    Checking deranged v0.5.9
+   Compiling either v1.19.0
+    Checking time v0.3.55
+   Compiling neli-proc-macros v0.1.4
+    Checking oxc_compat v0.155.0
+    Checking oxc_traverse v0.155.0
+    Checking oxc_sourcemap v9.0.0
+    Checking futures-executor v0.3.34
+    Checking parking_lot v0.12.5
+   Compiling alloca v0.4.0
+   Compiling thiserror-impl v1.0.69
+    Checking zeroize v1.9.1
+    Checking rustls-pki-types v1.15.1
+    Checking oxc_transformer v0.155.0
+    Checking regex-automata v0.4.18
+    Checking neli v0.6.5
+    Checking oxc_parser v0.155.0
+    Checking dashmap v6.2.1
+    Checking tokio v1.54.1
+    Checking inotify v0.11.5
+    Checking futures v0.3.34
+    Checking oxc_codegen v0.155.0
+    Checking oxide-fw-odf v0.17.0 (/home/z/my-project/oxide/crates/odf)
+    Checking yasna v0.6.0
+    Checking pem v4.0.0
+    Checking notify-types v2.2.0
+   Compiling oxide-macros v0.17.0 (/home/z/my-project/oxide/crates/macros)
+    Checking libloading v0.8.9
+    Checking oxc_resolver v11.24.3
+    Checking notify v8.2.1
+    Checking oxide-rustfn v0.17.0 (/home/z/my-project/oxide/crates/rustfn)
+    Checking rcgen v0.14.10
+    Checking oxide-fw-compiler v0.17.0 (/home/z/my-project/oxide/crates/compiler)
+    Checking local-ip-address v0.5.7
+    Checking ciborium v0.2.2
+    Checking regex v1.13.1
+    Checking tinytemplate v1.2.1
+    Checking qrcode v0.14.1
+    Checking criterion v0.8.2
+    Checking oxide-fw-dev v0.17.0 (/home/z/my-project/oxide/crates/dev)
+error: this method could have a `#[must_use]` attribute
+  --> crates/dev/src/lib.rs:58:12
+   |
+58 |     pub fn new(roots: Vec<PathBuf>) -> Self {
+   |            ^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+   = note: `-D clippy::must-use-candidate` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::must_use_candidate)]`
+help: add the attribute
+   |
+58 ~     #[must_use]
+59 ~     pub fn new(roots: Vec<PathBuf>) -> Self {
+   |
+
+error: item in documentation is missing backticks
+  --> crates/dev/src/lib.rs:81:44
+   |
+81 |     /// `package.json` entries (the single node_modules path class whose
+   |                                            ^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+   = note: `-D clippy::doc-markdown` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::doc_markdown)]`
+help: try
+   |
+81 -     /// `package.json` entries (the single node_modules path class whose
+81 +     /// `package.json` entries (the single `node_modules` path class whose
+   |
+
+error: item in documentation is missing backticks
+  --> crates/dev/src/lib.rs:83:9
+   |
+83 |     /// node_modules is dropped there). Hashing the whole dependency tree is
+   |         ^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+   |
+83 -     /// node_modules is dropped there). Hashing the whole dependency tree is
+83 +     /// `node_modules` is dropped there). Hashing the whole dependency tree is
+   |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/dev/src/lib.rs:133:5
+    |
+133 | /     pub fn with_workspace_links(
+134 | |         roots: Vec<PathBuf>,
+135 | |         links: &dyn WorkspaceLinks,
+136 | |         app_root: &Path,
+137 | |     ) -> Result<Self> {
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+    = note: `-D clippy::missing-errors-doc` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::missing_errors_doc)]`
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/dev/src/lib.rs:194:5
+    |
+194 |     pub fn poll(&self, seen: &mut BTreeSet<(PathBuf, String)>) -> Result<Vec<FileEvent>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: this function's return value is unnecessarily wrapped by `Result`
+   --> crates/dev/src/lib.rs:236:5
+    |
+236 | /     fn poll_notify(
+237 | |         &self,
+238 | |         backend: &NotifyBackend,
+239 | |         seen: &mut BTreeSet<(PathBuf, String)>,
+240 | |     ) -> Result<Vec<FileEvent>> {
+    | |_______________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unnecessary_wraps
+    = note: `-D clippy::unnecessary-wraps` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_wraps)]`
+help: remove `Result` from the return type...
+    |
+240 -     ) -> Result<Vec<FileEvent>> {
+240 +     ) -> std::vec::Vec<FileEvent> {
+    |
+help: ...and then remove the surrounding `Ok()` from returning expressions
+    |
+253 ~             return Vec::new();
+254 |         }
+...
+291 |         }
+292 ~         events
+    |
+
+error: case-sensitive file extension comparison
+   --> crates/dev/src/lib.rs:266:64
+    |
+266 |             if name.ends_with('~') || name.starts_with('.') && name.ends_with(".swp") {
+    |                                                                ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+    = note: `-D clippy::case-sensitive-file-extension-comparisons` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::case_sensitive_file_extension_comparisons)]`
+help: use std::path::Path
+    |
+266 ~             if name.ends_with('~') || name.starts_with('.') && std::path::Path::new(name)
+267 +                 .extension()
+268 ~                 .is_some_and(|ext| ext.eq_ignore_ascii_case("swp")) {
+    |
+
+error: item in documentation is missing backticks
+   --> crates/dev/src/lib.rs:319:42
+    |
+319 | /// spends one watch per directory under node_modules (~10k in a pnpm
+    |                                          ^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+    |
+319 - /// spends one watch per directory under node_modules (~10k in a pnpm
+319 + /// spends one watch per directory under `node_modules` (~10k in a pnpm
+    |
+
+error: this function's return value is unnecessary
+   --> crates/dev/src/lib.rs:323:1
+    |
+323 | / fn add_pruned_watches(
+324 | |     watcher: &std::sync::Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
+325 | |     root: &Path,
+326 | |     _mode: notify::RecursiveMode,
+327 | |     depth: u8,
+328 | | ) -> Result<()> {
+    | |_______________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unnecessary_wraps
+help: remove the return type...
+    |
+328 - ) -> Result<()> {
+328 + ) -> () {
+    |
+help: ...and then remove returned values
+    |
+332 ~         return ;
+333 |     };
+334 |     if !md.is_dir() {
+335 ~         return ;
+336 |     }
+337 |     let Ok(entries) = std::fs::read_dir(root) else {
+338 ~         return ;
+339 |     };
+...
+366 |     }
+367 ~     
+    |
+
+error: used underscore-prefixed binding
+   --> crates/dev/src/lib.rs:365:49
+    |
+365 |         let _ = add_pruned_watches(watcher, &p, _mode, next_depth);
+    |                                                 ^^^^^
+    |
+note: binding is defined here
+   --> crates/dev/src/lib.rs:326:5
+    |
+326 |     _mode: notify::RecursiveMode,
+    |     ^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#used_underscore_binding
+    = note: `-D clippy::used-underscore-binding` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::used_underscore_binding)]`
+
+error: item in documentation is missing backticks
+   --> crates/dev/src/lib.rs:575:55
+    |
+575 |     /// envelope: `{"v":1,"type":...,}` (key order is serde_json's; the
+    |                                                       ^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+    |
+575 -     /// envelope: `{"v":1,"type":...,}` (key order is serde_json's; the
+575 +     /// envelope: `{"v":1,"type":...,}` (key order is `serde_json`'s; the
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/dev/src/lib.rs:577:5
+    |
+577 |     pub fn try_to_json(&self) -> std::result::Result<String, serde_json::Error> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/dev/src/lib.rs:591:5
+    |
+591 |     pub fn try_from_json(s: &str) -> std::result::Result<Self, HmrWireError> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: this function could have a `#[must_use]` attribute
+   --> crates/dev/src/lib.rs:635:8
+    |
+635 | pub fn classify_path(path: &str) -> ChangeKind {
+    |        ^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+635 + #[must_use]
+636 | pub fn classify_path(path: &str) -> ChangeKind {
+    |
+
+error: case-sensitive file extension comparison
+   --> crates/dev/src/lib.rs:637:8
+    |
+637 |     if lower.ends_with(".css") || lower.ends_with(".scss") || lower.ends_with(".sass") {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+help: use std::path::Path
+    |
+637 ~     if std::path::Path::new(&lower)
+638 +         .extension()
+639 ~         .is_some_and(|ext| ext.eq_ignore_ascii_case("css")) || lower.ends_with(".scss") || lower.ends_with(".sass") {
+    |
+
+error: case-sensitive file extension comparison
+   --> crates/dev/src/lib.rs:637:35
+    |
+637 |     if lower.ends_with(".css") || lower.ends_with(".scss") || lower.ends_with(".sass") {
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+help: use std::path::Path
+    |
+637 ~     if lower.ends_with(".css") || std::path::Path::new(&lower)
+638 +         .extension()
+639 ~         .is_some_and(|ext| ext.eq_ignore_ascii_case("scss")) || lower.ends_with(".sass") {
+    |
+
+error: case-sensitive file extension comparison
+   --> crates/dev/src/lib.rs:637:63
+    |
+637 |     if lower.ends_with(".css") || lower.ends_with(".scss") || lower.ends_with(".sass") {
+    |                                                               ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+help: use std::path::Path
+    |
+637 ~     if lower.ends_with(".css") || lower.ends_with(".scss") || std::path::Path::new(&lower)
+638 +         .extension()
+639 ~         .is_some_and(|ext| ext.eq_ignore_ascii_case("sass")) {
+    |
+
+error: this function could have a `#[must_use]` attribute
+   --> crates/dev/src/lib.rs:698:8
+    |
+698 | pub fn classify_event(ev: &FileEvent) -> ChangeKind {
+    |        ^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+698 + #[must_use]
+699 | pub fn classify_event(ev: &FileEvent) -> ChangeKind {
+    |
+
+error: case-sensitive file extension comparison
+   --> crates/dev/src/lib.rs:737:8
+    |
+737 |     if lower.ends_with(".css")
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+help: use std::path::Path
+    |
+737 ~     if std::path::Path::new(&lower)
+738 +         .extension()
+739 +         .is_some_and(|ext| ext.eq_ignore_ascii_case("css"))
+    |
+
+error: case-sensitive file extension comparison
+   --> crates/dev/src/lib.rs:738:12
+    |
+738 |         || lower.ends_with(".scss")
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+help: use std::path::Path
+    |
+738 ~         || std::path::Path::new(&lower)
+739 +             .extension()
+740 +             .is_some_and(|ext| ext.eq_ignore_ascii_case("scss"))
+    |
+
+error: case-sensitive file extension comparison
+   --> crates/dev/src/lib.rs:739:12
+    |
+739 |         || lower.ends_with(".sass")
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+help: use std::path::Path
+    |
+739 ~         || std::path::Path::new(&lower)
+740 +             .extension()
+741 +             .is_some_and(|ext| ext.eq_ignore_ascii_case("sass"))
+    |
+
+error: this function could have a `#[must_use]` attribute
+   --> crates/dev/src/lib.rs:784:8
+    |
+784 | pub fn hmr_behavior(kind: ChangeKind) -> HmrBehavior {
+    |        ^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+784 + #[must_use]
+785 | pub fn hmr_behavior(kind: ChangeKind) -> HmrBehavior {
+    |
+
+error: item in documentation is missing backticks
+   --> crates/dev/src/lib.rs:844:5
+    |
+844 | /// node_modules path class whose events survive the CLI's HMR pre-filter
+    |     ^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+    |
+844 - /// node_modules path class whose events survive the CLI's HMR pre-filter
+844 + /// `node_modules` path class whose events survive the CLI's HMR pre-filter
+    |
+
+error: item in documentation is missing backticks
+   --> crates/dev/src/lib.rs:845:48
+    |
+845 | /// (see `seed_seen`'s doc for why the rest of node_modules stays unseeded).
+    |                                                ^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+    |
+845 - /// (see `seed_seen`'s doc for why the rest of node_modules stays unseeded).
+845 + /// (see `seed_seen`'s doc for why the rest of `node_modules` stays unseeded).
+    |
+
+error: this method could have a `#[must_use]` attribute
+   --> crates/dev/src/lib.rs:914:12
+    |
+914 |     pub fn new() -> Self {
+    |            ^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+914 ~     #[must_use]
+915 ~     pub fn new() -> Self {
+    |
+
+error: this method could have a `#[must_use]` attribute
+   --> crates/dev/src/lib.rs:930:12
+    |
+930 |     pub fn with_capacity(capacity: usize) -> Self {
+    |            ^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+930 ~     #[must_use]
+931 ~     pub fn with_capacity(capacity: usize) -> Self {
+    |
+
+error: this argument is passed by value, but not consumed in the function body
+   --> crates/dev/src/lib.rs:951:32
+    |
+951 |     pub fn publish(&self, msg: HmrMessage) {
+    |                                ^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+    = note: `-D clippy::needless-pass-by-value` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider taking a reference instead
+    |
+951 |     pub fn publish(&self, msg: &HmrMessage) {
+    |                                +
+
+error: this function could have a `#[must_use]` attribute
+    --> crates/dev/src/lib.rs:1002:8
+     |
+1002 | pub fn overlay_payload(diag: &Diagnostic) -> String {
+     |        ^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+     |
+1002 + #[must_use]
+1003 | pub fn overlay_payload(diag: &Diagnostic) -> String {
+     |
+
+error: this method could have a `#[must_use]` attribute
+    --> crates/dev/src/lib.rs:1113:12
+     |
+1113 |     pub fn new() -> Self {
+     |            ^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+     |
+1113 ~     #[must_use]
+1114 ~     pub fn new() -> Self {
+     |
+
+error: this method could have a `#[must_use]` attribute
+    --> crates/dev/src/lib.rs:1183:12
+     |
+1183 |     pub fn snapshot(&self) -> Vec<RequestTimingsRow> {
+     |            ^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+     |
+1183 ~     #[must_use]
+1184 ~     pub fn snapshot(&self) -> Vec<RequestTimingsRow> {
+     |
+
+error: called `map(_).unwrap_or_default()` on a `Result` value
+    --> crates/dev/src/lib.rs:1184:9
+     |
+1184 | /         self.inner
+1185 | |             .lock()
+1186 | |             .map(|q| q.iter().cloned().collect())
+1187 | |             .unwrap_or_default()
+     | |________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+     = note: `-D clippy::map-unwrap-or` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::map_unwrap_or)]`
+help: use instead
+     |
+1186 -             .map(|q| q.iter().cloned().collect())
+1187 -             .unwrap_or_default()
+1186 +             .map_or_default(|q| q.iter().cloned().collect())
+     |
+
+error: more than 3 bools in a struct
+    --> crates/dev/src/lib.rs:1235:1
+     |
+1235 | / pub struct DevOptions {
+1236 | |     pub bundle: bool,
+1237 | |     pub https: bool,
+1238 | |     pub proxy: std::collections::BTreeMap<String, String>,
+1239 | |     pub open_browser: bool,
+1240 | |     pub qr_code: bool,
+1241 | | }
+     | |_^
+     |
+     = help: consider using a state machine or refactoring bools into two-variant enums
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#struct_excessive_bools
+     = note: `-D clippy::struct-excessive-bools` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::struct_excessive_bools)]`
+
+error: redundant closure
+    --> crates/dev/src/lib.rs:1355:40
+     |
+1355 |                 .map_or_else(Vec::new, |r| r.snapshot()),
+     |                                        ^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `WaterfallRecorder::snapshot`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+     = note: `-D clippy::redundant-closure-for-method-calls` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+
+error: `format!(..)` appended to existing `String`
+    --> crates/dev/src/lib.rs:1432:9
+     |
+1432 | /         rows.push_str(&format!(
+1433 | |             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+1434 | |             html_escape(&r.id),
+1435 | |             html_escape(&r.mode),
+1436 | |             html_escape(r.dynamic_reason.as_deref().unwrap_or("")),
+1437 | |             html_escape(&r.cache_policy),
+1438 | |         ));
+     | |__________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+     = note: `-D clippy::format-push-string` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+     |
+1432 ~         let _ = write!(rows, "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+1433 +             html_escape(&r.id),
+1434 +             html_escape(&r.mode),
+1435 +             html_escape(r.dynamic_reason.as_deref().unwrap_or("")),
+1436 ~             html_escape(&r.cache_policy));
+     |
+
+error: casting `f64` to `u32` may truncate the value
+    --> crates/dev/src/lib.rs:1447:25
+     |
+1447 |             let width = (ms * 2.0).round().clamp(1.0, 400.0) as u32;
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+     = note: `-D clippy::cast-possible-truncation` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::cast_possible_truncation)]`
+
+error: casting `f64` to `u32` may lose the sign of the value
+    --> crates/dev/src/lib.rs:1447:25
+     |
+1447 |             let width = (ms * 2.0).round().clamp(1.0, 400.0) as u32;
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+     = note: `-D clippy::cast-sign-loss` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::cast_sign_loss)]`
+
+error: `format!(..)` appended to existing `String`
+    --> crates/dev/src/lib.rs:1448:13
+     |
+1448 | /             bars.push_str(&format!(
+1449 | |                 "<span class=\"bar\" style=\"width:{}px\" title=\"{}: {:.1}ms\"></span>",
+1450 | |                 width,
+1451 | |                 html_escape(name),
+1452 | |                 ms,
+1453 | |             ));
+     | |______________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1448 ~             let _ = write!(bars, "<span class=\"bar\" style=\"width:{}px\" title=\"{}: {:.1}ms\"></span>",
+1449 +                 width,
+1450 +                 html_escape(name),
+1451 ~                 ms);
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> crates/dev/src/lib.rs:1455:9
+     |
+1455 | /         wf_rows.push_str(&format!(
+1456 | |             "<tr><td><code>{}</code></td><td class=\"stages\">{}</td><td>{:.1}ms</td></tr>",
+1457 | |             html_escape(&wf.request_id),
+1458 | |             bars,
+1459 | |             total,
+1460 | |         ));
+     | |__________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1455 ~         let _ = write!(wf_rows, "<tr><td><code>{}</code></td><td class=\"stages\">{}</td><td>{:.1}ms</td></tr>",
+1456 +             html_escape(&wf.request_id),
+1457 +             bars,
+1458 ~             total);
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> crates/dev/src/lib.rs:1471:9
+     |
+1471 | /         live_rows.push_str(&format!(
+1472 | |             "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
+1473 | |             html_escape(&r.tag),
+1474 | |             if r.wildcard { "wildcard" } else { "exact" },
+1475 | |             r.subscribers,
+1476 | |         ));
+     | |__________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1471 ~         let _ = write!(live_rows, "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
+1472 +             html_escape(&r.tag),
+1473 +             if r.wildcard { "wildcard" } else { "exact" },
+1474 ~             r.subscribers);
+     |
+
+error: `format!(..)` appended to existing `String`
+    --> crates/dev/src/lib.rs:1483:9
+     |
+1483 | /         gen_rows.push_str(&format!(
+1484 | |             "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
+1485 | |             html_escape(&r.id),
+1486 | |             html_escape(&r.role),
+1487 | |             window,
+1488 | |         ));
+     | |__________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1483 ~         let _ = write!(gen_rows, "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
+1484 +             html_escape(&r.id),
+1485 +             html_escape(&r.role),
+1486 ~             window);
+     |
+
+error: parameter of type `HashMap` should be generalized over different hashers
+  --> crates/dev/src/boundary.rs:69:17
+   |
+69 |     importers: &HashMap<PathBuf, Vec<PathBuf>>,
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#implicit_hasher
+   = note: `-D clippy::implicit-hasher` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::implicit_hasher)]`
+help: add a type parameter for `BuildHasher`
+   |
+67 ~ pub fn plan<S: ::std::hash::BuildHasher>(
+68 |     changed: &Path,
+69 ~     importers: &HashMap<PathBuf, Vec<PathBuf>, S>,
+   |
+
+error: parameter of type `HashSet` should be generalized over different hashers
+  --> crates/dev/src/boundary.rs:70:17
+   |
+70 |     accepting: &HashSet<PathBuf>,
+   |                 ^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#implicit_hasher
+help: add a type parameter for `BuildHasher`
+   |
+67 ~ pub fn plan<S: ::std::hash::BuildHasher + Default>(
+68 |     changed: &Path,
+69 |     importers: &HashMap<PathBuf, Vec<PathBuf>>,
+70 ~     accepting: &HashSet<PathBuf, S>,
+71 |     entries: &HashSet<PathBuf>,
+...
+74 |     let mut boundaries: Vec<PathBuf> = Vec::new();
+75 ~     let mut seen: HashSet<PathBuf> = HashSet::default();
+   |
+
+error: parameter of type `HashSet` should be generalized over different hashers
+  --> crates/dev/src/boundary.rs:71:15
+   |
+71 |     entries: &HashSet<PathBuf>,
+   |               ^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#implicit_hasher
+help: add a type parameter for `BuildHasher`
+   |
+67 ~ pub fn plan<S: ::std::hash::BuildHasher + Default>(
+68 |     changed: &Path,
+69 |     importers: &HashMap<PathBuf, Vec<PathBuf>>,
+70 |     accepting: &HashSet<PathBuf>,
+71 ~     entries: &HashSet<PathBuf, S>,
+72 | ) -> Plan {
+73 |     let _span = tracing::debug_span!("hmr_boundary", changed = %changed.display()).entered();
+74 |     let mut boundaries: Vec<PathBuf> = Vec::new();
+75 ~     let mut seen: HashSet<PathBuf> = HashSet::default();
+   |
+
+error: parameter of type `HashMap` should be generalized over different hashers
+   --> crates/dev/src/boundary.rs:237:17
+    |
+237 |     importers: &HashMap<PathBuf, Vec<PathBuf>>,
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#implicit_hasher
+help: add a type parameter for `BuildHasher`
+    |
+234 ~ pub fn plan_classified<S: ::std::hash::BuildHasher>(
+235 |     kind: ChangeKind,
+236 |     changed: &Path,
+237 ~     importers: &HashMap<PathBuf, Vec<PathBuf>, S>,
+    |
+
+error: parameter of type `HashSet` should be generalized over different hashers
+   --> crates/dev/src/boundary.rs:238:17
+    |
+238 |     accepting: &HashSet<PathBuf>,
+    |                 ^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#implicit_hasher
+help: add a type parameter for `BuildHasher`
+    |
+234 ~ pub fn plan_classified<S: ::std::hash::BuildHasher>(
+235 |     kind: ChangeKind,
+236 |     changed: &Path,
+237 |     importers: &HashMap<PathBuf, Vec<PathBuf>>,
+238 ~     accepting: &HashSet<PathBuf, S>,
+    |
+
+error: parameter of type `HashSet` should be generalized over different hashers
+   --> crates/dev/src/boundary.rs:239:15
+    |
+239 |     entries: &HashSet<PathBuf>,
+    |               ^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#implicit_hasher
+help: add a type parameter for `BuildHasher`
+    |
+234 ~ pub fn plan_classified<S: ::std::hash::BuildHasher>(
+235 |     kind: ChangeKind,
+...
+238 |     accepting: &HashSet<PathBuf>,
+239 ~     entries: &HashSet<PathBuf, S>,
+    |
+
+error: more than 3 bools in a struct
+  --> crates/dev/src/dev_server.rs:26:1
+   |
+26 | / pub struct DevServerConfig {
+27 | |     /// Enable HTTPS with a self-signed cert.
+28 | |     pub https: bool,
+29 | |     /// Bind to all interfaces (0.0.0.0) instead of loopback.
+...  |
+36 | |     pub proxy: Vec<ProxyRule>,
+37 | | }
+   | |_^
+   |
+   = help: consider using a state machine or refactoring bools into two-variant enums
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#struct_excessive_bools
+
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/dev/src/dev_server.rs:59:1
+   |
+59 | pub fn generate_dev_cert() -> Result<DevCert> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: this function could have a `#[must_use]` attribute
+   --> crates/dev/src/dev_server.rs:107:8
+    |
+107 | pub fn network_url(port: u16, https: bool) -> Option<String> {
+    |        ^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+107 + #[must_use]
+108 | pub fn network_url(port: u16, https: bool) -> Option<String> {
+    |
+
+error: this function could have a `#[must_use]` attribute
+   --> crates/dev/src/dev_server.rs:114:8
+    |
+114 | pub fn local_url(port: u16, https: bool) -> String {
+    |        ^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+114 + #[must_use]
+115 | pub fn local_url(port: u16, https: bool) -> String {
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+   --> crates/dev/src/dev_server.rs:128:1
+    |
+128 | pub fn render_qr(data: &str) -> Result<String> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: this method could have a `#[must_use]` attribute
+   --> crates/dev/src/dev_server.rs:201:12
+    |
+201 |     pub fn with_strip(mut self, strip: bool) -> Self {
+    |            ^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+201 ~     #[must_use]
+202 ~     pub fn with_strip(mut self, strip: bool) -> Self {
+    |
+
+error: missing `#[must_use]` attribute on a method returning `Self`
+   --> crates/dev/src/dev_server.rs:201:5
+    |
+201 | /     pub fn with_strip(mut self, strip: bool) -> Self {
+202 | |         self.strip_prefix = strip;
+203 | |         self
+204 | |     }
+    | |_____^
+    |
+    = help: consider adding the `#[must_use]` attribute to the method or directly to the `Self` type
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#return_self_not_must_use
+    = note: `-D clippy::return-self-not-must-use` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::return_self_not_must_use)]`
+
+error: this function could have a `#[must_use]` attribute
+   --> crates/dev/src/dev_server.rs:222:8
+    |
+222 | pub fn apply_proxy(rules: &[ProxyRule], path: &str, query: Option<&str>) -> Option<ProxyMatch> {
+    |        ^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+222 + #[must_use]
+223 | pub fn apply_proxy(rules: &[ProxyRule], path: &str, query: Option<&str>) -> Option<ProxyMatch> {
+    |
+
+error: called `map(<f>).unwrap_or(false)` on an `Option` value
+   --> crates/dev/src/dev_server.rs:261:12
+    |
+261 |           || path
+    |  ____________^
+262 | |             .strip_prefix(prefix)
+263 | |             .map(|rest| rest.starts_with('/'))
+264 | |             .unwrap_or(false)
+    | |_____________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use `is_some_and(<f>)` instead
+    |
+263 -             .map(|rest| rest.starts_with('/'))
+264 -             .unwrap_or(false)
+263 +             .is_some_and(|rest| rest.starts_with('/'))
+    |
+
+error: this function could have a `#[must_use]` attribute
+   --> crates/dev/src/dev_server.rs:274:8
+    |
+274 | pub fn open_browser(url: &str) -> bool {
+    |        ^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+274 + #[must_use]
+275 | pub fn open_browser(url: &str) -> bool {
+    |
+
+error: called `map(<f>).unwrap_or(false)` on a `Result` value
+   --> crates/dev/src/dev_server.rs:284:5
+    |
+284 | /     std::process::Command::new(cmd.0)
+285 | |         .args(&cmd.1)
+286 | |         .stdout(std::process::Stdio::null())
+287 | |         .stderr(std::process::Stdio::null())
+288 | |         .spawn()
+289 | |         .map(|_| true)
+290 | |         .unwrap_or(false)
+    | |_________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use `is_ok_and(<f>)` instead
+    |
+289 -         .map(|_| true)
+290 -         .unwrap_or(false)
+289 +         .is_ok_and(|_| true)
+    |
+
+error: docs for function returning `Result` missing `# Errors` section
+  --> crates/dev/src/workspace.rs:72:5
+   |
+72 |     fn links(&self, app_root: &Path) -> Result<Vec<LinkedPackage>>;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+error: called `map(_).unwrap_or_default()` on an `Option` value
+   --> crates/dev/src/workspace.rs:265:22
+    |
+265 |           Some(obj) => obj
+    |  ______________________^
+266 | |             .get("packages")
+267 | |             .and_then(serde_json::Value::as_array)
+268 | |             .map(|items| glob_strings(items))
+269 | |             .unwrap_or_default(),
+    | |________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use instead
+    |
+268 -             .map(|items| glob_strings(items))
+269 -             .unwrap_or_default(),
+268 +             .map_or_default(|items| glob_strings(items)),
+    |
+
+error: could not compile `oxide-fw-dev` (lib) due to 59 previous errors
+warning: build failed, waiting for other jobs to finish...
