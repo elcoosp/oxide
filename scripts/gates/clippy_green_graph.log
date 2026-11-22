@@ -1,0 +1,15 @@
+# M1(b) GREEN transcript — oxide-fw-graph (52 findings -> 0)
+# rustc rustc 1.100.0 (0ef1bc386 2026-11-09)
+# $ cargo clippy -p oxide-fw-graph --all-targets -- -D warnings -W clippy::pedantic
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+    Checking oxide-fw-diagnostics v0.17.0 (/home/z/my-project/oxide/crates/diagnostics)
+    Checking oxide-fw-graph v0.17.0 (/home/z/my-project/oxide/crates/graph)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.91s
+EXIT=0
+
+# $ cargo test -p oxide-fw-graph
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.11s; merged doctests compilation took 0.11s
