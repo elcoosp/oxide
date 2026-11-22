@@ -1,0 +1,40 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+    Finished `test` profile [unoptimized] target(s) in 0.17s
+     Running tests/lint_uniformity.rs (target/debug/build/oxide-fw-diagnostics/79a4f59cb8b87a8d/out/lint_uniformity-79a4f59cb8b87a8d)
+
+running 5 tests
+test lints_table_body_finds_the_bare_header ... ok
+test lints_table_body_flags_a_bare_header ... ok
+test lints_table_body_flags_a_missing_table ... ok
+test lints_table_body_flags_an_override_subtable ... ok
+test every_workspace_member_inherits_the_workspace_lint_policy ... FAILED
+
+failures:
+
+---- every_workspace_member_inherits_the_workspace_lint_policy stdout ----
+
+thread 'every_workspace_member_inherits_the_workspace_lint_policy' (12585) panicked at crates/diagnostics/tests/lint_uniformity.rs:207:5:
+workspace lint-policy drift — these members do not inherit `[lints] workspace = true` (the one workspace lint contract; see crates/diagnostics/tests/lint_uniformity.rs and the root Cargo.toml's [workspace.lints]). Fix each by replacing its [lints] table with:
+  [lints]
+  workspace = true
+
+Offenders:
+  - crates/cli: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+  - crates/graph: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+  - crates/bundler: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+  - crates/jshost: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+  - crates/server: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+  - crates/cache: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+  - crates/dev: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+  - crates/plugin: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    every_workspace_member_inherits_the_workspace_lint_policy
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p oxide-fw-diagnostics --test lint_uniformity`
