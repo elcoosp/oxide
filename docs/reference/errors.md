@@ -134,6 +134,9 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DSP-115` | invalid `prefetch` section (a non-boolean `learned`, or a `minProbability` outside 0.0-1.0) | Fix the `prefetch` section |
 | `DSP-116` | the idempotency store refused `{key}`: {detail} | Check the store backend's availability — the stage degrades loud-then-run, so the request itself is unaffected |
 | `EDGE-101` | routes manifest must be an array of route rows or {"routes": [...]} (router typegen §8.3) | — |
+| `EDGE-103` | routes manifest is not valid JSON: {e} | Re-emit routes.json via `oxide build` (the router typegen §8.3) and redeploy |
+| `EDGE-104` | rules table is not valid JSON: {e} | Re-emit the native rules table via `oxide build` and redeploy |
+| `EDGE-105` | base value is not valid JSON: {e} | The ODP1 patch apply received a base value that is not valid JSON; re-encode the base snapshot |
 | `FN-BAD-REQUEST` | the server-function envelope is malformed (the 400 dispatch class) | Send the envelope shape `/_oxide/fn/<id>` documents |
 | `FN-INTERNAL` | the server-function dispatch failed internally (the 500 dispatch class) | Inspect the server logs; the dispatch failed inside the host |
 | `FN-NOT-FOUND` | no server function with that id is registered in this build | Rebuild, or check the id the client posts to `/_oxide/fn/<id>` |
