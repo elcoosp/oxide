@@ -35,7 +35,6 @@
 //! The wiring deltas live in `docs/deviations.md`.
 
 use std::collections::{BTreeSet, HashMap};
-use std::fmt::Write as _;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -101,21 +100,13 @@ pub fn delta_payload(prev: Option<&[u8]>, next: &[u8]) -> Bytes {
 
 /// Frame one SSE event (§V2-F05 step 3). Multi-line data becomes one
 /// `data:` line per input line; the event terminator is a blank line.
-#[must_use]
-pub fn sse_frame(event: &str, id: Option<usize>, data: &str) -> String {
-    let mut s = String::new();
-    // `write!`/`writeln!` into a `String` is infallible; the `Result` is
-    // discarded.
-    let _ = writeln!(s, "event: {event}");
-    if let Some(i) = id {
-        let _ = writeln!(s, "id: {i}");
-    }
-    for line in data.split('\n') {
-        let _ = writeln!(s, "data: {line}");
-    }
-    s.push('\n');
-    s
-}
+///
+/// Re-exported from `oxide_fw_edge_primitives::sse_frame` (WP E09: the
+/// wasm32 edge build reuses it without linking the server's `tokio`/`hyper`
+/// graph); byte-identical to the previous inline impl — the spec's own
+/// `sse_frame_multiline_data` pin in `server/tests/live_tdd.rs` still guards
+/// the framing.
+pub use oxide_fw_edge_primitives::sse_frame;
 
 /// The `200` SSE response head (§V2-F05 step 2): `text/event-stream`,
 /// `no-store` (every connection has its own snapshot stream) and
