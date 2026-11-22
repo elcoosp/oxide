@@ -1,0 +1,663 @@
+# V2-R01 red transcript — the failing-test state that drove the impl fixes
+# (the registry + C-assertions written; the checks failed before the
+#  parentElement/pull-stream/manifest/clientAdapter-wrapper fixes landed).
+# Command: node --test 'test/*.test.ts'  (from conformance/)
+
+[oxide] react: no component resolved for route `routes/missing`
+[oxide] react: no component resolved for route `routes/probe`
+[oxide] vue: no component resolved for route `routes/missing`
+[oxide] vue: no component resolved for route `routes/probe`
+[oxide] svelte: no component resolved for route `routes/missing`
+[oxide] svelte: no component resolved for route `routes/probe`
+[oxide] solid: no component resolved for route `routes/missing`
+[oxide] solid: no component resolved for route `routes/probe`
+✔ config: react default export is callable (1.138267ms)
+✔ config: react createAdapter({ ssr: 'ir' }) returns byte-identical IR output (5.029566ms)
+✔ config: react createAdapter() defaults to real SSR — §14.1 literal (1.090065ms)
+✔ config: react real SSR needs no componentFor (resolver supplies components) (2.125586ms)
+✔ config: react createAdapter() with an explicit resolver renders that route (0.733912ms)
+✔ smoke configs: react is literal (no component imports/closure) (0.525421ms)
+✔ config: react default export accepts the smoke-app {compiler:true} shape (0.146917ms)
+✔ config: vue default export is callable (0.231774ms)
+✔ config: vue createAdapter({ ssr: 'ir' }) returns byte-identical IR output (2.126339ms)
+✔ config: vue createAdapter() defaults to real SSR — §14.1 literal (0.657367ms)
+✔ config: vue real SSR needs no componentFor (resolver supplies components) (0.783907ms)
+✔ config: vue createAdapter() with an explicit resolver renders that route (0.666003ms)
+✔ smoke configs: vue is literal (no component imports/closure) (0.176318ms)
+✔ config: vue default export accepts the smoke-app {compiler:true} shape (0.155073ms)
+✔ config: svelte default export is callable (0.254042ms)
+✔ config: svelte createAdapter({ ssr: 'ir' }) returns byte-identical IR output (6.396625ms)
+✔ config: svelte createAdapter() defaults to real SSR — §14.1 literal (0.349397ms)
+✔ config: svelte real SSR needs no componentFor (resolver supplies components) (0.161578ms)
+✔ config: svelte createAdapter() with an explicit resolver renders that route (0.120914ms)
+✔ smoke configs: svelte is literal (no component imports/closure) (0.232294ms)
+✔ config: svelte default export accepts the smoke-app {compiler:true} shape (0.045512ms)
+✔ config: solid default export is callable (0.23454ms)
+✔ config: solid createAdapter({ ssr: 'ir' }) returns byte-identical IR output (1.651885ms)
+✔ config: solid createAdapter() defaults to real SSR — §14.1 literal (0.318173ms)
+✔ config: solid real SSR needs no componentFor (resolver supplies components) (0.194751ms)
+✔ config: solid createAdapter() with an explicit resolver renders that route (0.105684ms)
+✔ smoke configs: solid is literal (no component imports/closure) (0.109309ms)
+✔ config: solid default export accepts the smoke-app {compiler:true} shape (0.037912ms)
+[oxide-diag] real-render skipped: no manifest registered (route="routes/index")
+[oxide-diag] real-render skipped: no manifest registered (route="routes/blog/[slug]")
+✔ conformance: react passes every §22 assertion (112.109624ms)
+✔ conformance: vue passes every §22 assertion (81.014233ms)
+✔ conformance: svelte passes every §22 assertion (80.490036ms)
+✔ conformance: solid passes every §22 assertion (79.221397ms)
+[oxide-diag] real-render skipped: no manifest registered (route="routes/index")
+[oxide-diag] real-render skipped: no manifest registered (route="routes/blog/[slug]")
+✖ registry: react/binary — zero blockers, zero unexplained skips (128.564103ms)
+[oxide-diag] real-render skipped: no manifest registered (route="routes/index")
+[oxide-diag] real-render skipped: no manifest registered (route="routes/blog/[slug]")
+✖ registry: react/node — zero blockers, zero unexplained skips (87.69184ms)
+✖ registry: vue/binary — zero blockers, zero unexplained skips (81.275184ms)
+✖ registry: vue/node — zero blockers, zero unexplained skips (78.960501ms)
+✖ registry: svelte/binary — zero blockers, zero unexplained skips (86.169631ms)
+✖ registry: svelte/node — zero blockers, zero unexplained skips (79.778461ms)
+✖ registry: solid/binary — zero blockers, zero unexplained skips (83.173746ms)
+✖ registry: solid/node — zero blockers, zero unexplained skips (77.549562ms)
+✔ registry: the C25–C47 set is complete and registered in spec order (0.487346ms)
+✔ registry: the v0.1 set is migrated (no v0.1 assertion was dropped) (0.175855ms)
+✖ skip engine: an Unsupported capability skips with a recorded reason (0.272791ms)
+✔ skip engine: a ci-bound assertion skips with the spec + CI job (0.111894ms)
+ℹ tests 44
+ℹ suites 0
+ℹ pass 35
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2112.17151
+
+✖ failing tests:
+
+test at test/registry.test.ts:77:5
+✖ registry: react/binary — zero blockers, zero unexplained skips (128.564103ms)
+  AssertionError [ERR_ASSERTION]: react/binary: zero blocking failures
+    ✖ C31: four framework islands hydrated independently (dispatched=0, expected 4)
+    ✖ C32: the pending click was captured once (pending=0, expected 1)
+    ✖ C37: the reattach delivered every chunk once in order: got "!"
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'four framework islands hydrated independently (dispatched=0, expected 4)',
+  +     id: 'C31'
+  +   },
+  +   {
+  +     detail: 'the pending click was captured once (pending=0, expected 1)',
+  +     id: 'C32'
+  +   },
+  +   {
+  +     detail: 'the reattach delivered every chunk once in order: got "!"',
+  +     id: 'C37'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C31', detail: 'four framework islands hydrated independently (dispatched=0, expected 4)' }, { id: 'C32', detail: 'the pending click was captured once (pending=0, expected 1)' }, { id: 'C37', detail: 'the reattach delivered every chunk once in order: got "!"' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: react/node — zero blockers, zero unexplained skips (87.69184ms)
+  AssertionError [ERR_ASSERTION]: react/node: zero blocking failures
+    ✖ C31: four framework islands hydrated independently (dispatched=0, expected 4)
+    ✖ C32: the pending click was captured once (pending=0, expected 1)
+    ✖ C37: the reattach delivered every chunk once in order: got "!"
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'four framework islands hydrated independently (dispatched=0, expected 4)',
+  +     id: 'C31'
+  +   },
+  +   {
+  +     detail: 'the pending click was captured once (pending=0, expected 1)',
+  +     id: 'C32'
+  +   },
+  +   {
+  +     detail: 'the reattach delivered every chunk once in order: got "!"',
+  +     id: 'C37'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C31', detail: 'four framework islands hydrated independently (dispatched=0, expected 4)' }, { id: 'C32', detail: 'the pending click was captured once (pending=0, expected 1)' }, { id: 'C37', detail: 'the reattach delivered every chunk once in order: got "!"' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: vue/binary — zero blockers, zero unexplained skips (81.275184ms)
+  AssertionError [ERR_ASSERTION]: vue/binary: zero blocking failures
+    ✖ C32: the pending click was captured once (pending=0, expected 1)
+    ✖ C37: the reattach delivered every chunk once in order: got "!"
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the pending click was captured once (pending=0, expected 1)',
+  +     id: 'C32'
+  +   },
+  +   {
+  +     detail: 'the reattach delivered every chunk once in order: got "!"',
+  +     id: 'C37'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C32', detail: 'the pending click was captured once (pending=0, expected 1)' }, { id: 'C37', detail: 'the reattach delivered every chunk once in order: got "!"' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: vue/node — zero blockers, zero unexplained skips (78.960501ms)
+  AssertionError [ERR_ASSERTION]: vue/node: zero blocking failures
+    ✖ C32: the pending click was captured once (pending=0, expected 1)
+    ✖ C37: the reattach delivered every chunk once in order: got "!"
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the pending click was captured once (pending=0, expected 1)',
+  +     id: 'C32'
+  +   },
+  +   {
+  +     detail: 'the reattach delivered every chunk once in order: got "!"',
+  +     id: 'C37'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C32', detail: 'the pending click was captured once (pending=0, expected 1)' }, { id: 'C37', detail: 'the reattach delivered every chunk once in order: got "!"' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: svelte/binary — zero blockers, zero unexplained skips (86.169631ms)
+  AssertionError [ERR_ASSERTION]: svelte/binary: zero blocking failures
+    ✖ C32: the pending click was captured once (pending=0, expected 1)
+    ✖ C37: the reattach delivered every chunk once in order: got "!"
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the pending click was captured once (pending=0, expected 1)',
+  +     id: 'C32'
+  +   },
+  +   {
+  +     detail: 'the reattach delivered every chunk once in order: got "!"',
+  +     id: 'C37'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C32', detail: 'the pending click was captured once (pending=0, expected 1)' }, { id: 'C37', detail: 'the reattach delivered every chunk once in order: got "!"' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: svelte/node — zero blockers, zero unexplained skips (79.778461ms)
+  AssertionError [ERR_ASSERTION]: svelte/node: zero blocking failures
+    ✖ C32: the pending click was captured once (pending=0, expected 1)
+    ✖ C37: the reattach delivered every chunk once in order: got "!"
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the pending click was captured once (pending=0, expected 1)',
+  +     id: 'C32'
+  +   },
+  +   {
+  +     detail: 'the reattach delivered every chunk once in order: got "!"',
+  +     id: 'C37'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C32', detail: 'the pending click was captured once (pending=0, expected 1)' }, { id: 'C37', detail: 'the reattach delivered every chunk once in order: got "!"' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: solid/binary — zero blockers, zero unexplained skips (83.173746ms)
+  AssertionError [ERR_ASSERTION]: solid/binary: zero blocking failures
+    ✖ C32: the pending click was captured once (pending=0, expected 1)
+    ✖ C37: the reattach delivered every chunk once in order: got "!"
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the pending click was captured once (pending=0, expected 1)',
+  +     id: 'C32'
+  +   },
+  +   {
+  +     detail: 'the reattach delivered every chunk once in order: got "!"',
+  +     id: 'C37'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C32', detail: 'the pending click was captured once (pending=0, expected 1)' }, { id: 'C37', detail: 'the reattach delivered every chunk once in order: got "!"' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: solid/node — zero blockers, zero unexplained skips (77.549562ms)
+  AssertionError [ERR_ASSERTION]: solid/node: zero blocking failures
+    ✖ C32: the pending click was captured once (pending=0, expected 1)
+    ✖ C37: the reattach delivered every chunk once in order: got "!"
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the pending click was captured once (pending=0, expected 1)',
+  +     id: 'C32'
+  +   },
+  +   {
+  +     detail: 'the reattach delivered every chunk once in order: got "!"',
+  +     id: 'C37'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C32', detail: 'the pending click was captured once (pending=0, expected 1)' }, { id: 'C37', detail: 'the reattach delivered every chunk once in order: got "!"' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:120:1
+✖ skip engine: an Unsupported capability skips with a recorded reason (0.272791ms)
+  AssertionError [ERR_ASSERTION]: the skip reason names the Unsupported cell (got target 'node' is not in the assertion's target set (binary))
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:126:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+--- second red (after the first round of fixes; C31 + C42 still red) ---
+Command: node --test 'test/*.test.ts'
+
+[oxide] react: no component resolved for route `routes/missing`
+[oxide] react: no component resolved for route `routes/probe`
+[oxide] vue: no component resolved for route `routes/missing`
+[oxide] vue: no component resolved for route `routes/probe`
+[oxide] svelte: no component resolved for route `routes/missing`
+[oxide] svelte: no component resolved for route `routes/probe`
+[oxide] solid: no component resolved for route `routes/missing`
+[oxide] solid: no component resolved for route `routes/probe`
+✔ config: react default export is callable (1.110733ms)
+✔ config: react createAdapter({ ssr: 'ir' }) returns byte-identical IR output (14.934209ms)
+✔ config: react createAdapter() defaults to real SSR — §14.1 literal (1.003641ms)
+✔ config: react real SSR needs no componentFor (resolver supplies components) (0.934932ms)
+✔ config: react createAdapter() with an explicit resolver renders that route (0.296298ms)
+✔ smoke configs: react is literal (no component imports/closure) (0.49193ms)
+✔ config: react default export accepts the smoke-app {compiler:true} shape (0.150489ms)
+✔ config: vue default export is callable (0.176932ms)
+✔ config: vue createAdapter({ ssr: 'ir' }) returns byte-identical IR output (2.145584ms)
+✔ config: vue createAdapter() defaults to real SSR — §14.1 literal (0.420445ms)
+✔ config: vue real SSR needs no componentFor (resolver supplies components) (0.242013ms)
+✔ config: vue createAdapter() with an explicit resolver renders that route (0.376327ms)
+✔ smoke configs: vue is literal (no component imports/closure) (0.17895ms)
+✔ config: vue default export accepts the smoke-app {compiler:true} shape (0.049866ms)
+✔ config: svelte default export is callable (0.179596ms)
+✔ config: svelte createAdapter({ ssr: 'ir' }) returns byte-identical IR output (1.746387ms)
+✔ config: svelte createAdapter() defaults to real SSR — §14.1 literal (0.248947ms)
+✔ config: svelte real SSR needs no componentFor (resolver supplies components) (0.135415ms)
+✔ config: svelte createAdapter() with an explicit resolver renders that route (0.256339ms)
+✔ smoke configs: svelte is literal (no component imports/closure) (0.145601ms)
+✔ config: svelte default export accepts the smoke-app {compiler:true} shape (0.045023ms)
+✔ config: solid default export is callable (0.190913ms)
+✔ config: solid createAdapter({ ssr: 'ir' }) returns byte-identical IR output (1.654125ms)
+✔ config: solid createAdapter() defaults to real SSR — §14.1 literal (0.28455ms)
+✔ config: solid real SSR needs no componentFor (resolver supplies components) (0.165954ms)
+✔ config: solid createAdapter() with an explicit resolver renders that route (0.122464ms)
+✔ smoke configs: solid is literal (no component imports/closure) (0.123545ms)
+✔ config: solid default export accepts the smoke-app {compiler:true} shape (0.030778ms)
+[oxide-diag] real-render skipped: no manifest registered (route="routes/index")
+[oxide-diag] real-render skipped: no manifest registered (route="routes/blog/[slug]")
+✔ conformance: react passes every §22 assertion (112.438423ms)
+✔ conformance: vue passes every §22 assertion (81.955971ms)
+✔ conformance: svelte passes every §22 assertion (80.695568ms)
+✔ conformance: solid passes every §22 assertion (79.41048ms)
+[oxide-diag] real-render skipped: no manifest registered (route="routes/index")
+[oxide-diag] real-render skipped: no manifest registered (route="routes/blog/[slug]")
+✖ registry: react/binary — zero blockers, zero unexplained skips (136.907962ms)
+[oxide-diag] real-render skipped: no manifest registered (route="routes/index")
+[oxide-diag] real-render skipped: no manifest registered (route="routes/blog/[slug]")
+✖ registry: react/node — zero blockers, zero unexplained skips (97.323316ms)
+✖ registry: vue/binary — zero blockers, zero unexplained skips (92.693238ms)
+✖ registry: vue/node — zero blockers, zero unexplained skips (88.539986ms)
+✖ registry: svelte/binary — zero blockers, zero unexplained skips (96.095088ms)
+✖ registry: svelte/node — zero blockers, zero unexplained skips (91.6966ms)
+✖ registry: solid/binary — zero blockers, zero unexplained skips (93.121544ms)
+✖ registry: solid/node — zero blockers, zero unexplained skips (90.118978ms)
+✔ registry: the C25–C47 set is complete and registered in spec order (0.586741ms)
+✔ registry: the v0.1 set is migrated (no v0.1 assertion was dropped) (0.182985ms)
+✔ skip engine: an Unsupported capability skips with a recorded reason (0.146542ms)
+✔ skip engine: a ci-bound assertion skips with the spec + CI job (0.110616ms)
+ℹ tests 44
+ℹ suites 0
+ℹ pass 36
+ℹ fail 8
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2177.234106
+
+✖ failing tests:
+
+test at test/registry.test.ts:77:5
+✖ registry: react/binary — zero blockers, zero unexplained skips (136.907962ms)
+  AssertionError [ERR_ASSERTION]: react/binary: zero blocking failures
+    ✖ C31: four framework islands hydrated independently (dispatched=0, expected 4)
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'four framework islands hydrated independently (dispatched=0, expected 4)',
+  +     id: 'C31'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C31', detail: 'four framework islands hydrated independently (dispatched=0, expected 4)' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: react/node — zero blockers, zero unexplained skips (97.323316ms)
+  AssertionError [ERR_ASSERTION]: react/node: zero blocking failures
+    ✖ C31: four framework islands hydrated independently (dispatched=0, expected 4)
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'four framework islands hydrated independently (dispatched=0, expected 4)',
+  +     id: 'C31'
+  +   },
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C31', detail: 'four framework islands hydrated independently (dispatched=0, expected 4)' }, { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: vue/binary — zero blockers, zero unexplained skips (92.693238ms)
+  AssertionError [ERR_ASSERTION]: vue/binary: zero blocking failures
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: vue/node — zero blockers, zero unexplained skips (88.539986ms)
+  AssertionError [ERR_ASSERTION]: vue/node: zero blocking failures
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: svelte/binary — zero blockers, zero unexplained skips (96.095088ms)
+  AssertionError [ERR_ASSERTION]: svelte/binary: zero blocking failures
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: svelte/node — zero blockers, zero unexplained skips (91.6966ms)
+  AssertionError [ERR_ASSERTION]: svelte/node: zero blocking failures
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: solid/binary — zero blockers, zero unexplained skips (93.121544ms)
+  AssertionError [ERR_ASSERTION]: solid/binary: zero blocking failures
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/registry.test.ts:77:5
+✖ registry: solid/node — zero blockers, zero unexplained skips (90.118978ms)
+  AssertionError [ERR_ASSERTION]: solid/node: zero blocking failures
+    ✖ C42: the dominant + param edges warmed their chunks (warmed=[])
+  + actual - expected
+  
+  + [
+  +   {
+  +     detail: 'the dominant + param edges warmed their chunks (warmed=[])',
+  +     id: 'C42'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///home/z/my-project/conformance/test/registry.test.ts:92:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 'C42', detail: 'the dominant + param edges warmed their chunks (warmed=[])' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
