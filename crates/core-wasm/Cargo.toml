@@ -17,7 +17,13 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 oxide-fw-odf = { workspace = true }
-oxide-fw-router = { workspace = true }
+# V2-E09: `default-features = false` omits router's `scan`/`regex` features
+# from the wasm32 build (the edge consumes `routes.json`, never scans files,
+# and a `:name{regex}` constraint matches as a superset) — keeps the wasm
+# under the 400 KB gzip budget. The host workspace build still unifies the
+# features on via the CLI/server.
+oxide-fw-router = { workspace = true, default-features = false }
+oxide-fw-edge-primitives = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -26,11 +32,21 @@ blake3 = { workspace = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 
+[dev-dependencies]
+# V2-E09: the criterion bench over the new pure exports (match/rules/patch).
+# Host-only — never part of the wasm32 build.
+criterion = { workspace = true }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "edge_ops"
+harness = false
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-# V2-A02: this crate does not inherit the workspace lints yet (the recorded
-# dedicated hygiene pass adopts pedantic) — declared so the newer cargo
-# `missing_lints_inheritance` notice stays silent about the intent.
+# V2-A02 / V2-E09: this crate now inherits the workspace lints (the
+# dedicated hygiene pass adopted pedantic with the edge-completion exports).
 [lints]
+workspace = true
