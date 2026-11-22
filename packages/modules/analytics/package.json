@@ -1,0 +1,57 @@
+{
+  "name": "@oxide/analytics",
+  "version": "0.6.1",
+  "description": "Web-vitals analytics module for Oxide: wires the existing @oxide-fw/core beacon sink with generic webhook + console targets.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "keywords": [
+    "oxide",
+    "analytics",
+    "web-vitals",
+    "beacon"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "oxidespec": "V2-E06",
+  "oxide": {
+    "module": {
+      "adapters": ["react", "vue", "svelte", "solid"],
+      "configDefaults": {
+        "analytics": {
+          "endpoint": "/_oxide/vitals",
+          "console": false,
+          "batchSize": 10
+        }
+      },
+      "middlewares": [{ "file": "./server/middleware.ts" }],
+      "serverFns": [{ "file": "./server/track.ts" }],
+      "types": [
+        {
+          "name": "analytics",
+          "dts": "declare global { interface Window { __oxAnalytics?: { endpoint: string; console: boolean } } }"
+        }
+      ],
+      "hooks": ["transform"]
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "elcoosp <elcoosp@gmail.com>"
+}
