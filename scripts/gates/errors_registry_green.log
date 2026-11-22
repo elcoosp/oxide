@@ -1,0 +1,41 @@
+# errors_registry gate transcript — GREEN (ADDITIVE)
+
+The red→green pin for the §V2-K error-code registry coverage gate.
+Companion to `errors_registry_red.log`.
+
+## GREEN — the four codes registered + `errors.md` regenerated
+
+Added to `docs/errors.toml` (sorted by code, accurate `message` + `fix`
+harvested from each live call site):
+
+- `[CFG-CHECK]` — the bad `check.typecheck` spelling; fix names the valid
+  set (`tsgo`, `oxlint`, `tsrs`, `tsc`, `off`).
+- `[RFN-LOAD]` — the build-secret unavailable warn; fix: ensure the secret
+  is readable or drop `.oxide/rust` to run on the JS pool.
+- `[SKW-POOL]` — the no-worker-pool warn; fix: inspect the serve log.
+- `[SKW-SNAPSHOT]` — the loader-sources-not-frozen warn; fix: inspect the
+  snapshot error; the generation downgrades to acceptance-only.
+- `[DOC-004]` — the new V2-E05 code: `conformance/plugins/results.json`
+  malformed; fix: re-run `node scripts/plugin-compat.mjs --dry-run`.
+
+`CMP-NAT-001` confirmed `spec_only = false` (matches its live call site —
+no change needed).
+
+`docs/reference/errors.md` regenerated (the faithful extractor
+`scripts/regen_errors_md.py` reproduces `ErrorsPage::render()` byte-for-byte
+from `errors.toml`). The diff against the committed page is +13 insertions,
+0 deletions — the five new rows plus the pre-existing-stale `MOD-*` rows the
+committed page was missing:
+
+    $ python3 scripts/regen_errors_md.py
+    wrote docs/reference/errors.md (29410 bytes, 266 codes)
+    ok: CFG-CHECK, DOC-004, RFN-LOAD, SKW-POOL, SKW-SNAPSHOT present
+    $ git diff --stat docs/reference/errors.md
+    docs/reference/errors.md | 13 +++++++++++++
+    1 file changed, 13 insertions(+)
+
+The CI `docs-check` job (`cargo run -p oxide-fw-cli -- docs --root . generate
+--check`) is the final arbiter; the `errors_registry_tdd` integration test
+(`cargo test -p oxide-fw-cli --no-default-features --test errors_registry_tdd`)
+runs in the `rust/test` job — the CLI binary does not link in this sandbox
+(ENOSPC on the final `cc` link).
