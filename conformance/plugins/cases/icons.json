@@ -1,0 +1,16 @@
+{
+  "plugin": "unplugin-icons@24.0.0",
+  "fixture": "icons-app",
+  "adapter": "react",
+  "assert": [
+    {
+      "file": "dist/client/*.js",
+      "contains": "icon"
+    }
+  ],
+  "hooks": [
+    "transform",
+    "resolveId",
+    "load"
+  ]
+}
