@@ -86,6 +86,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CFG-IO` | read {}: {e} | — |
 | `CFG-LLMS` | the `llms` section carries a bad knob: {msg} | fix the `llms` section — `enabled` is the unquoted boolean master switch and `include` an array of absolute site-path patterns like `/docs/**` |
 | `CFG-OFFLINE` | the `offline` section carries a bad knob: {msg} | spell the section `offline: { enabled: true, precache: 'routes', outbox: true }` — `precache` is `'routes'` (the shell + prerendered routes) or `'all'` (every hashed asset) |
+| `CFG-PERM` | the `permissions` section carries a bad knob: {msg} | spell the section `permissions: { default: 'allow'\|'deny', net: string[]\|null, env: string[]\|null, fs: string[]\|null }` |
 | `CFG-REC` | the `record` key is `false`, `'all'`, `'errors'` or `{ sample, onError }` | spell the key `record: false`, `record: 'all'`, `record: 'errors'` or `record: { sample: 0.001, onError: true }` |
 | `CFG-SCHEMA` | serialize defaults: {e} | — |
 | `CFG-SEC` | `security.{key}` must be one of {valid} — got `{got}` | Set `security.{key}` to one of the valid spellings |
@@ -214,6 +215,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `PLG-LOAD` | plugin:load requires a `path` | — |
 | `PLG-WASM` | wasmtime engine init failed: {e} | — |
 | `PLG-WIT` | WASM plugin `{}` declares no `wit_world` — a stable WIT interface is required (§15.1 kind 2) | — |
+| `PRM-001` | A route used a capability outside its declared permissions (F19) | Add it to `config.permissions` or remove the call |
 | `RFN-001` | native function library speaks ABI {saw}, the host speaks ABI {want}; rebuild the user crate with the matching oxide-rustfn version | Rebuild the user crate with the matching `oxide-rustfn` version |
 | `RFN-002` | `*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08) | Use Binary or Docker, or remove the Rust functions |
 | `RFN-003` | native function library failed to load: {e} | Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type = ["cdylib"]` shape) |
@@ -271,4 +273,3 @@ Defined by the spec for work packages that have not landed; no call site raises 
 | --- | --- | --- |
 | `BLD-409` | Build header unknown or expired (surfaced client-side as a reload) | Reload the page |
 | `OX-SRC-001` | Search params failed `searchSchema` validation | Fix the URL or add defaults to the schema |
-| `PRM-001` | A route used a capability outside its declared permissions (F19) | Add it to `config.permissions` or remove the call |
