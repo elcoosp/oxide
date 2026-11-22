@@ -2,9 +2,16 @@
 //! params, layout chains, and i18n-prefix behavior (§16.4).
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+#[cfg(feature = "regex")]
+use std::collections::HashMap;
+#[cfg(feature = "regex")]
 use std::sync::{OnceLock, RwLock};
 
+// V2-E09: the `:name{regex}` param-constraint path is behind the `regex`
+// feature (default on); the wasm32 edge build disables it and
+// [`constraint_ok`] treats a constrained param as a superset match.
+#[cfg(feature = "regex")]
 use regex::Regex;
 use smallvec::SmallVec;
 
@@ -381,6 +388,7 @@ pub(crate) fn layout_chain<E: EntryLike>(entries: &[E], route_id: &str) -> Vec<R
 ///
 /// P-19: the cache is keyed by the *raw* constraint, so a hit does no
 /// `format!` allocation. The anchored pattern is built only on a miss.
+#[cfg(feature = "regex")]
 fn regex_for(pattern: &str) -> Option<Regex> {
     static CACHE: OnceLock<RwLock<HashMap<String, Regex>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
@@ -411,10 +419,21 @@ fn regex_for(pattern: &str) -> Option<Regex> {
     Some(re)
 }
 
+/// Whether a captured value satisfies a `:name{regex}` constraint. With the
+/// `regex` feature off (the wasm32 edge build), a constrained param matches
+/// as a superset — the edge consumes `routes.json` (never scans files) and
+/// the constraint validation is the native dispatcher's job.
 fn constraint_ok(constraint: Option<&str>, value: &str) -> bool {
     match constraint {
         None => true,
+        #[cfg(feature = "regex")]
         Some(pattern) => regex_for(pattern).is_some_and(|re| re.is_match(value)),
+        // V2-E09: no regex at the edge — accept the value (superset match).
+        #[cfg(not(feature = "regex"))]
+        Some(_) => {
+            let _ = value;
+            true
+        }
     }
 }
 
