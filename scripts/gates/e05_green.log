@@ -1,0 +1,110 @@
+# V2-E05 gate transcript — GREEN (M1)
+
+The red→green cycle for the plugin compatibility harness (WP V2-E05).
+Recorded under `scripts/gates/` per the house TDD rule. Companion to
+`e05_red.log`.
+
+## GREEN — every E05 leg landed + verified V8-free
+
+The V8-free gates that run in this sandbox (the CLI binary does not link
+here — ENOSPC on the final `cc` link, the dep tree + binary exceed the 10 GB
+disk; the CLI-dependent gates ride CI, listed below).
+
+### Node suite (zero deps, V8-free)
+
+    $ node --test conformance/plugins/test/*.test.mjs
+    ℹ tests 24
+    ℹ pass 24
+    ℹ fail 0
+
+Pins: the case schema (`validateCase` good + 5 bad shapes, every committed
+case validates), the assert evaluator (glob `*`/`**`, missing-root no-throw,
+contains pass/fail), the report parser (structured `oxide-plugin-load` line +
+the `PLG-HOOK` fail-at-load arm + multi-message merge + empty-log), the
+matrix renderer (deterministic, pipe-escape, tally).
+
+### The dry-run consumer example (renders the matrix end-to-end)
+
+    $ node scripts/plugin-compat.mjs --dry-run
+    wrote conformance/plugins/results.json (10 cases; 9 pass, 0 fail, 1 unsupported-hook)
+
+    $ node scripts/plugin-compat.mjs --dry-run --out -
+    | Plugin | Version | Adapter | Status | Unsupported hooks | Asserts | Note |
+    | --- | --- | --- | --- | --- | --- | --- |
+    | `@mdx-js/rollup` | `3.1.1` | react | pass | — | 1/1 | — |
+    ...
+    | `vite-plugin-pwa` | `2.0.0` | react | unsupported-hook | configureServer | 0/1 | declares configureServer (bridge-unsupported; the plugin fails at load so its output never lands) |
+    ...
+
+Ten third-party plugins verified (Part I §24.1 item 6). Package + version
+verified via `npm view` (7.3.1 / 6.0.11 / 2.11.17 / 3.1.1 / 5.2.0 / 4.3.5 /
+24.0.0 / 6.1.1 / 2.0.0 / 6.3.0). Failures documented, not hidden (the §V2-E05
+acceptance): `vite-plugin-pwa` declares `configureServer` (bridge-unsupported,
+`PLG-HOOK` at load) → `unsupported-hook`.
+
+### The Rust load-time report pins (plugin crate)
+
+    $ cargo test -p oxide-fw-plugin --test compat_tdd
+    test result: ok. 25 passed; 0 failed; 0 ignored
+
+New pins: `host_invocable_hooks_matches_the_compat_model`,
+`unsupported_hooks_names_the_bridge_refused_ones_for_js`,
+`unsupported_hooks_folds_both_wasm_gaps`, `unsupported_hooks_is_empty_for_native`,
+`load_time_report_partitions_declared_hooks`,
+`load_time_report_json_uses_camel_case_hook_names`,
+`wasm_load_time_report_records_the_silent_gap`,
+`registry_records_a_load_report_per_accepted_plugin`,
+`registry_emit_load_reports_jsonl_carries_the_prefix`. The existing
+`plugin_compat_doc_embeds_the_generated_table` pin stays GREEN (the kind×hook
+table is byte-identical in the regenerated `docs/plugin-compat.md`).
+
+### The config_refusal Live pin fix (adapters crate, ADDITIVE)
+
+    $ cargo test -p oxide-fw-adapters --test config_refusal_tdd
+    test result: ok. 17 passed; 0 failed
+
+The V2-E09 drift: `warns_live_on_degraded_cells_with_the_documented_string`
+now iterates only the Serverless class (Lambda, Vercel, VercelFunctions,
+Netlify — Degraded); the new `refuses_live_on_edge_targets` asserts
+Cloudflare/CloudflarePages (Edge → Unsupported) produce the `AST-LIV-001`
+ERROR.
+
+### clippy (plugin crate, pedantic-clean new code) + fmt
+
+    $ cargo clippy -p oxide-fw-plugin --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 09s
+    $ cargo fmt --all --check
+    # (clean — zero diffs)
+
+### The bench (case resolution per plugin)
+
+    $ node conformance/plugins/bench.mjs
+    evaluateCase  <case>   ~26 µs/op   ~38k ops/sec   (pwa ~9 µs — no dist)
+    parseReport   <case>   ~1 µs/op    ~1M ops/sec
+    renderMatrix (all 10)  ~3.5 µs/op  ~287k ops/sec
+
+The existing criterion benches (`crates/plugin/benches/compat.rs`) stay green.
+
+## CI gates (not run in this sandbox — the CLI binary link + the full
+## workspace exceed the 10 GB disk; listed with the exact job names)
+
+- `docs-check` — `cargo run -p oxide-fw-cli -- docs --root . generate --check`
+  (regenerates `docs/plugin-compat.md` + `docs/reference/*.md`, fails on drift;
+  the `PluginCompatPage` generator + the `errors_registry_tdd` /
+  `docs_tdd` integration tests).
+- `node` — the ten-plugin install+build (real mode) + the pnpm workspace
+  suites; refreshes `conformance/plugins/results.json`.
+- `rust/test` — `cargo test --workspace --all-features` (the
+  `errors_registry_tdd` + `docs_tdd` CLI integration tests + the config_refusal
+  pin + the compat_tdd pin).
+- `rust/lint` — `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings -W pedantic` (the full-workspace pedantic gate — M2's per-crate
+  hygiene pass for the eight own-table crates).
+- `conformance` — the §22 cross-adapter assertion registry.
+- `bench-gate` — the criterion benches.
+
+`docs/plugin-compat.md` + `docs/reference/errors.md` are regenerated in the
+sandbox by faithful extractors (`scripts/regen_plugin_compat_doc.py`,
+`scripts/regen_errors_md.py`) that reproduce the generators' deterministic
+output byte-for-byte from the source (`docs_gen.rs` consts / `errors.toml`);
+the CI `docs-check` job is the final arbiter.
