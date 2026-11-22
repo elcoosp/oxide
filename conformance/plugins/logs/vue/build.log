@@ -1,0 +1,3 @@
+oxide build: starting
+oxide-plugin-load	{"plugin": "@vitejs/plugin-vue", "kind": "js", "unsupportedHooks": [], "wiredHooks": ["transform"]}
+oxide build: wrote dist/client/index.js
