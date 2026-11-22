@@ -273,6 +273,10 @@ fix = "fix the `llms` section — `enabled` is the unquoted boolean master switc
 message = "the `offline` section carries a bad knob: {msg}"
 fix = "spell the section `offline: { enabled: true, precache: 'routes', outbox: true }` — `precache` is `'routes'` (the shell + prerendered routes) or `'all'` (every hashed asset)"
 
+[CFG-PERM]
+message = "the `permissions` section carries a bad knob: {msg}"
+fix = "spell the section `permissions: { default: 'allow'|'deny', net: string[]|null, env: string[]|null, fs: string[]|null }`"
+
 [CFG-REC]
 message = "the `record` key is `false`, `'all'`, `'errors'` or `{ sample, onError }`"
 fix = "spell the key `record: false`, `record: 'all'`, `record: 'errors'` or `record: { sample: 0.001, onError: true }`"
@@ -729,7 +733,6 @@ message = "WASM plugin `{}` declares no `wit_world` — a stable WIT interface i
 [PRM-001]
 message = "A route used a capability outside its declared permissions (F19)"
 fix = "Add it to `config.permissions` or remove the call"
-spec_only = true
 
 [RFN-001]
 message = "native function library speaks ABI {saw}, the host speaks ABI {want}; rebuild the user crate with the matching oxide-rustfn version"
