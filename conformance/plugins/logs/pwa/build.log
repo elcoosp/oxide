@@ -1,0 +1,3 @@
+oxide build: starting
+plugin `vite-plugin-pwa` declares hook `configureServer`, which the JS bridge does not support — see the compatibility table (§15.2/§15.3)
+oxide build: done (plugin skipped)
