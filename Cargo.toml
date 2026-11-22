@@ -19,6 +19,7 @@ members = [
     "crates/plugin",
     "crates/adapters",
     "crates/core-wasm",
+    "crates/edge-primitives",
     "crates/diagnostics",
     "crates/schema",
     "crates/macros",
@@ -95,6 +96,10 @@ snapfire_fsr_mdx = "0.2.3"
 solidjs-compiler = { git = "https://github.com/solidjs/solid", dir = "packages/compiler", rev = "7ea2a02e9edc976e4be4d060c7e65ba85d10b42c", default-features = false }
 # Internal crates (spec §23)
 oxide-fw-diagnostics = { path = "crates/diagnostics" }
+# V2-E09: the V8-free pure primitives (sse_frame, KeyHash/KeyStr, NonceSplicer)
+# the wasm32 edge build reuses; the server/cache/render crates re-export from
+# here so native behavior is byte-identical and the wasm dep graph stays lean.
+oxide-fw-edge-primitives = { path = "crates/edge-primitives" }
 oxide-fw-odf = { path = "crates/odf" }
 oxide-fw-router = { path = "crates/router" }
 oxide-fw-dispatch = { path = "crates/dispatch" }
