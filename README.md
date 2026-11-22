@@ -156,6 +156,43 @@ oxide build --root examples/smoke-app-react
 oxide start --root examples/smoke-app-react --port 3100
 ```
 
+## Lint policy and the drift guard
+
+The workspace ships **one lint contract** at the root (`Cargo.toml`
+`[workspace.lints]`: `rust.warnings = "deny"`, `clippy.pedantic = warn,
+priority = -1`). Every workspace member opts in by declaring
+`[lints] workspace = true` in its own `Cargo.toml` — and a **drift guard**
+makes that the enforced state, not a convention:
+
+```bash
+# the CI-callable form (the rust/lint job can invoke it before clippy):
+bash scripts/check-lint-uniformity.sh
+
+# the cargo-test form (runs as part of `cargo test -p oxide-fw-diagnostics`):
+cargo test -p oxide-fw-diagnostics --test lint_uniformity
+```
+
+Both fail the moment a member re-introduces a divergent `[lints]` table (a
+`[lints.clippy]` override or a bare header that opts out) or a new member
+opts out — naming every offender with the one-line fix. The per-crate
+pedantic gate (the chunked-clearance shape that fits a disk-constrained
+host — `cargo clippy -p <crate>` links no binaries):
+
+```bash
+# V8-free crates (default features):
+cargo clippy -p oxide-fw-graph --all-targets -- -D warnings -W clippy::pedantic
+
+# V8 crates (the `v8` feature gates the libclang/bindgen chain):
+cargo clippy -p oxide-fw-jshost --no-default-features --all-targets -- -D warnings -W clippy::pedantic
+cargo clippy -p oxide-fw-cli   --no-default-features --all-targets -- -D warnings -W clippy::pedantic
+
+# the unified gate (the CI rust/lint job's bar; --all-features needs libclang+nasm → CI):
+cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+```
+
+See `docs/deviations.md` ("V2-A02 closing leg") for the per-crate finding
+counts and the current clearance status.
+
 ## Project status
 
 **Pre-alpha. Built against a published specification and audited against it.**
