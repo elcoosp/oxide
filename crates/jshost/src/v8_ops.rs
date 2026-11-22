@@ -18,6 +18,7 @@
 //! a JS caller for those still gets `Op not found` from deno_core.
 
 use crate::CallInput;
+use crate::perm::PermissionSet;
 use deno_core::op2;
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -112,6 +113,127 @@ impl TraceParentGuard {
 impl Drop for TraceParentGuard {
     fn drop(&mut self) {
         set_trace_parent(None);
+    }
+}
+
+// V2-F19: the per-route capability permission slot — the grant the
+// `op_oxide_fetch` / `op_oxide_env_get` / `op_oxide_fs_read` boundary
+// checks consult. Seeded per-call by [`PermGuard::for_call`] from the
+// route's [`PermissionSet`] (the dispatcher records `request_id` →
+// `PermissionSet` before calling into the isolate; the guard seeds the
+// thread-local from the route's grant and clears it on drop). A
+// `JsRuntime` is `!Send` and pinned to one thread, so a thread-local is
+// the correct scope — the same reasoning as `TRACE_PARENT`.
+//
+// Model 2 (the spike's soundness closure, see
+// `docs/decisions/F19-permissions.md`): the isolate pool is keyed by the
+// route's profile hash, so the grant is baked into the isolate and a
+// detached timer (a `setTimeout` created outside the request context)
+// fires against the SAME grant, never `None` and never a different
+// route's. The thread-local is the per-call read; the profile-keyed pool
+// is the per-isolate invariant.
+thread_local! {
+    static PERM_CTX: RefCell<Option<PermissionSet>> = const { RefCell::new(None) };
+}
+
+/// Install the current call's per-route permission grant for the worker
+/// thread. Called by [`PermGuard::for_call`] — the RAII the worker loop
+/// installs around every `V8Msg::Call` — so the gated ops can read the
+/// grant at the op boundary. `None` clears a stale grant (CLEARING, not
+/// restoring — the same hygiene as `set_trace_parent`).
+pub fn set_perm_ctx(value: Option<PermissionSet>) {
+    PERM_CTX.with(|c| *c.borrow_mut() = value);
+}
+
+/// The current worker thread's seeded permission grant, if any. The read
+/// half of [`set_perm_ctx`] — tests and the consumer example use it to
+/// pin the seed/clear cycle; the gated ops read the private half
+/// directly.
+#[must_use]
+pub fn current_perm_ctx() -> Option<PermissionSet> {
+    PERM_CTX.with(|c| c.borrow().clone())
+}
+
+/// The per-call RAII the worker loop installs around every
+/// `V8Msg::Call` (V2-F19): seed the permission slot from the call's
+/// route grant on construction, clear it on drop. Mirrors
+/// [`TraceParentGuard`] exactly — the worker runs one call at a time, so
+/// CLEARING (not restoring) is the right hygiene.
+///
+/// The grant is looked up from the route→permission registry the
+/// dispatcher populates ([`crate::perm::set_route_permissions`]); a call
+/// whose route has no declaration seeds the unrestricted default (v0.2
+/// allow-all).
+pub struct PermGuard {
+    _private: (),
+}
+
+impl PermGuard {
+    /// Seed the slot for `input`'s duration — the route's grant from the
+    /// registry, or the unrestricted default when the route declares no
+    /// permissions (the v0.2 allow-all posture).
+    #[must_use]
+    pub fn for_call(input: &CallInput) -> Self {
+        let grant = input
+            .route
+            .as_deref()
+            .and_then(crate::perm::route_permissions)
+            .unwrap_or_default();
+        set_perm_ctx(Some(grant));
+        Self { _private: () }
+    }
+}
+
+impl Drop for PermGuard {
+    fn drop(&mut self) {
+        set_perm_ctx(None);
+    }
+}
+
+/// V2-F19: the net (fetch) boundary check. Reads the seeded
+/// [`PermissionSet`] and returns `Ok(())` when the host is allowed,
+/// `Err` with `PRM-001` when the grant denies it. The op boundary calls
+/// this before delegating to the fetch handler.
+fn check_net(host: &str) -> Result<(), deno_error::JsErrorBox> {
+    let Some(grant) = current_perm_ctx() else {
+        return Ok(()); // no grant seeded — unrestricted (the default)
+    };
+    if grant.is_net_allowed(host) {
+        Ok(())
+    } else {
+        Err(deno_error::JsErrorBox::generic(format!(
+            "PRM-001: route denied fetch to `{host}` — add it to config.permissions.net or remove the call"
+        )))
+    }
+}
+
+/// V2-F19: the env boundary check — the `process.env` Proxy's backing op
+/// calls this before returning a value.
+fn check_env(name: &str) -> Result<(), deno_error::JsErrorBox> {
+    let Some(grant) = current_perm_ctx() else {
+        return Ok(());
+    };
+    if grant.is_env_allowed(name) {
+        Ok(())
+    } else {
+        Err(deno_error::JsErrorBox::generic(format!(
+            "PRM-001: route denied env read `{name}` — add it to config.permissions.env or remove the call"
+        )))
+    }
+}
+
+/// V2-F19: the fs boundary check — the `node:fs.readFile` shim's backing
+/// op calls this before reading the file.
+fn check_fs(path: &str) -> Result<(), deno_error::JsErrorBox> {
+    let Some(grant) = current_perm_ctx() else {
+        return Ok(());
+    };
+    if grant.is_fs_allowed(path) {
+        Ok(())
+    } else {
+        Err(deno_error::JsErrorBox::generic(format!(
+            "PRM-001: route denied fs read `{path}` — add it to config.permissions.fs or remove the call"
+        )))
     }
 }
 
@@ -274,6 +396,14 @@ pub async fn op_oxide_fetch(
     #[string] headers_json: String,
     #[string] body_b64: String,
 ) -> Result<String, deno_error::JsErrorBox> {
+    // V2-F19: the net boundary check. The seeded `PermissionSet`'s
+    // `is_net_allowed(host)` runs before the fetch handler — a route
+    // whose grant does not list the host (or lists `Some([])`) is denied
+    // with `PRM-001`. A relative URL (no host) passes (no network); the
+    // SSRF guard in the fetch handler is the second layer.
+    if let Some(host) = crate::perm::url_host(&url) {
+        check_net(&host)?;
+    }
     let Some(h) = fetch_handler() else {
         return Err(deno_error::JsErrorBox::generic(
             "fetch op unavailable: no FetchHandler wired",
@@ -590,6 +720,60 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(s).ok()
 }
 
+/// V2-F19: `oxide.envGet(name)` — the `process.env` Proxy's backing op.
+/// The V8 bootstrap wraps `globalThis.process.env` in a `Proxy` whose
+/// `get` trap calls this op, so every env-var read flows through the
+/// permission boundary. Returns the value as a JSON string (`null` when
+/// the var is unset, `"value"` when set). A denied read throws
+/// `PRM-001`.
+///
+/// The V8 runtime's `process.env` is a minimal shim (`{ NODE_ENV:
+/// 'production' }`); this op is the gate the per-route grant checks
+/// against. On a deny the op throws — the Proxy's `get` trap surfaces the
+/// throw as a property-read failure, the honest signal.
+#[op2]
+#[string]
+pub fn op_oxide_env_get(#[string] name: String) -> String {
+    // V2-F19: the env boundary check. Throws (via the op's error path)
+    // when the grant denies the name.
+    if let Err(e) = check_env(&name) {
+        // op2 sync ops cannot return `Result`; surface the deny as a
+        // JSON error object the Proxy's get-trap throws. The shape
+        // mirrors the compile_module op's error arm.
+        return serde_json::json!({ "error": e.to_string() }).to_string();
+    }
+    // The V8 shim's env is `{ NODE_ENV: 'production' }` plus any vars
+    // the host threaded via `CallInput`. For v0.2 the env surface is
+    // minimal; the permission gate is the substrate that ships — the
+    // full env read-through rides a later tier (the spec's §4.6 tier 2).
+    match name.as_str() {
+        "NODE_ENV" => serde_json::to_string("production").unwrap(),
+        _ => serde_json::Value::Null.to_string(),
+    }
+}
+
+/// V2-F19: `oxide.fsRead(path)` — the `node:fs.readFile` shim's backing
+/// op. The V8 `node:fs` module's `readFile`/`readFileSync` route through
+/// this op so every file read flows through the permission boundary.
+/// Returns the file bytes as base64 (or a JSON error object on a deny).
+#[op2]
+#[string]
+pub fn op_oxide_fs_read(#[string] path: String) -> String {
+    // V2-F19: the fs boundary check.
+    if let Err(e) = check_fs(&path) {
+        return serde_json::json!({ "error": e.to_string() }).to_string();
+    }
+    // The V8 runtime does not expose a real fs (§4.6: a `node:fs` call
+    // is loud — "set server.backend to node"). The permission gate is
+    // the substrate; the real read-through rides the Node backend. A
+    // granted read on the V8 backend returns the honest "not available"
+    // signal rather than fabricating bytes.
+    serde_json::json!({
+        "error": "JSH-NODESHIM: node:fs.readFile is not available in the V8 runtime; set server.backend to node (§4.6)"
+    })
+    .to_string()
+}
+
 /// The op declarations attached to the V8 extension.
 ///
 /// **Append-only.** deno_core keys a snapshot's op external-reference table by
@@ -615,6 +799,12 @@ pub fn op_decls() -> Vec<deno_core::OpDecl> {
         // B-03: streaming loader settle lines (append-only, same snapshot
         // compatibility rule as above).
         op_oxide_loader_emit(),
+        // V2-F19: the per-route capability permission ops (append-only,
+        // same snapshot compatibility rule). The `process.env` Proxy and
+        // the `node:fs.readFile` shim route through these so every
+        // env/fs read flows through the permission boundary.
+        op_oxide_env_get(),
+        op_oxide_fs_read(),
     ]
 }
 
