@@ -59,6 +59,10 @@ mod archive;
 mod index;
 mod matcher;
 mod rules;
+// V2-E09: the route-file scanner is build-time only (pulls `regex` for
+// constraint validation + render/mode/tag scraping); gated behind `scan` so
+// the wasm32 edge build (`default-features = false`) omits it.
+#[cfg(feature = "scan")]
 mod scan;
 mod segment;
 mod typegen;
@@ -269,6 +273,7 @@ impl RouteTree {
     ///
     /// A scan/diagnostic error when the routes tree violates the §8
     /// conventions (colliding slots, unreadable modules, bad segment syntax).
+    #[cfg(feature = "scan")]
     pub fn scan(dir: &Path) -> Result<Self> {
         scan::scan_impl(dir)
     }
@@ -279,6 +284,7 @@ impl RouteTree {
     /// # Errors
     ///
     /// Same error class as [`Self::scan`]; the override path must exist.
+    #[cfg(feature = "scan")]
     pub fn scan_with_config(dir: &Path, routes_dir_override: Option<&Path>) -> Result<Self> {
         scan::scan_with_config_impl(dir, routes_dir_override)
     }
@@ -757,9 +763,9 @@ pub enum RuleOutcome {
 
 #[cfg(test)]
 mod dispatch_index_tdd {
-    //! The route_ctx pins' red, promoted to a router pin: the lazy caches'
-    //! first build held the READ guard across the WRITE lock — a same-thread
-    //! read→write hold self-deadlocks the std RwLock, so a cold
+    //! The `route_ctx` pins' red, promoted to a router pin: the lazy caches'
+    //! first build held the `READ` guard across the `WRITE` lock — a same-thread
+    //! read→write hold self-deadlocks the std `RwLock`, so a cold
     //! `insert`-built tree never answered `match_path`,
     //! `middleware_files_for` or `not_found_route` (the scanner-built
     //! production trees were warm through other paths; hand-built trees
