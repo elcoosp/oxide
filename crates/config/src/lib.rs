@@ -107,6 +107,13 @@ pub struct OxideConfig {
     pub plugins: Vec<serde_json::Value>,
     #[serde(default)]
     pub modules: Vec<String>,
+    /// §V2-E06: per-module config defaults (merged from each module's
+    /// `oxide.module.configDefaults` under the sanitized module name). The
+    /// key is the sanitized module name (`@scope/pkg` → `scope-pkg`); the
+    /// value is the deep-merged config patch. The build reads a module's
+    /// defaults from here, never from the raw `modules` name list.
+    #[serde(default)]
+    pub modules_config: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub extends: Vec<String>,
     #[serde(default)]
@@ -709,6 +716,7 @@ impl Default for OxideConfig {
             static_export: StaticConfig::default(),
             plugins: Vec::new(),
             modules: Vec::new(),
+            modules_config: BTreeMap::new(),
             extends: Vec::new(),
             environments: BTreeMap::new(),
             dev: DevConfig::default(),
