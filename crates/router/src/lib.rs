@@ -67,6 +67,10 @@ mod scan;
 mod segment;
 mod typegen;
 
+/// V2-F19: the per-route `permissions` export scan — the same token-
+/// boundary honest shape as `declares_search_schema`, re-exported so the
+/// CLI's declaration scan and the typegen walk share one definition.
+pub use typegen::declares_permissions;
 /// V2-E02: the `searchSchema` declaration scanner, public so the CLI's
 /// typegen/docs consumers reuse the one definition (the same source of
 /// truth the emitted `routes.d.ts` and `routes.json` use).
