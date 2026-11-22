@@ -1,0 +1,14 @@
+{
+  "plugin": "@tailwindcss/vite@4.3.5",
+  "fixture": "tailwind-app",
+  "adapter": "react",
+  "assert": [
+    {
+      "file": "dist/client/*.css",
+      "contains": ".tailwind"
+    }
+  ],
+  "hooks": [
+    "transform"
+  ]
+}
