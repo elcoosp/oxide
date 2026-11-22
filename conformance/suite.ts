@@ -1,14 +1,17 @@
-// Oxide conformance suite (spec §22, D20): ONE assertion set run against ALL
-// FOUR framework adapters. A release is blocked if any adapter regresses —
-// test/conformance.test.ts asserts every assertion passes for EVERY adapter,
-// and run.ts prints the table and exits non-zero on any failure.
+// Oxide conformance suite (spec §22, D20 + §V2-R01): ONE assertion set run
+// against ALL FOUR framework adapters. A release is blocked if any adapter
+// regresses — `test/conformance.test.ts` asserts every v0.1 assertion passes
+// for EVERY adapter, and `run.ts` prints the table and exits non-zero on any
+// failure.
 //
-// Covered (§22 list): SSR output, deterministic markup (no hydration
-// mismatch), streaming + deferred data, error and not-found boundaries, head
-// and metadata (title template + merge), islands markup + hydration,
-// actions with JS on and off, server functions (stub POST shape), caching and
-// revalidation shapes, and the client router contract (§8.4). Source maps are
-// build-level and NOT asserted here.
+// §V2-R01 migration: the v0.1 checks live in the `V01_CHECKS` array below as
+// `(c: CheckCtx) => detail` functions (their bodies are the pre-R01 checks
+// verbatim, with `adapter`/`opts`/`name`/`marker`/`render` rebinding onto the
+// `CheckCtx` argument). `runSuite` runs them for backward compatibility (the
+// `conformance.test.ts` guard); the registry (`conformance/assertions/v01.ts`)
+// wraps each entry into a `§V2-R01` assertion descriptor so the new runner
+// dispatches them through the same skip engine as the C25–C47 set — without
+// changing a single check.
 //
 // The suite uses the CORE client runtime (packages/oxide): createRouter,
 // enhance, hydrateIslands — the same modules apps ship — plus a hand-rolled
@@ -52,6 +55,19 @@ const MARKERS: Record<string, { root: RegExp; extra?: RegExp }> = {
 }
 
 // ---------------------------------------------------------------------------
+// The per-adapter context a v0.1 check closes over (the §V2-R01 migration
+// rebinds the old `adapter`/`opts`/`name`/`marker`/`render` locals onto this).
+// ---------------------------------------------------------------------------
+
+export interface CheckCtx {
+  adapter: Adapter
+  opts: SuiteOptions
+  name: string
+  marker: { root: RegExp; extra?: RegExp }
+  render: (r: AtlasRoute) => Promise<string>
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -83,16 +99,6 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<{ chunks: stri
 
 const tick = (ms = 5): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** Run one assertion, converting a throw into a failing result. */
-async function check(name: string, fn: () => Promise<string> | string): Promise<Assertion> {
-  try {
-    const detail = await fn()
-    return { name, pass: true, detail }
-  } catch (err) {
-    return { name, pass: false, detail: err instanceof Error ? err.message : String(err) }
-  }
-}
-
 function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message)
 }
@@ -107,367 +113,425 @@ function deepEqual<T>(actual: T, expected: T, message: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// The suite
+// The v0.1 checks — one entry per assertion. `fn` returns the detail string
+// on success and throws on failure (the runner turns a throw into a FAIL).
+// The bodies are the pre-§V2-R01 checks verbatim, with the five captured
+// locals rebound onto `c: CheckCtx`.
 // ---------------------------------------------------------------------------
 
-/**
- * Run the full assertion set against one adapter (§22). ~22 assertions;
- * the same set runs for every adapter so a regression anywhere blocks.
- */
-export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promise<Assertion[]> {
-  const name = adapter.name
-  const marker = MARKERS[name] ?? { root: /data-ox/ }
-  const render = async (r: AtlasRoute): Promise<string> => (await drain(adapter.render(asRenderInput(r)))).html
-  const results: Assertion[] = []
-  const push = async (n: string, fn: () => Promise<string> | string): Promise<void> => void results.push(await check(n, fn))
+export interface CheckEntry {
+  id: string
+  name: string
+  fn: (c: CheckCtx) => Promise<string> | string
+}
 
-  // --- §7 contract ---------------------------------------------------------
-
-  await push('contract: manifest shape (§7)', () => {
-    assert(adapter.contract === 1, 'contract must be 1')
-    assert(typeof adapter.name === 'string' && adapter.name.length > 0, 'name required')
-    assert(Array.isArray(adapter.extensions) && adapter.extensions.length > 0, 'extensions required')
-    assert(adapter.capabilities.islands === true, 'islands capability required (§10.3)')
-    assert(['native', 'core'].includes(adapter.capabilities.suspense), "suspense must be 'native' | 'core'")
-    assert(['refresh', 'component', 'full'].includes(adapter.capabilities.hmr), 'hmr must be refresh|component|full')
-    const plugins = adapter.plugins({})
-    assert(Array.isArray(plugins) && plugins.every((p) => typeof p.name === 'string'), 'plugins() returns named plugins')
-    const expected = { react: 'native', vue: 'core', svelte: 'core', solid: 'native' }[name]
-    assert(expected === undefined || adapter.capabilities.suspense === expected, `suspense must be '${expected}' for ${name}`)
-    return `suspense=${adapter.capabilities.suspense} hmr=${adapter.capabilities.hmr}`
-  })
-
-  // --- §22 SSR output ------------------------------------------------------
-
-  await push('ssr: home route content + framework marker', async () => {
-    const html = await render({ ...atlas.home })
-    assert(html.startsWith(expect.layout.doctype), 'doctype first')
-    assert(html.includes(expect.home.content), 'route content rendered')
-    assert(html.includes(expect.home.intro), 'loader data interpolated')
-    assert(html.includes(expect.home.title), 'title rendered')
-    assert(marker.root.test(html), `framework root marker for ${name}`)
-    if (marker.extra) assert(marker.extra.test(html), `framework flavor marker for ${name}`)
-    return `marker=${marker.root}`
-  })
-
-  await push('ssr: document structure + merged head', async () => {
-    const html = await render({ ...atlas.home })
-    assert(html.includes(expect.layout.charset), 'charset meta')
-    assert(html.includes(expect.layout.viewport), 'layout viewport meta')
-    assert(html.includes('content="Atlas home route"'), 'loader head meta merged')
-    assert(html.includes('content="atlas-home"'), 'page <head> wrapper extracted (§7 head extraction)')
-    const headEnd = html.indexOf('</head>')
-    assert(headEnd > 0 && html.slice(0, headEnd).includes('content="atlas-home"'), 'extracted meta lives in <head>')
-    return 'layout ⊕ loader ⊕ page head'
-  })
-
-  await push('hydration: deterministic markup, home (no mismatch)', async () => {
-    const a = await render({ ...atlas.home })
-    const b = await render({ ...atlas.home })
-    assert(a === b, 'render twice → byte-identical (deterministic hydration markup, §7.2)')
-    return `${a.length} bytes`
-  })
-
-  await push('hydration: deterministic markup, blog/[slug]', async () => {
-    const a = await render({ ...atlas.blog })
-    const b = await render({ ...atlas.blog })
-    assert(a === b, 'render twice → byte-identical')
-    return `${a.length} bytes`
-  })
-
-  await push('ssr: params + data reach the page (blog/[slug])', async () => {
-    const html = await render({ ...atlas.blog })
-    assert(html.includes(expect.blog.title), 'route title + template applied')
-    assert(html.includes(expect.blog.post), 'data title')
-    assert(html.includes(expect.blog.byline), 'param + author byline')
-    assert(html.includes(expect.blog.body), 'body data')
-    for (const c of expect.blog.comments) assert(html.includes(c), `comment: ${c}`)
-    return 'params+data ok'
-  })
-
-  // --- §7.1 streaming ------------------------------------------------------
-
-  await push('streaming: shell carries boundary placeholder + fallback', async () => {
-    const { chunks, html } = await drain(adapter.render(asRenderInput(atlas.streaming)))
-    const shell = chunks.slice(0, 2).join('')
-    assert(shell.includes("<template data-ox-b='0'>"), 'template[data-ox-b] placeholder in shell (§7.1)')
-    assert(shell.includes(expect.streaming.fallback), 'fallback content in placeholder')
-    assert(!shell.includes(expect.streaming.resolved), 'resolution NOT in the shell')
-    assert(html.includes(expect.streaming.resolved), 'resolution arrives later in the stream')
-    return `${chunks.length} chunks`
-  })
-
-  await push('streaming: deferred resolution chunk + swapper script', async () => {
-    const { chunks } = await drain(adapter.render(asRenderInput(atlas.streaming)))
-    const later = chunks.slice(2).join('')
-    assert(later.includes("<template data-ox-c='0'>"), 'template[data-ox-c] resolution (§7.1)')
-    assert(later.includes(expect.streaming.resolved), 'resolved content')
-    assert(later.includes("('0')"), 'swapper IIFE with boundary id baked in')
-    assert(later.includes('ox:swap'), 'swapper dispatches the ox:swap CustomEvent')
-    assert(later.includes('replaceWith'), 'DOM-API-only swapper (CSP-safe, no eval)')
-    return 'resolution + swapper'
-  })
-
-  await push('streaming: swap lands resolved content in the DOM', async () => {
-    const { chunks } = await drain(adapter.render(asRenderInput(atlas.streaming)))
-    const dom = createFakeDom(chunks.slice(0, 2).join(''))
-    let swaps = 0
-    dom.doc.addEventListener('ox:swap', () => swaps++)
-    assert(simulateSwap(dom.doc, chunks.slice(2).join('')), 'swapper found placeholder + resolution')
-    assert(swaps === 1, 'ox:swap dispatched once')
-    assert(dom.body!.innerHTML.includes(expect.streaming.resolved), 'resolved content replaced the placeholder')
-    assert(!dom.doc.querySelector("template[data-ox-b='0']"), 'placeholder removed')
-    return 'swap ok'
-  })
-
-  await push('streaming: a non-template boundary host swaps too', async () => {
-    // §7.1 gives `suspense: 'core'` adapters a `<Defer>` component. A
-    // framework cannot render the placeholder through `<template>`: Vue
-    // emits its hydration markers inside one, and the swapper's
-    // `innerHTML` would move those markers into the live DOM. So the host
-    // is a framework element — `<ox-defer data-ox-*>` — and the swapper's
-    // selectors are attribute-only to match either shape.
-    const host = `<ox-defer data-ox-b='0'><p>fallback</p></ox-defer>`
-    const dom = createFakeDom(`<body>${host}</body>`)
-    let swaps = 0
-    dom.doc.addEventListener('ox:swap', () => swaps++)
-    const resolution = `<template data-ox-c='0'><p>resolved</p></template>`
-    assert(simulateSwap(dom.doc, resolution), 'swapper found the framework host')
-    assert(swaps === 1, 'ox:swap dispatched once')
-    assert(dom.body!.innerHTML.includes('resolved'), 'resolved content replaced the host')
-    assert(!dom.doc.querySelector("[data-ox-b='0']"), 'host removed')
-    return 'attribute-only selector'
-  })
-
-  await push('streaming: rejected boundary streams the error boundary', async () => {
-    const { chunks, html } = await drain(adapter.render(asRenderInput(atlas.streamingError)))
-    assert(html.includes(expect.error.boundary), 'error boundary in the stream (§10.2 step 5)')
-    assert(html.includes(expect.streamingError.message), 'error message surfaced')
-    const later = chunks.slice(2).join('')
-    assert(later.includes('data-ox-c'), 'error streamed as a boundary resolution')
-    return 'error mapped to core model'
-  })
-
-  // --- boundaries ----------------------------------------------------------
-
-  await push('error: thrown render renders the error boundary', async () => {
-    const html = await render({ ...atlas.error })
-    assert(html.includes(expect.error.boundary), 'render-crate error boundary shape')
-    assert(html.includes(expect.error.message), 'error message rendered')
-    assert(!html.includes(expect.home.content), 'page content replaced by the boundary')
-    return 'OX-500'
-  })
-
-  await push('not-found: boundary renders for missing routes', async () => {
-    const html = await render({ ...atlas.notFound })
-    assert(html.includes(expect.notFound.marker), 'not-found marker')
-    assert(html.includes(expect.notFound.status), '404 status text')
-    return 'not-found ok'
-  })
-
-  // --- §16.3 head / metadata -----------------------------------------------
-
-  await push('head: title template %s applied', async () => {
-    const html = await render({ ...atlas.head })
-    assert(html.includes(expect.head.title), 'layout %s template + route title merged')
-    return expect.head.title
-  })
-
-  await push('head: loader + page + layout head merged', async () => {
-    const html = await render({ ...atlas.head })
-    assert(html.includes(expect.head.description), 'loader/defineMeta description meta')
-    assert(html.includes(expect.head.pageExtracted), 'page-extracted head element')
-    assert(html.includes(expect.head.layout), 'layout meta still present')
-    return '3 sources merged'
-  })
-
-  await push('head: head(ctx) returns the neutral HeadTags model', () => {
-    const ctx = {
-      route: atlas.head.route, url: atlas.head.url, params: atlas.head.params,
-      data: { title: 'Head Test', description: 'Head route description' },
-      locals: { 'oxide:head': { meta: [{ name: 'x-atlas', content: 'ctx-locals' }], link: [], style: [], script: [] } },
-    }
-    const tags = adapter.head(ctx)
-    assert(tags.title === 'Head Test', 'title from data')
-    assert(tags.titleTemplate === '%s · Atlas', 'titleTemplate in the model')
-    assert(tags.meta.some((m) => m.content === 'ctx-locals'), 'route head tags via ctx.locals merged')
-    assert(Array.isArray(tags.link) && Array.isArray(tags.style) && Array.isArray(tags.script), 'neutral model arrays')
-    return 'neutral model ok'
-  })
-
-  // --- §10.3 islands -------------------------------------------------------
-
-  await push('islands: ox-island markup with props + chunk (§10.3)', async () => {
-    const html = await render({ ...atlas.islands })
-    assert(html.includes(expect.islands.open), 'island host + component')
-    assert(html.includes(expect.islands.chunk), 'chunk reference')
-    assert(html.includes(expect.islands.strategy), 'strategy directive')
-    const m = /data-ox-props='([^']+)'/.exec(html)
-    assert(m, 'props attribute present')
-    // PERF-01: props ride ODF (JSON fallback for the non-subset);
-    // decodeIslandProps sniffs and handles both.
-    if (m === null) throw new Error("conformance: island props missing")
-    const propsB64 = m[1]
-    if (propsB64 === undefined) throw new Error("conformance: island props empty")
-    const props = decodeIslandProps(propsB64)
-    deepEqual(props, expect.islands.props, 'props round-trip')
-    assert(html.includes(expect.islands.ssr), 'SSR content inside the island')
-    return 'markup + props ok'
-  })
-
-  await push('islands: core loader hydrates the host + handlers work', async () => {
-    const html = await render({ ...atlas.islands })
-    const dom = createFakeDom(html)
-    const host = dom.doc.querySelector('ox-island')
-    assert(host, 'island host in SSR markup')
-    const before = host!.innerHTML
-    let dispatched = 0
-    const dispose = hydrateIslands({
-      adapter: {
-        hydrateIsland: (el, mod, props) => {
-          dispatched++
-          return adapter.hydrateIsland!(el as Element, mod, props)
+export const V01_CHECKS: readonly CheckEntry[] = [
+  {
+    id: 'contract-manifest',
+    name: 'contract: manifest shape (§7)',
+    fn: (c) => {
+      const { adapter, name } = c
+      assert(adapter.contract === 1, 'contract must be 1')
+      assert(typeof adapter.name === 'string' && adapter.name.length > 0, 'name required')
+      assert(Array.isArray(adapter.extensions) && adapter.extensions.length > 0, 'extensions required')
+      assert(adapter.capabilities.islands === true, 'islands capability required (§10.3)')
+      assert(['native', 'core'].includes(adapter.capabilities.suspense), "suspense must be 'native' | 'core'")
+      assert(['refresh', 'component', 'full'].includes(adapter.capabilities.hmr), 'hmr must be refresh|component|full')
+      const plugins = adapter.plugins({})
+      assert(Array.isArray(plugins) && plugins.every((p) => typeof p.name === 'string'), 'plugins() returns named plugins')
+      const expected = { react: 'native', vue: 'core', svelte: 'core', solid: 'native' }[name]
+      assert(expected === undefined || adapter.capabilities.suspense === expected, `suspense must be '${expected}' for ${name}`)
+      return `suspense=${adapter.capabilities.suspense} hmr=${adapter.capabilities.hmr}`
+    },
+  },
+  {
+    id: 'ssr-home',
+    name: 'ssr: home route content + framework marker',
+    fn: async (c) => {
+      const { render, marker, name } = c
+      const html = await render({ ...atlas.home })
+      assert(html.startsWith(expect.layout.doctype), 'doctype first')
+      assert(html.includes(expect.home.content), 'route content rendered')
+      assert(html.includes(expect.home.intro), 'loader data interpolated')
+      assert(html.includes(expect.home.title), 'title rendered')
+      assert(marker.root.test(html), `framework root marker for ${name}`)
+      if (marker.extra) assert(marker.extra.test(html), `framework flavor marker for ${name}`)
+      return `marker=${marker.root}`
+    },
+  },
+  {
+    id: 'ssr-document-structure',
+    name: 'ssr: document structure + merged head',
+    fn: async (c) => {
+      const { render } = c
+      const html = await render({ ...atlas.home })
+      assert(html.includes(expect.layout.charset), 'charset meta')
+      assert(html.includes(expect.layout.viewport), 'layout viewport meta')
+      assert(html.includes('content="Atlas home route"'), 'loader head meta merged')
+      assert(html.includes('content="atlas-home"'), 'page <head> wrapper extracted (§7 head extraction)')
+      const headEnd = html.indexOf('</head>')
+      assert(headEnd > 0 && html.slice(0, headEnd).includes('content="atlas-home"'), 'extracted meta lives in <head>')
+      return 'layout ⊕ loader ⊕ page head'
+    },
+  },
+  {
+    id: 'hydration-deterministic-home',
+    name: 'hydration: deterministic markup, home (no mismatch)',
+    fn: async (c) => {
+      const { render } = c
+      const a = await render({ ...atlas.home })
+      const b = await render({ ...atlas.home })
+      assert(a === b, 'render twice → byte-identical (deterministic hydration markup, §7.2)')
+      return `${a.length} bytes`
+    },
+  },
+  {
+    id: 'hydration-deterministic-blog',
+    name: 'hydration: deterministic markup, blog/[slug]',
+    fn: async (c) => {
+      const { render } = c
+      const a = await render({ ...atlas.blog })
+      const b = await render({ ...atlas.blog })
+      assert(a === b, 'render twice → byte-identical')
+      return `${a.length} bytes`
+    },
+  },
+  {
+    id: 'ssr-params-data',
+    name: 'ssr: params + data reach the page (blog/[slug])',
+    fn: async (c) => {
+      const { render } = c
+      const html = await render({ ...atlas.blog })
+      assert(html.includes(expect.blog.title), 'route title + template applied')
+      assert(html.includes(expect.blog.post), 'data title')
+      assert(html.includes(expect.blog.byline), 'param + author byline')
+      assert(html.includes(expect.blog.body), 'body data')
+      for (const item of expect.blog.comments) assert(html.includes(item), `comment: ${item}`)
+      return 'params+data ok'
+    },
+  },
+  {
+    id: 'streaming-shell',
+    name: 'streaming: shell carries boundary placeholder + fallback',
+    fn: async (c) => {
+      const { adapter } = c
+      const { chunks, html } = await drain(adapter.render(asRenderInput(atlas.streaming)))
+      const shell = chunks.slice(0, 2).join('')
+      assert(shell.includes("<template data-ox-b='0'>"), 'template[data-ox-b] placeholder in shell (§7.1)')
+      assert(shell.includes(expect.streaming.fallback), 'fallback content in placeholder')
+      assert(!shell.includes(expect.streaming.resolved), 'resolution NOT in the shell')
+      assert(html.includes(expect.streaming.resolved), 'resolution arrives later in the stream')
+      return `${chunks.length} chunks`
+    },
+  },
+  {
+    id: 'streaming-resolution',
+    name: 'streaming: deferred resolution chunk + swapper script',
+    fn: async (c) => {
+      const { adapter } = c
+      const { chunks } = await drain(adapter.render(asRenderInput(atlas.streaming)))
+      const later = chunks.slice(2).join('')
+      assert(later.includes("<template data-ox-c='0'>"), 'template[data-ox-c] resolution (§7.1)')
+      assert(later.includes(expect.streaming.resolved), 'resolved content')
+      assert(later.includes("('0')"), 'swapper IIFE with boundary id baked in')
+      assert(later.includes('ox:swap'), 'swapper dispatches the ox:swap CustomEvent')
+      assert(later.includes('replaceWith'), 'DOM-API-only swapper (CSP-safe, no eval)')
+      return 'resolution + swapper'
+    },
+  },
+  {
+    id: 'streaming-swap',
+    name: 'streaming: swap lands resolved content in the DOM',
+    fn: async (c) => {
+      const { adapter } = c
+      const { chunks } = await drain(adapter.render(asRenderInput(atlas.streaming)))
+      const dom = createFakeDom(chunks.slice(0, 2).join(''))
+      let swaps = 0
+      dom.doc.addEventListener('ox:swap', () => swaps++)
+      assert(simulateSwap(dom.doc, chunks.slice(2).join('')), 'swapper found placeholder + resolution')
+      assert(swaps === 1, 'ox:swap dispatched once')
+      assert(dom.body!.innerHTML.includes(expect.streaming.resolved), 'resolved content replaced the placeholder')
+      assert(!dom.doc.querySelector("template[data-ox-b='0']"), 'placeholder removed')
+      return 'swap ok'
+    },
+  },
+  {
+    id: 'streaming-non-template-host',
+    name: 'streaming: a non-template boundary host swaps too',
+    fn: () => {
+      const host = `<ox-defer data-ox-b='0'><p>fallback</p></ox-defer>`
+      const dom = createFakeDom(`<body>${host}</body>`)
+      let swaps = 0
+      dom.doc.addEventListener('ox:swap', () => swaps++)
+      const resolution = `<template data-ox-c='0'><p>resolved</p></template>`
+      assert(simulateSwap(dom.doc, resolution), 'swapper found the framework host')
+      assert(swaps === 1, 'ox:swap dispatched once')
+      assert(dom.body!.innerHTML.includes('resolved'), 'resolved content replaced the host')
+      assert(!dom.doc.querySelector("[data-ox-b='0']"), 'host removed')
+      return 'attribute-only selector'
+    },
+  },
+  {
+    id: 'streaming-rejected',
+    name: 'streaming: rejected boundary streams the error boundary',
+    fn: async (c) => {
+      const { adapter } = c
+      const { chunks, html } = await drain(adapter.render(asRenderInput(atlas.streamingError)))
+      assert(html.includes(expect.error.boundary), 'error boundary in the stream (§10.2 step 5)')
+      assert(html.includes(expect.streamingError.message), 'error message surfaced')
+      const later = chunks.slice(2).join('')
+      assert(later.includes('data-ox-c'), 'error streamed as a boundary resolution')
+      return 'error mapped to core model'
+    },
+  },
+  {
+    id: 'error-boundary',
+    name: 'error: thrown render renders the error boundary',
+    fn: async (c) => {
+      const { render } = c
+      const html = await render({ ...atlas.error })
+      assert(html.includes(expect.error.boundary), 'render-crate error boundary shape')
+      assert(html.includes(expect.error.message), 'error message rendered')
+      assert(!html.includes(expect.home.content), 'page content replaced by the boundary')
+      return 'OX-500'
+    },
+  },
+  {
+    id: 'not-found',
+    name: 'not-found: boundary renders for missing routes',
+    fn: async (c) => {
+      const { render } = c
+      const html = await render({ ...atlas.notFound })
+      assert(html.includes(expect.notFound.marker), 'not-found marker')
+      assert(html.includes(expect.notFound.status), '404 status text')
+      return 'not-found ok'
+    },
+  },
+  {
+    id: 'head-title-template',
+    name: 'head: title template %s applied',
+    fn: async (c) => {
+      const { render } = c
+      const html = await render({ ...atlas.head })
+      assert(html.includes(expect.head.title), 'layout %s template + route title merged')
+      return expect.head.title
+    },
+  },
+  {
+    id: 'head-merged',
+    name: 'head: loader + page + layout head merged',
+    fn: async (c) => {
+      const { render } = c
+      const html = await render({ ...atlas.head })
+      assert(html.includes(expect.head.description), 'loader/defineMeta description meta')
+      assert(html.includes(expect.head.pageExtracted), 'page-extracted head element')
+      assert(html.includes(expect.head.layout), 'layout meta still present')
+      return '3 sources merged'
+    },
+  },
+  {
+    id: 'head-neutral-model',
+    name: 'head: head(ctx) returns the neutral HeadTags model',
+    fn: (c) => {
+      const { adapter } = c
+      const ctx = {
+        route: atlas.head.route, url: atlas.head.url, params: atlas.head.params,
+        data: { title: 'Head Test', description: 'Head route description' },
+        locals: { 'oxide:head': { meta: [{ name: 'x-atlas', content: 'ctx-locals' }], link: [], style: [], script: [] } },
+      }
+      const tags = adapter.head(ctx)
+      assert(tags.title === 'Head Test', 'title from data')
+      assert(tags.titleTemplate === '%s · Atlas', 'titleTemplate in the model')
+      assert(tags.meta.some((m) => m.content === 'ctx-locals'), 'route head tags via ctx.locals merged')
+      assert(Array.isArray(tags.link) && Array.isArray(tags.style) && Array.isArray(tags.script), 'neutral model arrays')
+      return 'neutral model ok'
+    },
+  },
+  {
+    id: 'islands-markup',
+    name: 'islands: ox-island markup with props + chunk (§10.3)',
+    fn: async (c) => {
+      const { render } = c
+      const html = await render({ ...atlas.islands })
+      assert(html.includes(expect.islands.open), 'island host + component')
+      assert(html.includes(expect.islands.chunk), 'chunk reference')
+      assert(html.includes(expect.islands.strategy), 'strategy directive')
+      const m = /data-ox-props='([^']+)'/.exec(html)
+      assert(m, 'props attribute present')
+      // PERF-01: props ride ODF (JSON fallback for the non-subset);
+      // decodeIslandProps sniffs and handles both.
+      if (m === null) throw new Error("conformance: island props missing")
+      const propsB64 = m[1]
+      if (propsB64 === undefined) throw new Error("conformance: island props empty")
+      const props = decodeIslandProps(propsB64)
+      deepEqual(props, expect.islands.props, 'props round-trip')
+      assert(html.includes(expect.islands.ssr), 'SSR content inside the island')
+      return 'markup + props ok'
+    },
+  },
+  {
+    id: 'islands-hydrate',
+    name: 'islands: core loader hydrates the host + handlers work',
+    fn: async (c) => {
+      const { adapter, opts, render } = c
+      const html = await render({ ...atlas.islands })
+      const dom = createFakeDom(html)
+      const host = dom.doc.querySelector('ox-island')
+      assert(host, 'island host in SSR markup')
+      const before = host!.innerHTML
+      let dispatched = 0
+      const dispose = hydrateIslands({
+        adapter: {
+          hydrateIsland: (el, mod, props) => {
+            dispatched++
+            return adapter.hydrateIsland!(el as Element, mod, props)
+          },
         },
-      },
-      doc: dom.doc,
-      loadChunk: async (chunk) => {
-        const mod = opts.islandChunks?.[chunk]
-        assert(mod, `island chunk '${chunk}' resolvable`)
-        return mod
-      },
-    })
-    await tick()
-    assert(dispatched === 1, 'loader dispatched into adapter.hydrateIsland (§10.3)')
-    assert(host!.innerHTML === before, 'island hydration renders identical markup')
-    const button = host!.querySelector('button')
-    assert(button, 'interactive island content')
-    button!.dispatchEvent({ type: 'click' })
-    assert(host!.innerHTML.includes('>4</span>'), 'handler updated the island via client update')
-    dispose()
-    return 'load strategy + hydration ok'
-  })
-
-  // --- §9.3 actions --------------------------------------------------------
-
-  await push('actions: JS-off POST re-render applies form data', async () => {
-    const after = await render({ ...atlas.actions })
-    assert(after.includes(expect.actions.form), 'plain POST form (works with JS off)')
-    assert(after.includes(expect.actions.applied), 'form data applied by the action re-render')
-    assert(after.includes(expect.actions.result), 'action result rendered')
-    const before = await render({ ...atlas.actionsEmpty })
-    assert(before.includes(expect.actions.pending), 'no data → pending marker')
-    return 'progressive enhancement ok'
-  })
-
-  await push('actions: enhance POSTs and applies the result (JS on)', async () => {
-    const posts: Array<{ url: string; method: string }> = []
-    const applied: unknown[] = []
-    const listeners = new Map<string, Array<(e: unknown) => void>>()
-    const form = {
-      // Absolute URL: Node's Request has no document base to resolve '/actions'.
-      getAttribute(n: string) { return n === 'action' ? 'http://atlas.test/actions' : null },
-      hasAttribute(n: string) { return n === 'action' },
-      addEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, [...(listeners.get(type) ?? []), fn]) },
-      removeEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, (listeners.get(type) ?? []).filter((f) => f !== fn)) },
-      dispatchEvent(ev: { type: string }) {
-        for (const fn of listeners.get(ev.type) ?? []) fn({ ...ev, preventDefault: () => {} })
-        return true
-      },
-    }
-    const dispose = enhance(form, {
-      fetch: (async (input: string | Request | URL, init?: RequestInit) => {
-        const req = new Request(input, init)
-        posts.push({ url: req.url, method: req.method })
-        return new Response(JSON.stringify({ ok: true, message: 'Hello Grace' }), { headers: { 'content-type': 'application/json' } })
-      }) as typeof fetch,
-      getFormData: () => { const fd = new FormData(); fd.append('name', 'Grace'); return fd },
-      applyResult: (result) => applied.push(result),
-    })
-    form.dispatchEvent({ type: 'submit' })
-    await tick(10)
-    dispose()
-    assert(posts.length === 1, 'one POST per submit')
-    assert(mustEl(posts, 0).method === 'POST', 'actions are POST-only (§17.1)')
-    assert(mustEl(posts, 0).url.endsWith('/actions'), 'form action target')
-    deepEqual(applied[0], { ok: true, message: 'Hello Grace' }, 'action result applied')
-    return 'enhance ok'
-  })
-
-  // --- §9.4 server functions ------------------------------------------------
-
-  await push('server-fns: registry dispatch via stub POST shape', async () => {
-    const hello = serverFn('atlas-hello', (who: string) => ({ ok: true, data: `Hello ${who}` }))
-    assert(hello.$$oxideServerFn === true, 'server fn tagged (§9.4)')
-    assert(getServerFn('atlas-hello') === hello, 'registered under its id')
-    // Stub of the pipeline endpoint (Rust owns the real route, §9.4):
-    // POST /_oxide/fn/<id> with a JSON {args} body → dispatch → JSON result.
-    const req = new Request('http://atlas.test/_oxide/fn/atlas-hello', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ args: ['Grace'] }),
-    })
-    assert(req.method === 'POST', 'POST shape')
-    const body = (await req.json()) as { args: string[] }
-    const result = await (getServerFn('atlas-hello') as (...a: unknown[]) => unknown)(...body.args)
-    deepEqual(result, { ok: true, data: 'Hello Grace' }, 'dispatch result')
-    return 'POST /_oxide/fn/<id> ok'
-  })
-
-  // --- §11 caching / revalidation -------------------------------------------
-
-  await push('cache: revalidate event shapes + cache meta', async () => {
-    const before = _revalidateLog.length
-    const tagEv = revalidate.tag('atlas:posts')
-    const pathEv = revalidate.path('/blog')
-    const fresh = _revalidateLog.slice(before)
-    deepEqual(tagEv, { type: 'tag', tag: 'atlas:posts' }, 'tag event shape (§11.3)')
-    deepEqual(pathEv, { type: 'path', path: '/blog' }, 'path event shape')
-    deepEqual(fresh, [tagEv, pathEv], 'recorded in order')
-    const html = await render({ ...atlas.cached })
-    assert(html.includes(expect.cached.meta), 'cache policy surfaced (tags + life)')
-    return 'shapes ok'
-  })
-
-  // --- §8.4 client router ---------------------------------------------------
-
-  await push('router: goto dispatches adapter.update via createRouter (§8.4)', async () => {
-    // Fake browser (hand-rolled, same pattern as packages/oxide router tests).
-    const listeners = new Map<string, Array<(e: unknown) => void>>()
-    const doc = {
-      addEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, [...(listeners.get(type) ?? []), fn]) },
-      removeEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, (listeners.get(type) ?? []).filter((f) => f !== fn)) },
-      querySelectorAll() { return [] },
-    }
-    const history = { state: null as unknown, pushState(s: unknown) { history.state = s }, replaceState(s: unknown) { history.state = s } }
-    const location = { href: 'http://atlas.test/', pathname: '/', search: '' }
-    const fetchStub = (async () =>
-      new Response(encodeLite({
-        route: 'routes/blog/[slug]', url: '/blog/nav', params: { slug: 'nav' },
-        data: { title: 'POST title', author: 'Ada Lovelace', body: 'One core, four frameworks.' },
-      }), { headers: { 'content-type': 'application/oxide+odf' } })) as typeof fetch
-    // Mount the home route, then navigate through the CORE router.
-    const dom = createFakeDom('<div id="root"></div>')
-    const root = dom.root!
-    const disposeMount = adapter.mount(asElement(root), { route: 'routes/index', url: '/', params: {}, data: { framework: 'every framework' } })
-    assert(root.innerHTML.includes(expect.home.content), 'SPA mount rendered the shell')
-    const updates: Array<ClientInput> = []
-    const router = createRouter({
-      adapter: {
-        update(input) {
-          updates.push(input)
-          adapter.update(input) // the real adapter swap (§7 update)
+        doc: dom.doc,
+        loadChunk: async (chunk) => {
+          const mod = opts.islandChunks?.[chunk]
+          assert(mod, `island chunk '${chunk}' resolvable`)
+          return mod
         },
-      },
-      manifest: { routes: {} },
-      doc: doc,
-      history: history,
-      location: location,
-      fetch: fetchStub,
-    })
-    const disposeRouter = router.attach()
-    await router.goto('/blog/nav')
-    assert(updates.length === 1, 'goto dispatched adapter.update exactly once')
-    {
+      })
+      await tick()
+      assert(dispatched === 1, 'loader dispatched into adapter.hydrateIsland (§10.3)')
+      assert(host!.innerHTML === before, 'island hydration renders identical markup')
+      const button = host!.querySelector('button')
+      assert(button, 'interactive island content')
+      button!.dispatchEvent({ type: 'click' })
+      assert(host!.innerHTML.includes('>4</span>'), 'handler updated the island via client update')
+      dispose()
+      return 'load strategy + hydration ok'
+    },
+  },
+  {
+    id: 'actions-js-off',
+    name: 'actions: JS-off POST re-render applies form data',
+    fn: async (c) => {
+      const { render } = c
+      const after = await render({ ...atlas.actions })
+      assert(after.includes(expect.actions.form), 'plain POST form (works with JS off)')
+      assert(after.includes(expect.actions.applied), 'form data applied by the action re-render')
+      assert(after.includes(expect.actions.result), 'action result rendered')
+      const before = await render({ ...atlas.actionsEmpty })
+      assert(before.includes(expect.actions.pending), 'no data → pending marker')
+      return 'progressive enhancement ok'
+    },
+  },
+  {
+    id: 'actions-enhance',
+    name: 'actions: enhance POSTs and applies the result (JS on)',
+    fn: async () => {
+      const posts: Array<{ url: string; method: string }> = []
+      const applied: unknown[] = []
+      const listeners = new Map<string, Array<(e: unknown) => void>>()
+      const form = {
+        getAttribute(n: string) { return n === 'action' ? 'http://atlas.test/actions' : null },
+        hasAttribute(n: string) { return n === 'action' },
+        addEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, [...(listeners.get(type) ?? []), fn]) },
+        removeEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, (listeners.get(type) ?? []).filter((f) => f !== fn)) },
+        dispatchEvent(ev: { type: string }) {
+          for (const fn of listeners.get(ev.type) ?? []) fn({ ...ev, preventDefault: () => {} })
+          return true
+        },
+      }
+      const dispose = enhance(form, {
+        fetch: (async (input: string | Request | URL, init?: RequestInit) => {
+          const req = new Request(input, init)
+          posts.push({ url: req.url, method: req.method })
+          return new Response(JSON.stringify({ ok: true, message: 'Hello Grace' }), { headers: { 'content-type': 'application/json' } })
+        }) as typeof fetch,
+        getFormData: () => { const fd = new FormData(); fd.append('name', 'Grace'); return fd },
+        applyResult: (result) => applied.push(result),
+      })
+      form.dispatchEvent({ type: 'submit' })
+      await tick(10)
+      dispose()
+      assert(posts.length === 1, 'one POST per submit')
+      assert(mustEl(posts, 0).method === 'POST', 'actions are POST-only (§17.1)')
+      assert(mustEl(posts, 0).url.endsWith('/actions'), 'form action target')
+      deepEqual(applied[0], { ok: true, message: 'Hello Grace' }, 'action result applied')
+      return 'enhance ok'
+    },
+  },
+  {
+    id: 'server-fns',
+    name: 'server-fns: registry dispatch via stub POST shape',
+    fn: async () => {
+      const hello = serverFn('atlas-hello', (who: string) => ({ ok: true, data: `Hello ${who}` }))
+      assert(hello.$$oxideServerFn === true, 'server fn tagged (§9.4)')
+      assert(getServerFn('atlas-hello') === hello, 'registered under its id')
+      const req = new Request('http://atlas.test/_oxide/fn/atlas-hello', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ args: ['Grace'] }),
+      })
+      assert(req.method === 'POST', 'POST shape')
+      const body = (await req.json()) as { args: string[] }
+      const result = await (getServerFn('atlas-hello') as (...a: unknown[]) => unknown)(...body.args)
+      deepEqual(result, { ok: true, data: 'Hello Grace' }, 'dispatch result')
+      return 'POST /_oxide/fn/<id> ok'
+    },
+  },
+  {
+    id: 'cache-revalidate',
+    name: 'cache: revalidate event shapes + cache meta',
+    fn: async (c) => {
+      const { render } = c
+      const before = _revalidateLog.length
+      const tagEv = revalidate.tag('atlas:posts')
+      const pathEv = revalidate.path('/blog')
+      const fresh = _revalidateLog.slice(before)
+      deepEqual(tagEv, { type: 'tag', tag: 'atlas:posts' }, 'tag event shape (§11.3)')
+      deepEqual(pathEv, { type: 'path', path: '/blog' }, 'path event shape')
+      deepEqual(fresh, [tagEv, pathEv], 'recorded in order')
+      const html = await render({ ...atlas.cached })
+      assert(html.includes(expect.cached.meta), 'cache policy surfaced (tags + life)')
+      return 'shapes ok'
+    },
+  },
+  {
+    id: 'router-goto',
+    name: 'router: goto dispatches adapter.update via createRouter (§8.4)',
+    fn: async (c) => {
+      const { adapter, name: _name } = c
+      void _name
+      const listeners = new Map<string, Array<(e: unknown) => void>>()
+      const doc = {
+        addEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, [...(listeners.get(type) ?? []), fn]) },
+        removeEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, (listeners.get(type) ?? []).filter((f) => f !== fn)) },
+        querySelectorAll() { return [] },
+      }
+      const history = { state: null as unknown, pushState(s: unknown) { history.state = s }, replaceState(s: unknown) { history.state = s } }
+      const location = { href: 'http://atlas.test/', pathname: '/', search: '' }
+      const fetchStub = (async () =>
+        new Response(encodeLite({
+          route: 'routes/blog/[slug]', url: '/blog/nav', params: { slug: 'nav' },
+          data: { title: 'POST title', author: 'Ada Lovelace', body: 'One core, four frameworks.' },
+        }), { headers: { 'content-type': 'application/oxide+odf' } })) as typeof fetch
+      const dom = createFakeDom('<div id="root"></div>')
+      const root = dom.root!
+      const disposeMount = adapter.mount(asElement(root), { route: 'routes/index', url: '/', params: {}, data: { framework: 'every framework' } })
+      assert(root.innerHTML.includes(expect.home.content), 'SPA mount rendered the shell')
+      const updates: Array<ClientInput> = []
+      const router = createRouter({
+        adapter: {
+          update(input) {
+            updates.push(input)
+            adapter.update(input)
+          },
+        },
+        manifest: { routes: {} },
+        doc: doc,
+        history: history,
+        location: location,
+        fetch: fetchStub,
+      })
+      const disposeRouter = router.attach()
+      await router.goto('/blog/nav')
+      assert(updates.length === 1, 'goto dispatched adapter.update exactly once')
+      {
         const u0 = mustEl(updates, 0)
         const u0data = u0.data
         const u0title = u0data !== null && typeof u0data === 'object' && 'title' in u0data
@@ -475,228 +539,240 @@ export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promi
           : undefined
         assert(u0title === 'POST title', 'ODF route data decoded (§9.5)')
       }
-    assert(root.innerHTML.includes('POST title'), 'adapter.update swapped the route tree in the DOM')
-    assert(root.innerHTML.includes('By Ada Lovelace · nav'), 'params decoded')
-    disposeRouter()
-    disposeMount()
-    return 'goto → update → DOM swap'
-  })
-
-  // --- §7.1 out-of-order deferred streaming ---------------------------------
-
-  await push('streaming: deferred boundaries resolve out of declaration order (§7.1)', async () => {
-    // The streaming route declares `comments` then `meta`. To prove the
-    // adapter streams each boundary AS IT SETTLES (not in declaration order),
-    // resolve `meta` (declared 2nd) BEFORE `comments` (declared 1st) via real
-    // timers: a concurrent renderer yields meta-then-comments, a sequential
-    // one yields comments-then-meta. Already-resolved promises cannot test
-    // this — they settle in creation order.
-    //
-    // `comments` must resolve to an ARRAY of `{author, body}` — the page maps
-    // over it; a bare string would throw (and the boundary would render the
-    // OX-500 box instead of a comment body).
-    const comments = new Promise((resolve) =>
-      setTimeout(
-        () =>
-          resolve([
-            { author: 'Grace Hopper', body: 'First comment' },
-            { author: 'Alan Turing', body: 'Second comment' },
-          ]),
-        30,
-      ),
-    )
-    const meta = new Promise((resolve) =>
-      setTimeout(() => resolve(expect.streaming.metaResolved), 0),
-    )
-    const input = asRenderInput({
-      route: 'routes/streaming',
-      url: '/streaming',
-      params: {},
-      data: { comments, meta },
-      head: { title: 'Streaming', meta: [], link: [], style: [], script: [] },
-    })
-    const { html } = await drain(adapter.render(input))
-    const commentsAt = html.indexOf('First comment')
-    const metaAt = html.indexOf(expect.streaming.metaResolved)
-    assert(commentsAt > 0, `the comments boundary resolved: ${html.slice(-600)}`)
-    assert(metaAt > 0, `the meta boundary resolved: ${html.slice(-600)}`)
-    assert(
-      metaAt < commentsAt,
-      `meta (settles first) streams before comments (settles second): meta@${metaAt} comments@${commentsAt}`,
-    )
-    return 'resolution order follows settlement order'
-  })
-
-  // --- §8.4 prefetch --------------------------------------------------------
-
-  await push('router: prefetch fetches /__data and a later goto reuses it (§8.4)', async () => {
-    let fetches = 0
-    const listeners = new Map<string, Array<(e: unknown) => void>>()
-    const doc = {
-      addEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, [...(listeners.get(type) ?? []), fn]) },
-      removeEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, (listeners.get(type) ?? []).filter((f) => f !== fn)) },
-      querySelectorAll() { return [] },
-    }
-    const history = { state: null as unknown, pushState(s: unknown) { history.state = s }, replaceState(s: unknown) { history.state = s } }
-    const location = { href: 'http://atlas.test/', pathname: '/', search: '' }
-    const fetchStub = (async () => {
-      fetches++
-      return new Response(encodeLite({
-        route: 'routes/blog/[slug]', url: '/blog/pf', params: { slug: 'pf' },
-        data: { title: 'Prefetched', author: 'Ada', body: 'x' },
-      }), { headers: { 'content-type': 'application/oxide+odf' } })
-    }) as typeof fetch
-    const updates: Array<ClientInput> = []
-    const router = createRouter({
-      adapter: { update(input) { updates.push(input) } },
-      manifest: { routes: {} },
-      doc: doc,
-      history: history,
-      location: location,
-      fetch: fetchStub,
-    })
-    const dispose = router.attach()
-    // Prefetch warms the data cache; the subsequent goto must not re-fetch.
-    router.prefetch('/blog/pf')
-    await new Promise((r) => setTimeout(r, 20))
-    assert(fetches === 1, 'prefetch issued exactly one /__data fetch')
-    await router.goto('/blog/pf')
-    assert(fetches === 1, 'goto reused the prefetched data (no second fetch)')
-    assert(updates.length === 1, 'goto still dispatched adapter.update')
-    dispose()
-    return 'prefetch → cache hit'
-  })
-
-  // --- the v0.2 drafts (§22 + the newly wired V2 features) -------------------
-  // One assertion per newly wired V2 feature, through the same client
-  // modules apps ship. C09 and F11 are server/CLI surfaces: their fixture
-  // assertions are `tests/image_acceptance.sh` (the 64-concurrent
-  // single-flight wire check) and `tests/deploy_acceptance.sh` (the
-  // <5%-of-bytes delta + the unstamped refusal) — both CI-executed in the
-  // jshost-e2e job. E01's in-place registry is pinned by its recorded
-  // core/worker suites (the registry surface lives behind
-  // `createHotContext`, not a per-adapter import).
-
-  await push('typed-search: parseSearch validates through the Standard Schema contract (V2-E02)', async () => {
-    // A minimal Standard Schema V1 stub (the contract the generated
-    // `searchSchema` modules satisfy): sync validate, a default applied on
-    // a missing key, a refusal on a non-number.
-    const schema: StandardSchemaV1Like<Record<string, string>, { page: number }> = {
-      '~standard': {
-        validate(value) {
-          const pageRaw = value.page ?? '1'
-          const page = Number(pageRaw)
-          if (!Number.isFinite(page)) {
-            return { issues: [{ message: 'page is not a number' }] }
-          }
-          return { value: { page } }
+      assert(root.innerHTML.includes('POST title'), 'adapter.update swapped the route tree in the DOM')
+      assert(root.innerHTML.includes('By Ada Lovelace · nav'), 'params decoded')
+      disposeRouter()
+      disposeMount()
+      return 'goto → update → DOM swap'
+    },
+  },
+  {
+    id: 'streaming-out-of-order',
+    name: 'streaming: deferred boundaries resolve out of declaration order (§7.1)',
+    fn: async (c) => {
+      const { adapter } = c
+      const comments = new Promise((resolve) =>
+        setTimeout(
+          () =>
+            resolve([
+              { author: 'Grace Hopper', body: 'First comment' },
+              { author: 'Alan Turing', body: 'Second comment' },
+            ]),
+          30,
+        ),
+      )
+      const meta = new Promise((resolve) =>
+        setTimeout(() => resolve(expect.streaming.metaResolved), 0),
+      )
+      const input = asRenderInput({
+        route: 'routes/streaming',
+        url: '/streaming',
+        params: {},
+        data: { comments, meta },
+        head: { title: 'Streaming', meta: [], link: [], style: [], script: [] },
+      })
+      const { html } = await drain(adapter.render(input))
+      const commentsAt = html.indexOf('First comment')
+      const metaAt = html.indexOf(expect.streaming.metaResolved)
+      assert(commentsAt > 0, `the comments boundary resolved: ${html.slice(-600)}`)
+      assert(metaAt > 0, `the meta boundary resolved: ${html.slice(-600)}`)
+      assert(
+        metaAt < commentsAt,
+        `meta (settles first) streams before comments (settles second): meta@${metaAt} comments@${commentsAt}`,
+      )
+      return 'resolution order follows settlement order'
+    },
+  },
+  {
+    id: 'router-prefetch',
+    name: 'router: prefetch fetches /__data and a later goto reuses it (§8.4)',
+    fn: async (c) => {
+      const { adapter: _adapter } = c
+      void _adapter
+      let fetches = 0
+      const listeners = new Map<string, Array<(e: unknown) => void>>()
+      const doc = {
+        addEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, [...(listeners.get(type) ?? []), fn]) },
+        removeEventListener(type: string, fn: (e: unknown) => void) { listeners.set(type, (listeners.get(type) ?? []).filter((f) => f !== fn)) },
+        querySelectorAll() { return [] },
+      }
+      const history = { state: null as unknown, pushState(s: unknown) { history.state = s }, replaceState(s: unknown) { history.state = s } }
+      const location = { href: 'http://atlas.test/', pathname: '/', search: '' }
+      const fetchStub = (async () => {
+        fetches++
+        return new Response(encodeLite({
+          route: 'routes/blog/[slug]', url: '/blog/pf', params: { slug: 'pf' },
+          data: { title: 'Prefetched', author: 'Ada', body: 'x' },
+        }), { headers: { 'content-type': 'application/oxide+odf' } })
+      }) as typeof fetch
+      const updates: Array<ClientInput> = []
+      const router = createRouter({
+        adapter: { update(input) { updates.push(input) } },
+        manifest: { routes: {} },
+        doc: doc,
+        history: history,
+        location: location,
+        fetch: fetchStub,
+      })
+      const dispose = router.attach()
+      router.prefetch('/blog/pf')
+      await new Promise((r) => setTimeout(r, 20))
+      assert(fetches === 1, 'prefetch issued exactly one /__data fetch')
+      await router.goto('/blog/pf')
+      assert(fetches === 1, 'goto reused the prefetched data (no second fetch)')
+      assert(updates.length === 1, 'goto still dispatched adapter.update')
+      dispose()
+      return 'prefetch → cache hit'
+    },
+  },
+  {
+    id: 'typed-search-parseSearch',
+    name: 'typed-search: parseSearch validates through the Standard Schema contract (V2-E02)',
+    fn: async () => {
+      const schema: StandardSchemaV1Like<Record<string, string>, { page: number }> = {
+        '~standard': {
+          validate(value) {
+            const pageRaw = value.page ?? '1'
+            const page = Number(pageRaw)
+            if (!Number.isFinite(page)) {
+              return { issues: [{ message: 'page is not a number' }] }
+            }
+            return { value: { page } }
+          },
         },
-      },
+      }
+      const ok = await parseSearch(schema, new URLSearchParams('?page=3'))
+      assert(ok.ok === true, 'a valid query validates')
+      if (!ok.ok) throw new Error('unreachable')
+      deepEqual(ok.search, { page: 3 }, 'the validated output rides `search`')
+      assert(ok.corrected === undefined, "a String()-equal coercion ('3' → 3) is not a redirect")
+      const defaulted = await parseSearch(schema, new URLSearchParams(''))
+      assert(defaulted.ok === true, 'a missing key validates through the default')
+      if (!defaulted.ok) throw new Error('unreachable')
+      deepEqual(defaulted.search, { page: 1 }, 'the default applied')
+      assert(defaulted.corrected === 'page=1', 'the changed value rides the corrected query')
+      const bad = await parseSearch(schema, new URLSearchParams('?page=NaN'))
+      deepEqual(
+        bad,
+        { ok: false, code: 'OX-SRC-001', issues: [{ message: 'page is not a number' }] },
+        'the refusal carries OX-SRC-001 + the schema issues verbatim',
+      )
+      return 'validate / default / OX-SRC-001'
+    },
+  },
+  {
+    id: 'mixed-islands-registry',
+    name: 'islands: the mixed registry hydrates by framework and refuses unknown islands (V2-F01)',
+    fn: async (c) => {
+      const { adapter, opts, name, render } = c
+      const html = await render({ ...atlas.islands })
+      const hostMatch = /<ox-island[^>]*>[\s\S]*?<\/ox-island>/.exec(html)
+      if (hostMatch === null) throw new Error('the rendered islands markup carries an ox-island host')
+      const hostMarkup = mustEl(hostMatch, 0)
+      const islandName = /data-ox-island='([^']+)'/.exec(hostMarkup)?.[1]
+      const chunk = /data-ox-chunk='([^']+)'/.exec(hostMarkup)?.[1]
+      if (islandName === undefined || chunk === undefined) {
+        throw new Error('the host carries its name + chunk')
+      }
+      const dom = createFakeDom(
+        `<body>${hostMarkup}<ox-island data-ox-island="ghost" data-ox-chunk="ghost" data-ox-strategy="load"></ox-island></body>`,
+      )
+      const hosts = dom.doc.querySelectorAll('ox-island')
+      const live = mustEl(hosts, 0)
+      const ghost = mustEl(hosts, 1)
+      const before = live.innerHTML
+      let dispatched = 0
+      const clientAdapter: IslandsAdapter = {
+        hydrateIsland: (el, mod, props) => {
+          dispatched++
+          return adapter.hydrateIsland!(el as unknown as Element, mod, props)
+        },
+      }
+      const mod = opts.islandChunks?.[chunk]
+      assert(mod, `island chunk '${chunk}' resolvable`)
+      const dispose = hydrateMixedIslands(
+        {
+          adapters: { [name]: async () => ({ clientAdapter }) },
+          islands: { [islandName]: { fw: name, load: async () => mod } },
+        },
+        { doc: dom.doc },
+      )
+      await tick()
+      assert(dispatched === 1, 'the mixed registry dispatched into the named framework adapter')
+      assert(live.innerHTML === before, 'hydration renders identical markup')
+      assert(ghost.getAttribute('data-ox-hydrated') === 'error', 'an unknown island marks an error, never a wrong hydration')
+      assert((ghost.getAttribute('data-ox-error') ?? '').includes('unknown island ghost'), 'the error names the island')
+      dispose()
+      return `mixed registry ok (fw=${name})`
+    },
+  },
+  {
+    id: 'tt-policy',
+    name: 'tt: the oxide policy registers once per realm and falls back to identity (V2-E04)',
+    fn: () => {
+      const html = tt.createHTML('<p>atlas</p>')
+      assert(html === '<p>atlas</p>', 'the identity fallback passes the markup through')
+      const handle = (globalThis as { __oxide_tt?: { createHTML(s: string): string } }).__oxide_tt
+      assert(handle !== undefined, 'the realm-wide __oxide_tt handle is installed')
+      assert(handle!.createHTML('<b>x</b>') === '<b>x</b>', 'the handle is the same policy surface the swapper reads')
+      return 'identity fallback + realm handle'
+    },
+  },
+  {
+    id: 'search-static-matcher',
+    name: 'search: the static matcher rides the server arithmetic verbatim (V2-F09)',
+    fn: async () => {
+      const docs: StaticDoc[] = [
+        { id: 'd0', url: '/alpha', title: 'Alpha Router', excerpt: 'the router contract', tags: ['docs'] },
+        { id: 'd1', url: '/beta', title: 'Beta Actions', excerpt: 'actions and enhance', tags: ['guide'] },
+        { id: 'd2', url: '/gamma', title: 'Alpha Islands', excerpt: 'islands everywhere', tags: ['docs'] },
+      ]
+      const index: StaticIndex = { docs, postings: { router: [0], islands: [2] } }
+      deepEqual(await search('   '), { total: 0, hits: [] }, 'an empty query answers locally without a fetch')
+      const res = await search('alpha', { staticIndex: index })
+      assert(res.total === 2, `both title-prefix docs scored: ${res.total}`)
+      deepEqual(res.hits.map((h) => h.id), ['d0', 'd2'], 'the doc-order tiebreak holds')
+      assert(mustEl(res.hits, 0).score === 3, 'the title prefix arm scores 3')
+      const postings = await search('router', { staticIndex: index })
+      deepEqual(postings.hits.map((h) => h.id), ['d0'], 'a postings hit rides the body boost')
+      const capped = await search('alpha', { staticIndex: index, limit: 1 })
+      assert(capped.hits.length === 1, 'the limit takes')
+      assert(capped.total === 2, 'total counts pre-limit')
+      const tagged = await search('alpha', { staticIndex: index, limit: 1, tag: 'guide' })
+      assert(tagged.total === 2 && tagged.hits.length === 0, 'the tag filter rides after the take')
+      return 'postings / prefix / tiebreak / limit+tag quirk'
+    },
+  },
+]
+
+// ---------------------------------------------------------------------------
+// The suite — backward-compat surface for `conformance.test.ts`. Runs every
+// `V01_CHECKS` entry through the same `check()` shape the v0.1 guard expects.
+// ---------------------------------------------------------------------------
+
+/** Build the `CheckCtx` the v0.1 checks close over from the public suite
+ *  args (the registry's `RunContext` maps onto this same shape). */
+export function buildCheckCtx(adapter: Adapter, opts: SuiteOptions): CheckCtx {
+  const name = adapter.name
+  const marker = MARKERS[name] ?? { root: /data-ox/ }
+  const render = async (r: AtlasRoute): Promise<string> => (await drain(adapter.render(asRenderInput(r)))).html
+  return { adapter, opts, name, marker, render }
+}
+
+/**
+ * Run the full v0.1 assertion set against one adapter (§22). ~29 assertions;
+ * the same set runs for every adapter so a regression anywhere blocks.
+ */
+export async function runSuite(adapter: Adapter, opts: SuiteOptions = {}): Promise<Assertion[]> {
+  const c = buildCheckCtx(adapter, opts)
+  const results: Assertion[] = []
+  for (const { name, fn } of V01_CHECKS) {
+    try {
+      const detail = await fn(c)
+      results.push({ name, pass: true, detail })
+    } catch (err) {
+      results.push({ name, pass: false, detail: err instanceof Error ? err.message : String(err) })
     }
-    const ok = await parseSearch(schema, new URLSearchParams('?page=3'))
-    assert(ok.ok === true, 'a valid query validates')
-    if (!ok.ok) throw new Error('unreachable')
-    deepEqual(ok.search, { page: 3 }, 'the validated output rides `search`')
-    assert(ok.corrected === undefined, "a String()-equal coercion ('3' → 3) is not a redirect")
-    const defaulted = await parseSearch(schema, new URLSearchParams(''))
-    assert(defaulted.ok === true, 'a missing key validates through the default')
-    if (!defaulted.ok) throw new Error('unreachable')
-    deepEqual(defaulted.search, { page: 1 }, 'the default applied')
-    assert(defaulted.corrected === 'page=1', 'the changed value rides the corrected query')
-    const bad = await parseSearch(schema, new URLSearchParams('?page=NaN'))
-    deepEqual(
-      bad,
-      { ok: false, code: 'OX-SRC-001', issues: [{ message: 'page is not a number' }] },
-      'the refusal carries OX-SRC-001 + the schema issues verbatim',
-    )
-    return 'validate / default / OX-SRC-001'
-  })
-
-  await push('islands: the mixed registry hydrates by framework and refuses unknown islands (V2-F01)', async () => {
-    // Re-host the adapter's REAL island SSR (the markup the §10.3
-    // assertion pinned) plus a registry-unknown ghost, and hydrate both
-    // through the mixed registry the mixed boot entry emits: the island's
-    // own `fw` picks the adapter, an unknown name marks an error instead
-    // of hydrating through a wrong adapter.
-    const html = await render({ ...atlas.islands })
-    const hostMatch = /<ox-island[^>]*>[\s\S]*?<\/ox-island>/.exec(html)
-    if (hostMatch === null) throw new Error('the rendered islands markup carries an ox-island host')
-    const hostMarkup = mustEl(hostMatch, 0)
-    const islandName = /data-ox-island='([^']+)'/.exec(hostMarkup)?.[1]
-    const chunk = /data-ox-chunk='([^']+)'/.exec(hostMarkup)?.[1]
-    if (islandName === undefined || chunk === undefined) {
-      throw new Error('the host carries its name + chunk')
-    }
-    const dom = createFakeDom(
-      `<body>${hostMarkup}<ox-island data-ox-island="ghost" data-ox-chunk="ghost" data-ox-strategy="load"></ox-island></body>`,
-    )
-    const hosts = dom.doc.querySelectorAll('ox-island')
-    const live = mustEl(hosts, 0)
-    const ghost = mustEl(hosts, 1)
-    const before = live.innerHTML
-    let dispatched = 0
-    const clientAdapter: IslandsAdapter = {
-      hydrateIsland: (el, mod, props) => {
-        dispatched++
-        return adapter.hydrateIsland!(el as unknown as Element, mod, props)
-      },
-    }
-    const mod = opts.islandChunks?.[chunk]
-    assert(mod, `island chunk '${chunk}' resolvable`)
-    const dispose = hydrateMixedIslands(
-      {
-        adapters: { [name]: async () => ({ clientAdapter }) },
-        islands: { [islandName]: { fw: name, load: async () => mod } },
-      },
-      { doc: dom.doc },
-    )
-    await tick()
-    assert(dispatched === 1, 'the mixed registry dispatched into the named framework adapter')
-    assert(live.innerHTML === before, 'hydration renders identical markup')
-    assert(ghost.getAttribute('data-ox-hydrated') === 'error', 'an unknown island marks an error, never a wrong hydration')
-    assert((ghost.getAttribute('data-ox-error') ?? '').includes('unknown island ghost'), 'the error names the island')
-    dispose()
-    return `mixed registry ok (fw=${name})`
-  })
-
-  await push('tt: the oxide policy registers once per realm and falls back to identity (V2-E04)', () => {
-    // Node has no Trusted Types platform: the import-time factory takes
-    // the identity fallback (never a throw at import), and the realm-wide
-    // handle the inline scripts (the deferred swapper) read is installed.
-    const html = tt.createHTML('<p>atlas</p>')
-    assert(html === '<p>atlas</p>', 'the identity fallback passes the markup through')
-    const handle = (globalThis as { __oxide_tt?: { createHTML(s: string): string } }).__oxide_tt
-    assert(handle !== undefined, 'the realm-wide __oxide_tt handle is installed')
-    assert(handle!.createHTML('<b>x</b>') === '<b>x</b>', 'the handle is the same policy surface the swapper reads')
-    return 'identity fallback + realm handle'
-  })
-
-  await push('search: the static matcher rides the server arithmetic verbatim (V2-F09)', async () => {
-    const docs: StaticDoc[] = [
-      { id: 'd0', url: '/alpha', title: 'Alpha Router', excerpt: 'the router contract', tags: ['docs'] },
-      { id: 'd1', url: '/beta', title: 'Beta Actions', excerpt: 'actions and enhance', tags: ['guide'] },
-      { id: 'd2', url: '/gamma', title: 'Alpha Islands', excerpt: 'islands everywhere', tags: ['docs'] },
-    ]
-    const index: StaticIndex = { docs, postings: { router: [0], islands: [2] } }
-    deepEqual(await search('   '), { total: 0, hits: [] }, 'an empty query answers locally without a fetch')
-    // 'alpha' is a title prefix of d0 AND d2 — the title arm's boost, the
-    // score sort with the doc-order tiebreak.
-    const res = await search('alpha', { staticIndex: index })
-    assert(res.total === 2, `both title-prefix docs scored: ${res.total}`)
-    deepEqual(res.hits.map((h) => h.id), ['d0', 'd2'], 'the doc-order tiebreak holds')
-    assert(mustEl(res.hits, 0).score === 3, 'the title prefix arm scores 3')
-    const postings = await search('router', { staticIndex: index })
-    deepEqual(postings.hits.map((h) => h.id), ['d0'], 'a postings hit rides the body boost')
-    const capped = await search('alpha', { staticIndex: index, limit: 1 })
-    assert(capped.hits.length === 1, 'the limit takes')
-    assert(capped.total === 2, 'total counts pre-limit')
-    // The post-take tag filter (the pinned parity quirk): the tag filter
-    // rides AFTER the take, so a tag matching only a doc beyond the take
-    // window empties the hits while total still counts them.
-    const tagged = await search('alpha', { staticIndex: index, limit: 1, tag: 'guide' })
-    assert(tagged.total === 2 && tagged.hits.length === 0, 'the tag filter rides after the take')
-    return 'postings / prefix / tiebreak / limit+tag quirk'
-  })
-
+  }
   return results
 }
