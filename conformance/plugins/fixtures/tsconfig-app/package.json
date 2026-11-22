@@ -1,0 +1,15 @@
+{
+  "name": "tsconfig-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "V2-E05 plugin-compat fixture for vite-tsconfig-paths@6.1.1 \u2014 a minimal oxide app the runner copies, installs the plugin into, and builds.",
+  "scripts": {
+    "build": "oxide build"
+  },
+  "dependencies": {
+    "vite-tsconfig-paths": "^6.1.1",
+    "@oxide-fw/react": "workspace:*",
+    "@oxide-fw/core": "workspace:*"
+  }
+}
