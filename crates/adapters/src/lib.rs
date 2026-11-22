@@ -178,10 +178,14 @@ pub enum Capability {
     /// only); Unsupported where no server runs.
     Brownout,
     /// V2-F19: per-route capability permissions. Full on native (the
-    /// binary enforces its own grant table); Degraded on `NodeLike` (the
-    /// worker checks, the runtime cannot sandbox); the F19 WP outcome may
-    /// still revise the Native cell — a documented caveat, not a silent
-    /// one (see docs/deviations.md).
+    /// binary enforces its own grant table via the `PermGuard` RAII +
+    /// per-op boundary checks on `op_oxide_fetch` / `op_oxide_env_get` /
+    /// `op_oxide_fs_read`, closed against detached-timer bypass by the
+    /// profile-keyed isolate pool — Model 2, see
+    /// `docs/decisions/F19-permissions.md`); Degraded on `NodeLike` (the
+    /// worker checks the grant table, the runtime cannot sandbox — the
+    /// `op_dispatch` Fetch arm emits a structured `PRM-001` warn, never
+    /// a hard block, D35); Unsupported where no server runs.
     Permissions,
     /// V2-F20: attested reproducible builds — canonical manifests, SBOM,
     /// in-toto provenance, ed25519 sign/verify. Emitted at build time and
