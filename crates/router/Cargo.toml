@@ -14,7 +14,13 @@ repository.workspace = true
 oxide-fw-diagnostics = { workspace = true }
 rkyv = { workspace = true }
 memmap2 = { workspace = true }
-regex = { workspace = true }
+# V2-E09: `regex` is optional behind the `regex`/`scan` features so the
+# wasm32 edge build (`oxide-fw-core-wasm` with `default-features = false`)
+# can omit it — the matcher's `:name{regex}` constraint path falls back to
+# a superset match, and the route-file scanner (the only other regex user)
+# is gated behind `scan` (build-time only). Keeps the wasm under the
+# 400 KB gzip budget without pulling aho-corasick/regex-automata.
+regex = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -43,10 +49,20 @@ harness = false
 required-features = ["bench-util"]
 
 [features]
-default = []
+# V2-E09: `scan` (the route-file scanner + its regex) and `regex` (the
+# matcher's `:name{regex}` constraint path) are default-on so native builds
+# are unchanged; the wasm32 edge build passes `default-features = false` to
+# omit both (the edge consumes `routes.json`, never scans files, and a
+# constrained param matches as a superset — recorded in docs/deviations.md).
+default = ["scan", "regex"]
 # V2-B09: exposes the synthetic route generator (`testing::synthetic_entries`)
 # to benches and allocation-budget test targets.
 bench-util = []
+# The route-file scanner (build-time only; pulls regex for constraint
+# validation and render/mode/tag scraping).
+scan = ["dep:regex"]
+# The matcher's `:name{regex}` param-constraint path (full-match semantics).
+regex = ["dep:regex"]
 
 [package.metadata.docs.rs]
 all-features = true
