@@ -238,6 +238,54 @@ impl WasmPlugin {
             .collect()
     }
 
+    /// V2-E05: the load-time unsupported-hook report for this component —
+    /// the single source of truth the compat runner records as
+    /// `unsupportedHooks`. This unifies the two gaps a declared hook can
+    /// have: declared-but-unexported ([`missing_hooks`], the host cannot
+    /// call it) AND exported-but-no-host-path (a component exporting
+    /// `build_start` — the host has no call method for it, so it is never
+    /// invoked). [`crate::unsupported_hooks`] folds both against the compat
+    /// model; `available` is the probed export set.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use oxide_fw_plugin::{Hook, WasmPlugin, WasmPluginManifest};
+    /// // A component exporting only `transform`, declaring `transform` +
+    /// // `buildStart`: `buildStart` has no host call path → reported.
+    /// # let wat = r#"
+    /// # (component (core module $m
+    /// #   (memory (export "memory") 1)
+    /// #   (data (i32.const 8) "\28\00\00\00" "\05\00\00\00")
+    /// #   (data (i32.const 40) "UPPER")
+    /// #   (global $bump (mut i32) (i32.const 128))
+    /// #   (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+    /// #     (local $ret i32) (local.set $ret (global.get $bump))
+    /// #     (global.set $bump (i32.add (global.get $bump) (i32.const 64)))
+    /// #     (local.get $ret))
+    /// #   (func (export "transform_dyn") (param i32 i32) (result i32) (i32.const 8)))
+    /// #   (core instance $inst (instantiate $m))
+    /// #   (alias core export $inst "memory" (core memory $mem))
+    /// #   (alias core export $inst "cabi_realloc" (core func $realloc))
+    /// #   (alias core export $inst "transform_dyn" (core func $f))
+    /// #   (type $sig (func (param "code" string) (result string)))
+    /// #   (func $lifted (type $sig) (canon lift (core func $f) (memory $mem) (realloc $realloc)))
+    /// #   (export "transform" (func $lifted)))"#;
+    /// let m = WasmPluginManifest { name: "p".into(), wit_world: "oxide:plugin/hooks@0.1.0".into(),
+    ///     capabilities: vec![], hooks: vec![Hook::Transform, Hook::BuildStart] };
+    /// let p = WasmPlugin::load(wat.as_bytes(), m, None).unwrap();
+    /// assert_eq!(p.load_time_report().unsupported_hooks, vec![Hook::BuildStart]);
+    /// ```
+    #[must_use]
+    pub fn load_time_report(&self) -> crate::LoadTimeReport {
+        crate::LoadTimeReport::new(
+            crate::PluginKind::Wasm,
+            &self.manifest.name,
+            &self.manifest.hooks,
+            &self.available,
+        )
+    }
+
     /// The `PLG-WASM` error for a declared hook the component does not export
     /// in a callable shape (the message the load-time pins hold).
     #[must_use]
