@@ -8788,7 +8788,9 @@ async fn add_reports_module_contributions() {
     // resolveId, and load all route through the plugin pipeline today.
     assert!(out.contains("transform, resolveId (merged)"), "{out}");
     assert!(out.contains("adapters: node"), "{out}");
-    assert!(out.contains("configDefaults: present (not merged"), "{out}");
+    // §V2-E06: configDefaults is now WIRED (merged under modules.<name>),
+    // not deferred. The report names the merge honestly.
+    assert!(out.contains("configDefaults: present (merged"), "{out}");
 }
 
 #[tokio::test]
