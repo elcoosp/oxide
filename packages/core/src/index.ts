@@ -21,3 +21,20 @@ export { boot } from './client/boot.ts'
 export { scheduleScript, loadScripts, type ScriptStrategy, type ScriptOptions } from './client/scripts.ts'
 export { reportWebVitals, type VitalSample, type VitalsOptions } from './client/vitals.ts'
 export { __oxide_call_fn } from './fn.ts'
+// §V2-E06 Module API v1 — `defineModule` + `ModuleContext` (the authoring
+// surface; the Rust `modules_loader` consumes the same `oxide.module`
+// contract). One contract, not two.
+export {
+  defineModule,
+  OxideModuleError,
+  type ModuleAdapter,
+  type ModuleContext,
+  type ModuleDefinition,
+  type ModuleHost,
+  type ModuleManifest,
+  type ModuleMiddleware,
+  type ModulePlugin,
+  type ModuleRoute,
+  type ModuleServerFn,
+  type ModuleTypes,
+} from './module.ts'
