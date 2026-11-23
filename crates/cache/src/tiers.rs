@@ -100,7 +100,7 @@ impl MemoryTier {
     }
 
     /// Remove a key; returns the stored entry if it was present.
-           #[must_use]
+    #[must_use]
     pub fn remove(&self, key: &str) -> Option<Arc<Entry>> {
         self.cache.remove(key)
     }
@@ -112,21 +112,21 @@ impl MemoryTier {
     }
 
     /// Number of entries stored.
-           #[must_use]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.cache.run_pending_tasks();
         self.cache.entry_count() as usize
     }
 
     /// True when empty.
-           #[must_use]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.cache.run_pending_tasks();
         self.cache.entry_count() == 0
     }
 
     /// Total stored byte weight (≤ `max_bytes` after any insert completes).
-           #[must_use]
+    #[must_use]
     pub fn total_bytes(&self) -> u64 {
         self.cache.run_pending_tasks();
         self.cache.weighted_size()
@@ -456,7 +456,10 @@ impl DiskTier {
 
     /// PERF-L1: forget a specific (`stored_at`, key) placement.
     fn order_forget_placement(&self, key: &str, stored_at: u64) {
-        let mut order = self.order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut order = self
+            .order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         order.remove(&(stored_at, key.to_string()));
     }
 
@@ -479,13 +482,19 @@ impl DiskTier {
     /// PERF-L1: record the (`stored_at`, key) order entry for `key`. The caller
     /// forgets any previous placement first (it knows the old `stored_at`).
     fn order_record(&self, key: &str, stored_at: u64, size: u64) {
-        let mut order = self.order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut order = self
+            .order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         order.insert((stored_at, key.to_string()), size);
     }
 
     /// PERF-L1: forget `key`'s order entry (on delete).
     fn order_forget(&self, key: &str) {
-        let mut order = self.order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut order = self
+            .order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let stale: Vec<(u64, String)> = order.keys().filter(|sk| sk.1 == key).cloned().collect();
         for sk in stale {
             order.remove(&sk);
@@ -600,7 +609,9 @@ impl DiskTier {
             }
             Err(e) => return Err(ioerr(e)),
         };
-        let decoded = if let Ok(d) = zstd::stream::decode_all(raw.as_slice()) { d } else {
+        let decoded = if let Ok(d) = zstd::stream::decode_all(raw.as_slice()) {
+            d
+        } else {
             self.delete(key)?; // corrupt stream — silent miss (§17.2)
             return Ok(None);
         };
@@ -626,7 +637,9 @@ impl DiskTier {
             self.delete(key)?;
             return Ok(None);
         }
-        if let Ok(entry) = serde_json::from_slice::<Entry>(&decoded) { Ok(Some(entry)) } else {
+        if let Ok(entry) = serde_json::from_slice::<Entry>(&decoded) {
+            Ok(Some(entry))
+        } else {
             self.delete(key)?;
             Ok(None)
         }
@@ -733,7 +746,7 @@ pub struct CacheStats {
 pub const PATH_TAG_PREFIX: &str = "path:";
 
 /// Tag name for a path (`path:<path>`).
-       #[must_use]
+#[must_use]
 pub fn path_tag(path: &str) -> String {
     format!("{PATH_TAG_PREFIX}{path}")
 }
@@ -789,7 +802,7 @@ pub struct TieredCache {
 
 impl TieredCache {
     /// Memory-only cache with the default 512 MiB cap, wrapped in an Arc.
-           #[must_use]
+    #[must_use]
     pub fn new_memory() -> Arc<Self> {
         Arc::new(Self {
             memory: MemoryTier::new(512 * 1024 * 1024),
@@ -806,7 +819,7 @@ impl TieredCache {
     }
 
     /// Owned constructor (compose + wrap in Arc yourself, e.g. to attach a disk tier).
-           #[must_use]
+    #[must_use]
     pub fn new(max_bytes: u64) -> Self {
         Self {
             memory: MemoryTier::new(max_bytes),
@@ -931,7 +944,7 @@ impl TieredCache {
                     return Ok(Some(Hit::Stale(e)));
                 }
                 Freshness::Expired => {
-                    self.memory.remove(key); // lazy delete
+                    let _ = self.memory.remove(key); // lazy delete
                 }
             }
         }
@@ -1149,7 +1162,7 @@ impl TieredCache {
     ///
     /// Returns an error when the underlying operation fails.
     pub async fn delete(&self, key: &str) -> Result<()> {
-        self.memory.remove(key);
+        let _ = self.memory.remove(key);
         if let Some(disk) = &self.disk {
             disk.delete(key)?;
         }
@@ -1414,7 +1427,7 @@ impl CacheHandler for TieredCache {
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        self.memory.remove(key);
+        let _ = self.memory.remove(key);
         if let Some(disk) = &self.disk {
             let _ = disk.delete(key);
         }
