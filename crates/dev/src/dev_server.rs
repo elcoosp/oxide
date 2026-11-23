@@ -21,17 +21,32 @@ use std::net::IpAddr;
 // Config
 // ---------------------------------------------------------------------------
 
-/// Everything the dev server needs to know about its extra features.
+/// Network-bind toggles for the dev server. Split out of [`DevServerConfig`]
+/// so no single config struct crosses the `struct_excessive_bools` ceiling.
 #[derive(Debug, Clone, Default)]
-pub struct DevServerConfig {
+pub struct DevServerNetwork {
     /// Enable HTTPS with a self-signed cert.
     pub https: bool,
     /// Bind to all interfaces (0.0.0.0) instead of loopback.
     pub lan: bool,
+}
+
+/// Launch-convenience toggles for the dev server.
+#[derive(Debug, Clone, Default)]
+pub struct DevServerLaunch {
     /// Print the network URL as a QR code.
     pub qr_code: bool,
     /// Open the browser on start.
     pub open_browser: bool,
+}
+
+/// Everything the dev server needs to know about its extra features.
+#[derive(Debug, Clone, Default)]
+pub struct DevServerConfig {
+    /// Bind/network toggles (HTTPS, LAN).
+    pub network: DevServerNetwork,
+    /// Launch-convenience toggles (QR code, auto-open browser).
+    pub launch: DevServerLaunch,
     /// Proxy rules, evaluated longest-prefix first.
     pub proxy: Vec<ProxyRule>,
 }
@@ -56,6 +71,12 @@ pub struct DevCert {
 /// On macOS/iOS, browsers will show a warning until the user trusts the cert
 /// (or uses a tool like `mkcert`); on Linux, some distros accept self-signed
 /// certs for `localhost` without a warning.
+///
+/// # Errors
+///
+/// Returns `DEV-TLS` when `rcgen` cannot build the certificate params,
+/// generate the key pair, or self-sign — each mapped to a `DEV-TLS` diagnostic
+/// with the underlying `rcgen` error in the message.
 pub fn generate_dev_cert() -> Result<DevCert> {
     let mut sans: Vec<String> = vec!["localhost".into(), "127.0.0.1".into(), "::1".into()];
     if let Ok(ip) = local_ip_address::local_ip() {
@@ -104,6 +125,7 @@ pub fn generate_dev_cert() -> Result<DevCert> {
 
 /// The LAN-reachable URL for `port`, or `None` if no non-loopback interface
 /// exists (offline machine, VPN-only host, etc.).
+#[must_use]
 pub fn network_url(port: u16, https: bool) -> Option<String> {
     let ip = local_ip_address::local_ip().ok()?;
     let scheme = if https { "https" } else { "http" };
@@ -111,6 +133,7 @@ pub fn network_url(port: u16, https: bool) -> Option<String> {
 }
 
 /// The loopback URL for `port`.
+#[must_use]
 pub fn local_url(port: u16, https: bool) -> String {
     let scheme = if https { "https" } else { "http" };
     format!("{scheme}://localhost:{port}")
@@ -125,6 +148,11 @@ pub fn local_url(port: u16, https: bool) -> String {
 ///
 /// The quiet zone is included (8 modules on each side) because scanners rely
 /// on it for synchronisation.
+///
+/// # Errors
+///
+/// Returns `DEV-QR` when `qrcode::QrCode::new` cannot encode `data` (the
+/// input exceeds the QR capacity for any version/error-correction level).
 pub fn render_qr(data: &str) -> Result<String> {
     let code = qrcode::QrCode::new(data.as_bytes())
         .map_err(|e| err("DEV-QR", format!("QR generation failed: {e}")))?;
@@ -198,6 +226,7 @@ impl ProxyRule {
         }
     }
 
+    #[must_use]
     pub fn with_strip(mut self, strip: bool) -> Self {
         self.strip_prefix = strip;
         self
@@ -219,6 +248,7 @@ pub struct ProxyMatch {
 /// Matching is by **longest prefix** so `/api/v2` can override `/api`.
 /// A prefix matches when it equals the path or is followed by `/`
 /// (so `/api` matches `/api/users` but not `/apixyz`).
+#[must_use]
 pub fn apply_proxy(rules: &[ProxyRule], path: &str, query: Option<&str>) -> Option<ProxyMatch> {
     let mut best: Option<&ProxyRule> = None;
     for rule in rules {
@@ -260,8 +290,7 @@ fn prefix_matches(prefix: &str, path: &str) -> bool {
     path == prefix
         || path
             .strip_prefix(prefix)
-            .map(|rest| rest.starts_with('/'))
-            .unwrap_or(false)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +300,7 @@ fn prefix_matches(prefix: &str, path: &str) -> bool {
 /// Open `url` in the user's default browser. On failure (headless CI,
 /// missing `xdg-open`, etc.) returns `Ok(false)` rather than an error — this
 /// is a convenience, not a requirement.
+#[must_use]
 pub fn open_browser(url: &str) -> bool {
     #[cfg(target_os = "macos")]
     let cmd = ("open", vec![url]);
@@ -286,8 +316,7 @@ pub fn open_browser(url: &str) -> bool {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map(|_| true)
-        .unwrap_or(false)
+        .is_ok_and(|_| true)
 }
 
 // ---------------------------------------------------------------------------
