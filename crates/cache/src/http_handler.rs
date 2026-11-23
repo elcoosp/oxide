@@ -305,21 +305,18 @@ impl HttpCacheHandler {
     ) -> Result<(u16, Vec<u8>)> {
         let exchange = self.gated(method, url, body);
         if let Some(deadline) = self.deadline {
-            match tokio::time::timeout(deadline, exchange).await {
-                Ok(result) => result,
-                Err(_) => {
-                    tracing::warn!(
-                        code = "CACHE-HTTP",
-                        url = %url,
-                        deadline = ?deadline,
-                        "the remote cache did not answer within the deadline; \
-                         degrading (§11.2: a remote cache is an optimization)"
-                    );
-                    Err(err(
-                        "CACHE-HTTP",
-                        format!("the exchange exceeded its {deadline:?} deadline"),
-                    ))
-                }
+            if let Ok(result) = tokio::time::timeout(deadline, exchange).await { result } else {
+                tracing::warn!(
+                    code = "CACHE-HTTP",
+                    url = %url,
+                    deadline = ?deadline,
+                    "the remote cache did not answer within the deadline; \
+                     degrading (§11.2: a remote cache is an optimization)"
+                );
+                Err(err(
+                    "CACHE-HTTP",
+                    format!("the exchange exceeded its {deadline:?} deadline"),
+                ))
             }
         } else {
             exchange.await
@@ -1012,7 +1009,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
-    /// SPEC-12: HttpCacheHandler round-trips an Entry and publishes a tag
+    /// SPEC-12: `HttpCacheHandler` round-trips an Entry and publishes a tag
     /// invalidation against a tiny in-process HTTP server.
     #[tokio::test]
     async fn http_cache_handler_roundtrips() {
@@ -1105,7 +1102,7 @@ mod tests {
 
     /// §11.3 / P0-8: a tampered (or unsealed/legacy) payload is a miss,
     /// not a hit and not an error. The same contract redis/s3 pin; the
-    /// audit found HttpCacheHandler missing the seal entirely — a
+    /// audit found `HttpCacheHandler` missing the seal entirely — a
     /// forged entry (omit the MAC) was served to every reader.
     #[tokio::test]
     async fn http_handler_tampered_entry_is_a_miss() {
