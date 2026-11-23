@@ -55,6 +55,7 @@ pub enum FileEvent {
 }
 
 impl Watcher {
+    #[must_use]
     pub fn new(roots: Vec<PathBuf>) -> Self {
         Self {
             roots,
@@ -78,9 +79,9 @@ impl Watcher {
     /// still diffs to `Created`.
     ///
     /// Under `node_modules` the seed is deliberately NARROW: only
-    /// `package.json` entries (the single node_modules path class whose
+    /// `package.json` entries (the single `node_modules` path class whose
     /// events survive the CLI's HMR pre-filter — everything else under
-    /// node_modules is dropped there). Hashing the whole dependency tree is
+    /// `node_modules` is dropped there). Hashing the whole dependency tree is
     /// both wasteful and actively harmful: walking `.pnpm`'s store paths
     /// costs seconds on a cold cache, and the watcher loop only starts
     /// AFTER the seed — a slow seed delays change detection for every early
@@ -126,6 +127,9 @@ impl Watcher {
     /// `../packages/ui/src` therefore invalidates the app without watching
     /// every sibling package in the monorepo (the coarse SPEC-16 walk).
     ///
+    ///
+    /// # Errors
+    ///
     /// Discovery failures surface through the returned [`Result`]: a
     /// malformed workspace manifest is a loud `DEV-WS-001`, never a silent
     /// roots-only boot. An uninstalled dependency skips with a warn — the
@@ -150,7 +154,6 @@ impl Watcher {
     }
 
     fn try_notify(roots: &[PathBuf]) -> Result<NotifyBackend> {
-        use notify::RecursiveMode;
         let (tx, rx) = std::sync::mpsc::channel();
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(ev) = res {
@@ -176,7 +179,7 @@ impl Watcher {
             // store's bulk, and cap the node_modules descent at the
             // top-level package dirs (whose direct `package.json` children
             // are the §3.3 prebundle-invalidation signal).
-            add_pruned_watches(&watcher, root, RecursiveMode::NonRecursive, 0)?;
+            add_pruned_watches(&watcher, root, 0);
         }
         Ok(NotifyBackend { watcher, rx })
     }
@@ -191,12 +194,17 @@ impl Watcher {
     /// concern: `poll` returns immediately and the caller decides the sampling
     /// interval (`self.debounce` documents the intended gap); the debounced notify
     /// loop lives with the dev server runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DEV-NOTIFY` (watcher creation/registration) or a hash-diff I/O
+    /// error from the snapshot path; the notify-backend path is infallible.
     pub fn poll(&self, seen: &mut BTreeSet<(PathBuf, String)>) -> Result<Vec<FileEvent>> {
         // PERF-11: with the notify backend, only the touched paths are
         // re-hashed. The callback buffer is drained (debounced), the changed
         // set is content-hashed, and events emitted only for real changes.
         if let Some(backend) = &self.backend {
-            return self.poll_notify(backend, seen);
+            return Ok(self.poll_notify(backend, seen));
         }
         let mut current: BTreeMap<PathBuf, String> = BTreeMap::new();
         for root in &self.roots {
@@ -237,7 +245,7 @@ impl Watcher {
         &self,
         backend: &NotifyBackend,
         seen: &mut BTreeSet<(PathBuf, String)>,
-    ) -> Result<Vec<FileEvent>> {
+    ) -> Vec<FileEvent> {
         // §3.7 latency fix: debounce ONLY when events are queued. Before
         // this, every poll cycle slept `self.debounce` (30ms) even on an
         // idle filesystem — which meant (a) every write paid 30ms on top of
@@ -250,7 +258,7 @@ impl Watcher {
             touched.insert(p);
         }
         if touched.is_empty() {
-            return Ok(Vec::new());
+            return Vec::new();
         }
         // There ARE events — give the filesystem a moment to settle
         // (editors write in bursts: save, temp, rename), then drain
@@ -263,7 +271,7 @@ impl Watcher {
         for path in touched {
             // Skip editor temp files.
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name.ends_with('~') || name.starts_with('.') && name.ends_with(".swp") {
+            if name.ends_with('~') || name.starts_with('.') && has_ext_ci(name, "swp") {
                 continue;
             }
             if path.is_dir() {
@@ -289,7 +297,7 @@ impl Watcher {
             }
             emit_diff(&path, seen, &mut events);
         }
-        Ok(events)
+        events
     }
 }
 
@@ -316,26 +324,25 @@ fn add_watch_dir(
 /// watch per directory, pruning the expensive subtree (see
 /// [`WATCH_PRUNE_DIRS`]) and capping the `node_modules` descent at its
 /// top-level package directories. A plain `RecursiveMode::Recursive` watch
-/// spends one watch per directory under node_modules (~10k in a pnpm
+/// spends one watch per directory under `node_modules` (~10k in a pnpm
 /// workspace) and exhausts `fs.inotify.max_user_watches` nondeterministically
 /// — the failure mode was a watcher that silently stopped firing for
 /// whichever subtrees lost the registration race.
 fn add_pruned_watches(
     watcher: &std::sync::Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
     root: &Path,
-    _mode: notify::RecursiveMode,
     depth: u8,
-) -> Result<()> {
+) {
     const NODE_MODULES_MAX_DEPTH: u8 = 2;
     let _ = add_watch_dir(watcher, root);
     let Ok(md) = std::fs::metadata(root) else {
-        return Ok(());
+        return;
     };
     if !md.is_dir() {
-        return Ok(());
+        return;
     }
     let Ok(entries) = std::fs::read_dir(root) else {
-        return Ok(());
+        return;
     };
     for entry in entries.flatten() {
         let p = entry.path();
@@ -362,9 +369,8 @@ fn add_pruned_watches(
         if under_nm && next_depth > NODE_MODULES_MAX_DEPTH {
             continue;
         }
-        let _ = add_pruned_watches(watcher, &p, _mode, next_depth);
+        add_pruned_watches(watcher, &p, next_depth);
     }
-    Ok(())
 }
 
 /// §1.3: hash-diff one touched file against `seen`, emitting the event kind
@@ -572,8 +578,14 @@ impl HmrMessage {
     }
     /// Fallible serialization — the seam for callers that must distinguish
     /// a serialize failure from an empty frame. Emits the schema-v1
-    /// envelope: `{"v":1,"type":...,}` (key order is serde_json's; the
+    /// envelope: `{"v":1,"type":...,}` (key order is `serde_json`'s; the
     /// client reads fields by name).
+    ///
+    /// # Errors
+    ///
+    /// Propagates `serde_json::Error` from `to_value`/`to_string` — a
+    /// non-serializable field type (none exist on `HmrMessage` today, but
+    /// the seam keeps the contract honest).
     pub fn try_to_json(&self) -> std::result::Result<String, serde_json::Error> {
         let mut value = serde_json::to_value(self)?;
         if let serde_json::Value::Object(ref mut map) = value {
@@ -588,6 +600,11 @@ impl HmrMessage {
     /// failure from a schema-version mismatch. Enforces the v1 envelope: a
     /// frame without (or with a foreign) `v` is [`HmrWireError::Schema`],
     /// not a parse error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HmrWireError::Schema`] when the `v` field is missing or
+    /// foreign; propagates `serde_json` parse errors from `from_str`/`from_value`.
     pub fn try_from_json(s: &str) -> std::result::Result<Self, HmrWireError> {
         let value: serde_json::Value = serde_json::from_str(s)?;
         let found = value
@@ -630,11 +647,22 @@ pub enum ChangeKind {
     ConfigOrRoutes,
 }
 
+/// Case-insensitive file-extension check. `str::ends_with(".ext")` is a
+/// case-sensitive comparison (flagged by `clippy::case_sensitive_file_extension_comparisons`);
+/// `Path::extension` + `eq_ignore_ascii_case` is the cross-platform-correct
+/// form (file extensions are case-insensitive on macOS/Windows filesystems).
+fn has_ext_ci(path: &str, ext: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+}
+
 /// SPEC-14: classify a changed file path into the §13.3 change kind, which
 /// selects the HMR behavior (and thus the `HmrMessage` the dev loop emits).
+#[must_use]
 pub fn classify_path(path: &str) -> ChangeKind {
     let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".css") || lower.ends_with(".scss") || lower.ends_with(".sass") {
+    if has_ext_ci(path, "css") || has_ext_ci(path, "scss") || has_ext_ci(path, "sass") {
         ChangeKind::Css
     } else if lower.ends_with(".server.ts") || lower.ends_with(".server.tsx") {
         // A server module: a loader change is data-only; anything else is a
@@ -695,6 +723,7 @@ pub fn classify_path(path: &str) -> ChangeKind {
 /// `route.*` and `socket.*` are always structural even on `Modified`:
 /// those files define endpoints/dispatch tables whose identity, not just
 /// body, is semantically load-bearing.
+#[must_use]
 pub fn classify_event(ev: &FileEvent) -> ChangeKind {
     // §3.9: notify (especially FSEvents on macOS) reports some in-place
     // writes as Created, because the write path can go through temp+rename
@@ -734,9 +763,9 @@ pub fn classify_event(ev: &FileEvent) -> ChangeKind {
     // Anything `classify_path` already handles unambiguously — CSS,
     // `.server.*` (loader vs. swap depends on the file name only), config
     // — delegates. The event kind is irrelevant for those.
-    if lower.ends_with(".css")
-        || lower.ends_with(".scss")
-        || lower.ends_with(".sass")
+    if has_ext_ci(&pstr, "css")
+        || has_ext_ci(&pstr, "scss")
+        || has_ext_ci(&pstr, "sass")
         || lower.ends_with(".server.ts")
         || lower.ends_with(".server.tsx")
         || lower.contains("oxide.config")
@@ -781,6 +810,7 @@ pub fn classify_event(ev: &FileEvent) -> ChangeKind {
     classify_path(&pstr)
 }
 
+#[must_use]
 pub fn hmr_behavior(kind: ChangeKind) -> HmrBehavior {
     match kind {
         ChangeKind::Component => HmrBehavior::AdapterHmr,
@@ -841,8 +871,8 @@ fn walk_root(root: &Path, out: &mut BTreeMap<PathBuf, String>) {
 }
 
 /// §1.3: seed the dependency tree's `package.json` entries — the ONLY
-/// node_modules path class whose events survive the CLI's HMR pre-filter
-/// (see `seed_seen`'s doc for why the rest of node_modules stays unseeded).
+/// `node_modules` path class whose events survive the CLI's HMR pre-filter
+/// (see `seed_seen`'s doc for why the rest of `node_modules` stays unseeded).
 /// Top-level `node_modules/<pkg>` and `node_modules/@scope/<pkg>` links are
 /// hashed THROUGH the symlink; `.pnpm`/`.bin`/`.oxide` are skipped (a real
 /// install's new store paths are new files — they diff as `Created` and
@@ -911,6 +941,7 @@ pub struct HmrHub {
 }
 
 impl HmrHub {
+    #[must_use]
     pub fn new() -> Self {
         Self::with_build_id("dev")
     }
@@ -927,6 +958,7 @@ impl HmrHub {
         }
     }
 
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         let (tx, _) = tokio::sync::broadcast::channel(capacity.max(1));
         Self {
@@ -948,7 +980,7 @@ impl HmrHub {
     }
 
     /// Serialize and broadcast; dropped when no receiver is listening (OK by design).
-    pub fn publish(&self, msg: HmrMessage) {
+    pub fn publish(&self, msg: &HmrMessage) {
         let _ = self.tx.send(msg.to_json());
     }
 
@@ -999,6 +1031,7 @@ impl Default for HmrHub {
 
 /// Error overlay payload: miette-style diagnostics serialized as JSON — code frames,
 /// source-mapped stacks, hints with fixes (§13.4). Drawn by a small overlay in dev.
+#[must_use]
 pub fn overlay_payload(diag: &Diagnostic) -> String {
     diag.to_json()
 }
@@ -1110,6 +1143,7 @@ pub struct WaterfallRecorder {
 }
 
 impl WaterfallRecorder {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -1180,11 +1214,11 @@ impl WaterfallRecorder {
     }
 
     /// Snapshot for the inspector.
+    #[must_use]
     pub fn snapshot(&self) -> Vec<RequestTimingsRow> {
         self.inner
             .lock()
-            .map(|q| q.iter().cloned().collect())
-            .unwrap_or_default()
+            .map_or_default(|q| q.iter().cloned().collect())
     }
 }
 
@@ -1231,13 +1265,33 @@ pub struct PoolRow {
 
 /// Dev server features (§13.5): proxy rules, env reload, network URL display,
 /// `dev.bundle` full-bundle mode flag. Kept as typed plumbing for the CLI.
+///
+/// The bools are split across two sub-structs so no single struct crosses the
+/// `struct_excessive_bools` ceiling; `#[serde(flatten)]` keeps the config
+/// schema flat (`dev.bundle`, `dev.https`, `dev.open_browser`, `dev.qr_code`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DevBuildOptions {
+    /// `dev.bundle` — full-bundle mode (every rebuild re-emits the whole bundle).
+    pub bundle: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DevServeOptions {
+    /// Enable HTTPS with a self-signed cert.
+    pub https: bool,
+    /// Open the browser on start.
+    pub open_browser: bool,
+    /// Print the network URL as a QR code.
+    pub qr_code: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DevOptions {
-    pub bundle: bool,
-    pub https: bool,
+    #[serde(flatten)]
+    pub build: DevBuildOptions,
+    #[serde(flatten)]
+    pub serve: DevServeOptions,
     pub proxy: std::collections::BTreeMap<String, String>,
-    pub open_browser: bool,
-    pub qr_code: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -1352,7 +1406,7 @@ impl RouteTableInspector {
             waterfalls: self
                 .waterfalls
                 .as_ref()
-                .map_or_else(Vec::new, |r| r.snapshot()),
+                .map_or_else(Vec::new, WaterfallRecorder::snapshot),
             live: self.live.clone(),
             generations: self.generations.clone(),
             ..Default::default()
@@ -1427,15 +1481,17 @@ fn render_modules_section(state: &InspectorState, query: Option<&str>) -> String
 /// search over nothing would be a fabrication).
 #[must_use]
 pub fn render_inspector_html_with_query(state: &InspectorState, query: Option<&str>) -> String {
+    use std::fmt::Write as _;
     let mut rows = String::new();
     for r in &state.routes {
-        rows.push_str(&format!(
+        let _ = write!(
+            rows,
             "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             html_escape(&r.id),
             html_escape(&r.mode),
             html_escape(r.dynamic_reason.as_deref().unwrap_or("")),
             html_escape(&r.cache_policy),
-        ));
+        );
     }
     // B-17: render the recorded request waterfalls (the flamegraph view).
     let mut wf_rows = String::new();
@@ -1444,20 +1500,25 @@ pub fn render_inspector_html_with_query(state: &InspectorState, query: Option<&s
         let mut bars = String::new();
         for (name, ms) in &wf.waterfall_ms {
             // 2px per ms, clamped so a 2s defer cannot blow up the page.
-            let width = (ms * 2.0).round().clamp(1.0, 400.0) as u32;
-            bars.push_str(&format!(
-                "<span class=\"bar\" style=\"width:{}px\" title=\"{}: {:.1}ms\"></span>",
+            // `width` stays f64 and renders via `{:.0}` to avoid the
+            // `f64 as u32` cast (cast_possible_truncation/cast_sign_loss);
+            // the clamp bounds it to [1.0, 400.0], so the rounded integer is identical.
+            let width = (ms * 2.0).round().clamp(1.0, 400.0);
+            let _ = write!(
+                bars,
+                "<span class=\"bar\" style=\"width:{:.0}px\" title=\"{}: {:.1}ms\"></span>",
                 width,
                 html_escape(name),
                 ms,
-            ));
+            );
         }
-        wf_rows.push_str(&format!(
+        let _ = write!(
+            wf_rows,
             "<tr><td><code>{}</code></td><td class=\"stages\">{}</td><td>{:.1}ms</td></tr>",
             html_escape(&wf.request_id),
             bars,
             total,
-        ));
+        );
     }
     // §V2-E08 item 2: the module-graph table (the search surface) builds
     // in [`render_modules_section`] — the heading, the `k of n` note, the
@@ -1468,24 +1529,26 @@ pub fn render_inspector_html_with_query(state: &InspectorState, query: Option<&s
     // rows — the render stays honest, no fabricated rows.
     let mut live_rows = String::new();
     for r in &state.live {
-        live_rows.push_str(&format!(
+        let _ = write!(
+            live_rows,
             "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
             html_escape(&r.tag),
             if r.wildcard { "wildcard" } else { "exact" },
             r.subscribers,
-        ));
+        );
     }
     let mut gen_rows = String::new();
     for r in &state.generations {
         let window = r
             .window_ms_remaining
             .map_or("\u{2014}".to_string(), |ms| format!("{ms}ms"));
-        gen_rows.push_str(&format!(
+        let _ = write!(
+            gen_rows,
             "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>",
             html_escape(&r.id),
             html_escape(&r.role),
-            window,
-        ));
+            window
+        );
     }
     format!(
         "<!doctype html><html><head><title>Oxide Inspector</title>\
@@ -1578,8 +1641,8 @@ pub use boundary::{
 
 pub mod dev_server;
 pub use dev_server::{
-    DevCert, DevServerConfig, ProxyMatch, ProxyRule, apply_proxy, generate_dev_cert, local_url,
-    network_url, open_browser, render_qr,
+    DevCert, DevServerConfig, DevServerLaunch, DevServerNetwork, ProxyMatch, ProxyRule,
+    apply_proxy, generate_dev_cert, local_url, network_url, open_browser, render_qr,
 };
 
 /// V2-E01 phase 4: the state-preservation substrate — the `preserve`
