@@ -69,6 +69,12 @@ pub trait WorkspaceLinks: Send + Sync {
     /// A non-workspace app yields `Ok(vec![])` — discovery is opt-in by
     /// tree shape, never by configuration. A manifest that exists but does
     /// not parse is a loud error (`DEV-WS-001`), not a silent empty set.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DEV-WS-001` when a workspace manifest is present but cannot
+    /// be parsed (malformed `pnpm-workspace.yaml` or `package.json`
+    /// `workspaces`); a non-workspace app yields `Ok(vec![])`, never an error.
     fn links(&self, app_root: &Path) -> Result<Vec<LinkedPackage>>;
 }
 
@@ -265,8 +271,7 @@ fn read_pkg_workspaces(path: &Path) -> Result<Vec<String>> {
         Some(obj) => obj
             .get("packages")
             .and_then(serde_json::Value::as_array)
-            .map(|items| glob_strings(items))
-            .unwrap_or_default(),
+            .map_or_default(|items| glob_strings(items)),
     })
 }
 
