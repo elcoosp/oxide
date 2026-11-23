@@ -7208,3 +7208,20 @@ exits 0. The unified gate (`cargo clippy --workspace --all-targets
 crate opts in; the CI `rust/lint` job (`cargo clippy --workspace --all-targets
 -- -D warnings`) is the final arbiter. No `#[allow]`/`#[expect]`/lint
 downgrade landed or is planned — every finding is fixed at its source.
+
+## V2-A02 finish (partial, 2026-11-23) — 4 of 6 remaining crates cleared; cache + server stay RED
+
+**Status.** Partial clearance, NOT M1-done. The drift guard is RED (oxide-fw-cache +
+oxide-fw-server still carry bare `[lints]` tables). Cleared this session (pedantic-clean,
+opted in `[lints] workspace = true`, green transcripts under `scripts/gates/`):
+oxide-fw-dev (69→0), oxide-fw-bundler (own sources 0), oxide-fw-jshost (V8-free half 0),
+oxide-fw-cli (V8-free half 0). The mechanical-fix helpers
+(`scripts/gates/apply_mechanical_fixes.py`, `extract_findings.py`) cleared ~48 of
+oxide-fw-cache findings (must_use_candidate, missing_errors_doc, manual_let_else,
+match-wildcard let-else rewrites); ~34 remain (cast_possible_truncation/sign_loss in
+the http.rs date math, unused_async on SingleFlight::acquire/publish_and_cleanup
+(ripples into cli/l0_lookup.rs), too_many_lines, needless_pass_by_value). oxide-fw-server
+is untouched (wasmtime/hyper/quinn dep tree not built in this sandbox). The five
+F47→F69 deferral postscripts and the 2026-11-22 partial-delivery record stay OPEN
+until cache + server clear and the guard goes 23/23 GREEN. No `#[allow]]`/`#[expect]]`/
+lint downgrade landed or is planned.
