@@ -314,10 +314,9 @@ fn chunks_and_css_files_are_written_non_empty_with_hashed_names() {
         let js = std::fs::read(dir.path().join("dist").join(&c.file)).unwrap();
         assert!(!js.is_empty(), "chunk {} is empty", c.file);
         for f in &c.css {
-            assert!(
-                !std::fs::read(dir.path().join("dist").join(f))
-                    .unwrap()
-                    .is_empty()
+            assert_ne!(
+                std::fs::read(dir.path().join("dist").join(f))
+                    .unwrap(), [] as [u8; 0]
             );
         }
     }
@@ -500,7 +499,7 @@ fn import_cycle_completes_with_bld_cycle_diagnostic() {
     let entry = chunk_named(&out, "cyc");
     assert!(entry.modules.iter().any(|p| p.ends_with("a.ts")));
     assert!(entry.modules.iter().any(|p| p.ends_with("b.ts")));
-    assert!(!body(dir.path(), &entry.file).is_empty());
+    assert_ne!(body(dir.path(), &entry.file), "");
 }
 
 #[test]
@@ -526,7 +525,7 @@ fn unresolved_bare_import_yields_bld_resolve_but_completes() {
     );
     assert!(out.modules.iter().any(|m| m.resolved.ends_with("solo.ts")));
     let entry = chunk_named(&out, "solo");
-    assert!(!body(dir.path(), &entry.file).is_empty());
+    assert_ne!(body(dir.path(), &entry.file), "");
 }
 
 #[test]
