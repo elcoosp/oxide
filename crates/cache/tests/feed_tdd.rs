@@ -21,7 +21,7 @@
 //!    and loses what arrives after saturation; a retention ring would
 //!    silently drop the OLD rows instead). Drops are counted
 //!    (`dropped()`), never silent.
-//! 4. The failure rule is the FileTraceSink sticky warn adapted: the
+//! 4. The failure rule is the `FileTraceSink` sticky warn adapted: the
 //!    FIRST drop leaves one `tracing::warn!` under the `oxide::cache`
 //!    target (naming the capacity), then the rows drop silently while the
 //!    counter keeps the score — a saturated feed must not spam the very
@@ -42,7 +42,7 @@ fn entry(body: &[u8], tags: &[&str]) -> Entry {
         body: body.to_vec(),
         status: 200,
         headers: vec![("content-type".into(), "text/html".into())],
-        tags: tags.iter().map(|s| s.to_string()).collect(),
+        tags: tags.iter().map(std::string::ToString::to_string).collect(),
         policy: Policy {
             ttl: Duration::from_secs(60),
             swr: None,
@@ -267,7 +267,7 @@ fn sustained_overshoot_counts_every_drop() {
 
 // ------------------------------------------------------------ the sticky pin
 
-/// The FileTraceSink posture adapted: the FIRST drop leaves one warn under
+/// The `FileTraceSink` posture adapted: the FIRST drop leaves one warn under
 /// the `oxide::cache` target naming the capacity; the rows after it drop
 /// silently (counted, never rendered) — a saturated feed must not spam
 /// the console.
