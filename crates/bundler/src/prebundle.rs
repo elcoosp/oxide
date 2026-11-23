@@ -230,8 +230,7 @@ fn bundle_family_multi_entry(
                     // bundle_family_multi_entry with itself as the focus).
                     let bundle_path = out_dir_owned.join(format!("{focus_name}.js"));
                     let names = std::fs::read_to_string(&focus_owned)
-                        .map(|s| oxide_fw_compiler::extract_cjs_export_names(&s))
-                        .unwrap_or_default();
+                        .map_or_default(|s| oxide_fw_compiler::extract_cjs_export_names(&s));
                     let mut bundle = std::fs::read_to_string(&bundle_path)
                         .map_err(|e| format!("read bundle: {e}"))?;
                     let original_len = bundle.len();
@@ -321,8 +320,7 @@ fn bundle_one(
                     // (2) rewrite `__require("X")` to a top-level ESM import
                     let bundle_path = out_dir_owned.join(format!("{entry_name}.js"));
                     let names = std::fs::read_to_string(&entry_owned)
-                        .map(|s| oxide_fw_compiler::extract_cjs_export_names(&s))
-                        .unwrap_or_default();
+                        .map_or_default(|s| oxide_fw_compiler::extract_cjs_export_names(&s));
                     let mut bundle = std::fs::read_to_string(&bundle_path)
                         .map_err(|e| format!("read bundle: {e}"))?;
                     let original_len = bundle.len();
@@ -386,7 +384,7 @@ fn resolve_through_wrapper_impl(path: &Path, depth: u32) -> PathBuf {
             let Some(end) = rest[1..].find(quote) else {
                 continue;
             };
-            let rel = &rest[1..1 + end];
+            let rel = &rest[1..=end];
             if let Some(stripped) = rel.strip_prefix("./") {
                 candidates.push(stripped.to_string());
             }
@@ -590,8 +588,8 @@ mod tests {
     fn empty_packages_yields_empty_result() {
         let tmp = tempfile::tempdir().unwrap();
         let r = prebundle_cjs_to_esm(tmp.path(), &[], &tmp.path().join("out")).unwrap();
-        assert!(r.bundled.is_empty());
-        assert!(r.failures.is_empty());
+        assert_eq!(r.bundled, [] as [std::string::String; 0]);
+        assert_eq!(r.failures, [] as [(std::string::String, std::string::String); 0]);
     }
 
     // The test above will not actually bundle (no node_modules in a tempdir);
