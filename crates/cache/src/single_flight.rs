@@ -106,7 +106,7 @@ pub struct FlightOwnerGuard {
 
 impl FlightOwnerGuard {
     /// Wrap an owner sender (from [`FlightSlot::Owner`]).
-           #[must_use]
+    #[must_use]
     pub fn new(
         map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>>,
         key: String,
