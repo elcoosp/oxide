@@ -103,6 +103,15 @@ name = "cost"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F20: the module→package map rides every `write_attestation` call once
+# over the union of every route's source modules — the per-module
+# classification (one `Path::components` pass + a `BTreeSet` insert per
+# distinct package) must stay noise next to the SBOM write it feeds.
+[[bench]]
+name = "reached_packages"
+harness = false
+required-features = ["bench-util"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
