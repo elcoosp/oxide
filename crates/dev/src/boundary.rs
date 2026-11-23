@@ -33,6 +33,7 @@ use crate::ChangeKind;
 use oxide_fw_diagnostics::Diagnostic;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 
 /// The plan a changed module produces (§V2-E01).
@@ -64,11 +65,11 @@ pub enum Plan {
 ///
 /// The boundary check runs BEFORE the entry check, so a module that is both
 /// (a route `page.tsx` is a component boundary) updates in place.
-pub fn plan(
+pub fn plan<S: BuildHasher>(
     changed: &Path,
-    importers: &HashMap<PathBuf, Vec<PathBuf>>,
-    accepting: &HashSet<PathBuf>,
-    entries: &HashSet<PathBuf>,
+    importers: &HashMap<PathBuf, Vec<PathBuf>, S>,
+    accepting: &HashSet<PathBuf, S>,
+    entries: &HashSet<PathBuf, S>,
 ) -> Plan {
     let _span = tracing::debug_span!("hmr_boundary", changed = %changed.display()).entered();
     let mut boundaries: Vec<PathBuf> = Vec::new();
@@ -231,12 +232,12 @@ impl ClassifiedPlan {
 ///
 /// Deterministic: the same inputs produce the same [`ClassifiedPlan`]
 /// (the walk sorts and deduplicates before it returns).
-pub fn plan_classified(
+pub fn plan_classified<S: BuildHasher>(
     kind: ChangeKind,
     changed: &Path,
-    importers: &HashMap<PathBuf, Vec<PathBuf>>,
-    accepting: &HashSet<PathBuf>,
-    entries: &HashSet<PathBuf>,
+    importers: &HashMap<PathBuf, Vec<PathBuf>, S>,
+    accepting: &HashSet<PathBuf, S>,
+    entries: &HashSet<PathBuf, S>,
 ) -> ClassifiedPlan {
     let _span =
         tracing::debug_span!("hmr_boundary_classified", changed = %changed.display()).entered();
