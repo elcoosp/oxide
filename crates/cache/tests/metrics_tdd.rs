@@ -54,7 +54,7 @@ fn entry(body: &[u8], tags: &[&str]) -> Entry {
         body: body.to_vec(),
         status: 200,
         headers: vec![("content-type".into(), "text/html".into())],
-        tags: tags.iter().map(|s| s.to_string()).collect(),
+        tags: tags.iter().map(std::string::ToString::to_string).collect(),
         policy: Policy {
             ttl: Duration::from_secs(60),
             swr: None,
@@ -77,7 +77,7 @@ fn metrics_observer_is_a_cache_observer() {
     let cache = Arc::new(TieredCache::new(64 * 1024 * 1024).with_observer(metrics.clone()));
     // No panic = the coercion + attach hold; the traffic pins below prove
     // the rows land.
-    assert!(cache.stats().hits == 0);
+    assert_eq!(cache.stats().hits, 0);
     let _ = &*metrics;
 }
 
