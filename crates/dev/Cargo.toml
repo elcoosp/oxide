@@ -102,7 +102,9 @@ required-features = ["bench-util"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-# V2-A02: this crate does not inherit the workspace lints yet (the recorded
-# dedicated hygiene pass adopts pedantic) — declared so the newer cargo
-# `missing_lints_inheritance` notice stays silent about the intent.
+# V2-A02 finish: this crate now inherits the workspace lint policy
+# (`[workspace.lints]` rust warnings=deny, clippy pedantic=warn) — the
+# dedicated hygiene pass cleared every pedantic finding at the source, so
+# the bare-table opt-out is retired.
 [lints]
+workspace = true
