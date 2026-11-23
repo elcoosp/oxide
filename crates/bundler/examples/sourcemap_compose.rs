@@ -13,7 +13,7 @@
 //!    V3 JSON string. The chain folds it into the accumulated map; a
 //!    mapless plugin is position-preserving and keeps the map intact.
 //! 3. The bundlers: `RolldownBundler` attaches the folded map to
-//!    `HookTransformOutput.map`, and the ChunkBundler stitches the
+//!    `HookTransformOutput.map`, and the `ChunkBundler` stitches the
 //!    per-module compiler maps into the emitted chunk `.map` (replacing the
 //!    old `{}` stub).
 //!
