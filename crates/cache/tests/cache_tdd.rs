@@ -24,7 +24,7 @@ fn entry(body: &[u8], tags: &[&str], policy: Policy) -> Entry {
         body: body.to_vec(),
         status: 200,
         headers: vec![("content-type".into(), "text/html".into())],
-        tags: tags.iter().map(|s| s.to_string()).collect(),
+        tags: tags.iter().map(std::string::ToString::to_string).collect(),
         policy,
         stored_at: now_ms(),
         etag: "\"v1\"".into(),
@@ -217,7 +217,7 @@ async fn disk_tag_lookup() {
     t1.sort();
     assert_eq!(t1, vec!["k1".to_string(), "k2".to_string()]);
     assert_eq!(disk.tag_keys("t2").unwrap(), vec!["k1".to_string()]);
-    assert!(disk.tag_keys("nope").unwrap().is_empty());
+    assert_eq!(disk.tag_keys("nope").unwrap(), [] as [std::string::String; 0]);
 
     // Deleting a key removes it from the tag index too.
     disk.delete("k1").unwrap();
@@ -579,7 +579,7 @@ impl CacheHandler for FakeRemote {
         Ok(())
     }
     async fn tag_keys(&self, tag: &str) -> oxide_fw_cache::Result<Vec<String>> {
-        Ok(self.tags.get(tag).map(|l| l.clone()).unwrap_or_default())
+        Ok(self.tags.get(tag).map_or_default(|l| l.clone()))
     }
     async fn invalidate_tag(&self, tag: &str, soft: bool) -> oxide_fw_cache::Result<usize> {
         let keys = self.tag_keys(tag).await?;
@@ -1012,7 +1012,7 @@ fn simple_entry(body: &[u8], tags: &[&str]) -> Entry {
         body: body.to_vec(),
         status: 200,
         headers: vec![],
-        tags: tags.iter().map(|s| s.to_string()).collect(),
+        tags: tags.iter().map(std::string::ToString::to_string).collect(),
         policy: Policy {
             ttl: Duration::from_secs(60),
             swr: None,
