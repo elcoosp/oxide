@@ -305,7 +305,9 @@ impl HttpCacheHandler {
     ) -> Result<(u16, Vec<u8>)> {
         let exchange = self.gated(method, url, body);
         if let Some(deadline) = self.deadline {
-            if let Ok(result) = tokio::time::timeout(deadline, exchange).await { result } else {
+            if let Ok(result) = tokio::time::timeout(deadline, exchange).await {
+                result
+            } else {
                 tracing::warn!(
                     code = "CACHE-HTTP",
                     url = %url,
