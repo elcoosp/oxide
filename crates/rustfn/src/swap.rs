@@ -34,6 +34,12 @@ use oxide_fw_diagnostics::OxideError;
 
 use crate::host::{RegistryError, RegistryErrorKind, RustFnHost, RustFnLibrary};
 
+// V2-F08 M2: re-export the introspection surface so `use
+// oxide_rustfn::swap::RegistryReport` serves the dev overlay (the
+// same shape the boot-time host exposes — the "one consult surface"
+// contract, lifted to the report).
+pub use crate::host::RegistryReport;
+
 /// One id → export pair of a rebuilt library: the loop's swap input, so
 /// the host never re-derives ids from raw types payloads (the loop owns
 /// the secret and the ONE id definition).
@@ -120,6 +126,27 @@ impl SwappableHost {
         }
     }
 
+    /// A swappable host wrapping a pre-built [`RustFnHost`] (V2-F08 M2:
+    /// the dev overlay's `with_timeout` / `with_lanes` config surface
+    /// needs a way to construct the swappable host from a configured
+    /// boot-time host — the `RegistryReport` introspection exposes
+    /// the configured budget and lane count, so the overlay's "is the
+    /// budget set?" check reads them back).
+    ///
+    /// The host's mounted libraries and registered ids carry through —
+    /// the dev loop's first swap re-points them at the rebuilt library.
+    /// The generation starts at `0` (the swap state's own count; the
+    /// boot-time host's mounts are generation `0`).
+    #[must_use]
+    pub fn with_host(host: RustFnHost) -> Self {
+        Self {
+            state: Mutex::new(Swapped {
+                host,
+                generation: 0,
+            }),
+        }
+    }
+
     /// The swap count so far (0 on a fresh host; each `swap` bumps by 1).
     ///
     /// # Panics
@@ -128,6 +155,36 @@ impl SwappableHost {
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.state.lock().expect("the swap lock").generation
+    }
+
+    /// A snapshot of the swappable host's posture for the dev overlay's
+    /// observability (V2-F08 M2): the live generation, the mount count,
+    /// the id count, the sorted ids, whether a types payload is mounted,
+    /// the per-function timeout, and the blocking-lane count. ONE read
+    /// over the swap lock, not N — the dev overlay renders the report,
+    /// it does not take the lock per field.
+    ///
+    /// The boot-time [`crate::host::RustFnHost`] answers the same shape
+    /// (its `report` reports generation `0`), so the dev overlay
+    /// introspects EITHER host through [`crate::host::RegistryReport`]
+    /// — the same "one consult surface" contract M1 landed for
+    /// [`crate::host::RustFnRegistry::call`].
+    ///
+    /// # Panics
+    ///
+    /// When the swap lock is poisoned (a call panicked while holding it).
+    #[must_use]
+    pub fn report(&self) -> crate::host::RegistryReport {
+        let st = self.state.lock().expect("the swap lock");
+        crate::host::RegistryReport {
+            generation: st.generation,
+            mount_count: st.host.mount_count(),
+            id_count: st.host.ids().len(),
+            ids: st.host.ids(),
+            has_types: st.host.types_json().is_some(),
+            timeout_secs: st.host.timeout_for_consult().as_secs(),
+            lanes: st.host.lanes(),
+        }
     }
 
     /// Mount the rebuilt library and re-point every binding at it. Ids the
@@ -269,5 +326,76 @@ impl SwappableHost {
             crate::host::RFN_LOAD,
             "the swappable host state is poisoned (a call panicked while holding the swap lock)",
         )
+    }
+}
+
+/// The consult seam the dispatcher wires: `Arc<SwappableHost>` IS-A
+/// `Arc<dyn RustFnRegistry>`, so the dev-loop host and the boot-time
+/// [`crate::host::RustFnHost`] share ONE consult surface. The
+/// dispatcher no longer forks between a boot-time registry and a
+/// dev-loop adapter — the same `has` / `call` / `types_json` the
+/// server crate's `RustFirstDispatcher` consults answers through both.
+///
+/// `has` and `types_json` consult the live swap state through the
+/// short mutex. `call` resolves the library `Arc` + entry name AND
+/// clones the host's permit semaphore + timeout UNDER the swap lock,
+/// converts the args JSON to the ODF bytes the boundary carries, then
+/// runs the call OUTSIDE the lock through the host's shared permit +
+/// `spawn_blocking` + timeout trio — an in-flight call holds only its
+/// library `Arc` and a permit, so a swap never waits on it and a call
+/// never waits on a swap (the same two-phase shape [`Self::call_now`]
+/// runs, lifted onto the runtime).
+///
+/// # Panics
+///
+/// The lock accessors panic on a poisoned swap lock — the same policy
+/// [`SwappableHost`]'s other accessors hold (the state is panic-free
+/// by construction; a poison means the dev loop's host is unsalvageable).
+#[async_trait::async_trait]
+impl crate::host::RustFnRegistry for SwappableHost {
+    fn has(&self, id: &str) -> bool {
+        SwappableHost::has(self, id)
+    }
+
+    fn types_json(&self) -> Option<String> {
+        let st = self.state.lock().expect("the swap lock");
+        st.host.types_json()
+    }
+
+    async fn call(
+        &self,
+        id: &str,
+        args_json: &[u8],
+    ) -> Result<Vec<u8>, crate::host::RegistryError> {
+        use crate::host::{RegistryError, RegistryErrorKind};
+
+        // Resolve the library `Arc` + entry name AND clone the host's
+        // permit semaphore + budget UNDER the swap lock, convert the
+        // args JSON to the ODF bytes the boundary carries — then run
+        // the call OUTSIDE the lock through the shared trio. A call in
+        // flight holds only its library `Arc` and a permit, so swaps
+        // (and retires of OTHER mounts) never wait on it, and the swap
+        // lock is never held across an await.
+        let (lib, name, input, permits, timeout) = {
+            let st = self.state.lock().expect("the swap lock");
+            let Some((lib, name)) = st.host.resolve_call(id) else {
+                return Err(RegistryError {
+                    kind: RegistryErrorKind::NotFound,
+                    message: format!("no native function registered under id {id:?}"),
+                });
+            };
+            let input = crate::host::args_to_odf(args_json).map_err(|e| RegistryError {
+                kind: RegistryErrorKind::Wire,
+                message: e.to_string(),
+            })?;
+            (
+                lib,
+                name,
+                input,
+                st.host.permits_for_consult(),
+                st.host.timeout_for_consult(),
+            )
+        };
+        crate::host::run_resolved_call(permits, timeout, lib, name, input).await
     }
 }
