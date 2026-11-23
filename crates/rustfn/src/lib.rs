@@ -20,17 +20,22 @@
 //! names — `Arc<ChainedRegistry>` IS-A `Arc<dyn RustFnRegistry>`, so the
 //! dispatcher consults ONE chain over every native crate's host.
 //!
-//! The remaining F08 halves are the CLI-owned loops documented in
-//! `docs/deviations.md`: the dev cargo-build/watch half and the
-//! production `dist/native/<lib>` emission ride the `rust_fns` fact
-//! the R02 refusal seam already carries; the dispatcher consult lands
-//! in the server crate (`RustFirstDispatcher`).
+//! The call-outcome observability decorator ([`stats`]) closes the gap
+//! the substrate's own rustdocs name ("the registry has no traffic
+//! counters to expose yet"): `StatsRegistry` wraps
+//! `Arc<dyn RustFnRegistry>` and IS-A `RustFnRegistry` itself, so
+//! `Arc<StatsRegistry>` upcasts to `Arc<dyn RustFnRegistry>` and the
+//! dispatcher consults ONE instrumented registry — every served call
+//! and every wire-arm refusal lands in a [`stats::CallStats`] snapshot
+//! the dev overlay reads through the same "one consult surface"
+//! contract the posture snapshots hold.
 
 pub mod abi;
 pub mod bridge;
 pub mod chain;
 pub mod host;
 pub mod shim;
+pub mod stats;
 pub mod swap;
 pub mod types;
 
@@ -53,6 +58,15 @@ pub use crate::swap::{FnBinding, RetireReport, SwapReport, SwappableHost};
 // "consult each host in turn" the host and swap modules named as the
 // missing piece lives here (spec §V2-F08 "Host").
 pub use crate::chain::{ChainedRegistry, ChainedReport};
+// V2-F08 M4: the call-outcome observability decorator — `StatsRegistry`
+// IS-A `RustFnRegistry`, so the dispatcher consults ONE instrumented
+// registry through the same object-safe seam it already wires for the
+// boot-time host, the dev-loop host and the chain. The posture snapshots
+// answer "is the host attached?"; `CallStats` answers "how many native
+// calls succeeded vs fell back, and which wire arm refused?" — the gap
+// the substrate's own rustdocs name ("the registry has no traffic
+// counters to expose yet").
+pub use crate::stats::{CallStats, StatsRegistry};
 // The macro namespace and the trait namespace share one name (the
 // serde pattern): `use oxide_rustfn::TsType` serves both
 // `#[derive(TsType)]` and `T: TsType`.
@@ -105,6 +119,7 @@ pub mod prelude {
     pub use crate::host::{
         RegistryError, RegistryReport, RustFnHost, RustFnLibrary, RustFnRegistry,
     };
+    pub use crate::stats::{CallStats, StatsRegistry};
     pub use crate::swap::{FnBinding, SwappableHost};
     pub use crate::{TsType, export_table, server_fn};
 }
