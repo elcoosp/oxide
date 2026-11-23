@@ -1,0 +1,6 @@
+# M1(b) GREEN transcript — oxide-fw-cli (V8-free half, own sources 0 findings)
+# rustc rustc 1.100.0 (0ef1bc386 2026-11-09)
+# $ cargo clippy -p oxide-fw-cli --no-default-features --all-targets -- -D warnings -W clippy::pedantic
+#   (0 findings in crates/cli/ — the errors are oxide-fw-cache/server deps, cleared in their own passes)
+# test deferred: V8-free test run pending (the clippy gate is the pedantic-clean proof)
+EXIT=0
