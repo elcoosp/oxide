@@ -320,7 +320,10 @@ impl Bundler for RolldownBundler {
         changed: Option<&[PathBuf]>,
     ) -> crate::Result<BundleOutput> {
         let desired_hash = hash_bundle_options(options);
-        let mut guard = self.incremental.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .incremental
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let needs_new = match guard.as_ref() {
             None => true,
@@ -570,7 +573,8 @@ fn convert(
                 } else {
                     ChunkKind::Shared
                 };
-                let imports: Vec<String> = c.imports.iter().map(arcstr::ArcStr::to_string).collect();
+                let imports: Vec<String> =
+                    c.imports.iter().map(arcstr::ArcStr::to_string).collect();
                 // Hash the persisted file (Rolldown `write()` already saved it).
                 let hash = std::fs::read(out_dir.join(&file))
                     .map_or_default(|b| blake3::hash(&b).to_hex().to_string()[..12].to_string());
@@ -622,10 +626,8 @@ fn convert(
         // entry chunk PLUS every chunk transitively reachable through the
         // import graph (shared chunks the route actually loads). The old
         // entry-only number under-reported every route that shares code.
-        let size_of = |file: &str| -> u64 {
-            std::fs::metadata(out_dir.join(file))
-                .map_or(0, |m| m.len())
-        };
+        let size_of =
+            |file: &str| -> u64 { std::fs::metadata(out_dir.join(file)).map_or(0, |m| m.len()) };
         // file name → (imports as file names, own bytes)
         let by_name: std::collections::HashMap<String, (&Vec<String>, u64)> = chunks
             .iter()
@@ -650,7 +652,8 @@ fn convert(
                         // Imports may be a name or a file; normalize via file_of.
                         let child = file_of
                             .iter()
-                            .find(|(_, f)| f.as_str() == i.as_str()).map_or_else(|| i.clone(), |(name, _)| name.clone());
+                            .find(|(_, f)| f.as_str() == i.as_str())
+                            .map_or_else(|| i.clone(), |(name, _)| name.clone());
                         stack.push(child);
                     }
                 }
@@ -674,7 +677,8 @@ fn convert(
                         for i in &ch.imports {
                             let child = file_of
                                 .iter()
-                                .find(|(_, f)| f.as_str() == i.as_str()).map_or_else(|| i.clone(), |(name, _)| name.clone());
+                                .find(|(_, f)| f.as_str() == i.as_str())
+                                .map_or_else(|| i.clone(), |(name, _)| name.clone());
                             stack.push(child);
                         }
                     }
@@ -1023,7 +1027,8 @@ impl Plugin for CssPlugin {
             // derives its CSS file names, so an unchanged stylesheet lands on
             // the same file across builds.
             let stem = Path::new(&bare)
-                .file_stem().map_or_else(|| "style".to_string(), |s| s.to_string_lossy().to_string());
+                .file_stem()
+                .map_or_else(|| "style".to_string(), |s| s.to_string_lossy().to_string());
             let hash = crate::ChunkBundler::content_hash(&[code.as_bytes()]);
             let file_name = format!("{stem}-{hash}.css");
 
