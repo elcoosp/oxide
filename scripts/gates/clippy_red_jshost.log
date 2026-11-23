@@ -1,5 +1,7 @@
 warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
 warning: workspace (manifest) generated 1 warning
+    Checking oxide-fw-diagnostics v0.17.0 (/home/z/my-project/oxide/crates/diagnostics)
+    Checking oxc_sourcemap v9.0.0
     Checking indexmap v2.14.2
     Checking moka v0.12.16
     Checking oxc_transformer v0.155.0
@@ -7,88 +9,14 @@ warning: workspace (manifest) generated 1 warning
     Checking tokio v1.54.1
     Checking oxc_codegen v0.155.0
     Checking oxide-fw-compiler v0.17.0 (/home/z/my-project/oxide/crates/compiler)
+    Checking oxide-fw-cache v0.17.0 (/home/z/my-project/oxide/crates/cache)
     Checking oxide-fw-odf v0.17.0 (/home/z/my-project/oxide/crates/odf)
     Checking tinytemplate v1.2.1
     Checking criterion v0.8.2
-    Checking oxide-fw-cache v0.17.0 (/home/z/my-project/oxide/crates/cache)
-error: item in documentation is missing backticks
-  --> crates/cache/src/../README.md:41:378
-   |
-41 | ...11.3 header set (`cache_control` from the policy, the entry's ETag, the `Date`) composed into one `ServeOutcome` (`NotModified` c...
-   |                                                                  ^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-   = note: `-D clippy::doc-markdown` implied by `-D warnings`
-   = help: to override `-D warnings` add `#[allow(clippy::doc_markdown)]`
-help: try
-   |
-41 - - **The §11.3 serving half** (F54) — `serve_entry(entry, req_headers, now_secs)` (`http.rs`): the ONE call a host makes to serve a stored entry — the canonical conditional comparison (`conditional_response`: weak `If-None-Match` lists and `*`, then `If-Modified-Since` against the entry's `Last-Modified`) and the §11.3 header set (`cache_control` from the policy, the entry's ETag, the `Date`) composed into one `ServeOutcome` (`NotModified` carries the validator set a 304 SHOULD have — RFC 9110 §15.4.5; `Full` carries the stored headers verbatim with the generated set filling only the gaps, one header per name). The helpers the audit named zero-consumer works compose here at last, and the serving decision gains the capability the hand-rolled matches never had: an `If-Modified-Since`-only re-check against an unchanged `Last-Modified` answers 304 instead of re-downloading. `crates/cache/examples/conditional.rs` serves one entry three ways (first visit, ETag re-check, IMS-only re-check)
-41 + - **The §11.3 serving half** (F54) — `serve_entry(entry, req_headers, now_secs)` (`http.rs`): the ONE call a host makes to serve a stored entry — the canonical conditional comparison (`conditional_response`: weak `If-None-Match` lists and `*`, then `If-Modified-Since` against the entry's `Last-Modified`) and the §11.3 header set (`cache_control` from the policy, the entry's `ETag`, the `Date`) composed into one `ServeOutcome` (`NotModified` carries the validator set a 304 SHOULD have — RFC 9110 §15.4.5; `Full` carries the stored headers verbatim with the generated set filling only the gaps, one header per name). The helpers the audit named zero-consumer works compose here at last, and the serving decision gains the capability the hand-rolled matches never had: an `If-Modified-Since`-only re-check against an unchanged `Last-Modified` answers 304 instead of re-downloading. `crates/cache/examples/conditional.rs` serves one entry three ways (first visit, ETag re-check, IMS-only re-check)
-   |
-
-error: item in documentation is missing backticks
-  --> crates/cache/src/../README.md:41:964
-   |
-41 | ...les/conditional.rs` serves one entry three ways (first visit, ETag re-check, IMS-only re-check)
-   |                                                                  ^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-   |
-41 - - **The §11.3 serving half** (F54) — `serve_entry(entry, req_headers, now_secs)` (`http.rs`): the ONE call a host makes to serve a stored entry — the canonical conditional comparison (`conditional_response`: weak `If-None-Match` lists and `*`, then `If-Modified-Since` against the entry's `Last-Modified`) and the §11.3 header set (`cache_control` from the policy, the entry's ETag, the `Date`) composed into one `ServeOutcome` (`NotModified` carries the validator set a 304 SHOULD have — RFC 9110 §15.4.5; `Full` carries the stored headers verbatim with the generated set filling only the gaps, one header per name). The helpers the audit named zero-consumer works compose here at last, and the serving decision gains the capability the hand-rolled matches never had: an `If-Modified-Since`-only re-check against an unchanged `Last-Modified` answers 304 instead of re-downloading. `crates/cache/examples/conditional.rs` serves one entry three ways (first visit, ETag re-check, IMS-only re-check)
-41 + - **The §11.3 serving half** (F54) — `serve_entry(entry, req_headers, now_secs)` (`http.rs`): the ONE call a host makes to serve a stored entry — the canonical conditional comparison (`conditional_response`: weak `If-None-Match` lists and `*`, then `If-Modified-Since` against the entry's `Last-Modified`) and the §11.3 header set (`cache_control` from the policy, the entry's ETag, the `Date`) composed into one `ServeOutcome` (`NotModified` carries the validator set a 304 SHOULD have — RFC 9110 §15.4.5; `Full` carries the stored headers verbatim with the generated set filling only the gaps, one header per name). The helpers the audit named zero-consumer works compose here at last, and the serving decision gains the capability the hand-rolled matches never had: an `If-Modified-Since`-only re-check against an unchanged `Last-Modified` answers 304 instead of re-downloading. `crates/cache/examples/conditional.rs` serves one entry three ways (first visit, `ETag` re-check, IMS-only re-check)
-   |
-
-error: docs for function returning `Result` missing `# Errors` section
-  --> crates/cache/src/codec.rs:28:1
-   |
-28 | pub fn encode_entry(e: &Entry) -> Result<Vec<u8>> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-   = note: `-D clippy::missing-errors-doc` implied by `-D warnings`
-   = help: to override `-D warnings` add `#[allow(clippy::missing_errors_doc)]`
-
-error: docs for function returning `Result` missing `# Errors` section
-  --> crates/cache/src/codec.rs:44:1
-   |
-44 | pub fn decode_entry(bytes: &[u8]) -> Result<Entry> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: this function could have a `#[must_use]` attribute
-  --> crates/cache/src/http.rs:22:8
-   |
-22 | pub fn conditional_response(req_headers: &[(String, String)], entry: &Entry) -> Option<u16> {
-   |        ^^^^^^^^^^^^^^^^^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-   = note: `-D clippy::must-use-candidate` implied by `-D warnings`
-   = help: to override `-D warnings` add `#[allow(clippy::must_use_candidate)]`
-help: add the attribute
-   |
-22 + #[must_use]
-23 | pub fn conditional_response(req_headers: &[(String, String)], entry: &Entry) -> Option<u16> {
-   |
-
-error: this function could have a `#[must_use]` attribute
-  --> crates/cache/src/http.rs:76:8
-   |
-76 | pub fn cache_control(policy: &Policy) -> String {
-   |        ^^^^^^^^^^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-   |
-76 + #[must_use]
-77 | pub fn cache_control(policy: &Policy) -> String {
-   |
-
 error: `format!(..)` appended to existing `String`
-  --> crates/cache/src/http.rs:83:9
+  --> crates/cache/src/http.rs:85:9
    |
-83 |         out.push_str(&format!(", stale-while-revalidate={}", swr.as_secs()));
+85 |         out.push_str(&format!(", stale-while-revalidate={}", swr.as_secs()));
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: you may need to import the `std::fmt::Write` trait
@@ -97,41 +25,28 @@ error: `format!(..)` appended to existing `String`
    = help: to override `-D warnings` add `#[allow(clippy::format_push_string)]`
 help: consider using `write!` to avoid the extra allocation
    |
-83 -         out.push_str(&format!(", stale-while-revalidate={}", swr.as_secs()));
-83 +         let _ = write!(out, ", stale-while-revalidate={}", swr.as_secs());
+85 -         out.push_str(&format!(", stale-while-revalidate={}", swr.as_secs()));
+85 +         let _ = write!(out, ", stale-while-revalidate={}", swr.as_secs());
    |
 
 error: `format!(..)` appended to existing `String`
-  --> crates/cache/src/http.rs:86:9
+  --> crates/cache/src/http.rs:88:9
    |
-86 |         out.push_str(&format!(", stale-if-error={}", sie.as_secs()));
+88 |         out.push_str(&format!(", stale-if-error={}", sie.as_secs()));
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: you may need to import the `std::fmt::Write` trait
    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
 help: consider using `write!` to avoid the extra allocation
    |
-86 -         out.push_str(&format!(", stale-if-error={}", sie.as_secs()));
-86 +         let _ = write!(out, ", stale-if-error={}", sie.as_secs());
+88 -         out.push_str(&format!(", stale-if-error={}", sie.as_secs()));
+88 +         let _ = write!(out, ", stale-if-error={}", sie.as_secs());
    |
 
-error: this function could have a `#[must_use]` attribute
-   --> crates/cache/src/http.rs:105:8
-    |
-105 | pub fn parse_http_date(s: &str) -> Option<u64> {
-    |        ^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-105 + #[must_use]
-106 | pub fn parse_http_date(s: &str) -> Option<u64> {
-    |
-
 error: casting `usize` to `i64` may wrap around the value on targets with 64-bit wide pointers
-   --> crates/cache/src/http.rs:119:15
+   --> crates/cache/src/http.rs:122:15
     |
-119 |     let mon = MONTHS.iter().position(|m| p[1].eq_ignore_ascii_case(m))? as i64 + 1;
+122 |     let mon = MONTHS.iter().position(|m| p[1].eq_ignore_ascii_case(m))? as i64 + 1;
     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_wrap
@@ -139,9 +54,9 @@ error: casting `usize` to `i64` may wrap around the value on targets with 64-bit
     = help: to override `-D warnings` add `#[allow(clippy::cast_possible_wrap)]`
 
 error: casting `i64` to `u32` may truncate the value
-   --> crates/cache/src/http.rs:135:38
+   --> crates/cache/src/http.rs:138:38
     |
-135 |     let days = days_from_civil(year, mon as u32, day as u32);
+138 |     let days = days_from_civil(year, mon as u32, day as u32);
     |                                      ^^^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
@@ -150,14 +65,14 @@ error: casting `i64` to `u32` may truncate the value
     = help: to override `-D warnings` add `#[allow(clippy::cast_possible_truncation)]`
 help: ... or use `try_from` and handle the error accordingly
     |
-135 -     let days = days_from_civil(year, mon as u32, day as u32);
-135 +     let days = days_from_civil(year, u32::try_from(mon), day as u32);
+138 -     let days = days_from_civil(year, mon as u32, day as u32);
+138 +     let days = days_from_civil(year, u32::try_from(mon), day as u32);
     |
 
 error: casting `i64` to `u32` may lose the sign of the value
-   --> crates/cache/src/http.rs:135:38
+   --> crates/cache/src/http.rs:138:38
     |
-135 |     let days = days_from_civil(year, mon as u32, day as u32);
+138 |     let days = days_from_civil(year, mon as u32, day as u32);
     |                                      ^^^^^^^^^^
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
@@ -165,267 +80,102 @@ error: casting `i64` to `u32` may lose the sign of the value
     = help: to override `-D warnings` add `#[allow(clippy::cast_sign_loss)]`
 
 error: casting `i64` to `u32` may truncate the value
-   --> crates/cache/src/http.rs:135:50
+   --> crates/cache/src/http.rs:138:50
     |
-135 |     let days = days_from_civil(year, mon as u32, day as u32);
+138 |     let days = days_from_civil(year, mon as u32, day as u32);
     |                                                  ^^^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-135 -     let days = days_from_civil(year, mon as u32, day as u32);
-135 +     let days = days_from_civil(year, mon as u32, u32::try_from(day));
+138 -     let days = days_from_civil(year, mon as u32, day as u32);
+138 +     let days = days_from_civil(year, mon as u32, u32::try_from(day));
     |
 
 error: casting `i64` to `u32` may lose the sign of the value
-   --> crates/cache/src/http.rs:135:50
+   --> crates/cache/src/http.rs:138:50
     |
-135 |     let days = days_from_civil(year, mon as u32, day as u32);
+138 |     let days = days_from_civil(year, mon as u32, day as u32);
     |                                                  ^^^^^^^^^^
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
 
 error: casting `i64` to `u64` may lose the sign of the value
-   --> crates/cache/src/http.rs:136:10
+   --> crates/cache/src/http.rs:139:10
     |
-136 |     Some((days * 86_400 + h * 3_600 + m * 60 + sec) as u64)
+139 |     Some((days * 86_400 + h * 3_600 + m * 60 + sec) as u64)
     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_unsigned()` instead: `(days * 86_400 + h * 3_600 + m * 60 + sec).cast_unsigned()`
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
 
-error: this function could have a `#[must_use]` attribute
-   --> crates/cache/src/http.rs:140:8
-    |
-140 | pub fn http_date(unix_secs: u64) -> String {
-    |        ^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-140 + #[must_use]
-141 | pub fn http_date(unix_secs: u64) -> String {
-    |
-
 error: casting `u64` to `i64` may wrap around the value
-   --> crates/cache/src/http.rs:141:16
+   --> crates/cache/src/http.rs:145:16
     |
-141 |     let days = (unix_secs / 86_400) as i64;
+145 |     let days = (unix_secs / 86_400) as i64;
     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `(unix_secs / 86_400).cast_signed()`
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_wrap
 
 error: casting `i64` to `usize` may truncate the value on targets with 32-bit wide pointers
-   --> crates/cache/src/http.rs:144:23
+   --> crates/cache/src/http.rs:148:23
     |
-144 |     let wd = WEEKDAYS[((days + 4).rem_euclid(7)) as usize]; // 1970-01-01 was a Thursday
+148 |     let wd = WEEKDAYS[((days + 4).rem_euclid(7)) as usize]; // 1970-01-01 was a Thursday
     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-144 -     let wd = WEEKDAYS[((days + 4).rem_euclid(7)) as usize]; // 1970-01-01 was a Thursday
-144 +     let wd = WEEKDAYS[usize::try_from(((days + 4).rem_euclid(7)))]; // 1970-01-01 was a Thursday
+148 -     let wd = WEEKDAYS[((days + 4).rem_euclid(7)) as usize]; // 1970-01-01 was a Thursday
+148 +     let wd = WEEKDAYS[usize::try_from(((days + 4).rem_euclid(7)))]; // 1970-01-01 was a Thursday
     |
 
 error: casting `i32` to `usize` may lose the sign of the value
-   --> crates/cache/src/http.rs:147:16
+   --> crates/cache/src/http.rs:151:16
     |
-147 |         MONTHS[(m - 1) as usize],
+151 |         MONTHS[(m - 1) as usize],
     |                ^^^^^^^^^^^^^^^^
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
 
-error: casts from `u32` to `i64` can be expressed infallibly using `From`
-   --> crates/cache/src/http.rs:159:15
-    |
-159 |     let mp = (m as i64 + 9) % 12; // [0, 11]
-    |               ^^^^^^^^
-    |
-    = help: an `as` cast can become silently lossy if the types change in the future
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_lossless
-    = note: `-D clippy::cast-lossless` implied by `-D warnings`
-    = help: to override `-D warnings` add `#[allow(clippy::cast_lossless)]`
-help: use `i64::from` instead
-    |
-159 -     let mp = (m as i64 + 9) % 12; // [0, 11]
-159 +     let mp = (i64::from(m) + 9) % 12; // [0, 11]
-    |
-
-error: casts from `u32` to `i64` can be expressed infallibly using `From`
-   --> crates/cache/src/http.rs:160:36
-    |
-160 |     let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
-    |                                    ^^^^^^^^
-    |
-    = help: an `as` cast can become silently lossy if the types change in the future
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_lossless
-help: use `i64::from` instead
-    |
-160 -     let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
-160 +     let doy = (153 * mp + 2) / 5 + i64::from(d) - 1; // [0, 365]
-    |
-
 error: casting `i64` to `i32` may truncate the value
-   --> crates/cache/src/http.rs:176:38
+   --> crates/cache/src/http.rs:180:38
     |
-176 |     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
+180 |     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
     |                                      ^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-176 -     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
-176 +     (if m <= 2 { y + 1 } else { y }, i32::try_from(m), d as i32)
+180 -     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
+180 +     (if m <= 2 { y + 1 } else { y }, i32::try_from(m), d as i32)
     |
 
 error: casting `i64` to `i32` may truncate the value
-   --> crates/cache/src/http.rs:176:48
+   --> crates/cache/src/http.rs:180:48
     |
-176 |     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
+180 |     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
     |                                                ^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-176 -     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
-176 +     (if m <= 2 { y + 1 } else { y }, m as i32, i32::try_from(d))
+180 -     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
+180 +     (if m <= 2 { y + 1 } else { y }, m as i32, i32::try_from(d))
     |
-
-error: this function could have a `#[must_use]` attribute
-   --> crates/cache/src/http.rs:183:8
-    |
-183 | pub fn memo_key(method: &str, url: &str, body: &[u8]) -> String {
-    |        ^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-183 + #[must_use]
-184 | pub fn memo_key(method: &str, url: &str, body: &[u8]) -> String {
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/http.rs:203:12
-    |
-203 |     pub fn get(&self, key: &str) -> Option<Bytes> {
-    |            ^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-203 ~     #[must_use]
-204 ~     pub fn get(&self, key: &str) -> Option<Bytes> {
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/http.rs:213:12
-    |
-213 |     pub fn get_for_request(&self, method: &str, url: &str, body: &[u8]) -> Option<Bytes> {
-    |            ^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-213 ~     #[must_use]
-214 ~     pub fn get_for_request(&self, method: &str, url: &str, body: &[u8]) -> Option<Bytes> {
-    |
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/http.rs:224:33
-    |
-224 | /// entry's policy, the entry's ETag, the `Date` via [`http_date`])
-    |                                 ^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-224 - /// entry's policy, the entry's ETag, the `Date` via [`http_date`])
-224 + /// entry's policy, the entry's `ETag`, the `Date` via [`http_date`])
-    |
-
-error: this function could have a `#[must_use]` attribute
-   --> crates/cache/src/http.rs:295:8
-    |
-295 | pub fn serve_entry(entry: &Entry, req_headers: &[(String, String)], now_secs: u64) -> ServeOutcome {
-    |        ^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-295 + #[must_use]
-296 | pub fn serve_entry(entry: &Entry, req_headers: &[(String, String)], now_secs: u64) -> ServeOutcome {
-    |
-
-error: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
-   --> crates/cache/src/http_handler.rs:308:13
-    |
-308 | /             match tokio::time::timeout(deadline, exchange).await {
-309 | |                 Ok(result) => result,
-310 | |                 Err(_) => {
-311 | |                     tracing::warn!(
-...   |
-323 | |             }
-    | |_____________^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#single_match_else
-    = note: `-D clippy::single-match-else` implied by `-D warnings`
-    = help: to override `-D warnings` add `#[allow(clippy::single_match_else)]`
-help: try
-    |
-308 ~             if let Ok(result) = tokio::time::timeout(deadline, exchange).await { result } else {
-309 +                 tracing::warn!(
-310 +                     code = "CACHE-HTTP",
-311 +                     url = %url,
-312 +                     deadline = ?deadline,
-313 +                     "the remote cache did not answer within the deadline; \
-314 ~                      degrading (§11.2: a remote cache is an optimization)"
-315 +                 );
-316 +                 Err(err(
-317 +                     "CACHE-HTTP",
-318 +                     format!("the exchange exceeded its {deadline:?} deadline"),
-319 +                 ))
-320 +             }
-    |
-
-error: item in documentation is missing backticks
-  --> crates/cache/src/single_flight.rs:10:74
-   |
-10 | //! - a follower that finds the entry subscribes while still holding the DashMap shard
-   |                                                                          ^^^^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-   |
-10 - //! - a follower that finds the entry subscribes while still holding the DashMap shard
-10 + //! - a follower that finds the entry subscribes while still holding the `DashMap` shard
-   |
-
-error: this method could have a `#[must_use]` attribute
-  --> crates/cache/src/single_flight.rs:33:12
-   |
-33 |     pub fn new() -> Self {
-   |            ^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-   |
-33 ~     #[must_use]
-34 ~     pub fn new() -> Self {
-   |
 
 error: unused `async` for async trait impl function with no `.await` statements
-  --> crates/cache/src/single_flight.rs:39:5
+  --> crates/cache/src/single_flight.rs:40:5
    |
-39 | /     pub async fn acquire(
-40 | |         &self,
-41 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
-42 | |         key: &str,
+40 | /     pub async fn acquire(
+41 | |         &self,
+42 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+43 | |         key: &str,
 ...  |
-56 | |     }
+57 | |     }
    | |_____^
    |
    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
@@ -434,103 +184,51 @@ error: unused `async` for async trait impl function with no `.await` statements
    = help: to override `-D warnings` add `#[allow(clippy::unused_async_trait_impl)]`
 help: consider removing the `async` from this function and returning `impl Future<Output = FlightSlot>` instead
    |
-39 ~     pub fn acquire(
-40 |         &self,
-41 |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
-42 |         key: &str,
-43 ~     ) -> impl Future<Output = FlightSlot> {
-44 |         // Fast path: subscribe while the shard read lock is held (see module docs).
-45 |         if let Some(tx) = map.get(key) {
-46 ~             return std::future::ready(FlightSlot::Follower(tx.subscribe()));
-47 |         }
-48 ~         std::future::ready(match map.entry(key.to_string()) {
-49 +             dashmap::mapref::entry::Entry::Occupied(e) => FlightSlot::Follower(e.get().subscribe()),
-50 +             dashmap::mapref::entry::Entry::Vacant(e) => {
-51 +                 let (tx, _rx) = broadcast::channel(1);
-52 +                 e.insert(Arc::new(tx.clone()));
-53 +                 FlightSlot::Owner(tx)
-54 +             }
-55 +         })
+40 ~     pub fn acquire(
+41 |         &self,
+42 |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+43 |         key: &str,
+44 ~     ) -> impl Future<Output = FlightSlot> {
+45 |         // Fast path: subscribe while the shard read lock is held (see module docs).
+46 |         if let Some(tx) = map.get(key) {
+47 ~             return std::future::ready(FlightSlot::Follower(tx.subscribe()));
+48 |         }
+49 ~         std::future::ready(match map.entry(key.to_string()) {
+50 +             dashmap::mapref::entry::Entry::Occupied(e) => FlightSlot::Follower(e.get().subscribe()),
+51 +             dashmap::mapref::entry::Entry::Vacant(e) => {
+52 +                 let (tx, _rx) = broadcast::channel(1);
+53 +                 e.insert(Arc::new(tx.clone()));
+54 +                 FlightSlot::Owner(tx)
+55 +             }
+56 +         })
    |
 
 error: unused `async` for async trait impl function with no `.await` statements
-  --> crates/cache/src/single_flight.rs:62:5
+  --> crates/cache/src/single_flight.rs:63:5
    |
-62 | /     pub async fn publish_and_cleanup(
-63 | |         &self,
-64 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
-65 | |         key: &str,
+63 | /     pub async fn publish_and_cleanup(
+64 | |         &self,
+65 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+66 | |         key: &str,
 ...  |
-74 | |     }
+75 | |     }
    | |_____^
    |
    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unused_async_trait_impl
 help: consider removing the `async` from this function and returning `impl Future<Output = usize>` instead
    |
-62 ~     pub fn publish_and_cleanup(
-63 |         &self,
+63 ~     pub fn publish_and_cleanup(
+64 |         &self,
 ...
-67 |         entry: Option<Arc<Entry>>,
-68 ~     ) -> impl Future<Output = usize> {
-69 |         map.remove(key); // before publish — see module docs
-70 ~         std::future::ready(match (slot, entry) {
-71 +             (FlightSlot::Owner(tx), Some(value)) => tx.send(value).unwrap_or_default(),
-72 +             _ => 0, // failed owner or a follower slot: cleanup only
-73 +         })
+68 |         entry: Option<Arc<Entry>>,
+69 ~     ) -> impl Future<Output = usize> {
+70 |         map.remove(key); // before publish — see module docs
+71 ~         std::future::ready(match (slot, entry) {
+72 +             (FlightSlot::Owner(tx), Some(value)) => tx.send(value).unwrap_or_default(),
+73 +             _ => 0, // failed owner or a follower slot: cleanup only
+74 +         })
    |
-
-error: item in documentation is missing backticks
-  --> crates/cache/src/single_flight.rs:94:5
-   |
-94 | /// DashMap entry forever (attacker-mintable keys → unbounded growth, and the
-   |     ^^^^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-   |
-94 - /// DashMap entry forever (attacker-mintable keys → unbounded growth, and the
-94 + /// `DashMap` entry forever (attacker-mintable keys → unbounded growth, and the
-   |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/single_flight.rs:108:12
-    |
-108 |     pub fn new(
-    |            ^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-108 ~     #[must_use]
-109 ~     pub fn new(
-    |
-
-error: item in documentation is missing backticks
- --> crates/cache/src/tiers.rs:7:57
-  |
-7 | //! moka enforces `max_capacity` by weight and uses its TinyLFU admission policy
-  |                                                         ^^^^^^^
-  |
-  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-  |
-7 - //! moka enforces `max_capacity` by weight and uses its TinyLFU admission policy
-7 + //! moka enforces `max_capacity` by weight and uses its `TinyLFU` admission policy
-  |
-
-error: item in documentation is missing backticks
- --> crates/cache/src/tiers.rs:8:25
-  |
-8 | //! (spec §11.2: "moka, TinyLFU, weighted by bytes"). Entries heavier than the cap
-  |                         ^^^^^^^
-  |
-  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-  |
-8 - //! (spec §11.2: "moka, TinyLFU, weighted by bytes"). Entries heavier than the cap
-8 + //! (spec §11.2: "moka, `TinyLFU`, weighted by bytes"). Entries heavier than the cap
-  |
 
 error: casting `u128` to `u64` may truncate the value
   --> crates/cache/src/tiers.rs:34:5
@@ -551,156 +249,38 @@ help: ... or use `try_from` and handle the error accordingly
 37 +         .as_millis())
    |
 
-error: item in documentation is missing backticks
-  --> crates/cache/src/tiers.rs:60:54
-   |
-60 | /// moka-backed L0/L1 memory tier (spec §11.2: moka, TinyLFU, weighted by bytes).
-   |                                                      ^^^^^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-   |
-60 - /// moka-backed L0/L1 memory tier (spec §11.2: moka, TinyLFU, weighted by bytes).
-60 + /// moka-backed L0/L1 memory tier (spec §11.2: moka, `TinyLFU`, weighted by bytes).
-   |
-
-error: this method could have a `#[must_use]` attribute
-  --> crates/cache/src/tiers.rs:67:12
-   |
-67 |     pub fn new(max_bytes: u64) -> Self {
-   |            ^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-   |
-67 ~     #[must_use]
-68 ~     pub fn new(max_bytes: u64) -> Self {
-   |
-
-error: casts from `u32` to `u64` can be expressed infallibly using `From`
-  --> crates/cache/src/tiers.rs:71:24
-   |
-71 |                 if w > u32::MAX as u64 {
-   |                        ^^^^^^^^^^^^^^^
-   |
-   = help: an `as` cast can become silently lossy if the types change in the future
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_lossless
-help: use `u64::from` instead
-   |
-71 -                 if w > u32::MAX as u64 {
-71 +                 if w > u64::from(u32::MAX) {
-   |
-
 error: casting `u64` to `u32` may truncate the value
-  --> crates/cache/src/tiers.rs:74:21
+  --> crates/cache/src/tiers.rs:75:21
    |
-74 |                     w as u32
+75 |                     w as u32
    |                     ^^^^^^^^
    |
    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
    |
-74 -                     w as u32
-74 +                     u32::try_from(w)
+75 -                     w as u32
+75 +                     u32::try_from(w)
    |
-
-error: this method could have a `#[must_use]` attribute
-  --> crates/cache/src/tiers.rs:83:12
-   |
-83 |     pub fn get(&self, key: &str) -> Option<Arc<Entry>> {
-   |            ^^^
-   |
-   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-   |
-83 ~     #[must_use]
-84 ~     pub fn get(&self, key: &str) -> Option<Arc<Entry>> {
-   |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/tiers.rs:101:12
-    |
-101 |     pub fn remove(&self, key: &str) -> Option<Arc<Entry>> {
-    |            ^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-101 ~     #[must_use]
-102 ~     pub fn remove(&self, key: &str) -> Option<Arc<Entry>> {
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/tiers.rs:112:12
-    |
-112 |     pub fn len(&self) -> usize {
-    |            ^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-112 ~     #[must_use]
-113 ~     pub fn len(&self) -> usize {
-    |
 
 error: casting `u64` to `usize` may truncate the value on targets with 32-bit wide pointers
-   --> crates/cache/src/tiers.rs:114:9
+   --> crates/cache/src/tiers.rs:118:9
     |
-114 |         self.cache.entry_count() as usize
+118 |         self.cache.entry_count() as usize
     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-114 -         self.cache.entry_count() as usize
-114 +         usize::try_from(self.cache.entry_count())
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/tiers.rs:118:12
-    |
-118 |     pub fn is_empty(&self) -> bool {
-    |            ^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-118 ~     #[must_use]
-119 ~     pub fn is_empty(&self) -> bool {
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/tiers.rs:124:12
-    |
-124 |     pub fn total_bytes(&self) -> u64 {
-    |            ^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-124 ~     #[must_use]
-125 ~     pub fn total_bytes(&self) -> u64 {
-    |
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/tiers.rs:135:69
-    |
-135 | /// Index row: blob path (relative to root), compressed size, tags, stored_at and the
-    |                                                                     ^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-135 - /// Index row: blob path (relative to root), compressed size, tags, stored_at and the
-135 + /// Index row: blob path (relative to root), compressed size, tags, `stored_at` and the
+118 -         self.cache.entry_count() as usize
+118 +         usize::try_from(self.cache.entry_count())
     |
 
 error: this argument is passed by value, but not consumed in the function body
-   --> crates/cache/src/tiers.rs:153:15
+   --> crates/cache/src/tiers.rs:159:15
     |
-153 | fn jsonerr(e: serde_json::Error) -> OxideError {
+159 | fn jsonerr(e: serde_json::Error) -> OxideError {
     |               ^^^^^^^^^^^^^^^^^
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
@@ -708,173 +288,42 @@ error: this argument is passed by value, but not consumed in the function body
     = help: to override `-D warnings` add `#[allow(clippy::needless_pass_by_value)]`
 help: consider taking a reference instead
     |
-153 | fn jsonerr(e: &serde_json::Error) -> OxideError {
+159 | fn jsonerr(e: &serde_json::Error) -> OxideError {
     |               +
 
 error: this argument is passed by value, but not consumed in the function body
-   --> crates/cache/src/tiers.rs:157:13
+   --> crates/cache/src/tiers.rs:163:13
     |
-157 | fn ioerr(e: std::io::Error) -> OxideError {
+163 | fn ioerr(e: std::io::Error) -> OxideError {
     |             ^^^^^^^^^^^^^^
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
 help: consider taking a reference instead
     |
-157 | fn ioerr(e: &std::io::Error) -> OxideError {
+163 | fn ioerr(e: &std::io::Error) -> OxideError {
     |             +
 
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/tiers.rs:272:5
-    |
-272 |     pub fn open(root: std::path::PathBuf) -> Result<Self> {
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/tiers.rs:277:5
-    |
-277 | /     pub fn open_with_budget(
-278 | |         root: std::path::PathBuf,
-279 | |         max_bytes: u64,
-280 | |         max_entry: u64,
-281 | |     ) -> Result<Self> {
-    | |_____________________^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/tiers.rs:363:5
-    |
-363 |     pub fn set(&self, key: &str, entry: &Entry) -> Result<()> {
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
 error: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
-   --> crates/cache/src/tiers.rs:381:39
+   --> crates/cache/src/tiers.rs:399:39
     |
-381 |         serialized.extend_from_slice(&(meta_json.len() as u32).to_be_bytes());
+399 |         serialized.extend_from_slice(&(meta_json.len() as u32).to_be_bytes());
     |                                       ^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-381 -         serialized.extend_from_slice(&(meta_json.len() as u32).to_be_bytes());
-381 +         serialized.extend_from_slice(&u32::try_from(meta_json.len()).to_be_bytes());
+399 -         serialized.extend_from_slice(&(meta_json.len() as u32).to_be_bytes());
+399 +         serialized.extend_from_slice(&u32::try_from(meta_json.len()).to_be_bytes());
     |
-
-error: called `map(<f>).unwrap_or(<a>)` on an `Option` value
-   --> crates/cache/src/tiers.rs:390:25
-    |
-390 |         let prev_size = prev.map(|(s, _)| s).unwrap_or(0);
-    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
-    = note: `-D clippy::map-unwrap-or` implied by `-D warnings`
-    = help: to override `-D warnings` add `#[allow(clippy::map_unwrap_or)]`
-help: use `map_or(<a>, <f>)` instead
-    |
-390 -         let prev_size = prev.map(|(s, _)| s).unwrap_or(0);
-390 +         let prev_size = prev.map_or(0, |(s, _)| s);
-    |
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/tiers.rs:439:37
-    |
-439 |     /// PERF-L1: forget a specific (stored_at, key) placement.
-    |                                     ^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-439 -     /// PERF-L1: forget a specific (stored_at, key) placement.
-439 +     /// PERF-L1: forget a specific (`stored_at`, key) placement.
-    |
-
-error: redundant closure
-   --> crates/cache/src/tiers.rs:441:58
-    |
-441 |         let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
-    |                                                          ^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
-    = note: `-D clippy::redundant-closure-for-method-calls` implied by `-D warnings`
-    = help: to override `-D warnings` add `#[allow(clippy::redundant_closure_for_method_calls)]`
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/tiers.rs:445:45
-    |
-445 |     /// S-08: the indexed (compressed size, stored_at) of `key`, or `None` when absent.
-    |                                             ^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-445 -     /// S-08: the indexed (compressed size, stored_at) of `key`, or `None` when absent.
-445 +     /// S-08: the indexed (compressed size, `stored_at`) of `key`, or `None` when absent.
-    |
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/tiers.rs:461:30
-    |
-461 |     /// PERF-L1: record the (stored_at, key) order entry for `key`. The caller
-    |                              ^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-461 -     /// PERF-L1: record the (stored_at, key) order entry for `key`. The caller
-461 +     /// PERF-L1: record the (`stored_at`, key) order entry for `key`. The caller
-    |
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/tiers.rs:462:64
-    |
-462 |     /// forgets any previous placement first (it knows the old stored_at).
-    |                                                                ^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-462 -     /// forgets any previous placement first (it knows the old stored_at).
-462 +     /// forgets any previous placement first (it knows the old `stored_at`).
-    |
-
-error: redundant closure
-   --> crates/cache/src/tiers.rs:464:58
-    |
-464 |         let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
-    |                                                          ^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
-
-error: redundant closure
-   --> crates/cache/src/tiers.rs:470:58
-    |
-470 |         let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
-    |                                                          ^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/tiers.rs:564:5
-    |
-564 |     pub fn get(&self, key: &str) -> Result<Option<Entry>> {
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
 
 error: this could be rewritten as `let...else`
-   --> crates/cache/src/tiers.rs:581:9
+   --> crates/cache/src/tiers.rs:603:9
     |
-581 | /         let decoded = match zstd::stream::decode_all(raw.as_slice()) {
-582 | |             Ok(d) => d,
-583 | |             Err(_) => {
-584 | |                 self.delete(key)?; // corrupt stream — silent miss (§17.2)
-...   |
-587 | |         };
+603 | /         let decoded = if let Ok(d) = zstd::stream::decode_all(raw.as_slice()) { d } else {
+604 | |             self.delete(key)?; // corrupt stream — silent miss (§17.2)
+605 | |             return Ok(None);
+606 | |         };
     | |__________^
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#manual_let_else
@@ -882,142 +331,16 @@ error: this could be rewritten as `let...else`
     = help: to override `-D warnings` add `#[allow(clippy::manual_let_else)]`
 help: consider writing
     |
-581 ~         let Ok(decoded) = zstd::stream::decode_all(raw.as_slice()) else {
-582 ~                 self.delete(key)?; // corrupt stream — silent miss (§17.2)
-583 +                 return Ok(None);
-584 +             };
+603 ~         let Ok(decoded) = zstd::stream::decode_all(raw.as_slice()) else {
+604 ~             self.delete(key)?; // corrupt stream — silent miss (§17.2)
+605 +             return Ok(None);
+606 +         };
     |
-
-error: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
-   --> crates/cache/src/tiers.rs:581:23
-    |
-581 |           let decoded = match zstd::stream::decode_all(raw.as_slice()) {
-    |  _______________________^
-582 | |             Ok(d) => d,
-583 | |             Err(_) => {
-584 | |                 self.delete(key)?; // corrupt stream — silent miss (§17.2)
-...   |
-587 | |         };
-    | |_________^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#single_match_else
-help: try
-    |
-581 ~         let decoded = if let Ok(d) = zstd::stream::decode_all(raw.as_slice()) { d } else {
-582 ~             self.delete(key)?; // corrupt stream — silent miss (§17.2)
-583 +             return Ok(None);
-584 ~         };
-    |
-
-error: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
-   --> crates/cache/src/tiers.rs:610:9
-    |
-610 | /         match serde_json::from_slice::<Entry>(&decoded) {
-611 | |             Ok(entry) => Ok(Some(entry)),
-612 | |             Err(_) => {
-613 | |                 self.delete(key)?;
-...   |
-616 | |         }
-    | |_________^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#single_match_else
-help: try
-    |
-610 ~         if let Ok(entry) = serde_json::from_slice::<Entry>(&decoded) { Ok(Some(entry)) } else {
-611 +             self.delete(key)?;
-612 +             Ok(None)
-613 +         }
-    |
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/tiers.rs:621:5
-    |
-621 |     pub fn delete(&self, key: &str) -> Result<bool> {
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/tiers.rs:676:5
-    |
-676 |     pub fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: this function could have a `#[must_use]` attribute
-   --> crates/cache/src/tiers.rs:712:8
-    |
-712 | pub fn path_tag(path: &str) -> String {
-    |        ^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-712 + #[must_use]
-713 | pub fn path_tag(path: &str) -> String {
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/tiers.rs:767:12
-    |
-767 |     pub fn new_memory() -> Arc<Self> {
-    |            ^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-767 ~     #[must_use]
-768 ~     pub fn new_memory() -> Arc<Self> {
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/tiers.rs:783:12
-    |
-783 |     pub fn new(max_bytes: u64) -> Self {
-    |            ^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-783 ~     #[must_use]
-784 ~     pub fn new(max_bytes: u64) -> Self {
-    |
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/tiers.rs:799:5
-    |
-799 |     pub fn with_disk(mut self, root: std::path::PathBuf) -> Result<Self> {
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: missing `#[must_use]` attribute on a method returning `Self`
-   --> crates/cache/src/tiers.rs:827:5
-    |
-827 | /     pub fn with_remote(mut self, remote: Arc<dyn CacheHandler>) -> Self {
-828 | |         self.remote = Some(remote);
-829 | |         self
-830 | |     }
-    | |_____^
-    |
-    = help: consider adding the `#[must_use]` attribute to the method or directly to the `Self` type
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#return_self_not_must_use
-    = note: `-D clippy::return-self-not-must-use` implied by `-D warnings`
-    = help: to override `-D warnings` add `#[allow(clippy::return_self_not_must_use)]`
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/tiers.rs:867:5
-    |
-867 |     pub async fn get(&self, key: &str) -> Result<Option<Hit>> {
-    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
 
 error: this function has too many lines (133/100)
-   --> crates/cache/src/tiers.rs:867:5
+   --> crates/cache/src/tiers.rs:903:5
     |
-867 |     pub async fn get(&self, key: &str) -> Result<Option<Hit>> {
+903 |     pub async fn get(&self, key: &str) -> Result<Option<Hit>> {
     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#too_many_lines
@@ -1025,11 +348,11 @@ error: this function has too many lines (133/100)
     = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
 
 error: these match arms have identical bodies
-   --> crates/cache/src/tiers.rs:918:17
+   --> crates/cache/src/tiers.rs:954:17
     |
-918 |                 Ok(_) => None,
+954 |                 Ok(_) => None,
     |                 ^^^^^^^^^^^^^
-919 |                 Err(_) => None,
+955 |                 Err(_) => None,
     |                 ^^^^^^^^^^^^^^
     |
     = help: if this is unintentional make the arms return different values
@@ -1038,288 +361,61 @@ error: these match arms have identical bodies
     = help: to override `-D warnings` add `#[allow(clippy::match_same_arms)]`
 help: otherwise merge the patterns into a single arm
     |
-918 ~                 Ok(_) | Err(_) => None,
-919 ~                 };
-    |
-
-error: docs for function returning `Result` missing `# Errors` section
-    --> crates/cache/src/tiers.rs:1030:5
-     |
-1030 |     pub async fn set(&self, key: &str, entry: Entry) -> Result<()> {
-     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-    --> crates/cache/src/tiers.rs:1092:5
-     |
-1092 |     pub async fn set_with_path(&self, key: &str, entry: Entry, path: &str) -> Result<()> {
-     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-    --> crates/cache/src/tiers.rs:1103:5
-     |
-1103 |     pub async fn delete(&self, key: &str) -> Result<()> {
-     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-    --> crates/cache/src/tiers.rs:1124:5
-     |
-1124 |     pub async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
-     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: called `map(_).unwrap_or_default()` on an `Option` value
-    --> crates/cache/src/tiers.rs:1125:37
-     |
-1125 |           let mut keys: Vec<String> = self
-     |  _____________________________________^
-1126 | |             .tags
-1127 | |             .get(tag)
-1128 | |             .map(|l| l.iter().cloned().collect::<Vec<_>>())
-1129 | |             .unwrap_or_default();
-     | |________________________________^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
-help: use instead
-     |
-1128 -             .map(|l| l.iter().cloned().collect::<Vec<_>>())
-1129 -             .unwrap_or_default();
-1128 +             .map_or_default(|l| l.iter().cloned().collect::<Vec<_>>());
-     |
-
-error: docs for function returning `Result` missing `# Errors` section
-    --> crates/cache/src/tiers.rs:1172:5
-     |
-1172 |     pub async fn invalidate_tag(&self, tag: &str, soft: bool) -> Result<usize> {
-     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-    --> crates/cache/src/tiers.rs:1222:5
-     |
-1222 |     pub async fn invalidate_path(&self, path: &str, soft: bool) -> Result<usize> {
-     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-    --> crates/cache/src/tiers.rs:1228:5
-     |
-1228 |     pub async fn seed(&self, entries: Vec<(String, Entry)>) -> Result<usize> {
-     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: called `map(_).unwrap_or_default()` on an `Option` value
-    --> crates/cache/src/tiers.rs:1362:12
-     |
-1362 |           Ok(self
-     |  ____________^
-1363 | |             .tags
-1364 | |             .get(tag)
-1365 | |             .map(|v| v.iter().cloned().collect::<Vec<_>>())
-1366 | |             .unwrap_or_default())
-     | |________________________________^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
-help: use instead
-     |
-1365 -             .map(|v| v.iter().cloned().collect::<Vec<_>>())
-1366 -             .unwrap_or_default())
-1365 +             .map_or_default(|v| v.iter().cloned().collect::<Vec<_>>()))
-     |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/lib.rs:143:12
-    |
-143 |     pub fn is_fresh(&self, now: u64) -> bool {
-    |            ^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-143 ~     #[must_use]
-144 ~     pub fn is_fresh(&self, now: u64) -> bool {
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/lib.rs:148:12
-    |
-148 |     pub fn fresh_until(&self) -> u64 {
-    |            ^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-148 ~     #[must_use]
-149 ~     pub fn fresh_until(&self) -> u64 {
+954 ~                 Ok(_) | Err(_) => None,
+955 ~                 };
     |
 
 error: casting `u128` to `u64` may truncate the value
-   --> crates/cache/src/lib.rs:150:29
+   --> crates/cache/src/lib.rs:152:29
     |
-150 |             .saturating_add(self.policy.ttl.as_millis() as u64)
+152 |             .saturating_add(self.policy.ttl.as_millis() as u64)
     |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-150 -             .saturating_add(self.policy.ttl.as_millis() as u64)
-150 +             .saturating_add(u64::try_from(self.policy.ttl.as_millis()))
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/lib.rs:155:12
-    |
-155 |     pub fn stale_until(&self) -> u64 {
-    |            ^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-155 ~     #[must_use]
-156 ~     pub fn stale_until(&self) -> u64 {
-    |
-
-error: called `map(<f>).unwrap_or(<a>)` on an `Option` value
-   --> crates/cache/src/lib.rs:156:19
-    |
-156 |         let swr = self.policy.swr.map(|d| d.as_millis() as u64).unwrap_or(0);
-    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
-help: use `map_or(<a>, <f>)` instead
-    |
-156 -         let swr = self.policy.swr.map(|d| d.as_millis() as u64).unwrap_or(0);
-156 +         let swr = self.policy.swr.map_or(0, |d| d.as_millis() as u64);
+152 -             .saturating_add(self.policy.ttl.as_millis() as u64)
+152 +             .saturating_add(u64::try_from(self.policy.ttl.as_millis()))
     |
 
 error: casting `u128` to `u64` may truncate the value
-   --> crates/cache/src/lib.rs:156:43
+   --> crates/cache/src/lib.rs:159:49
     |
-156 |         let swr = self.policy.swr.map(|d| d.as_millis() as u64).unwrap_or(0);
-    |                                           ^^^^^^^^^^^^^^^^^^^^
+159 |         let swr = self.policy.swr.map_or(0, |d| d.as_millis() as u64);
+    |                                                 ^^^^^^^^^^^^^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-156 -         let swr = self.policy.swr.map(|d| d.as_millis() as u64).unwrap_or(0);
-156 +         let swr = self.policy.swr.map(|d| u64::try_from(d.as_millis())).unwrap_or(0);
-    |
-
-error: this method could have a `#[must_use]` attribute
-   --> crates/cache/src/lib.rs:212:12
-    |
-212 |     pub fn as_str(&self) -> &'static str {
-    |            ^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-212 ~     #[must_use]
-213 ~     pub fn as_str(&self) -> &'static str {
-    |
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/lib.rs:228:5
-    |
-228 | /// CacheHandler trait (§11.2): get, set, delete, tag_keys, invalidate_tag,
-    |     ^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-228 - /// CacheHandler trait (§11.2): get, set, delete, tag_keys, invalidate_tag,
-228 + /// `CacheHandler` trait (§11.2): get, set, delete, tag_keys, invalidate_tag,
-    |
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/lib.rs:228:51
-    |
-228 | /// CacheHandler trait (§11.2): get, set, delete, tag_keys, invalidate_tag,
-    |                                                   ^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-228 - /// CacheHandler trait (§11.2): get, set, delete, tag_keys, invalidate_tag,
-228 + /// CacheHandler trait (§11.2): get, set, delete, `tag_keys`, invalidate_tag,
-    |
-
-error: item in documentation is missing backticks
-   --> crates/cache/src/lib.rs:228:61
-    |
-228 | /// CacheHandler trait (§11.2): get, set, delete, tag_keys, invalidate_tag,
-    |                                                             ^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
-help: try
-    |
-228 - /// CacheHandler trait (§11.2): get, set, delete, tag_keys, invalidate_tag,
-228 + /// CacheHandler trait (§11.2): get, set, delete, tag_keys, `invalidate_tag`,
-    |
-
-error: this function could have a `#[must_use]` attribute
-   --> crates/cache/src/lib.rs:262:8
-    |
-262 | pub fn build_id(parts: &[&[u8]]) -> String {
-    |        ^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
-help: add the attribute
-    |
-262 + #[must_use]
-263 | pub fn build_id(parts: &[&[u8]]) -> String {
+159 -         let swr = self.policy.swr.map_or(0, |d| d.as_millis() as u64);
+159 +         let swr = self.policy.swr.map_or(0, |d| u64::try_from(d.as_millis()));
     |
 
 error: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
-   --> crates/cache/src/lib.rs:265:19
+   --> crates/cache/src/lib.rs:270:19
     |
-265 |         h.update(&(p.len() as u32).to_le_bytes());
+270 |         h.update(&(p.len() as u32).to_le_bytes());
     |                   ^^^^^^^^^^^^^^^^
     |
     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
 help: ... or use `try_from` and handle the error accordingly
     |
-265 -         h.update(&(p.len() as u32).to_le_bytes());
-265 +         h.update(&u32::try_from(p.len()).to_le_bytes());
+270 -         h.update(&(p.len() as u32).to_le_bytes());
+270 +         h.update(&u32::try_from(p.len()).to_le_bytes());
     |
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/lib.rs:294:1
-    |
-294 | pub fn build_id_of_dist(dist: &std::path::Path) -> Result<String> {
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
-
-error: docs for function returning `Result` missing `# Errors` section
-   --> crates/cache/src/lib.rs:384:1
-    |
-384 | pub fn stamp_build_id(dist: &std::path::Path) -> Result<String> {
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |
-    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
 
 error: unused `async` for function with no await statements
-  --> crates/cache/src/single_flight.rs:39:5
+  --> crates/cache/src/single_flight.rs:40:5
    |
-39 | /     pub async fn acquire(
-40 | |         &self,
-41 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
-42 | |         key: &str,
+40 | /     pub async fn acquire(
+41 | |         &self,
+42 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+43 | |         key: &str,
 ...  |
-56 | |     }
+57 | |     }
    | |_____^
    |
    = help: consider removing the `async` from this function
@@ -1328,17 +424,54 @@ error: unused `async` for function with no await statements
    = help: to override `-D warnings` add `#[allow(clippy::unused_async)]`
 
 error: unused `async` for function with no await statements
-  --> crates/cache/src/single_flight.rs:62:5
+  --> crates/cache/src/single_flight.rs:63:5
    |
-62 | /     pub async fn publish_and_cleanup(
-63 | |         &self,
-64 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
-65 | |         key: &str,
+63 | /     pub async fn publish_and_cleanup(
+64 | |         &self,
+65 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+66 | |         key: &str,
 ...  |
-74 | |     }
+75 | |     }
    | |_____^
    |
    = help: consider removing the `async` from this function
    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unused_async
 
-error: could not compile `oxide-fw-cache` (lib) due to 102 previous errors
+error: unused return value of `tiers::MemoryTier::remove` that must be used
+   --> crates/cache/src/tiers.rs:934:21
+    |
+934 |                     self.memory.remove(key); // lazy delete
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `-D unused-must-use` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(unused_must_use)]`
+help: use `let _ = ...` to ignore the resulting value
+    |
+934 |                     let _ = self.memory.remove(key); // lazy delete
+    |                     +++++++
+
+error: unused return value of `tiers::MemoryTier::remove` that must be used
+    --> crates/cache/src/tiers.rs:1152:9
+     |
+1152 |         self.memory.remove(key);
+     |         ^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: use `let _ = ...` to ignore the resulting value
+     |
+1152 |         let _ = self.memory.remove(key);
+     |         +++++++
+
+error: unused return value of `tiers::MemoryTier::remove` that must be used
+    --> crates/cache/src/tiers.rs:1417:9
+     |
+1417 |         self.memory.remove(key);
+     |         ^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: use `let _ = ...` to ignore the resulting value
+     |
+1417 |         let _ = self.memory.remove(key);
+     |         +++++++
+
+error: could not compile `oxide-fw-cache` (lib) due to 32 previous errors
+warning: build failed, waiting for other jobs to finish...
+EXIT=101
