@@ -14,6 +14,18 @@ use oxide_fw_dev::state::{DefaultStatePolicy, StatePolicy, update_frame};
 use oxide_fw_dev::{UpdateEntry, UpdateKind};
 
 fn main() {
+    // A paranoid policy that never preserves — declared up front so the
+    // demo's statements stay in story order (the §3 "verdict is injectable"
+    // step uses it below).
+    struct NeverPreserve;
+    impl StatePolicy for NeverPreserve {
+        fn preservation(&self, _plan: &ClassifiedPlan) -> oxide_fw_dev::Preservation {
+            oxide_fw_dev::Preservation::Clear {
+                reason: "policy: never preserve".into(),
+            }
+        }
+    }
+
     let policy = DefaultStatePolicy;
 
     // 1. The happy path: a util edit bubbles to two component boundaries —
@@ -44,20 +56,12 @@ fn main() {
         oxide_fw_dev::Preservation::Clear { reason } => {
             println!("clear verdict: policy=clear reason={reason:?}");
         }
-        other => println!("unexpected: {other:?}"),
+        keep @ oxide_fw_dev::Preservation::Keep => println!("unexpected: {keep:?}"),
     }
 
     // 3. The verdict is injectable: a custom policy can clear any class
-    //    (here, a paranoid policy that never preserves) — the same seam
+    //    (here, the `NeverPreserve` policy declared up top) — the same seam
     //    pattern the F18 `Probe` trait set.
-    struct NeverPreserve;
-    impl StatePolicy for NeverPreserve {
-        fn preservation(&self, _plan: &ClassifiedPlan) -> oxide_fw_dev::Preservation {
-            oxide_fw_dev::Preservation::Clear {
-                reason: "policy: never preserve".into(),
-            }
-        }
-    }
     let paranoid = update_frame(&boundary_plan, &NeverPreserve, vec![]);
     println!("never-preserve frame: {}", paranoid.to_json());
 
