@@ -329,7 +329,7 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
         // for every configured plugin that this file path happens to be.
         let comp = file_compute_with_plugins(src, &inputs.plugin_options);
         graph.register(mk.clone(), Arc::clone(&comp));
-        let _ = graph.get(mk.clone(), comp.as_ref());
+        let _ = graph.get(&mk, comp.as_ref());
         all_keys.push(mk.0.to_string());
     }
     // Also record the boot entry when one was synthesised.
@@ -338,7 +338,7 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
         let mk = module_key(&boot_src);
         let comp = file_compute(&boot_src);
         graph.register(mk.clone(), Arc::clone(&comp));
-        let _ = graph.get(mk.clone(), comp.as_ref());
+        let _ = graph.get(&mk, comp.as_ref());
         all_keys.push(mk.0.to_string());
     }
 
@@ -348,7 +348,7 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
         let ck = chunk_key("client", p);
         let comp = file_compute(p);
         graph.register(ck.clone(), Arc::clone(&comp));
-        let _ = graph.get(ck.clone(), comp.as_ref());
+        let _ = graph.get(&ck, comp.as_ref());
         all_keys.push(ck.0.to_string());
         client_chunk_keys.push(ck);
     }
@@ -357,7 +357,7 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
         let ck = chunk_key("ssr", p);
         let comp = file_compute(p);
         graph.register(ck.clone(), Arc::clone(&comp));
-        let _ = graph.get(ck.clone(), comp.as_ref());
+        let _ = graph.get(&ck, comp.as_ref());
         all_keys.push(ck.0.to_string());
         server_chunk_keys.push(ck);
     }
@@ -373,7 +373,7 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
             chunk_keys: cks.clone(),
         });
         graph.register(mk.clone(), Arc::clone(&comp));
-        let _ = graph.get(mk.clone(), comp.as_ref());
+        let _ = graph.get(&mk, comp.as_ref());
         all_keys.push(mk.0.to_string());
     }
 
@@ -388,7 +388,7 @@ pub fn record_and_persist(inputs: RecordInputs<'_>) -> std::io::Result<GraphSnap
             let tk = typegen_key(name);
             let comp = file_compute(&p);
             graph.register(tk.clone(), Arc::clone(&comp));
-            let _ = graph.get(tk.clone(), comp.as_ref());
+            let _ = graph.get(&tk, comp.as_ref());
             all_keys.push(tk.0.to_string());
         }
     }
