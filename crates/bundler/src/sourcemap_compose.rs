@@ -243,6 +243,7 @@ pub fn toks_of(map: &V3Map) -> Result<Vec<Tok>> {
 /// # Errors
 ///
 /// [`BLD-SMAP`] when a token's source index is out of the `sources` range.
+#[must_use]
 pub fn v3_from_toks(
     toks: &[Tok],
     file: Option<String>,
@@ -263,10 +264,10 @@ pub fn v3_from_toks(
         if !mappings.is_empty() && !mappings.ends_with(';') {
             mappings.push(',');
         }
-        encode_vlq(&mut mappings, t.gen_col as i64 - gen_col as i64);
-        encode_vlq(&mut mappings, t.src as i64 - src as i64);
-        encode_vlq(&mut mappings, t.src_line as i64 - src_line as i64);
-        encode_vlq(&mut mappings, t.src_col as i64 - src_col as i64);
+        encode_vlq(&mut mappings, i64::from(t.gen_col) - i64::from(gen_col));
+        encode_vlq(&mut mappings, i64::from(t.src) - i64::from(src));
+        encode_vlq(&mut mappings, i64::from(t.src_line) - i64::from(src_line));
+        encode_vlq(&mut mappings, i64::from(t.src_col) - i64::from(src_col));
         gen_col = t.gen_col;
         src = t.src;
         src_line = t.src_line;
@@ -369,13 +370,12 @@ pub fn oxc_from_v3(map: &V3Map) -> Result<oxc_sourcemap::OwnedSourceMap> {
             .collect(),
         map.sources_content
             .clone()
-            .map(|contents| {
+            .map_or_default(|contents| {
                 contents
                     .into_iter()
                     .map(|c| c.map(std::borrow::Cow::Owned))
                     .collect()
-            })
-            .unwrap_or_default(),
+            }),
         tokens.into_boxed_slice(),
         None,
     );
@@ -462,6 +462,6 @@ const VLQ_DIGITS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01
 /// Apply one decoded delta to an absolute `u32` field, refusing a malformed
 /// (negative-result or overflowing) map instead of wrapping.
 fn add_u32(abs: u32, delta: i64) -> Result<u32> {
-    let next = abs as i64 + delta;
+    let next = i64::from(abs) + delta;
     u32::try_from(next).map_err(|_| err(BLD_SMAP, "mappings field out of range"))
 }
