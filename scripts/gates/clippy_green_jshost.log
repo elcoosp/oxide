@@ -1,0 +1,14 @@
+# M1(b) GREEN transcript — oxide-fw-jshost (V8-free half, own sources 0 findings)
+# rustc rustc 1.100.0 (0ef1bc386 2026-11-09)
+# $ cargo clippy -p oxide-fw-jshost --no-default-features --all-targets -- -D warnings -W clippy::pedantic
+#   (0 findings in crates/jshost/ — the 32 errors are oxide-fw-cache's, cleared in its own pass)
+# $ cargo test -p oxide-fw-jshost --no-default-features
+test result: ok. 80 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+test result: ok. 0 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+EXIT=0
