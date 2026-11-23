@@ -95,3 +95,7 @@ ship.toml
 !conformance/plugins/logs/*/
 !conformance/plugins/logs/*/dist/
 !conformance/plugins/logs/*/dist/**
+
+# ship.toml delivery manifest + reviewer PR body (per-session, gitignored)
+ship.toml
+.github/pr-body.md
