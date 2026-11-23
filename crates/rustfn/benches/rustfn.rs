@@ -15,6 +15,7 @@ use std::sync::Arc;
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxide_rustfn::abi::{ABI_VERSION, FnEntry, FnTable, RawBuf};
 use oxide_rustfn::bridge::encode_odf;
+use oxide_rustfn::chain::ChainedRegistry;
 use oxide_rustfn::host::{RustFnHost, RustFnLibrary, RustFnRegistry};
 use oxide_rustfn::shim::run_shim;
 use oxide_rustfn::swap::{FnBinding, SwappableHost};
@@ -156,11 +157,47 @@ fn bench_swappable_registry(c: &mut Criterion) {
     });
 }
 
+/// The M1 multi-host consult: a two-member `ChainedRegistry` upcast to
+/// `Arc<dyn RustFnRegistry>` and called through the chain's `has`-walk —
+/// the per-call overhead the dispatcher consult pays when the workspace
+/// ships more than one native crate (the extra `has` per member + the
+/// delegate), on top of the boot-time host's `host_registry_hit` floor.
+fn bench_chained_registry(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the bench runtime");
+    // Two members, disjoint ids — the consult walks ONE `has` miss then a
+    // hit (the worst case is the last member; the average over a real
+    // workspace sits between). `bench-id-b` lives on the second member.
+    let mut a = RustFnHost::new();
+    let idx_a = a.mount(loaded_library());
+    a.register("bench-id-a", idx_a, "thumbnail");
+    let mut b = RustFnHost::new();
+    let idx_b = b.mount(loaded_library());
+    b.register("bench-id-b", idx_b, "thumbnail");
+    let chain = Arc::new(ChainedRegistry::from_members(vec![
+        Arc::new(a),
+        Arc::new(b),
+    ]));
+    let registry: Arc<dyn RustFnRegistry> = chain;
+    let args = json_args(8);
+    c.bench_function("chained_registry_hit", |b| {
+        b.iter(|| {
+            let registry = registry.clone();
+            let args = args.clone();
+            rt.block_on(registry.call("bench-id-b", black_box(&args)))
+                .expect("the bench call succeeds")
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_bridge,
     bench_shim,
     bench_host_registry,
-    bench_swappable_registry
+    bench_swappable_registry,
+    bench_chained_registry
 );
 criterion_main!(benches);
