@@ -80,7 +80,7 @@ fn rolldown_bundles_single_entry_and_writes_chunk() {
         code.contains("42"),
         "expected folded constant 42 in chunk body:\n{code}"
     );
-    assert!(!entry.hash.is_empty());
+    assert_ne!(entry.hash, "");
     assert!(entry.hash.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
