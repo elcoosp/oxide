@@ -58,7 +58,10 @@ fn the_default_state_stays_honest_with_no_graph() {
     // Nothing wired, nothing rendered — the schema's pre-E08 shape is
     // unchanged (the `#[serde(default)]`-era consumers keep parsing).
     let state = RouteTableInspector::from_router_table(Vec::new()).state();
-    assert!(state.module_graph.is_empty());
+    assert_eq!(
+        state.module_graph,
+        [] as [(std::string::String, std::vec::Vec<std::string::String>); 0]
+    );
     let html = render_inspector_html(&state);
     assert!(html.contains("Modules (0)"), "{html}");
 }
@@ -99,7 +102,10 @@ fn a_blank_query_is_every_row_and_a_miss_is_no_rows() {
     let g = graph();
     assert_eq!(search_module_graph(&g, "").len(), 3);
     assert_eq!(search_module_graph(&g, "   ").len(), 3);
-    assert!(search_module_graph(&g, "zzz-no-such-module").is_empty());
+    assert_eq!(
+        search_module_graph(&g, "zzz-no-such-module"),
+        [] as [&(std::string::String, std::vec::Vec<std::string::String>); 0]
+    );
 }
 
 #[test]
@@ -121,7 +127,10 @@ fn search_preserves_the_sorted_input_order() {
 
 #[test]
 fn search_over_an_empty_graph_is_empty() {
-    assert!(search_module_graph(&[], "anything").is_empty());
+    assert_eq!(
+        search_module_graph(&[], "anything"),
+        [] as [&(std::string::String, std::vec::Vec<std::string::String>); 0]
+    );
 }
 
 // ------------------------------------------------------------------ html
