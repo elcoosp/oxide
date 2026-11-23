@@ -17,6 +17,7 @@ use oxide_rustfn::abi::{ABI_VERSION, FnEntry, FnTable, RawBuf};
 use oxide_rustfn::bridge::encode_odf;
 use oxide_rustfn::host::{RustFnHost, RustFnLibrary, RustFnRegistry};
 use oxide_rustfn::shim::run_shim;
+use oxide_rustfn::swap::{FnBinding, SwappableHost};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -130,5 +131,36 @@ fn bench_host_registry(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_bridge, bench_shim, bench_host_registry);
+/// The M1 consult: `Arc<SwappableHost>` upcast to `Arc<dyn
+/// RustFnRegistry>` and called through the swap lock — the per-call
+/// overhead the dev-loop host adds over the boot-time host (the extra
+/// `Mutex` lock + the `Arc` clone), the cost the dispatcher consult
+/// pays when the dev loop owns the registry.
+fn bench_swappable_registry(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the bench runtime");
+    let host = Arc::new(SwappableHost::new());
+    host.swap(loaded_library(), &[FnBinding::new("bench-id", "thumbnail")])
+        .expect("the bench swap mounts");
+    let registry: Arc<dyn RustFnRegistry> = host;
+    let args = json_args(8);
+    c.bench_function("swappable_registry_hit", |b| {
+        b.iter(|| {
+            let registry = registry.clone();
+            let args = args.clone();
+            rt.block_on(registry.call("bench-id", black_box(&args)))
+                .expect("the bench call succeeds")
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_bridge,
+    bench_shim,
+    bench_host_registry,
+    bench_swappable_registry
+);
 criterion_main!(benches);
