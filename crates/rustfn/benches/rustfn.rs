@@ -17,9 +17,11 @@ use oxide_rustfn::abi::{ABI_VERSION, FnEntry, FnTable, RawBuf};
 use oxide_rustfn::bridge::encode_odf;
 use oxide_rustfn::chain::ChainedRegistry;
 use oxide_rustfn::host::{RustFnHost, RustFnLibrary, RustFnRegistry};
+use oxide_rustfn::hot_keys::HotKeyRegistry;
 use oxide_rustfn::shim::run_shim;
 use oxide_rustfn::stats::StatsRegistry;
 use oxide_rustfn::swap::{FnBinding, SwappableHost};
+use oxide_rustfn::tracing::TracingRegistry;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -228,6 +230,91 @@ fn bench_stats_registry(c: &mut Criterion) {
     });
 }
 
+/// The per-call tracing decorator's consult overhead — the cost the
+/// dispatcher pays when the registry is traced (the `Instant::now` +
+/// the `debug!` event-build the decorator pays to delegate). The
+/// decorator never alters the call path's blocking work; this bench
+/// isolates the timing + event-emit cost over the inner host's call, so
+/// a traced consult's regression against the plain host's consult is
+/// attributable to the decorator alone. A no-subscriber build pays only
+/// the `enabled!`-guarded field-formatting cost (the `tracing` macro's
+/// fast path); the bench runs without a subscriber attached, so the
+/// number is the floor a host's subscriber adds onto.
+fn bench_tracing_registry(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the bench runtime");
+    let mut host = RustFnHost::new();
+    let index = host.mount(loaded_library());
+    host.register("bench-id", index, "thumbnail");
+    let traced = Arc::new(TracingRegistry::new(Arc::new(host)));
+    let registry: Arc<dyn RustFnRegistry> = traced.clone();
+    let args = json_args(8);
+    c.bench_function("tracing_registry_hit", |b| {
+        b.iter(|| {
+            let registry = registry.clone();
+            let args = args.clone();
+            rt.block_on(registry.call("bench-id", black_box(&args)))
+                .expect("the bench call succeeds")
+        });
+    });
+    // The composed consult — stats AND tracing stacked — so the
+    // regression the dispatcher pays for both decorators at once is
+    // visible against the single-decorator benches above.
+    let mut host = RustFnHost::new();
+    let index = host.mount(loaded_library());
+    host.register("bench-id", index, "thumbnail");
+    let stats_then_traced = Arc::new(TracingRegistry::new(Arc::new(StatsRegistry::new(
+        Arc::new(host),
+    ))));
+    let registry: Arc<dyn RustFnRegistry> = stats_then_traced.clone();
+    c.bench_function("tracing_registry_over_stats_hit", |b| {
+        b.iter(|| {
+            let registry = registry.clone();
+            let args = args.clone();
+            rt.block_on(registry.call("bench-id", black_box(&args)))
+                .expect("the bench call succeeds")
+        });
+    });
+}
+
+/// The per-id hot-key attribution decorator's consult overhead — the
+/// cost the dispatcher pays when the registry is attributed (the
+/// `Instant`-free `Mutex` lock + the `HashMap` bump the decorator pays
+/// to delegate). The decorator never alters the call path's blocking
+/// work; this bench isolates the ledger-update cost over the inner
+/// host's call, so an attributed consult's regression against the
+/// plain host's consult is attributable to the decorator alone. The
+/// `top` read is the observability cost the dev overlay pays per
+/// refresh tick (the lock + the sort over the tracked ids).
+fn bench_hot_keys_registry(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the bench runtime");
+    let mut host = RustFnHost::new();
+    let index = host.mount(loaded_library());
+    host.register("bench-id", index, "thumbnail");
+    let attributed = Arc::new(HotKeyRegistry::new(Arc::new(host)));
+    let registry: Arc<dyn RustFnRegistry> = attributed.clone();
+    let args = json_args(8);
+    c.bench_function("hot_keys_registry_hit", |b| {
+        b.iter(|| {
+            let registry = registry.clone();
+            let args = args.clone();
+            rt.block_on(registry.call("bench-id", black_box(&args)))
+                .expect("the bench call succeeds")
+        });
+    });
+    // The `top` read — the observability cost the dev overlay pays per
+    // refresh tick (the lock + the sort over the tracked ids). Polled
+    // off the call path, but cheap to keep honest.
+    c.bench_function("hot_keys_registry_top", |b| {
+        b.iter(|| black_box(attributed.top(10)));
+    });
+}
+
 criterion_group!(
     benches,
     bench_bridge,
@@ -235,6 +322,8 @@ criterion_group!(
     bench_host_registry,
     bench_swappable_registry,
     bench_chained_registry,
-    bench_stats_registry
+    bench_stats_registry,
+    bench_tracing_registry,
+    bench_hot_keys_registry
 );
 criterion_main!(benches);
