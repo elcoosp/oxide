@@ -41,7 +41,7 @@ fn default_policy_clears_state_on_a_full_reload_with_the_planners_reason() {
     };
     match DefaultStatePolicy.preservation(&plan) {
         Preservation::Clear { reason: cleared } => assert_eq!(cleared, reason),
-        other => panic!("expected Clear with the planner's reason, got {other:?}"),
+        Preservation::Keep => panic!("expected Clear with the planner's reason, got Keep"),
     }
 }
 
