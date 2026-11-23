@@ -36,9 +36,11 @@
 //!   "is the budget set?" check).
 //! - `RustFnHost::report()` answers the same shape — the boot-time
 //!   host and the dev-loop host share ONE introspection type.
-//! - The report is `Default` (an empty host is `generation = 0`,
-//!   `mount_count = 0`, `id_count = 0`, `ids = []`, `has_types = false`,
-//!   `timeout_secs = 30`, `lanes = 16`).
+//! - The report is `Default`: the all-zero "no host attached" sentinel
+//!   (`generation = 0`, `mount_count = 0`, `id_count = 0`, `ids = []`,
+//!   `has_types = false`, `timeout_secs = 0`, `lanes = 0`), DISTINCT from
+//!   an empty host's report (which carries the substrate's 30 s budget
+//!   and 16 lanes — see `the_empty_host_report_carries_the_substrate_defaults`).
 
 use std::sync::Arc;
 use std::time::Duration;
