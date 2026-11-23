@@ -368,14 +368,12 @@ pub fn oxc_from_v3(map: &V3Map) -> Result<oxc_sourcemap::OwnedSourceMap> {
             .iter()
             .map(|s| std::borrow::Cow::Owned(s.clone()))
             .collect(),
-        map.sources_content
-            .clone()
-            .map_or_default(|contents| {
-                contents
-                    .into_iter()
-                    .map(|c| c.map(std::borrow::Cow::Owned))
-                    .collect()
-            }),
+        map.sources_content.clone().map_or_default(|contents| {
+            contents
+                .into_iter()
+                .map(|c| c.map(std::borrow::Cow::Owned))
+                .collect()
+        }),
         tokens.into_boxed_slice(),
         None,
     );
