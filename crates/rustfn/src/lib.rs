@@ -29,8 +29,15 @@ pub mod types;
 use oxide_fw_diagnostics::OxideError;
 
 pub use crate::host::{
-    RegistryError, RegistryErrorKind, RustFnHost, RustFnLibrary, RustFnRegistry,
+    RegistryError, RegistryErrorKind, RegistryReport, RustFnHost, RustFnLibrary, RustFnRegistry,
 };
+// V2-F08 M1: the dev-loop host IS-A `RustFnRegistry` — the consult the
+// dispatcher wires behind `Arc<dyn RustFnRegistry>` answers through
+// both the boot-time host and the swappable host, so the server crate
+// no longer forks between them.
+// V2-F08 M2: `RegistryReport` re-exports from `host` here; `swap`'s
+// own re-export serves `use oxide_rustfn::swap::RegistryReport`.
+pub use crate::swap::{FnBinding, RetireReport, SwapReport, SwappableHost};
 // The macro namespace and the trait namespace share one name (the
 // serde pattern): `use oxide_rustfn::TsType` serves both
 // `#[derive(TsType)]` and `T: TsType`.
@@ -79,6 +86,9 @@ fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 /// spec's user-crate import shape).
 pub mod prelude {
     pub use crate::ServerError;
-    pub use crate::host::{RegistryError, RustFnHost, RustFnLibrary};
+    pub use crate::host::{
+        RegistryError, RegistryReport, RustFnHost, RustFnLibrary, RustFnRegistry,
+    };
+    pub use crate::swap::{FnBinding, SwappableHost};
     pub use crate::{TsType, export_table, server_fn};
 }
