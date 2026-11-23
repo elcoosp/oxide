@@ -13,6 +13,13 @@
 //! the `TsType` trait and its derive share one name, the serde
 //! pattern.
 //!
+//! The dev-loop hot-swap state ([`swap`]) and the multi-host consult
+//! adapter ([`chain`]) ride on the substrate: `SwappableHost` is the
+//! `RustFnHost` behind a short mutex the dev task drives, and
+//! `ChainedRegistry` is the "consult each host in turn" seam the spec
+//! names — `Arc<ChainedRegistry>` IS-A `Arc<dyn RustFnRegistry>`, so the
+//! dispatcher consults ONE chain over every native crate's host.
+//!
 //! The remaining F08 halves are the CLI-owned loops documented in
 //! `docs/deviations.md`: the dev cargo-build/watch half and the
 //! production `dist/native/<lib>` emission ride the `rust_fns` fact
@@ -21,6 +28,7 @@
 
 pub mod abi;
 pub mod bridge;
+pub mod chain;
 pub mod host;
 pub mod shim;
 pub mod swap;
@@ -38,6 +46,13 @@ pub use crate::host::{
 // V2-F08 M2: `RegistryReport` re-exports from `host` here; `swap`'s
 // own re-export serves `use oxide_rustfn::swap::RegistryReport`.
 pub use crate::swap::{FnBinding, RetireReport, SwapReport, SwappableHost};
+// V2-F08 M3: the multi-host consult adapter — `ChainedRegistry` IS-A
+// `RustFnRegistry`, so the dispatcher consults ONE chain over every
+// native crate's host through the same object-safe seam the boot-time
+// `RustFnHost` and the dev-loop `SwappableHost` already answer. The
+// "consult each host in turn" the host and swap modules named as the
+// missing piece lives here (spec §V2-F08 "Host").
+pub use crate::chain::{ChainedRegistry, ChainedReport};
 // The macro namespace and the trait namespace share one name (the
 // serde pattern): `use oxide_rustfn::TsType` serves both
 // `#[derive(TsType)]` and `T: TsType`.
@@ -86,6 +101,7 @@ fn err(code: &'static str, msg: impl Into<String>) -> OxideError {
 /// spec's user-crate import shape).
 pub mod prelude {
     pub use crate::ServerError;
+    pub use crate::chain::ChainedRegistry;
     pub use crate::host::{
         RegistryError, RegistryReport, RustFnHost, RustFnLibrary, RustFnRegistry,
     };
