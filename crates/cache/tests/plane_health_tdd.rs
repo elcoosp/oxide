@@ -102,7 +102,7 @@ async fn unconfigured_health_answers_404() {
     let svc = plain_service();
     let resp = respond(&svc, "GET", "/health").await;
     assert_eq!(resp.status, 404, "the unconfigured arm stays a plain 404");
-    assert!(resp.body.is_empty());
+    assert_eq!(resp.body, [] as [u8; 0]);
 }
 
 /// The configured arm answers the provider's pull as JSON: a PULL — the
@@ -205,8 +205,7 @@ async fn the_health_arm_rides_the_socket_shell() {
     let body = buf
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .map(|i| &buf[i + 4..])
-        .unwrap_or_default();
+        .map_or_default(|i| &buf[i + 4..]);
     let answered: CacheHealth =
         serde_json::from_slice(body).expect("the wire body is the CacheHealth JSON");
     assert_eq!(answered, fake());
