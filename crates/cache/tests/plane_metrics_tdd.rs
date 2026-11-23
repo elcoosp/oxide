@@ -96,7 +96,7 @@ async fn unconfigured_metrics_answers_404() {
     let svc = plain_service();
     let resp = respond(&svc, "GET", "/metrics").await;
     assert_eq!(resp.status, 404, "the unconfigured arm stays a plain 404");
-    assert!(resp.body.is_empty());
+    assert_eq!(resp.body, [] as [u8; 0]);
 
     let resp = respond(&svc, "POST", "/metrics").await;
     assert_eq!(
@@ -261,8 +261,7 @@ async fn the_metrics_arm_rides_the_socket_shell() {
     let body = buf
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .map(|i| &buf[i + 4..])
-        .unwrap_or_default();
+        .map_or_default(|i| &buf[i + 4..]);
     let text = String::from_utf8_lossy(body);
     assert!(
         text.contains("# TYPE oxide_cache_plane_hits_total counter"),
