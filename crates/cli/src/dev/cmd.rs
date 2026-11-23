@@ -695,7 +695,7 @@ pub(crate) async fn cmd_dev(
                 lock_key.clone(),
                 std::sync::Arc::new(LockFileCompute(path.clone())),
             );
-            let _ = dev_graph.get(lock_key, &LockFileCompute(path.clone()));
+            let _ = dev_graph.get(&lock_key, &LockFileCompute(path.clone()));
             return true;
         }
         let key = oxide_fw_graph::NodeKey::new(path.to_string_lossy().as_ref());
@@ -716,7 +716,7 @@ pub(crate) async fn cmd_dev(
         }
         dev_graph.register(key.clone(), std::sync::Arc::new(FileCompute(path.clone())));
         // Seed the node and, on a re-read, let early cutoff decide.
-        let _ = dev_graph.get(key.clone(), &FileCompute(path.clone()));
+        let _ = dev_graph.get(&key, &FileCompute(path.clone()));
         !dev_graph
             .invalidate(&[oxide_fw_graph::Input::Node(key, blake3::hash(&[]))])
             .is_empty()
@@ -873,7 +873,7 @@ pub(crate) async fn cmd_dev(
                 #[cfg(feature = "search")]
                 refresh_search_index(&rootp, &cfg, started.hot_search.as_ref(), w)?;
                 if let Some(hub) = started.hmr.as_ref() {
-                    hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                    hub.publish(&oxide_fw_dev::HmrMessage::FullReload {
                         reason: "content collection changed".to_string(),
                     });
                 }
@@ -942,7 +942,7 @@ pub(crate) async fn cmd_dev(
                     // needed: FullReload is the signal.)
                     let _ = crate::esm_dev::build_rewrite_map(&rootp, &cfg.dev.prebundle);
                     if let Some(hub) = started.hmr.as_ref() {
-                        hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                        hub.publish(&oxide_fw_dev::HmrMessage::FullReload {
                             reason: format!(
                                 "node_modules change — prebundle regenerated ({} package.json event(s))",
                                 events.iter().filter(|ev| {
@@ -1007,7 +1007,7 @@ pub(crate) async fn cmd_dev(
                 // new values — no in-memory update needed here.
                 tracing::info!("§3.4: .env* change — full reload");
                 if let Some(hub) = started.hmr.as_ref() {
-                    hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                    hub.publish(&oxide_fw_dev::HmrMessage::FullReload {
                         reason: ".env* change — import.meta.env values refreshed".to_string(),
                     });
                 }
@@ -1140,7 +1140,7 @@ pub(crate) async fn cmd_dev(
                 }
             }
             if force_reload && let Some(hub) = started.hmr.as_ref() {
-                hub.publish(oxide_fw_dev::HmrMessage::FullReload {
+                hub.publish(&oxide_fw_dev::HmrMessage::FullReload {
                     reason: "plugin handleHotUpdate requested a reload".to_string(),
                 });
             }
@@ -1239,7 +1239,7 @@ pub(crate) async fn cmd_dev(
                                 bytes = css.len(),
                                 "tailwind HMR: rebuilt CSS"
                             );
-                            hub.publish(oxide_fw_dev::state::update_frame(
+                            hub.publish(&oxide_fw_dev::state::update_frame(
                                 // Tailwind rebuild: the entry IS the whole
                                 // surface (a rebuilt sheet at its cache-busted
                                 // URL) — boundary-scoped by construction, so
@@ -1353,7 +1353,7 @@ pub(crate) async fn cmd_dev(
                                     message = %diag.message,
                                     "DEV-HMR-002: orphan stylesheet"
                                 );
-                                hub.publish(HmrMessage::Error { diagnostic: diag });
+                                hub.publish(&HmrMessage::Error { diagnostic: diag });
                             }
                             let root_str = rootp.to_string_lossy();
                             let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
@@ -1364,7 +1364,7 @@ pub(crate) async fn cmd_dev(
                                 // module: the entry's acceptedPath is the
                                 // module URL the client re-imports (style
                                 // injection, never a reload — §13.3).
-                                hub.publish(oxide_fw_dev::state::update_frame(
+                                hub.publish(&oxide_fw_dev::state::update_frame(
                                     &classified,
                                     &state_policy,
                                     vec![oxide_fw_dev::UpdateEntry::stamped(
@@ -1375,7 +1375,7 @@ pub(crate) async fn cmd_dev(
                                     )],
                                 ));
                             } else {
-                                hub.publish(oxide_fw_dev::state::update_frame(
+                                hub.publish(&oxide_fw_dev::state::update_frame(
                                     &classified,
                                     &state_policy,
                                     vec![oxide_fw_dev::UpdateEntry::stamped(
@@ -1387,7 +1387,7 @@ pub(crate) async fn cmd_dev(
                                 ));
                             }
                         } else {
-                            hub.publish(oxide_fw_dev::state::update_frame(
+                            hub.publish(&oxide_fw_dev::state::update_frame(
                                 // Non-ESM / non-src CSS: a `<link>` href swap
                                 // for the changed sheet — the single entry is
                                 // the whole surface (boundary-scoped by
@@ -1450,7 +1450,7 @@ pub(crate) async fn cmd_dev(
                             // pattern match then dropped it). The v1 entry
                             // keeps the same conservative shape — a data
                             // entry whose path the client pattern-matches.
-                            hub.publish(oxide_fw_dev::state::update_frame(
+                            hub.publish(&oxide_fw_dev::state::update_frame(
                                 // A data entry re-fetches `/__data` for one
                                 // route — the single entry is the whole
                                 // surface (boundary-scoped by construction).
@@ -1469,7 +1469,7 @@ pub(crate) async fn cmd_dev(
                                 )],
                             ));
                         } else {
-                            hub.publish(HmrMessage::OxData {
+                            hub.publish(&HmrMessage::OxData {
                                 route: route_pattern,
                                 data: odf_b64,
                             });
@@ -1481,7 +1481,7 @@ pub(crate) async fn cmd_dev(
                                 "DEV-BUNDLE",
                                 format!("rebuild failed for {pstr}: {err_msg}"),
                             );
-                            hub.publish(HmrMessage::Error { diagnostic: diag });
+                            hub.publish(&HmrMessage::Error { diagnostic: diag });
                         } else if cfg.dev.esm {
                             tracing::info!("HMR: publishing update entries for ESM file");
                             let root_str = rootp.to_string_lossy();
@@ -1628,9 +1628,11 @@ pub(crate) async fn cmd_dev(
                                                 );
                                                 let diag =
                                                     oxide_fw_dev::full_reload_diagnostic(&reason);
-                                                hub.publish(HmrMessage::Error { diagnostic: diag });
+                                                hub.publish(&HmrMessage::Error {
+                                                    diagnostic: diag,
+                                                });
                                                 tick_reload_reason = Some(reason.clone());
-                                                hub.publish(HmrMessage::FullReload { reason });
+                                                hub.publish(&HmrMessage::FullReload { reason });
                                             }
                                         }
                                     }
@@ -1638,14 +1640,14 @@ pub(crate) async fn cmd_dev(
                             } else {
                                 tick_reload_reason =
                                     Some(format!("rebuild skipped for non-src file {pstr}"));
-                                hub.publish(HmrMessage::FullReload {
+                                hub.publish(&HmrMessage::FullReload {
                                     reason: format!("rebuild skipped for non-src file {pstr}"),
                                 });
                             }
                         } else if client_rebuilt {
                             tick_reload_reason =
                                 Some(format!("rebuilt client bundle after {pstr}"));
-                            hub.publish(HmrMessage::FullReload {
+                            hub.publish(&HmrMessage::FullReload {
                                 reason: format!("rebuilt client bundle after {pstr}"),
                             });
                         }
@@ -1834,7 +1836,7 @@ pub(crate) async fn cmd_dev(
                                         consolidate_tailwind_css_and_manifest(&rootp);
                                     }
                                     tick_reload_reason = Some("route tree rebuilt".to_string());
-                                    hub.publish(HmrMessage::FullReload {
+                                    hub.publish(&HmrMessage::FullReload {
                                         reason: "route tree rebuilt".to_string(),
                                     });
                                 }
@@ -1845,14 +1847,14 @@ pub(crate) async fn cmd_dev(
                                     );
                                     tick_reload_reason =
                                         Some(format!("{pstr} changed (route rescan failed)"));
-                                    hub.publish(HmrMessage::FullReload {
+                                    hub.publish(&HmrMessage::FullReload {
                                         reason: format!("{pstr} changed (route rescan failed)"),
                                     });
                                 }
                             }
                         } else {
                             tick_reload_reason = Some(format!("{pstr} changed"));
-                            hub.publish(HmrMessage::FullReload {
+                            hub.publish(&HmrMessage::FullReload {
                                 reason: format!("{pstr} changed"),
                             });
                         }
@@ -1903,7 +1905,7 @@ pub(crate) async fn cmd_dev(
                 },
                 None => oxide_fw_dev::state::StatePolicy::preservation(&state_policy, &batch_plan),
             };
-            hub.publish(oxide_fw_dev::HmrMessage::Update { updates, preserve });
+            hub.publish(&oxide_fw_dev::HmrMessage::Update { updates, preserve });
         }
 
         if !warmed && idle_since.elapsed() >= IDLE_WARM {
