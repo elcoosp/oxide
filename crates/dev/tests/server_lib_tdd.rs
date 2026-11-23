@@ -214,14 +214,14 @@ fn spec_in(root: &Path) -> ServerLibSpec {
     ServerLibSpec::new("native-fns", root.join("native"))
 }
 
-fn fake_builder(root: &Path) -> Box<FakeBuilder> {
+fn fake_builder(root: &Path) -> Box<dyn LibBuild> {
     Box::new(FakeBuilder {
         output: root.join("native/target/debug/libnative_fns.so"),
         calls: Mutex::new(Vec::new()),
     })
 }
 
-fn fake_swap() -> Box<FakeSwap> {
+fn fake_swap() -> Box<dyn ServerLibSwap> {
     Box::new(FakeSwap {
         seen: Mutex::new(Vec::new()),
     })
@@ -452,7 +452,6 @@ fn the_loop_swaps_a_real_host_and_the_new_behavior_serves() {
 /// running dev server's native fns down.
 #[test]
 fn a_failed_build_refuses_and_keeps_the_previous_mount() {
-    let (dir, root) = temp_app();
     struct FailingBuild;
     impl LibBuild for FailingBuild {
         fn build(&self, _spec: &ServerLibSpec) -> Result<BuildOutput, OxideError> {
@@ -462,6 +461,7 @@ fn a_failed_build_refuses_and_keeps_the_previous_mount() {
             ))
         }
     }
+    let (dir, root) = temp_app();
     let host = Arc::new(SwappableHost::new());
     let mut lp = ServerLibLoop::new(
         spec_in(&root),
@@ -485,7 +485,6 @@ fn a_failed_build_refuses_and_keeps_the_previous_mount() {
 /// A failed load refuses the step and the previous mount keeps serving.
 #[test]
 fn a_failed_load_refuses_and_keeps_the_previous_mount() {
-    let (dir, root) = temp_app();
     struct LoadOnce {
         calls: AtomicU64,
     }
@@ -502,6 +501,7 @@ fn a_failed_load_refuses_and_keeps_the_previous_mount() {
             }
         }
     }
+    let (dir, root) = temp_app();
     let host = Arc::new(SwappableHost::new());
     let mut lp = ServerLibLoop::new(
         spec_in(&root),
@@ -612,7 +612,7 @@ fn the_real_loop_swaps_a_rebuilt_cdylib() {
     let manifest_text = std::fs::read_to_string(&manifest).expect("the manifest");
     let rewritten = manifest_text.replace(
         "oxide-rustfn = { path = \"../..\" }",
-        &format!("oxide-rustfn = {{ path = {:?} }}", workspace),
+        &format!("oxide-rustfn = {{ path = {workspace:?} }}"),
     );
     assert_ne!(
         manifest_text, rewritten,
