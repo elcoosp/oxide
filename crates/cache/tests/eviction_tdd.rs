@@ -70,7 +70,7 @@ fn recorded(log: &[(String, CacheOp)]) -> Vec<(String, CacheOp)> {
 // ------------------------------------------------------- F51: the eviction event
 
 /// The disk tier counts its S-08 prune victims exactly. A zero-budget
-/// store (max_bytes = 1) prunes every write it just completed — the
+/// store (`max_bytes` = 1) prunes every write it just completed — the
 /// honest steady state where each `set` is also one eviction — so two
 /// sets answer `evictions() == 2` with every byte accounted, and both
 /// keys are gone (the eviction really happened, not just counted).
