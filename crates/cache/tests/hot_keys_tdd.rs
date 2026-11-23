@@ -525,7 +525,7 @@ fn snapshot_on_the_zero_bound_ledger() {
     let hot = HotKeyObserver::bounded(0);
     push(&hot, "route:/a", CacheOp::Miss);
     let snap = hot.snapshot(10);
-    assert!(snap.rows.is_empty());
+    assert_eq!(snap.rows, [] as [oxide_fw_cache::HotKeyRow; 0]);
     assert_eq!(snap.unattributed, 1);
     assert_eq!(snap.tracked, 0);
     assert_eq!(snap.capacity, 0);
@@ -765,7 +765,7 @@ fn take_rearms_the_sticky_warn() {
 fn take_on_an_empty_ledger_hands_an_empty_window() {
     let hot = HotKeyObserver::bounded(8);
     let taken = hot.take();
-    assert!(taken.rows.is_empty());
+    assert_eq!(taken.rows, [] as [oxide_fw_cache::HotKeyRow; 0]);
     assert_eq!(taken.tracked, 0);
     assert_eq!(taken.capacity, 8);
     assert_eq!(taken.unattributed, 0);
