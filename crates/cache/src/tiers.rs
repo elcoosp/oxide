@@ -4,8 +4,8 @@
 //! # Memory tier (moka, spec §11.2)
 //!
 //! L0/L1 memory tier is a [`moka::sync::Cache`] with a weigher of `entry_weight`;
-//! moka enforces `max_capacity` by weight and uses its TinyLFU admission policy
-//! (spec §11.2: "moka, TinyLFU, weighted by bytes"). Entries heavier than the cap
+//! moka enforces `max_capacity` by weight and uses its `TinyLFU` admission policy
+//! (spec §11.2: "moka, `TinyLFU`, weighted by bytes"). Entries heavier than the cap
 //! are refused by moka's own admission rule, matching the previous policy.
 //! moka amortizes eviction internally; `run_pending_tasks()` is called only on
 //! `len`/`is_empty`/`total_bytes` so those reads stay exact (P-17 removed the
@@ -57,18 +57,19 @@ pub(crate) fn entry_weight(e: &Entry) -> u64 {
 
 // --------------------------------------------------------------------------- MemoryTier
 
-/// moka-backed L0/L1 memory tier (spec §11.2: moka, TinyLFU, weighted by bytes).
+/// moka-backed L0/L1 memory tier (spec §11.2: moka, `TinyLFU`, weighted by bytes).
 pub struct MemoryTier {
     pub max_bytes: u64,
     cache: MokaCache<String, Arc<Entry>>,
 }
 
 impl MemoryTier {
+    #[must_use]
     pub fn new(max_bytes: u64) -> Self {
         let cache = MokaCache::builder()
             .weigher(|_k: &String, v: &Arc<Entry>| {
                 let w = entry_weight(v);
-                if w > u32::MAX as u64 {
+                if w > u64::from(u32::MAX) {
                     u32::MAX
                 } else {
                     w as u32
@@ -80,6 +81,7 @@ impl MemoryTier {
     }
 
     /// Get a cached entry.
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<Arc<Entry>> {
         self.cache.get(key)
     }
@@ -98,6 +100,7 @@ impl MemoryTier {
     }
 
     /// Remove a key; returns the stored entry if it was present.
+           #[must_use]
     pub fn remove(&self, key: &str) -> Option<Arc<Entry>> {
         self.cache.remove(key)
     }
@@ -109,18 +112,21 @@ impl MemoryTier {
     }
 
     /// Number of entries stored.
+           #[must_use]
     pub fn len(&self) -> usize {
         self.cache.run_pending_tasks();
         self.cache.entry_count() as usize
     }
 
     /// True when empty.
+           #[must_use]
     pub fn is_empty(&self) -> bool {
         self.cache.run_pending_tasks();
         self.cache.entry_count() == 0
     }
 
     /// Total stored byte weight (≤ `max_bytes` after any insert completes).
+           #[must_use]
     pub fn total_bytes(&self) -> u64 {
         self.cache.run_pending_tasks();
         self.cache.weighted_size()
@@ -132,7 +138,7 @@ impl MemoryTier {
 const ENTRY_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("oxide-fw-cache-entries");
 const TAG_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("oxide-fw-cache-tags");
 
-/// Index row: blob path (relative to root), compressed size, tags, stored_at and the
+/// Index row: blob path (relative to root), compressed size, tags, `stored_at` and the
 /// blake3 of the *uncompressed* serialized entry (verified on load, §17.2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DiskIndexEntry {
@@ -269,11 +275,19 @@ fn migrate_tag_table_v1_to_v2(index: &Database) -> Result<()> {
 
 impl DiskTier {
     /// Open (creating dirs + redb index as needed) at `root`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub fn open(root: std::path::PathBuf) -> Result<Self> {
         Self::open_with_budget(root, DEFAULT_DISK_MAX_BYTES, DEFAULT_DISK_MAX_ENTRY)
     }
 
     /// Open with an explicit disk budget + per-entry cap.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub fn open_with_budget(
         root: std::path::PathBuf,
         max_bytes: u64,
@@ -360,6 +374,10 @@ impl DiskTier {
 
     /// Store an entry: compress with zstd, write the blob (tmp + rename), update the
     /// index row and the tag → keys table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub fn set(&self, key: &str, entry: &Entry) -> Result<()> {
         // S-08: refuse an entry over the per-entry cap before touching disk.
         let raw_len = entry.body.len() as u64;
@@ -387,7 +405,7 @@ impl DiskTier {
         // The previous row's size + stored_at, so the byte counter and the
         // order index stay exact on replace.
         let prev = self.indexed_meta(key);
-        let prev_size = prev.map(|(s, _)| s).unwrap_or(0);
+        let prev_size = prev.map_or(0, |(s, _)| s);
         let path = self.blob_path(key);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ioerr)?;
@@ -436,13 +454,13 @@ impl DiskTier {
         Ok(())
     }
 
-    /// PERF-L1: forget a specific (stored_at, key) placement.
+    /// PERF-L1: forget a specific (`stored_at`, key) placement.
     fn order_forget_placement(&self, key: &str, stored_at: u64) {
-        let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
+        let mut order = self.order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         order.remove(&(stored_at, key.to_string()));
     }
 
-    /// S-08: the indexed (compressed size, stored_at) of `key`, or `None` when absent.
+    /// S-08: the indexed (compressed size, `stored_at`) of `key`, or `None` when absent.
     fn indexed_meta(&self, key: &str) -> Option<(u64, u64)> {
         let Ok(txn) = self.index.begin_read() else {
             return None;
@@ -458,16 +476,16 @@ impl DiskTier {
         }
     }
 
-    /// PERF-L1: record the (stored_at, key) order entry for `key`. The caller
-    /// forgets any previous placement first (it knows the old stored_at).
+    /// PERF-L1: record the (`stored_at`, key) order entry for `key`. The caller
+    /// forgets any previous placement first (it knows the old `stored_at`).
     fn order_record(&self, key: &str, stored_at: u64, size: u64) {
-        let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
+        let mut order = self.order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         order.insert((stored_at, key.to_string()), size);
     }
 
     /// PERF-L1: forget `key`'s order entry (on delete).
     fn order_forget(&self, key: &str) {
-        let mut order = self.order.lock().unwrap_or_else(|p| p.into_inner());
+        let mut order = self.order.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let stale: Vec<(u64, String)> = order.keys().filter(|sk| sk.1 == key).cloned().collect();
         for sk in stale {
             order.remove(&sk);
@@ -561,6 +579,10 @@ impl DiskTier {
     }
 
     /// Load an entry; corrupt/missing blobs are deleted and reported as a miss.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub fn get(&self, key: &str) -> Result<Option<Entry>> {
         let idx = {
             let txn = self.index.begin_read().map_err(dberr)?;
@@ -578,12 +600,9 @@ impl DiskTier {
             }
             Err(e) => return Err(ioerr(e)),
         };
-        let decoded = match zstd::stream::decode_all(raw.as_slice()) {
-            Ok(d) => d,
-            Err(_) => {
-                self.delete(key)?; // corrupt stream — silent miss (§17.2)
-                return Ok(None);
-            }
+        let decoded = if let Ok(d) = zstd::stream::decode_all(raw.as_slice()) { d } else {
+            self.delete(key)?; // corrupt stream — silent miss (§17.2)
+            return Ok(None);
         };
         if blake3::hash(&decoded).to_string() != idx.hash {
             self.delete(key)?; // hash mismatch — silent miss (§17.2)
@@ -607,17 +626,18 @@ impl DiskTier {
             self.delete(key)?;
             return Ok(None);
         }
-        match serde_json::from_slice::<Entry>(&decoded) {
-            Ok(entry) => Ok(Some(entry)),
-            Err(_) => {
-                self.delete(key)?;
-                Ok(None)
-            }
+        if let Ok(entry) = serde_json::from_slice::<Entry>(&decoded) { Ok(Some(entry)) } else {
+            self.delete(key)?;
+            Ok(None)
         }
     }
 
     /// Delete a key: blob file, index row and tag-table rows. Returns whether the key
     /// was indexed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub fn delete(&self, key: &str) -> Result<bool> {
         let txn = self.index.begin_write().map_err(dberr)?;
         let removed: Option<Vec<u8>> = {
@@ -673,6 +693,10 @@ impl DiskTier {
     }
 
     /// Keys tagged with `tag` (from the durable tag multimap).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
         let txn = self.index.begin_read().map_err(dberr)?;
         let mm = txn.open_multimap_table(TAG_KEYS).map_err(dberr)?;
@@ -709,6 +733,7 @@ pub struct CacheStats {
 pub const PATH_TAG_PREFIX: &str = "path:";
 
 /// Tag name for a path (`path:<path>`).
+       #[must_use]
 pub fn path_tag(path: &str) -> String {
     format!("{PATH_TAG_PREFIX}{path}")
 }
@@ -764,6 +789,7 @@ pub struct TieredCache {
 
 impl TieredCache {
     /// Memory-only cache with the default 512 MiB cap, wrapped in an Arc.
+           #[must_use]
     pub fn new_memory() -> Arc<Self> {
         Arc::new(Self {
             memory: MemoryTier::new(512 * 1024 * 1024),
@@ -780,6 +806,7 @@ impl TieredCache {
     }
 
     /// Owned constructor (compose + wrap in Arc yourself, e.g. to attach a disk tier).
+           #[must_use]
     pub fn new(max_bytes: u64) -> Self {
         Self {
             memory: MemoryTier::new(max_bytes),
@@ -796,6 +823,10 @@ impl TieredCache {
     }
 
     /// Attach a local disk tier (L1).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub fn with_disk(mut self, root: std::path::PathBuf) -> Result<Self> {
         let tier = Arc::new(DiskTier::open(root)?);
         // F51: the observer-first builder order wires the eviction seam
@@ -824,6 +855,7 @@ impl TieredCache {
     /// serves the §11.2 protocol. Reads fall through memory → disk → remote;
     /// writes write through all three. This is the constructor
     /// `cache.handler = { type: 'http', url }` wires to.
+    #[must_use]
     pub fn with_remote(mut self, remote: Arc<dyn CacheHandler>) -> Self {
         self.remote = Some(remote);
         self
@@ -864,6 +896,10 @@ impl TieredCache {
 
     /// Get across tiers (memory → disk → remote). Every tier hit promotes the entry to
     /// memory. Records hits/misses/stale for [`TieredCache::stats`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub async fn get(&self, key: &str) -> Result<Option<Hit>> {
         let now = now_ms();
 
@@ -1027,6 +1063,10 @@ impl TieredCache {
     }
 
     /// Set writes through all tiers and indexes tags (deduped).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub async fn set(&self, key: &str, entry: Entry) -> Result<()> {
         // S-08: an entry heavier than the memory cap was never servable, so
         // skip every tier — it must not fill the disk/remote either.
@@ -1089,6 +1129,10 @@ impl TieredCache {
 
     /// Like [`TieredCache::set`], but also tags the entry `path:<path>` so
     /// [`TieredCache::invalidate_path`] can find it (§11.3).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub async fn set_with_path(&self, key: &str, entry: Entry, path: &str) -> Result<()> {
         let mut entry = entry;
         let tag = path_tag(path);
@@ -1100,6 +1144,10 @@ impl TieredCache {
 
     /// Delete from every tier and clean the tag indexes eagerly (V2-B05) —
     /// a deleted key never dangles in a tag set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub async fn delete(&self, key: &str) -> Result<()> {
         self.memory.remove(key);
         if let Some(disk) = &self.disk {
@@ -1121,12 +1169,15 @@ impl TieredCache {
 
     /// Keys tagged with `tag` across the in-memory index, disk and remote (deduped,
     /// sorted for determinism).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub async fn tag_keys(&self, tag: &str) -> Result<Vec<String>> {
         let mut keys: Vec<String> = self
             .tags
             .get(tag)
-            .map(|l| l.iter().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
+            .map_or_default(|l| l.iter().cloned().collect::<Vec<_>>());
         if let Some(disk) = &self.disk {
             for k in disk.tag_keys(tag)? {
                 if !keys.contains(&k) {
@@ -1169,6 +1220,10 @@ impl TieredCache {
     /// servable for the original freshness window (documented marker scheme). An entry
     /// that is already past its whole usable window is deleted instead of resurrected.
     /// Returns the number of distinct keys affected.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub async fn invalidate_tag(&self, tag: &str, soft: bool) -> Result<usize> {
         let now = now_ms();
         let keys = self.tag_keys(tag).await?;
@@ -1219,12 +1274,20 @@ impl TieredCache {
 
     /// `revalidate.path('/blog/a')` — matches entries tagged `path:<path>` at set time
     /// (via [`TieredCache::set_with_path`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub async fn invalidate_path(&self, path: &str, soft: bool) -> Result<usize> {
         self.invalidate_tag(&path_tag(path), soft).await
     }
 
     /// Build seeding (§11.3): insert prerendered entries at deploy start.
     /// Returns the number of entries successfully written.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying operation fails.
     pub async fn seed(&self, entries: Vec<(String, Entry)>) -> Result<usize> {
         let mut seeded = 0usize;
         for (key, entry) in entries {
@@ -1362,8 +1425,7 @@ impl CacheHandler for TieredCache {
         Ok(self
             .tags
             .get(tag)
-            .map(|v| v.iter().cloned().collect::<Vec<_>>())
-            .unwrap_or_default())
+            .map_or_default(|v| v.iter().cloned().collect::<Vec<_>>()))
     }
 
     async fn invalidate_tag(&self, tag: &str, _soft: bool) -> Result<usize> {
@@ -1399,7 +1461,7 @@ mod tests {
             body: body.to_vec(),
             status: 200,
             headers: vec![("content-type".into(), "text/html".into())],
-            tags: tags.iter().map(|s| s.to_string()).collect(),
+            tags: tags.iter().map(std::string::ToString::to_string).collect(),
             policy: Policy {
                 ttl: Duration::from_secs(60),
                 swr: None,
