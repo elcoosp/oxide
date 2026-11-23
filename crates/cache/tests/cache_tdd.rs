@@ -217,7 +217,10 @@ async fn disk_tag_lookup() {
     t1.sort();
     assert_eq!(t1, vec!["k1".to_string(), "k2".to_string()]);
     assert_eq!(disk.tag_keys("t2").unwrap(), vec!["k1".to_string()]);
-    assert_eq!(disk.tag_keys("nope").unwrap(), [] as [std::string::String; 0]);
+    assert_eq!(
+        disk.tag_keys("nope").unwrap(),
+        [] as [std::string::String; 0]
+    );
 
     // Deleting a key removes it from the tag index too.
     disk.delete("k1").unwrap();
