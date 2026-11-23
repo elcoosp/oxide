@@ -19,7 +19,7 @@ fn poll_reports_created_then_noop_on_unchanged_content() {
 
     // Second poll with no changes at all: zero events.
     let events = w.poll(&mut seen).unwrap();
-    assert!(events.is_empty());
+    assert_eq!(events, [] as [FileEvent; 0]);
 
     // touch-without-change (same bytes rewritten, only mtime moves): still zero
     // events — the §5.5 content-hash confirmation requirement.
@@ -43,7 +43,7 @@ fn poll_reports_modified_only_when_content_hash_changes() {
 
     // Rewriting the identical content again must not re-report.
     fs::write(&a, "v2").unwrap();
-    assert!(w.poll(&mut seen).unwrap().is_empty());
+    assert_eq!(w.poll(&mut seen).unwrap(), [] as [FileEvent; 0]);
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn poll_lists_removed_before_other_events_and_sorts_by_path() {
     );
 
     // seen now reflects the current state: nothing left.
-    assert!(w.poll(&mut seen).unwrap().is_empty());
+    assert_eq!(w.poll(&mut seen).unwrap(), [] as [FileEvent; 0]);
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn hmr_messages_roundtrip_through_json_all_variants() {
     ];
     for m in &msgs {
         let json = m.to_json();
-        assert!(!json.is_empty());
+        assert_ne!(json, "");
         assert_eq!(
             &HmrMessage::from_json(&json).unwrap(),
             m,
@@ -262,7 +262,7 @@ fn schema_mismatch_diagnostic_is_dev_hmr_003() {
     assert_eq!(d.severity, oxide_fw_diagnostics::Severity::Warning);
     assert!(d.fix.is_some());
     assert!(
-        d.message.contains("2"),
+        d.message.contains('2'),
         "names the found version: {}",
         d.message
     );
@@ -317,10 +317,10 @@ async fn hmr_hub_broadcasts_to_two_subscribers() {
     let mut s2 = hub.subscribe();
     assert_eq!(hub.subscriber_count(), 2);
 
-    hub.publish(HmrMessage::FullReload {
+    hub.publish(&HmrMessage::FullReload {
         reason: "routes changed".into(),
     });
-    hub.publish(HmrMessage::Connected { build: "b1".into() });
+    hub.publish(&HmrMessage::Connected { build: "b1".into() });
 
     let want = HmrMessage::FullReload {
         reason: "routes changed".into(),
@@ -334,7 +334,7 @@ async fn hmr_hub_broadcasts_to_two_subscribers() {
 
     // Publishing with no subscribers must not panic.
     let solo = HmrHub::default();
-    solo.publish(HmrMessage::Update {
+    solo.publish(&HmrMessage::Update {
         updates: vec![UpdateEntry {
             kind: UpdateKind::Css,
             path: "x.css".into(),
@@ -379,9 +379,12 @@ fn route_table_inspector_from_router_table() {
     assert_eq!(state.routes[0].cache_policy, "revalidate=60,posts");
     assert_eq!(state.routes[1].cache_policy, "");
     // No source for these yet — schema stays honest.
-    assert!(state.module_graph.is_empty());
-    assert!(state.cache.is_empty());
-    assert!(state.waterfalls.is_empty());
+    assert_eq!(
+        state.module_graph,
+        [] as [(std::string::String, std::vec::Vec<std::string::String>); 0]
+    );
+    assert_eq!(state.cache, [] as [CacheRow; 0]);
+    assert_eq!(state.waterfalls, [] as [RequestTimingsRow; 0]);
     assert!(state.why.is_empty());
     assert_eq!(state.pool.workers, 0);
 }
@@ -789,17 +792,17 @@ fn route_table_inspector_wires_live_and_generation_rows() {
     let state = inspector.state();
     assert_eq!(state.live.len(), 1);
     assert_eq!(state.generations.len(), 1);
-    assert!(
+    assert_eq!(
         RouteTableInspector::from_router_table(Vec::new())
             .state()
-            .live
-            .is_empty()
+            .live,
+        [] as [LiveRow; 0]
     );
-    assert!(
+    assert_eq!(
         RouteTableInspector::from_router_table(Vec::new())
             .state()
-            .generations
-            .is_empty()
+            .generations,
+        [] as [GenerationRow; 0]
     );
 }
 
