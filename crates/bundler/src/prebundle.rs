@@ -589,7 +589,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let r = prebundle_cjs_to_esm(tmp.path(), &[], &tmp.path().join("out")).unwrap();
         assert_eq!(r.bundled, [] as [std::string::String; 0]);
-        assert_eq!(r.failures, [] as [(std::string::String, std::string::String); 0]);
+        assert_eq!(
+            r.failures,
+            [] as [(std::string::String, std::string::String); 0]
+        );
     }
 
     // The test above will not actually bundle (no node_modules in a tempdir);
