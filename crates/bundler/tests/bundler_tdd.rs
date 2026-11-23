@@ -315,8 +315,8 @@ fn chunks_and_css_files_are_written_non_empty_with_hashed_names() {
         assert!(!js.is_empty(), "chunk {} is empty", c.file);
         for f in &c.css {
             assert_ne!(
-                std::fs::read(dir.path().join("dist").join(f))
-                    .unwrap(), [] as [u8; 0]
+                std::fs::read(dir.path().join("dist").join(f)).unwrap(),
+                [] as [u8; 0]
             );
         }
     }
