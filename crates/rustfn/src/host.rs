@@ -39,6 +39,60 @@ pub const RFN_LOAD: &str = "RFN-003";
 /// timeout (default 30 s)").
 pub const RUSTFN_TIMEOUT_SECS: u64 = 30;
 
+/// A snapshot of a registry's posture for the dev overlay's
+/// observability (V2-F08 M2): the generation the host is on (the
+/// boot-time [`RustFnHost`] reports `0` — it does not swap; the
+/// dev-loop [`crate::swap::SwappableHost`] reports the live count),
+/// the mount count, the id count, the sorted ids, whether a types
+/// payload is mounted, the per-function timeout in seconds, and the
+/// blocking-lane count.
+///
+/// ONE read over the host's lock, not N — the dev overlay renders the
+/// report, it does not take the lock per field. The same shape answers
+/// for the boot-time host and the dev-loop host, so the overlay
+/// introspects EITHER through [`RegistryReport`] — the same "one
+/// consult surface" contract M1 landed for [`RustFnRegistry::call`].
+///
+/// The fields are a snapshot, not live counters (unlike the cache
+/// crate's `CacheMetricsSnapshot`, which is monotone counters since
+/// the observer was attached — the registry has no traffic counters
+/// to expose yet; the report is a posture read for the overlay's
+/// "is the host healthy?" check).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RegistryReport {
+    /// The swap generation (0 for the boot-time host; the live count
+    /// for the dev-loop host).
+    pub generation: u64,
+    /// The mounted library count (the retire pass's denominator).
+    pub mount_count: usize,
+    /// The registered id count (the consult's `has` surface size).
+    pub id_count: usize,
+    /// The registered ids (sorted — the host's `BTreeMap` order, so
+    /// two reports over the same state are byte-equal for the dev
+    /// overlay's diff).
+    pub ids: Vec<String>,
+    /// Whether ANY mounted library carries a types payload (the same
+    /// consult `RustFnRegistry::types_json` answers).
+    pub has_types: bool,
+    /// The per-function call budget in seconds (the spec's 30 s
+    /// default; the host with `with_timeout` overrides it).
+    pub timeout_secs: u64,
+    /// The blocking-lane count (the spec's 16 default; the host with
+    /// `with_lanes` overrides it).
+    pub lanes: usize,
+}
+
+impl RegistryReport {
+    /// Whether the registry is empty (no ids registered). The dev
+    /// overlay's "is the host attached?" check — `is_empty()` over the
+    /// host's lock is the same predicate, but the report carries it as
+    /// a derived field so the overlay reads ONE snapshot.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.id_count == 0
+    }
+}
+
 /// The default bounded-semaphore lanes (§V2-F08: "a bounded
 /// semaphore" — the native calls are blocking work, so the default is
 /// the conservative `available_parallelism`-shaped 16; the host with
@@ -488,6 +542,11 @@ pub struct RustFnHost {
     ids: BTreeMap<String, (usize, String)>,
     permits: Arc<Semaphore>,
     timeout: Duration,
+    /// The lane count the semaphore was built with (V2-F08 M2: the
+    /// `RegistryReport` introspection surface exposes it for the dev
+    /// overlay's "is the lane count set?" check — `tokio::Semaphore`
+    /// does not surface `max_permits`, so the host records the count).
+    lanes: usize,
 }
 
 impl Default for RustFnHost {
@@ -506,11 +565,13 @@ impl RustFnHost {
     /// A host with `lanes` concurrent native calls (at least one).
     #[must_use]
     pub fn with_lanes(lanes: usize) -> Self {
+        let lanes = lanes.max(1);
         Self {
             libraries: Vec::new(),
             ids: BTreeMap::new(),
-            permits: Arc::new(Semaphore::new(lanes.max(1))),
+            permits: Arc::new(Semaphore::new(lanes)),
             timeout: Duration::from_secs(RUSTFN_TIMEOUT_SECS),
+            lanes,
         }
     }
 
@@ -563,6 +624,41 @@ impl RustFnHost {
     #[must_use]
     pub fn mount_count(&self) -> usize {
         self.libraries.len()
+    }
+
+    /// The blocking-lane count the host was built with (V2-F08 M2: the
+    /// `RegistryReport` introspection surface exposes it for the dev
+    /// overlay's "is the lane count set?" check — `tokio::Semaphore`
+    /// does not surface `max_permits`, so the host records the count).
+    #[must_use]
+    pub(crate) fn lanes(&self) -> usize {
+        self.lanes
+    }
+
+    /// A snapshot of the host's posture for the dev overlay's
+    /// observability (V2-F08 M2): the generation the boot-time host
+    /// reports as `0` (it does not swap), the mount count, the id count,
+    /// the sorted ids, whether a types payload is mounted, the
+    /// per-function timeout, and the blocking-lane count. ONE read,
+    /// not N — the dev overlay renders the report, it does not take the
+    /// lock per field.
+    ///
+    /// The dev-loop [`crate::swap::SwappableHost`] answers the same
+    /// shape (its `report` carries the live generation), so the dev
+    /// overlay introspects EITHER host through [`RegistryReport`] —
+    /// the same "one consult surface" contract M1 landed for
+    /// [`RustFnRegistry::call`].
+    #[must_use]
+    pub fn report(&self) -> RegistryReport {
+        RegistryReport {
+            generation: 0,
+            mount_count: self.mount_count(),
+            id_count: self.ids.len(),
+            ids: self.ids(),
+            has_types: self.types_json().is_some(),
+            timeout_secs: self.timeout.as_secs(),
+            lanes: self.lanes,
+        }
     }
 
     /// Forget one id (the dev loop's swap drops the ids a rebuild no
@@ -670,6 +766,64 @@ impl RustFnHost {
         })?;
         lib.call_raw(&name, &input).map_err(RegistryError::from)
     }
+
+    /// The bounded-semaphore handle the swappable host's consult clones
+    /// for its async `call` (the lanes are owned once, at the host; the
+    /// swappable host's consult borrows the handle under the swap lock
+    /// and acquires the permit outside it).
+    #[must_use]
+    pub(crate) fn permits_for_consult(&self) -> Arc<Semaphore> {
+        Arc::clone(&self.permits)
+    }
+
+    /// The per-function call budget the swappable host's consult reads
+    /// for its async `call` (the budget is owned once, at the host; the
+    /// swappable host's consult borrows it under the swap lock and
+    /// applies it outside it).
+    #[must_use]
+    pub(crate) fn timeout_for_consult(&self) -> Duration {
+        self.timeout
+    }
+}
+
+/// The shared permit + `spawn_blocking` + timeout trio every
+/// `RustFnRegistry::call` runs, factored out so the boot-time host and
+/// the swappable host's consult pay it once. The caller resolves the
+/// library `Arc` + entry name + ODF-encoded args under its own lock,
+/// clones the permit handle + budget, then hands them here — the call
+/// runs OUTSIDE any lock, so an in-flight call never blocks (or is
+/// blocked by) a swap.
+///
+/// # Errors
+///
+/// [`RegistryError`] with the wire mapping: the call's own `Err` →
+/// `FnError`; a panic → `Panic`; an over-budget call → `Timeout`; a
+/// closed lane → `Internal`.
+pub(crate) async fn run_resolved_call(
+    permits: Arc<Semaphore>,
+    timeout: Duration,
+    lib: Arc<RustFnLibrary>,
+    name: String,
+    input: Vec<u8>,
+) -> Result<Vec<u8>, RegistryError> {
+    let _permit = permits.acquire_owned().await.map_err(|_| {
+        RegistryError::new(RegistryErrorKind::Internal, "the native call lane closed")
+    })?;
+    let handle = tokio::task::spawn_blocking(move || lib.call_raw(&name, &input));
+    match tokio::time::timeout(timeout, handle).await {
+        Ok(Ok(result)) => result.map_err(RegistryError::from),
+        Ok(Err(join)) => Err(RegistryError::new(
+            RegistryErrorKind::Panic,
+            format!("the native call task died: {join}"),
+        )),
+        Err(_elapsed) => Err(RegistryError::new(
+            RegistryErrorKind::Timeout,
+            format!(
+                "the native fn exceeded its {:.0}s budget",
+                timeout.as_secs_f32()
+            ),
+        )),
+    }
 }
 
 /// Convert the §9.4 route's args JSON into the ODF bytes the boundary
@@ -715,25 +869,7 @@ impl RustFnRegistry for RustFnHost {
             kind: RegistryErrorKind::Wire,
             message: e.to_string(),
         })?;
-        let name = lookup.1.clone();
-        let _permit = self.permits.clone().acquire_owned().await.map_err(|_| {
-            RegistryError::new(RegistryErrorKind::Internal, "the native call lane closed")
-        })?;
-        let handle = tokio::task::spawn_blocking(move || lib.call_raw(&name, &input));
-        match tokio::time::timeout(self.timeout, handle).await {
-            Ok(Ok(result)) => result.map_err(RegistryError::from),
-            Ok(Err(join)) => Err(RegistryError::new(
-                RegistryErrorKind::Panic,
-                format!("the native call task died: {join}"),
-            )),
-            Err(_elapsed) => Err(RegistryError::new(
-                RegistryErrorKind::Timeout,
-                format!(
-                    "the native fn `{}` exceeded its {:.0}s budget",
-                    lookup.1,
-                    self.timeout.as_secs_f32()
-                ),
-            )),
-        }
+        let name = lookup.1;
+        run_resolved_call(Arc::clone(&self.permits), self.timeout, lib, name, input).await
     }
 }
