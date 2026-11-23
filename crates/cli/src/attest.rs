@@ -31,6 +31,7 @@
 //! surface renders the same code/cause/fix shape as the rest of the tool
 //! (architecture invariant 3 — the miette-style help text).
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use base64::Engine as _;
@@ -39,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use thiserror::Error;
 
+use oxide_fw_bundler::ClientManifest;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
 
 /// The environment variable fixing the only timestamp an artifact carries
@@ -532,6 +534,62 @@ fn component(pkg: &LockPackage, scheme: &str, kind: &str) -> serde_json::Value {
         "type": kind,
         "version": pkg.version,
     })
+}
+
+/// Narrow a lockfile's npm packages to the set the bundle reached — the
+/// §V2-F20 intersection `docs/deviations.md` delta 5 names ("Intersecting
+/// `pnpm-lock.yaml` with the client manifest's source list needs the
+/// bundler's module-to-package map on the attest path"). `reached` is the
+/// [`ClientManifest::reached_packages`] value the bundler's
+/// module→package map produces; a package is kept when its name is in the
+/// set, dropped otherwise.
+///
+/// An empty `reached` set is the pre-F20 over-reporting shape: every
+/// locked package is kept (the safe direction for an SBOM — a
+/// manifest-less, first-party-only, or pre-seam build never narrows the
+/// component list). The input order is preserved (the SBOM sorts
+/// components by purl after the filter; the filter itself re-sorts
+/// nothing). A name in `reached` the lockfile does not carry is dropped
+/// silently on the SBOM side — the lockfile is the source of truth for
+/// what was installed.
+#[must_use]
+pub fn filter_reached(packages: &[LockPackage], reached: &BTreeSet<String>) -> Vec<LockPackage> {
+    if reached.is_empty() {
+        return packages.to_vec();
+    }
+    packages
+        .iter()
+        .filter(|pkg| reached.contains(&pkg.name))
+        .cloned()
+        .collect()
+}
+
+/// The npm packages the bundle reached, read best-effort from the client
+/// manifest a build wrote under `dist/client/client.manifest.json`. A
+/// missing manifest (a non-bundle build, or a dist from before the seam),
+/// a corrupt manifest, or a manifest whose routes reached no package all
+/// yield an empty set — the [`filter_reached`] over-reporting default, so
+/// the SBOM never narrows on a read failure and a broken manifest never
+/// blocks the attest (over-reporting is the safe direction for an SBOM).
+/// A present-but-unparseable manifest emits one `tracing::warn!` naming
+/// the path and the parse error before the fallback.
+fn reached_packages_from_dist(dist: &Path) -> BTreeSet<String> {
+    let manifest_path = dist.join("client").join("client.manifest.json");
+    match std::fs::read_to_string(&manifest_path) {
+        Ok(text) => match serde_json::from_str::<ClientManifest>(&text) {
+            Ok(manifest) => manifest.reached_packages(),
+            Err(e) => {
+                tracing::warn!(
+                    target: "oxide::attest",
+                    path = %manifest_path.display(),
+                    error = %e,
+                    "the client manifest is unparseable; the SBOM over-reports every locked npm package"
+                );
+                BTreeSet::new()
+            }
+        },
+        Err(_) => BTreeSet::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,13 +1094,20 @@ pub fn write_attestation(
         Err(_) => Vec::new(),
     };
     // The bundle's npm packages: the project's pnpm-lock.yaml when it
-    // exists. The "packages that reached a bundle" manifest filter is the
-    // substrate's documented deferral — every locked package is listed.
+    // exists, narrowed to the packages the bundle reached. The §V2-F20
+    // module→package map (`ClientManifest::reached_packages` read from
+    // `dist/client/client.manifest.json`) intersects the lockfile so the
+    // SBOM lists only the npm packages whose code shipped — not every
+    // locked package. A missing or corrupt manifest yields an empty
+    // reached set and `filter_reached` over-reports every locked package
+    // (the pre-F20 shape, byte-identical — the safe direction for an SBOM).
     let pnpm_lock = project_root.join("pnpm-lock.yaml");
     let pnpm = match std::fs::read_to_string(&pnpm_lock) {
         Ok(text) => parse_pnpm_lock_packages(&text)?,
         Err(_) => Vec::new(),
     };
+    let reached = reached_packages_from_dist(dist);
+    let pnpm = filter_reached(&pnpm, &reached);
 
     let sbom = sbom_from_locks(&cargo, &pnpm, facts.source_date_epoch);
     let components = sbom["components"].as_array().map_or(0, Vec::len);
