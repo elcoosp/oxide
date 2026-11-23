@@ -47,7 +47,7 @@ fn entry(body: &[u8], tags: &[&str]) -> Entry {
         body: body.to_vec(),
         status: 200,
         headers: vec![("content-type".into(), "text/html".into())],
-        tags: tags.iter().map(|s| s.to_string()).collect(),
+        tags: tags.iter().map(std::string::ToString::to_string).collect(),
         policy: Policy {
             ttl: Duration::from_secs(60),
             swr: None,
