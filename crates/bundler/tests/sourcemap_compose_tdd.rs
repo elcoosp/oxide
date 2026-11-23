@@ -9,12 +9,12 @@
 //! - `compose_v3`'s array semantics (the composed map points at the ORIGINAL
 //!   sources, so it carries `prev`'s sources/names);
 //! - the oxc interop (`oxc_from_v3`), and
-//! - the two wire-ups: the ChunkBundler emits a REAL stitched V3 map (never
+//! - the two wire-ups: the `ChunkBundler` emits a REAL stitched V3 map (never
 //!   the old `{}` stub) and the rolldown path with a banner plugin keeps the
 //!   original line-1 mapping (the spec's acceptance).
 //!
 //! Every pin here runs without a JS engine: `compose` itself is pure, the
-//! plugin maps in the wire tests are Rust closures, and oxc_sourcemap is a
+//! plugin maps in the wire tests are Rust closures, and `oxc_sourcemap` is a
 //! plain Rust library.
 
 use oxide_fw_bundler::sourcemap_compose::{
@@ -43,7 +43,7 @@ fn identity(lines: u32, sources: &[&str]) -> V3Map {
     v3_from_toks(
         &toks,
         Some("out.js".to_string()),
-        sources.iter().map(|s| s.to_string()).collect(),
+        sources.iter().map(std::string::ToString::to_string).collect(),
         Vec::new(),
     )
 }
@@ -270,7 +270,7 @@ fn compose_v3_json_banner_acceptance_points_back_at_line_one() {
     let composed = compose_v3_json(&prev_json, &next_json).expect("compose");
     let map = parse_v3(&composed).expect("composed map parses");
     let toks = toks_of(&map).expect("tokens decode");
-    assert!(!toks.is_empty());
+    assert_ne!(toks, [] as [oxide_fw_bundler::sourcemap_compose::Tok; 0]);
     assert_eq!(
         toks[0],
         tok(1, 0, 0, 0, 0),
