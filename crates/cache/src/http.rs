@@ -19,6 +19,7 @@ use dashmap::DashMap;
 ///   entry without one can never answer IMS. Dates parse as IMF-fixdate
 ///   (`Sun, 06 Nov 1994 08:49:37 GMT`) or — for tests/dev tooling — as a bare
 ///   unix-**milliseconds** number (see [`parse_http_date`]).
+#[must_use]
 pub fn conditional_response(req_headers: &[(String, String)], entry: &Entry) -> Option<u16> {
     let get = |name: &str| {
         req_headers
@@ -73,6 +74,7 @@ fn etag_list_matches(header: &str, entry_etag: &str) -> bool {
 /// `ttl = 0` → `no-store` (never cacheable, regardless of SWR/SIE). Otherwise
 /// `public, max-age=<s>, s-maxage=<s>` plus `stale-while-revalidate` / `stale-if-error`
 /// when configured.
+#[must_use]
 pub fn cache_control(policy: &Policy) -> String {
     if policy.ttl.is_zero() {
         return "no-store".to_string();
@@ -102,6 +104,7 @@ const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /// 2. IMF-fixdate `Sun, 06 Nov 1994 08:49:37 GMT` (weekday is ignored; `GMT` required).
 ///
 /// Obsolete forms (RFC 850, asctime) are deliberately not supported.
+       #[must_use]
 pub fn parse_http_date(s: &str) -> Option<u64> {
     let s = s.trim();
     if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
@@ -137,6 +140,7 @@ pub fn parse_http_date(s: &str) -> Option<u64> {
 }
 
 /// Format unix seconds as an IMF-fixdate HTTP date (`Sun, 06 Nov 1994 08:49:37 GMT`).
+       #[must_use]
 pub fn http_date(unix_secs: u64) -> String {
     let days = (unix_secs / 86_400) as i64;
     let rem = unix_secs % 86_400;
@@ -156,8 +160,8 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400; // [0, 399]
-    let mp = (m as i64 + 9) % 12; // [0, 11]
-    let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
+    let mp = (i64::from(m) + 9) % 12; // [0, 11]
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1; // [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
     era * 146_097 + doe - 719_468
 }
@@ -180,6 +184,7 @@ fn civil_from_days(z: i64) -> (i64, i32, i32) {
 
 /// Key for [`FetchMemo`]: `METHOD url blake3(body)` — the body hash makes POST
 /// memoization safe; method is uppercased.
+       #[must_use]
 pub fn memo_key(method: &str, url: &str, body: &[u8]) -> String {
     let digest = blake3::hash(body).to_string();
     format!("{} {url} {digest}", method.to_ascii_uppercase())
@@ -200,6 +205,7 @@ impl FetchMemo {
     }
 
     /// Look a response up by precomputed key.
+           #[must_use]
     pub fn get(&self, key: &str) -> Option<Bytes> {
         self.inner.get(key).map(|b| Bytes::clone(&b))
     }
@@ -210,6 +216,7 @@ impl FetchMemo {
     }
 
     /// Look a response up for a request within the same request id.
+           #[must_use]
     pub fn get_for_request(&self, method: &str, url: &str, body: &[u8]) -> Option<Bytes> {
         self.get(&memo_key(method, url, body))
     }
@@ -221,7 +228,7 @@ impl FetchMemo {
 /// conditional headers (§11.3): the ONE call a host makes to serve a
 /// cached entry — the canonical 304 comparison ([`conditional_response`],
 /// RFC 9110 §13) and the §11.3 header set ([`cache_control`] from the
-/// entry's policy, the entry's ETag, the `Date` via [`http_date`])
+/// entry's policy, the entry's `ETag`, the `Date` via [`http_date`])
 /// composed, so no host re-rolls the semantics (the L0 stage's and the
 /// static-asset server's hand-rolled matches were the evidence it
 /// happened twice; both compose through this seam since V2-F55/F56).
@@ -292,6 +299,7 @@ pub enum ServeOutcome {
 /// assert_eq!(status, 200);
 /// assert!(headers.contains(&("cache-control".into(), "public, max-age=60, s-maxage=60".into())));
 /// ```
+       #[must_use]
 pub fn serve_entry(entry: &Entry, req_headers: &[(String, String)], now_secs: u64) -> ServeOutcome {
     // The 304 arm: the canonical comparison, then the validator set a
     // 304 SHOULD carry (RFC 9110 §15.4.5).
