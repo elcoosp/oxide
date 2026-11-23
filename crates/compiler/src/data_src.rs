@@ -43,12 +43,16 @@
 //!   language, or a module with no component is returned unchanged. A
 //!   skipped stamp costs the overlay nothing; a wrong one misleads it.
 //!
-//! Vue and Svelte are not covered here: the spec routes their stamps
-//! through their compile hooks (the tooling pool's `@vue/compiler-sfc` /
-//! `svelte/compiler` steps), not the JSX path — the recorded remaining
-//! halves in `docs/deviations.md`. The stamp is dev-only: the wire-up
-//! lives in [`crate::lower_to_js_with_refresh`], the dev lowering entry
-//! the ESM dev server serves modules through; the production lowering
+//! Vue and Svelte are covered by the template stamp below: a Vue SFC
+//! stamps the first element inside its `<template>` block, a Svelte file
+//! stamps the first element of its markup region (after the `</script>`
+//! close) — the same DOM→source contract, the same span-surgery rule, the
+//! same idempotency guard, applied to template syntax the JSX pass cannot
+//! see (Vue/Svelte compile through the Node tooling pool, but the stamp is
+//! a pure-Rust pass over the source text BEFORE the pool runs, so it is
+//! V8-free and testable). The stamp is dev-only: the wire-up lives in
+//! [`crate::lower_to_js_with_refresh`], the dev lowering entry the ESM dev
+//! server serves modules through; the production lowering
 //! ([`crate::lower_to_js`]) never sees the pass.
 //!
 //! The module never touches the filesystem and never refuses: the dev
@@ -74,12 +78,21 @@ pub const DATA_OX_SRC_ATTR: &str = "data-ox-src";
 /// text: only the attribute bytes are inserted, every other byte (and
 /// every line count, so the dev sourcemap stays valid) is preserved.
 ///
-/// Returns the source unchanged for: a non-`tsx`/`jsx` language (the
-/// stamp rides the JSX lowering), a source that does not parse (the
-/// lowering reports the parse diagnostic — this pass adds nothing to
-/// it), and a module with no stampable component. Idempotent: an element
-/// already carrying [`DATA_OX_SRC_ATTR`] is skipped, so re-injecting an
-/// already-stamped source returns it unchanged.
+/// Two stamp paths, dispatched by `lang`:
+///
+/// - `tsx` / `jsx` — the JSX pass: every top-level component's first
+///   **returned** JSX element is stamped (the React/Solid half).
+/// - `vue` / `svelte` — the template pass: the first element of the
+///   Vue `<template>` block or the Svelte markup region is stamped (the
+///   file IS the component, so the line is `1` — the same `src` spelling
+///   the cost endpoint's `?src=` contract takes, and the bundler's
+///   per-file `source_costs` key).
+///
+/// Returns the source unchanged for: a language neither path owns, a
+/// source that does not parse (the JSX half — the lowering reports the
+/// parse diagnostic), and a module with no stampable element. Idempotent:
+/// an element already carrying [`DATA_OX_SRC_ATTR`] is skipped, so
+/// re-injecting an already-stamped source returns it unchanged.
 ///
 /// Dev-only by construction: the wire-up is
 /// [`crate::lower_to_js_with_refresh`], the dev lowering entry; the
@@ -92,6 +105,9 @@ pub const DATA_OX_SRC_ATTR: &str = "data-ox-src";
 /// [`crate::inject_react_refresh`] convention.
 pub fn inject_data_ox_src(code: &str, lang: &str, path: &str) -> crate::Result<Option<String>> {
     let _span = debug_span!("inject_data_ox_src").entered();
+    if matches!(lang, "vue" | "svelte") {
+        return inject_template_data_ox_src(code, lang, path);
+    }
     if !matches!(lang, "tsx" | "jsx") {
         return Ok(None);
     }
@@ -112,6 +128,268 @@ pub fn inject_data_ox_src(code: &str, lang: &str, path: &str) -> crate::Result<O
         out.insert_str(at, &text);
     }
     Ok(Some(out))
+}
+
+/// Stamp the first element of a Vue `<template>` block or a Svelte markup
+/// region with `data-ox-src="{path}:1"` — the §V2-F17 DOM→source mapping
+/// for the template frameworks (the file IS the component, so the line is
+/// `1`, the same `src` spelling the cost endpoint's `?src=` contract
+/// takes). Span surgery on the original text: only the attribute bytes are
+/// inserted, every other byte is preserved. The Vue/Svelte compile hooks
+/// run later through the Node tooling pool, but the stamp lands BEFORE
+/// them on the source text, so the pool's output carries the attribute into
+/// the rendered DOM.
+///
+/// The scan is a lightweight, pure-Rust pass over the template syntax (the
+/// JSX AST visitor cannot see template syntax). It finds the first opening
+/// tag in the template region and inserts the attribute before the tag's
+/// closing `>` (or before the `/` of a self-closing tag, so the slash stays
+/// attached to the angle bracket — the JSX half's `stamp_edit` rule).
+///
+/// Returns the source unchanged for: a Vue SFC without a `<template>`
+/// block, a Svelte file whose markup region has no element, an element that
+/// already carries [`DATA_OX_SRC_ATTR`] (idempotency), and a tag shape the
+/// scan cannot safely attribute (a skipped stamp costs the overlay nothing,
+/// a wrong one misleads it).
+///
+/// # Errors
+///
+/// Never — the template scan is infallible (a malformed template is an
+/// honest no-op, the same no-vouch direction the JSX half takes).
+pub fn inject_template_data_ox_src(
+    code: &str,
+    lang: &str,
+    path: &str,
+) -> crate::Result<Option<String>> {
+    let _span = debug_span!("inject_template_data_ox_src").entered();
+    let region = template_region(code, lang);
+    let Some(region) = region else {
+        return Ok(None);
+    };
+    let Some(tag) = first_opening_tag(&code[region.clone()]) else {
+        return Ok(None);
+    };
+    // The full opening tag (from `<` to `>`) is the idempotency scan's
+    // scope — a hand-written or previously-stamped attribute sits anywhere
+    // in the tag's head. The scan walks from the tag's start to its
+    // closing `>` (or `/>`), so a stamp anywhere on the element's opening
+    // tag counts.
+    let tag_start_in_region = tag.name_start_in_region;
+    let tag_head_end = tag_start_in_region
+        + opening_tag_end(&code[region.clone()][tag_start_in_region..]).unwrap_or(0);
+    if carries_template_stamp(
+        &code[region.start + tag_start_in_region..region.start + tag_head_end],
+    ) {
+        return Ok(None);
+    }
+    // The absolute insertion offset in the full source.
+    let abs_name_end = region.start + tag.name_end_in_region;
+    let Some(at) = insertion_offset(code, abs_name_end) else {
+        return Ok(None);
+    };
+    let value = format!("{path}:1");
+    let text = format!(" {DATA_OX_SRC_ATTR}=\"{value}\"");
+    let mut out = code.to_string();
+    out.insert_str(at, &text);
+    Ok(Some(out))
+}
+
+/// The byte range of the template region the stamp scans: a Vue SFC's
+/// `<template>...</template>` block (the block's inner content, after the
+/// opening tag and before the closing tag), or a Svelte file's markup
+/// region (everything after the last `</script>` close — the markup that
+/// follows the script block(s); a file with no script block is all
+/// markup).
+fn template_region(code: &str, lang: &str) -> Option<std::ops::Range<usize>> {
+    match lang {
+        "vue" => {
+            // The first top-level `<template>` block. SFCs may carry
+            // `<template>` inside other blocks; the component's render
+            // template is the first top-level one.
+            let open = find_tag_open(code, "template")?;
+            let after_open = open.end;
+            let close = find_tag_close(code, "template", after_open)?;
+            Some(after_open..close.start)
+        }
+        "svelte" => {
+            // The markup region: after the last `</script>` close. A
+            // Svelte file may carry a `<script>` and a `<script
+            // context="module">`; the markup follows the final close. A
+            // file with no script block is all markup (the region is the
+            // whole file).
+            let mut search_from = 0usize;
+            let mut after_last_script = 0usize;
+            while let Some(close) = find_tag_close(code, "script", search_from) {
+                after_last_script = close.end;
+                search_from = close.end;
+            }
+            Some(after_last_script..code.len())
+        }
+        _ => None,
+    }
+}
+
+/// A found tag's `[start, end)` byte range — the whole `<...>` span
+/// (open) or `</...>` span (close).
+type TagSpan = std::ops::Range<usize>;
+
+/// The first opening tag `name` in `code` (e.g. `<template>`, `<script>`).
+/// Returns the whole tag's byte range, or `None` when absent. A naive
+/// scanner is enough: the SFC's top-level tags are unambiguous, and a
+/// `<` inside a script string would only confuse a tag that does not
+/// appear there.
+fn find_tag_open(code: &str, name: &str) -> Option<TagSpan> {
+    let needle_open = format!("<{name}");
+    let start = code.find(&needle_open)?;
+    // The tag's close is the next `>` (SFC tags carry no `>` in attributes
+    // in practice; a quoted `>` inside an attribute value is the only
+    // ambiguity, and Vue SFC top-level block tags carry none).
+    let after = start + needle_open.len();
+    let gt = code[after..].find('>')?;
+    let end = after + gt + 1;
+    Some(start..end)
+}
+
+/// The first closing tag `</name>` at or after `from` in `code`. Returns
+/// the whole `</...>` byte range, or `None` when absent.
+fn find_tag_close(code: &str, name: &str, from: usize) -> Option<TagSpan> {
+    let needle_close = format!("</{name}");
+    let start = code[from..].find(&needle_close)? + from;
+    let after = start + needle_close.len();
+    let gt = code[after..].find('>')?;
+    let end = after + gt + 1;
+    Some(start..end)
+}
+
+/// The first opening element tag inside the template region: the tag's
+/// name span (the byte offset in the region where the tag name ends — the
+/// insertion point for the attribute lands just after the name, before any
+/// existing attributes or the closing `>`/`/>`). A `<` that is not
+/// followed by a tag-name char (a `</`, a `<!--` comment, or a `<` text
+/// node) is skipped; the first real element wins.
+struct FirstTag {
+    /// The byte offset (relative to the region's start) where the tag
+    /// starts (`<`).
+    name_start_in_region: usize,
+    /// The byte offset (relative to the region's start) where the tag
+    /// name ends — the `<tagname` span's end, before any whitespace or
+    /// attribute.
+    name_end_in_region: usize,
+}
+
+/// Scan the region for the first opening element tag and return where its
+/// name ends (relative to the region). Comments, closing tags and bare
+/// text are skipped. Self-closing and attribute-bearing tags are handled by
+/// the caller's `insertion_offset`.
+fn first_opening_tag(region: &str) -> Option<FirstTag> {
+    let bytes = region.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        // A `<` — what follows?
+        let next = bytes.get(i + 1).copied()?;
+        // `</` is a closing tag — skip to its `>`.
+        if next == b'/' {
+            let gt = region[i + 2..].find('>')?;
+            i = i + 2 + gt + 1;
+            continue;
+        }
+        // `<!--` is a comment — skip to `-->`.
+        if region[i..].starts_with("<!--") {
+            let end = region[i + 4..].find("-->")?;
+            i = i + 4 + end + 3;
+            continue;
+        }
+        // `<!` (doctype/declaration) — skip to `>`.
+        if next == b'!' {
+            let gt = region[i + 2..].find('>')?;
+            i = i + 2 + gt + 1;
+            continue;
+        }
+        // A tag name char (a letter) — this is an opening element.
+        if next.is_ascii_alphabetic() {
+            // The name runs until a non-name char (whitespace, `/`, `>`).
+            let mut j = i + 1;
+            while j < bytes.len() {
+                let c = bytes[j];
+                if c.is_ascii_alphanumeric() || c == b'-' || c == b':' || c == b'_' || c == b'.' {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            return Some(FirstTag {
+                name_start_in_region: i,
+                name_end_in_region: j,
+            });
+        }
+        // A bare `<` followed by something else — skip the char.
+        i += 1;
+    }
+    None
+}
+
+/// The length (in bytes) of the opening tag's head — from the leading `<`
+/// to and including the closing `>` or `/>`. Used by the idempotency scan
+/// to bound the attribute search. Returns `None` for a tag with no closing
+/// `>` (an honest no-op the caller treats as zero).
+fn opening_tag_end(tag: &str) -> Option<usize> {
+    let bytes = tag.as_bytes();
+    let mut i = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        match c {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'>' if !in_single && !in_double => return Some(i + 1),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether the opening tag's head already carries the stamp attribute —
+/// the idempotency guard (a hand-written stamp or a previous pass's stamp
+/// means the element is already attributed, so a second injection is a
+/// no-op). The scan covers the whole tag head (from `<` to `>`).
+fn carries_template_stamp(tag_head: &str) -> bool {
+    tag_head.contains(DATA_OX_SRC_ATTR)
+}
+
+/// The byte offset (in the full source) where the attribute text goes:
+/// just before the tag's closing `>` (or before the `/` of a self-closing
+/// tag, so the slash stays attached to the angle bracket — the JSX half's
+/// `stamp_edit` rule). `name_end` is the absolute offset where the tag
+/// name ends; the scan walks forward from there to find the closing `>` or
+/// `/>`, skipping attributes and whitespace. Returns `None` for a tag shape
+/// the scan cannot safely attribute (no closing `>`, or a `>` inside a
+/// quoted attribute value it cannot resolve — an honest no-op).
+fn insertion_offset(code: &str, name_end: usize) -> Option<usize> {
+    let bytes = code.as_bytes();
+    let mut i = name_end;
+    let mut in_single = false;
+    let mut in_double = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        match c {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            // A `/` outside a quoted value is the self-closing slash (the
+            // `/>` shape); a `>` is the tag's close. Either is the
+            // insertion point — insert before it (the JSX half's
+            // `stamp_edit` rule).
+            b'/' | b'>' if !in_single && !in_double => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// One attribute insertion: the byte offset the attribute text goes
