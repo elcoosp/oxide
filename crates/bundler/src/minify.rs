@@ -22,7 +22,7 @@ pub fn minify(src: &str) -> String {
     let mut line: Vec<u8> = Vec::new(); // current output line (comment-stripped)
 
     let flush_line = |out: &mut Vec<u8>, line: &mut Vec<u8>, keep_newline: bool| {
-        while matches!(line.last(), Some(b' ') | Some(b'\t')) {
+        while matches!(line.last(), Some(b' ' | b'\t')) {
             line.pop();
         }
         if !line.is_empty() {
@@ -38,7 +38,7 @@ pub fn minify(src: &str) -> String {
     while i < n {
         let c = b[i];
         if c == b'\n' {
-            let in_lit = matches!(stack.last(), Some(M::Str(_)) | Some(M::Tmpl));
+            let in_lit = matches!(stack.last(), Some(M::Str(_) | M::Tmpl));
             if in_lit {
                 // newline inside a string/template literal is literal content
                 line.push(c);
