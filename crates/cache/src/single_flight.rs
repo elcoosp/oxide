@@ -7,7 +7,7 @@
 //! [`SingleFlight::publish_and_cleanup`] removes the map entry **before** sending on
 //! the broadcast channel. This closes a subscribe/publish race deterministically:
 //!
-//! - a follower that finds the entry subscribes while still holding the DashMap shard
+//! - a follower that finds the entry subscribes while still holding the `DashMap` shard
 //!   read lock; the owner's `remove` needs the write lock on that shard, so the owner
 //!   cannot remove-and-send until every in-flight follower has subscribed. Nobody who
 //!   found the entry can miss the value;
@@ -30,6 +30,7 @@ use tokio::sync::broadcast;
 pub struct SingleFlight;
 
 impl SingleFlight {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -91,7 +92,7 @@ pub enum FlightSlot {
 /// S-15: an RAII guard for an owner slot. Every owner exit path — success,
 /// loader `error(404)`/redirect, cookie short-circuit, render error — must
 /// clear the in-flight map entry, or a short-circuited request leaks one
-/// DashMap entry forever (attacker-mintable keys → unbounded growth, and the
+/// `DashMap` entry forever (attacker-mintable keys → unbounded growth, and the
 /// key is single-flight-broken thereafter). A guard makes *all* early returns
 /// correct without threading cleanup through each one.
 ///
@@ -105,6 +106,7 @@ pub struct FlightOwnerGuard {
 
 impl FlightOwnerGuard {
     /// Wrap an owner sender (from [`FlightSlot::Owner`]).
+           #[must_use]
     pub fn new(
         map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>>,
         key: String,
@@ -197,9 +199,8 @@ mod tests {
         let map: DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>> = DashMap::new();
 
         // First acquire owns; follow-up acquires coalesce onto it.
-        let owner = match sf.acquire(&map, "k").await {
-            FlightSlot::Owner(tx) => tx,
-            _ => panic!("first acquire must own"),
+        let FlightSlot::Owner(owner) = sf.acquire(&map, "k").await else {
+            panic!("first acquire must own");
         };
         let f1 = sf.acquire(&map, "k").await;
         let f2 = sf.acquire(&map, "k").await;
@@ -230,9 +231,8 @@ mod tests {
         let map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>> =
             Arc::new(DashMap::new());
         let sf = SingleFlight::new();
-        let tx = match sf.acquire(&map, "k").await {
-            FlightSlot::Owner(tx) => tx,
-            _ => panic!("owner"),
+        let FlightSlot::Owner(tx) = sf.acquire(&map, "k").await else {
+            panic!("owner");
         };
         assert_eq!(map.len(), 1);
         {
@@ -249,13 +249,11 @@ mod tests {
         let map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>> =
             Arc::new(DashMap::new());
         let sf = SingleFlight::new();
-        let tx = match sf.acquire(&map, "k").await {
-            FlightSlot::Owner(tx) => tx,
-            _ => panic!("owner"),
+        let FlightSlot::Owner(tx) = sf.acquire(&map, "k").await else {
+            panic!("owner");
         };
-        let mut follower = match sf.acquire(&map, "k").await {
-            FlightSlot::Follower(rx) => rx,
-            _ => panic!("follower"),
+        let FlightSlot::Follower(mut follower) = sf.acquire(&map, "k").await else {
+            panic!("follower");
         };
         let guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
         let reached = guard.publish(Arc::new(entry(b"v")));
@@ -274,13 +272,11 @@ mod tests {
         let map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>> =
             Arc::new(DashMap::new());
         let sf = SingleFlight::new();
-        let tx = match sf.acquire(&map, "k").await {
-            FlightSlot::Owner(tx) => tx,
-            _ => panic!("owner"),
+        let FlightSlot::Owner(tx) = sf.acquire(&map, "k").await else {
+            panic!("owner");
         };
-        let mut follower = match sf.acquire(&map, "k").await {
-            FlightSlot::Follower(rx) => rx,
-            _ => panic!("follower"),
+        let FlightSlot::Follower(mut follower) = sf.acquire(&map, "k").await else {
+            panic!("follower");
         };
         let guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
         let reached = guard.publish(Arc::new(entry(b"v")));
@@ -295,9 +291,8 @@ mod tests {
         let map: Arc<DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>> =
             Arc::new(DashMap::new());
         let sf = SingleFlight::new();
-        let tx = match sf.acquire(&map, "k").await {
-            FlightSlot::Owner(tx) => tx,
-            _ => panic!("owner"),
+        let FlightSlot::Owner(tx) = sf.acquire(&map, "k").await else {
+            panic!("owner");
         };
         let guard = FlightOwnerGuard::new(Arc::clone(&map), "k".to_string(), tx);
         assert_eq!(guard.publish(Arc::new(entry(b"v"))), 0);
