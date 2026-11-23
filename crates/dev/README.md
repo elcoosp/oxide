@@ -45,7 +45,7 @@ The design goal is a dev loop that never restarts the process. A source edit tri
 use oxide_fw_dev::{HmrHub, HmrMessage};
 
 let hub = HmrHub::new();
-hub.publish(HmrMessage::FullReload {
+hub.publish(&HmrMessage::FullReload {
     reason: "config changed".into(),
 });
 ```
