@@ -14,6 +14,19 @@ use oxide_fw_dev::workspace::{ManifestWorkspaceLinks, WorkspaceLinks, real_path}
 use std::path::Path;
 
 fn main() {
+    // The injectable seam: a fake `WorkspaceLinks` that watches nothing
+    // extra — declared up front so the demo's statements stay in story order
+    // (step 6 below uses it).
+    struct NoLinks;
+    impl WorkspaceLinks for NoLinks {
+        fn links(
+            &self,
+            _app_root: &Path,
+        ) -> oxide_fw_dev::Result<Vec<oxide_fw_dev::LinkedPackage>> {
+            Ok(Vec::new())
+        }
+    }
+
     // 1. Build the spec's fixture workspace on disk: `apps/web` (the app)
     //    depends on `@acme/ui`; `packages/ui` is the workspace package.
     let ws = tempfile::tempdir().expect("tempdir");
@@ -116,17 +129,8 @@ fn main() {
     assert!(watcher.roots.contains(&pkg.join("src")));
 
     // 6. The injectable seam: a fake WorkspaceLinks drives the same wire-up
-    //    (the pattern the record/replay fakes use) — here a policy that
-    //    watches nothing extra.
-    struct NoLinks;
-    impl WorkspaceLinks for NoLinks {
-        fn links(
-            &self,
-            _app_root: &Path,
-        ) -> oxide_fw_dev::Result<Vec<oxide_fw_dev::LinkedPackage>> {
-            Ok(Vec::new())
-        }
-    }
+    //    (the pattern the record/replay fakes use) — here the `NoLinks`
+    //    policy declared up top watches nothing extra.
     let plain = Watcher::with_workspace_links(vec![app.clone()], &NoLinks, &app)
         .expect("watcher over the fake");
     assert_eq!(plain.roots, vec![app.clone()]);
