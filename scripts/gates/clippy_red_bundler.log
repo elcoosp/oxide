@@ -1,482 +1,264 @@
 warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
 warning: workspace (manifest) generated 1 warning
  Downloading crates ...
-  Downloaded adler2 v2.0.1
-  Downloaded anstyle v1.0.14
   Downloaded append-only-vec v0.1.10
-  Downloaded alloca v0.4.0
-  Downloaded arcstr v1.2.0
-  Downloaded async-lock v3.4.2
-  Downloaded base-encode v0.3.1
-  Downloaded float-cmp v0.10.0
-  Downloaded futures-sink v0.3.34
-  Downloaded base64-simd v0.8.0
-  Downloaded async-scoped v0.9.0
-  Downloaded embedded-io v0.4.0
-  Downloaded ciborium-ll v0.2.2
-  Downloaded futures-io v0.3.34
-  Downloaded endian-type v0.2.0
-  Downloaded futures-core v0.3.34
-  Downloaded crypto-common v0.1.7
-  Downloaded form_urlencoded v1.2.2
-  Downloaded futures-task v0.3.34
-  Downloaded futures-macro v0.3.34
-  Downloaded cow-utils v0.1.3
-  Downloaded heck v0.5.0
-  Downloaded clap_lex v1.1.1
-  Downloaded json-strip-comments v3.1.2
-  Downloaded mime v0.3.17
-  Downloaded hmac-sha1-compact v1.1.8
-  Downloaded cpufeatures v0.2.17
-  Downloaded cobs v0.3.0
-  Downloaded lazy_static v1.5.1
-  Downloaded concurrent_lru v0.2.0
-  Downloaded nu-ansi-term v0.50.3
-  Downloaded nibble_vec v0.1.0
-  Downloaded nonmax v0.5.5
-  Downloaded block-buffer v0.10.4
-  Downloaded ciborium-io v0.2.2
-  Downloaded castaway v0.2.4
-  Downloaded idna_adapter v1.2.2
-  Downloaded json-escape-simd v3.1.3
-  Downloaded lazy-regex-proc_macros v3.6.2
-  Downloaded thread_local v1.1.10
-  Downloaded anes v0.1.6
-  Downloaded fast-glob v1.1.2
-  Downloaded nodejs-built-in-modules v1.0.0
-  Downloaded rolldown_std_utils v1.2.15
-  Downloaded rustc-hash v2.1.3
-  Downloaded same-file v1.0.6
-  Downloaded untrusted v0.9.0
-  Downloaded event-listener-strategy v0.5.4
-  Downloaded unicode-xid v0.2.6
-  Downloaded displaydoc v0.2.7
-  Downloaded digest v0.10.7
-  Downloaded fixedbitset v0.5.7
-  Downloaded typedmap v0.6.0
-  Downloaded utf8_iter v1.0.4
-  Downloaded criterion-plot v0.8.2
-  Downloaded futures-executor v0.3.34
-  Downloaded cast v0.3.0
-  Downloaded foldhash v0.1.5
-  Downloaded byteorder v1.5.0
-  Downloaded foldhash v0.2.0
-  Downloaded generic-array v0.14.7
-  Downloaded lazy-regex v3.6.2
-  Downloaded icu_locale_fallback v2.4.0
-  Downloaded icu_locale_fallback_data v2.4.0
-  Downloaded siphasher v1.0.4
-  Downloaded escape-simd v0.1.1
-  Downloaded version_check v0.9.5
-  Downloaded infer v0.22.0
-  Downloaded bytecount v0.6.9
-  Downloaded ts-rs-macros v12.0.1
-  Downloaded zerofrom v0.1.8
-  Downloaded sha2 v0.10.9
-  Downloaded potential_utf v0.1.6
-  Downloaded rustc_version v0.4.1
-  Downloaded tracing-serde v0.2.0
-  Downloaded outref v0.5.2
   Downloaded anyhow v1.0.104
-  Downloaded seq-macro v0.3.6
-  Downloaded event-listener v5.4.2
-  Downloaded slab v0.4.12
-  Downloaded futures-channel v0.3.34
-  Downloaded ciborium v0.2.2
-  Downloaded filetime v0.2.29
-  Downloaded getrandom v0.2.17
-  Downloaded litemap v0.8.3
-  Downloaded halfbrown v0.4.0
-  Downloaded allocator-api2 v0.2.21
-  Downloaded oxc_compat v0.155.0
-  Downloaded embedded-io v0.6.1
-  Downloaded synstructure v0.14.0
-  Downloaded rolldown_devtools v1.2.15
-  Downloaded base64 v0.23.1
-  Downloaded page_size v0.6.0
-  Downloaded zerofrom-derive v0.1.8
-  Downloaded tracing-attributes v0.1.31
-  Downloaded writeable v0.6.4
-  Downloaded rolldown_sourcemap v1.2.15
-  Downloaded tinystr v0.8.5
-  Downloaded rolldown_tracing v1.2.15
-  Downloaded dragonbox_ecma v0.1.12
-  Downloaded futures v0.3.34
+  Downloaded async-scoped v0.9.0
+  Downloaded base-encode v0.3.1
+  Downloaded bytecheck v0.8.3
+  Downloaded async-lock v3.4.2
+  Downloaded crossbeam-epoch v0.9.21
+  Downloaded heck v0.5.0
+  Downloaded lazy-regex v3.6.2
+  Downloaded ptr_meta v0.3.2
+  Downloaded form_urlencoded v1.2.2
+  Downloaded endian-type v0.2.0
+  Downloaded bytecheck_derive v0.8.3
   Downloaded oxc v0.155.0
-  Downloaded crc32fast v1.5.3
+  Downloaded event-listener-strategy v0.5.4
+  Downloaded mime v0.3.17
+  Downloaded munge_macro v0.4.7
   Downloaded parking v2.2.1
-  Downloaded icu_provider v2.4.0
-  Downloaded str_indices v0.4.4
-  Downloaded ref-cast-impl v1.0.27
-  Downloaded rolldown_plugin_oxc_runtime v1.2.15
-  Downloaded termcolor v1.4.1
-  Downloaded stable_deref_trait v1.2.1
-  Downloaded percent-encoding v2.3.2
-  Downloaded clap v4.6.7
-  Downloaded flate2 v1.1.10
-  Downloaded rolldown_devtools_action v1.2.15
-  Downloaded icu_normalizer_data v2.4.0
-  Downloaded ref-cast v1.0.27
-  Downloaded rolldown_fs v1.2.15
-  Downloaded string_wizard v1.2.15
-  Downloaded tinytemplate v1.2.1
   Downloaded pathdiff v0.2.3
+  Downloaded nibble_vec v0.1.0
+  Downloaded munge v0.4.7
+  Downloaded idna_adapter v1.2.2
+  Downloaded rancor v0.1.3
+  Downloaded tracing-serde v0.2.0
+  Downloaded rolldown_tracing v1.2.15
+  Downloaded rolldown_devtools v1.2.15
   Downloaded tagptr v0.2.0
-  Downloaded vsimd v0.8.0
-  Downloaded xxhash-rust v0.8.19
-  Downloaded value-trait v0.12.3
-  Downloaded rolldown_plugin_lazy_compilation v1.2.15
-  Downloaded zerovec-derive v0.11.7
+  Downloaded rend v0.5.4
+  Downloaded ptr_meta_derive v0.3.2
+  Downloaded lazy-regex-proc_macros v3.6.2
+  Downloaded rolldown_devtools_action v1.2.15
+  Downloaded rolldown_std_utils v1.2.15
+  Downloaded rolldown_fs v1.2.15
+  Downloaded termcolor v1.4.1
+  Downloaded filetime v0.2.29
+  Downloaded fixedbitset v0.5.7
+  Downloaded crossbeam-deque v0.8.8
+  Downloaded arcstr v1.2.0
+  Downloaded concurrent_lru v0.2.0
+  Downloaded foldhash v0.1.5
+  Downloaded string_wizard v1.2.15
+  Downloaded rustc_version v0.4.1
+  Downloaded infer v0.22.0
+  Downloaded thread_local v1.1.10
+  Downloaded jobserver v0.1.35
   Downloaded rolldown_dev_common v1.2.15
-  Downloaded rolldown_plugin_hmr v1.2.15
-  Downloaded phf_shared v0.14.0
-  Downloaded half v2.7.1
-  Downloaded rolldown_ecmascript_utils v1.2.15
-  Downloaded rolldown_plugin_data_url v1.2.15
-  Downloaded phf_generator v0.14.0
-  Downloaded miniz_oxide v0.9.1
-  Downloaded rolldown_resolver v1.2.15
-  Downloaded self_cell v1.3.0
-  Downloaded simd-adler32 v0.3.10
-  Downloaded phf_macros v0.14.0
-  Downloaded oxc_span v0.155.0
-  Downloaded rolldown_plugin_copy_module v1.2.15
-  Downloaded semver v1.0.28
-  Downloaded derive_more v2.1.1
-  Downloaded rolldown_plugin_utils v1.2.15
-  Downloaded static_assertions v1.1.0
-  Downloaded icu_locale_core v2.4.0
   Downloaded rolldown_ecmascript v1.2.15
-  Downloaded oxc_estree v0.155.0
-  Downloaded ts-rs v12.0.1
-  Downloaded oorandom v11.1.5
-  Downloaded yoke-derive v0.8.4
-  Downloaded rustversion v1.0.23
-  Downloaded crossbeam-channel v0.5.17
-  Downloaded derive_more-impl v2.1.1
-  Downloaded icu_collections v2.4.0
-  Downloaded num-integer v0.1.47
-  Downloaded compact_str v0.10.0
-  Downloaded ryu v1.0.23
-  Downloaded smawk v0.3.3
-  Downloaded phf v0.14.0
-  Downloaded tracing-core v0.1.36
-  Downloaded pin-project-internal v1.1.13
-  Downloaded oxc_index v5.0.0
-  Downloaded rolldown_utils v1.2.15
-  Downloaded sharded-slab v0.1.7
-  Downloaded sugar_path v3.0.0
-  Downloaded textwrap v0.16.4
-  Downloaded rolldown_plugin_asset_module v1.2.15
-  Downloaded rolldown_plugin_chunk_import_map v1.2.15
-  Downloaded oxc_ast_macros v0.155.0
-  Downloaded oxc_transformer_plugins v0.155.0
-  Downloaded oxc_syntax v0.155.0
-  Downloaded rolldown_plugin v1.2.15
-  Downloaded criterion v0.8.2
-  Downloaded unicode-id-start v1.5.0
-  Downloaded hashbrown v0.15.5
-  Downloaded yoke v0.8.4
-  Downloaded oxc_isolated_declarations v0.155.0
-  Downloaded icu_properties v2.4.0
-  Downloaded walkdir v2.5.0
-  Downloaded oxc_str v0.155.0
-  Downloaded oxc_diagnostics v0.155.0
-  Downloaded hashbrown v0.16.1
-  Downloaded nom v8.0.0
   Downloaded oxc_mangler v0.155.0
-  Downloaded itertools v0.13.0
-  Downloaded clap_builder v4.6.7
-  Downloaded futures-util v0.3.34
-  Downloaded itertools v0.15.0
-  Downloaded idna v1.1.0
-  Downloaded aho-corasick v1.1.5
-  Downloaded postcard v1.1.3
-  Downloaded vfs v0.13.0
+  Downloaded xxhash-rust v0.8.19
+  Downloaded rolldown_plugin_data_url v1.2.15
+  Downloaded rolldown_plugin_utils v1.2.15
+  Downloaded simd-adler32 v0.3.10
+  Downloaded nu-ansi-term v0.50.3
+  Downloaded rolldown_plugin_asset_module v1.2.15
   Downloaded rolldown-ariadne v0.6.0
-  Downloaded rolldown_error v1.2.15
-  Downloaded icu_properties_data v2.4.0
-  Downloaded ropey v1.6.1
-  Downloaded url v2.5.8
-  Downloaded simd-json v0.18.1
-  Downloaded moka v0.12.16
-  Downloaded tracing-subscriber v0.3.23
-  Downloaded oxc_data_structures v0.155.0
-  Downloaded pin-project v1.1.13
-  Downloaded oxc_regular_expression v0.155.0
-  Downloaded oxc_codegen v0.155.0
-  Downloaded oxc_ecmascript v0.155.0
-  Downloaded oxc_sourcemap v9.0.0
-  Downloaded oxc_ast_visit v0.155.0
-  Downloaded tracing v0.1.44
+  Downloaded rolldown_plugin_hmr v1.2.15
+  Downloaded unicode-xid v0.2.6
+  Downloaded rolldown_plugin_lazy_compilation v1.2.15
+  Downloaded rkyv_derive v0.8.18
+  Downloaded pin-project-internal v1.1.13
+  Downloaded ts-rs-macros v12.0.1
+  Downloaded rolldown_sourcemap v1.2.15
+  Downloaded rolldown_ecmascript_utils v1.2.15
+  Downloaded vfs v0.13.0
+  Downloaded semver v1.0.28
+  Downloaded event-listener v5.4.2
+  Downloaded zstd-safe v8.2.0
+  Downloaded tinyvec v1.13.3
+  Downloaded oxc_isolated_declarations v0.155.0
+  Downloaded ts-rs v12.0.1
+  Downloaded oxc_transformer_plugins v0.155.0
+  Downloaded rolldown_resolver v1.2.15
+  Downloaded pkg-config v0.3.34
+  Downloaded rolldown_plugin_copy_module v1.2.15
   Downloaded yansi v1.0.1
-  Downloaded icu_normalizer v2.4.0
-  Downloaded zerotrie v0.2.5
-  Downloaded unicode-segmentation v1.13.3
-  Downloaded num-bigint v0.5.1
-  Downloaded typenum v1.20.1
-  Downloaded oxc_resolver v11.24.3
-  Downloaded oxc_semantic v0.155.0
-  Downloaded oxc_traverse v0.155.0
-  Downloaded zerovec v0.11.9
-  Downloaded oxc-browserslist v5.0.1
-  Downloaded rolldown_common v1.2.15
-  Downloaded zerocopy-derive v0.8.63
-  Downloaded oxc_allocator v0.155.0
-  Downloaded regex v1.13.1
-  Downloaded unicode-width v0.2.3
-  Downloaded portable-atomic v1.15.0
-  Downloaded oxc_parser v0.155.0
+  Downloaded zstd v0.14.3
+  Downloaded rolldown_plugin v1.2.15
+  Downloaded uuid v1.29.0
+  Downloaded url v2.5.8
+  Downloaded typedmap v0.6.0
+  Downloaded crc32fast v1.5.3
+  Downloaded pin-project v1.1.13
+  Downloaded rolldown_error v1.2.15
+  Downloaded rolldown_plugin_oxc_runtime v1.2.15
+  Downloaded sharded-slab v0.1.7
+  Downloaded rolldown_utils v1.2.15
+  Downloaded sugar_path v3.0.0
+  Downloaded tracing-subscriber v0.3.23
   Downloaded zlib-rs v0.6.8
-  Downloaded oxc_ast v0.155.0
-  Downloaded oxc_transformer v0.155.0
+  Downloaded icu_normalizer_data v2.4.0
+  Downloaded getrandom v0.4.3
+  Downloaded crossbeam-channel v0.5.17
+  Downloaded derive_more v2.1.1
+  Downloaded rayon-core v1.13.0
+  Downloaded flate2 v1.1.10
+  Downloaded zstd-sys v2.1.2+zstd.1.5.7
+  Downloaded derive_more-impl v2.1.1
+  Downloaded icu_properties v2.4.0
+  Downloaded rolldown_common v1.2.15
+  Downloaded hashbrown v0.15.5
+  Downloaded idna v1.1.0
+  Downloaded nom v8.0.0
+  Downloaded rayon v1.12.0
+  Downloaded rkyv v0.8.18
+  Downloaded icu_properties_data v2.4.0
+  Downloaded portable-atomic v1.15.0
+  Downloaded moka v0.12.16
   Downloaded oxc_minifier v0.155.0
   Downloaded radix_trie v0.3.0
-  Downloaded zerocopy v0.8.63
   Downloaded regress v0.12.0
-  Downloaded icu_segmenter_data v2.4.0
+  Downloaded redb v4.4.0
   Downloaded pnp v0.12.12
-  Downloaded regex-automata v0.4.18
-  Downloaded icu_segmenter v2.4.0
+  Downloaded icu_normalizer v2.4.0
+  Downloaded rolldown_plugin_chunk_import_map v1.2.15
   Downloaded petgraph v0.8.3
   Downloaded rolldown v1.2.15
-  Downloaded ring v0.17.14
    Compiling serde_core v1.0.229
-   Compiling syn v3.0.9
    Compiling serde v1.0.229
-    Checking memchr v2.8.3
-   Compiling syn v2.0.119
-   Compiling serde_derive v1.0.229
-    Checking allocator-api2 v0.2.21
-    Checking hashbrown v0.17.1
-   Compiling synstructure v0.14.0
-    Checking smallvec v1.16.4
-   Compiling zerofrom-derive v0.1.8
-   Compiling yoke-derive v0.8.4
-    Checking stable_deref_trait v1.2.1
-    Checking zerofrom v0.1.8
-   Compiling zerovec-derive v0.11.7
-    Checking yoke v0.8.4
-   Compiling displaydoc v0.2.7
-   Compiling thiserror-impl v2.0.21
-    Checking zerovec v0.11.9
-    Checking writeable v0.6.4
-    Checking rustc-hash v2.1.3
-    Checking equivalent v1.0.3
-    Checking thiserror v2.0.21
-    Checking tinystr v0.8.5
-    Checking litemap v0.8.3
-   Compiling rustversion v1.0.23
    Compiling crossbeam-epoch v0.9.21
-    Checking icu_locale_core v2.4.0
-    Checking potential_utf v0.1.6
-    Checking zerotrie v0.2.5
-    Checking foldhash v0.2.0
-   Compiling siphasher v1.0.4
-   Compiling phf_shared v0.14.0
-    Checking icu_provider v2.4.0
-    Checking str_indices v0.4.4
-    Checking either v1.19.0
-    Checking utf8_iter v1.0.4
-   Compiling dragonbox_ecma v0.1.12
-    Checking icu_collections v2.4.0
-    Checking ropey v1.6.1
-    Checking castaway v0.2.4
-    Checking static_assertions v1.1.0
-    Checking compact_str v0.10.0
-    Checking oxc_data_structures v0.155.0
-   Compiling num-traits v0.2.19
-    Checking indexmap v2.14.2
+   Compiling crossbeam-deque v0.8.8
+   Compiling rayon-core v1.13.0
    Compiling serde_json v1.0.154
-    Checking oxc_estree v0.155.0
-    Checking crossbeam-deque v0.8.8
-    Checking bitflags v2.13.2
-   Compiling icu_locale_fallback_data v2.4.0
-    Checking rayon-core v1.13.0
-    Checking oxc_allocator v0.155.0
-   Compiling phf v0.14.0
-   Compiling fastrand v2.5.0
-    Checking percent-encoding v2.3.2
-   Compiling icu_segmenter_data v2.4.0
-    Checking oxc_str v0.155.0
-   Compiling phf_generator v0.14.0
-   Compiling oxc_ast_macros v0.155.0
     Checking rayon v1.12.0
-    Checking adler2 v2.0.1
+    Checking smallvec v1.16.4
+    Checking ropey v1.6.1
+    Checking oxc_data_structures v0.155.0
+    Checking compact_str v0.10.0
+    Checking indexmap v2.14.2
+    Checking oxc_estree v0.155.0
+    Checking bitflags v2.13.2
+    Checking oxc_allocator v0.155.0
+    Checking oxc_str v0.155.0
     Checking simd-adler32 v0.3.10
     Checking miniz_oxide v0.9.1
-    Checking icu_locale_fallback v2.4.0
     Checking oxc_span v0.155.0
-   Compiling phf_macros v0.14.0
-    Checking cow-utils v0.1.3
-    Checking unicode-width v0.2.3
-    Checking nonmax v0.5.5
-    Checking icu_segmenter v2.4.0
     Checking oxc_index v5.0.0
-    Checking unicode-id-start v1.5.0
-    Checking smawk v0.3.3
-    Checking unicode-segmentation v1.13.3
+    Checking icu_segmenter v2.4.0
+   Compiling libc v0.2.191
     Checking textwrap v0.16.4
-    Checking bytecount v0.6.9
-    Checking oxc_syntax v0.155.0
     Checking oxc_diagnostics v0.155.0
-    Checking cobs v0.3.0
+    Checking oxc_syntax v0.155.0
+   Compiling jobserver v0.1.35
+   Compiling cc v1.10.0
     Checking postcard v1.1.3
     Checking oxc_regular_expression v0.155.0
-    Checking oxc-browserslist v5.0.1
-    Checking num-integer v0.1.47
     Checking oxc_ast v0.155.0
-    Checking num-bigint v0.5.1
+    Checking oxc-browserslist v5.0.1
     Checking oxc_compat v0.155.0
-    Checking self_cell v1.3.0
     Checking tracing-core v0.1.36
-    Checking itertools v0.15.0
-    Checking arrayvec v0.7.8
     Checking parking_lot_core v0.9.12
-   Compiling tracing-attributes v0.1.31
     Checking tracing v0.1.44
     Checking aho-corasick v1.1.5
+    Checking regex-syntax v0.8.11
+    Checking regex-automata v0.4.18
     Checking oxc_ecmascript v0.155.0
     Checking oxc_ast_visit v0.155.0
-    Checking vsimd v0.8.0
-   Compiling oxc_sourcemap v9.0.0
-    Checking outref v0.5.2
-    Checking escape-simd v0.1.1
-    Checking regex-automata v0.4.18
+   Compiling memchr v2.8.3
     Checking oxc_semantic v0.155.0
-    Checking oxc_traverse v0.155.0
-    Checking json-escape-simd v3.1.3
-    Checking base64-simd v0.8.0
-    Checking futures-core v0.3.34
-    Checking futures-sink v0.3.34
-   Compiling seq-macro v0.3.6
-    Checking base64 v0.23.1
     Checking oxc_parser v0.155.0
-    Checking futures-channel v0.3.34
+    Checking oxc_traverse v0.155.0
     Checking regex v1.13.1
-   Compiling futures-macro v0.3.34
-   Compiling regex-syntax v0.8.11
-    Checking slab v0.4.12
-    Checking futures-task v0.3.34
-    Checking hmac-sha1-compact v1.1.8
-    Checking futures-io v0.3.34
-    Checking simdutf8 v0.1.5
+    Checking oxc_sourcemap v9.0.0
     Checking dashmap v6.2.1
     Checking futures-util v0.3.34
     Checking oxc_transformer v0.155.0
    Compiling crc32fast v1.5.3
     Checking oxc_codegen v0.155.0
     Checking parking_lot v0.12.5
-    Checking hashbrown v0.16.1
    Compiling getrandom v0.4.3
-   Compiling ref-cast v1.0.27
-    Checking halfbrown v0.4.0
    Compiling lazy-regex-proc_macros v3.6.2
-    Checking float-cmp v0.10.0
     Checking nibble_vec v0.1.0
-   Compiling ref-cast-impl v1.0.27
-   Compiling tokio-macros v2.7.2
-    Checking ryu v1.0.23
-    Checking zlib-rs v0.6.8
+    Checking mio v1.2.4
     Checking endian-type v0.2.0
-    Checking radix_trie v0.3.0
+    Checking zlib-rs v0.6.8
     Checking rustix v1.1.6
     Checking flate2 v1.1.10
+    Checking radix_trie v0.3.0
     Checking tokio v1.54.1
-    Checking value-trait v0.12.3
     Checking lazy-regex v3.6.2
     Checking futures-executor v0.3.34
     Checking oxc_mangler v0.155.0
+   Compiling blake3 v1.8.7
     Checking concurrent_lru v0.2.0
     Checking regress v0.12.0
-    Checking byteorder v1.5.0
     Checking pathdiff v0.2.3
-    Checking nodejs-built-in-modules v1.0.0
     Checking pnp v0.12.12
     Checking oxc_minifier v0.155.0
     Checking futures v0.3.34
     Checking uuid v1.29.0
-    Checking simd-json v0.18.1
     Checking oxc_transformer_plugins v0.155.0
     Checking oxc_isolated_declarations v0.155.0
-    Checking fast-glob v1.1.2
-    Checking json-strip-comments v3.1.2
    Compiling unicode-xid v0.2.6
    Compiling anyhow v1.0.104
-    Checking blake3 v1.8.7
    Compiling derive_more-impl v2.1.1
     Checking oxc v0.155.0
     Checking oxc_resolver v11.24.3
     Checking sugar_path v3.0.0
     Checking yansi v1.0.1
-    Checking derive_more v2.1.1
     Checking rolldown-ariadne v0.6.0
+    Checking derive_more v2.1.1
    Compiling pin-project-internal v1.1.13
-    Checking heck v0.5.0
     Checking arcstr v1.2.0
+    Checking heck v0.5.0
     Checking rolldown_error v1.2.15
-    Checking pin-project v1.1.13
     Checking form_urlencoded v1.2.2
     Checking filetime v0.2.29
+    Checking pin-project v1.1.13
     Checking async-scoped v0.9.0
     Checking vfs v0.13.0
     Checking rolldown_std_utils v1.2.15
     Checking nom v8.0.0
+    Checking xxhash-rust v0.8.19
     Checking infer v0.22.0
     Checking base-encode v0.3.1
     Checking mime v0.3.17
-    Checking xxhash-rust v0.8.19
     Checking rolldown_fs v1.2.15
     Checking rolldown_ecmascript v1.2.15
     Checking rolldown_sourcemap v1.2.15
     Checking string_wizard v1.2.15
-    Checking lazy_static v1.5.1
    Compiling termcolor v1.4.1
+    Checking lazy_static v1.5.1
+    Checking sharded-slab v0.1.7
    Compiling ts-rs-macros v12.0.1
     Checking rolldown_utils v1.2.15
     Checking rolldown_common v1.2.15
-    Checking sharded-slab v0.1.7
     Checking tracing-serde v0.2.0
     Checking thread_local v1.1.10
     Checking nu-ansi-term v0.50.3
     Checking tracing-subscriber v0.3.23
     Checking ts-rs v12.0.1
     Checking rolldown_resolver v1.2.15
+   Compiling pkg-config v0.3.34
     Checking rolldown_devtools_action v1.2.15
-    Checking typedmap v0.6.0
-   Compiling version_check v0.9.5
     Checking rolldown_devtools v1.2.15
-   Compiling generic-array v0.14.7
+    Checking typedmap v0.6.0
+   Compiling zstd-sys v2.1.2+zstd.1.5.7
     Checking rolldown_plugin v1.2.15
-    Checking typenum v1.20.1
     Checking oxide-fw-diagnostics v0.17.0 (/home/z/my-project/oxide/crates/diagnostics)
    Compiling icu_normalizer_data v2.4.0
-    Checking parking v2.2.1
+   Compiling zstd-safe v8.2.0
    Compiling icu_properties_data v2.4.0
+    Checking parking v2.2.1
     Checking event-listener v5.4.2
    Compiling ptr_meta_derive v0.3.2
    Compiling portable-atomic v1.15.0
+   Compiling redb v4.4.0
     Checking ptr_meta v0.3.2
     Checking event-listener-strategy v0.5.4
-    Checking block-buffer v0.10.4
-    Checking crypto-common v0.1.7
    Compiling ring v0.17.14
-   Compiling zerocopy v0.8.63
-    Checking digest v0.10.7
+    Checking async-lock v3.4.2
     Checking icu_properties v2.4.0
     Checking icu_normalizer v2.4.0
-    Checking async-lock v3.4.2
     Checking rancor v0.1.3
     Checking crossbeam-channel v0.5.17
-    Checking getrandom v0.2.17
-   Compiling zerocopy-derive v0.8.63
+    Checking zstd v0.14.3
    Compiling bytecheck_derive v0.8.3
-   Compiling async-trait v0.1.92
-    Checking cpufeatures v0.2.17
-    Checking untrusted v0.9.0
     Checking tagptr v0.2.0
     Checking moka v0.12.16
-    Checking sha2 v0.10.9
     Checking bytecheck v0.8.3
     Checking idna_adapter v1.2.2
     Checking rolldown_plugin_utils v1.2.15
@@ -485,9 +267,9 @@ warning: workspace (manifest) generated 1 warning
     Checking foldhash v0.1.5
     Checking hashbrown v0.15.5
     Checking munge v0.4.7
-    Checking half v2.7.1
     Checking oxide-fw-cache v0.17.0 (/home/z/my-project/oxide/crates/cache)
     Checking idna v1.1.0
+    Checking oxide-fw-odf v0.17.0 (/home/z/my-project/oxide/crates/odf)
     Checking rend v0.5.4
 error: item in documentation is missing backticks
   --> crates/cache/src/../README.md:41:378
@@ -1821,3 +1603,6 @@ error: unused `async` for function with no await statements
 
 error: could not compile `oxide-fw-cache` (lib) due to 102 previous errors
 warning: build failed, waiting for other jobs to finish...
+EXIT=101
+10:08:52
+c-6b0402b1-140d72b5-edc1ce71845b-rootfs  9.9G  4.3G  5.1G  46% /
