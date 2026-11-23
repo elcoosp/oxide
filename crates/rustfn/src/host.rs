@@ -520,11 +520,23 @@ impl From<RawCallError> for RegistryError {
 
 /// The object-safe registry seam the dispatcher consult wires: `has`
 /// answers before a JS dispatch, `call` runs the native fn with the
-/// §9.4 route's args JSON and `types_json` feeds the `.d.ts` emitter.
+/// §9.4 route's args JSON, `ids` enumerates the registered ids (sorted)
+/// and `types_json` feeds the `.d.ts` emitter.
+///
+/// `ids` is the surface the multi-host consult adapter
+/// ([`crate::chain::ChainedRegistry`]) enumerates the union of its
+/// members' ids through — the same "one consult surface" contract `call`
+/// already holds, lifted to id enumeration so the chain's report renders
+/// the posture of every native crate behind ONE read.
 #[async_trait::async_trait]
 pub trait RustFnRegistry: Send + Sync {
     /// Whether the id is native-owned.
     fn has(&self, id: &str) -> bool;
+    /// The registered ids, sorted (the host's `BTreeMap` order, so two
+    /// reads over the same state are byte-equal for the dev overlay's
+    /// diff). The chain consult enumerates the union of its members' ids
+    /// through this seam.
+    fn ids(&self) -> Vec<String>;
     /// Run the fn: args JSON in, the fn's encoded output out.
     ///
     /// # Errors
@@ -740,26 +752,17 @@ impl RustFnHost {
     ///
     /// [`RegistryError`] with the wire mapping.
     pub fn call_now(&self, id: &str, args_json: &[u8]) -> Result<Vec<u8>, RegistryError> {
-        let (library_index, name) = self
-            .ids
-            .get(id)
-            .ok_or_else(|| {
-                RegistryError::new(
-                    RegistryErrorKind::NotFound,
-                    format!("no native function registered under id {id:?}"),
-                )
-            })?
-            .clone();
-        let lib = self
-            .libraries
-            .get(library_index)
-            .ok_or_else(|| {
-                RegistryError::new(
-                    RegistryErrorKind::NotFound,
-                    format!("no native function registered under id {id:?}"),
-                )
-            })?
-            .clone();
+        // The two-phase resolve [`crate::swap::SwappableHost::call_now`]
+        // (and the consult adapter) runs too: the library `Arc` + entry
+        // name resolved under one call, so the boot-time host no longer
+        // reimplements the lookup inline (the same `resolve_call` the
+        // swappable host delegates to).
+        let (lib, name) = self.resolve_call(id).ok_or_else(|| {
+            RegistryError::new(
+                RegistryErrorKind::NotFound,
+                format!("no native function registered under id {id:?}"),
+            )
+        })?;
         let input = args_to_odf(args_json).map_err(|e| RegistryError {
             kind: RegistryErrorKind::Wire,
             message: e.to_string(),
@@ -846,20 +849,20 @@ impl RustFnRegistry for RustFnHost {
         RustFnHost::has(self, id)
     }
 
+    fn ids(&self) -> Vec<String> {
+        RustFnHost::ids(self)
+    }
+
     fn types_json(&self) -> Option<String> {
         RustFnHost::types_json(self)
     }
 
     async fn call(&self, id: &str, args_json: &[u8]) -> Result<Vec<u8>, RegistryError> {
         // The permit bounds the blocking lanes; a wire error refuses
-        // before it queues.
-        let lookup = self.ids.get(id).cloned().ok_or_else(|| {
-            RegistryError::new(
-                RegistryErrorKind::NotFound,
-                format!("no native function registered under id {id:?}"),
-            )
-        })?;
-        let lib = self.libraries.get(lookup.0).cloned().ok_or_else(|| {
+        // before it queues. The library `Arc` + entry name resolve
+        // through the same `resolve_call` the swappable host's consult
+        // and `call_now` use — one lookup site, not two.
+        let (lib, name) = self.resolve_call(id).ok_or_else(|| {
             RegistryError::new(
                 RegistryErrorKind::NotFound,
                 format!("no native function registered under id {id:?}"),
@@ -869,7 +872,6 @@ impl RustFnRegistry for RustFnHost {
             kind: RegistryErrorKind::Wire,
             message: e.to_string(),
         })?;
-        let name = lookup.1;
         run_resolved_call(Arc::clone(&self.permits), self.timeout, lib, name, input).await
     }
 }
