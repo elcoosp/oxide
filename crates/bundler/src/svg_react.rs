@@ -193,6 +193,7 @@ fn parse_attrs(s: &str) -> Vec<(String, String)> {
 }
 
 /// Marker an import uses to request a React component: `.svg?react`.
+#[must_use]
 pub fn is_svg_react_specifier(spec: &str) -> bool {
     if spec.contains(':') && !spec.starts_with("./") && !spec.starts_with("../") {
         return false; // bare specifier like `react` — never a .svg?react import
@@ -204,6 +205,7 @@ pub fn is_svg_react_specifier(spec: &str) -> bool {
 /// (`./icon.svg?react` → `./icon.svg`). The suffix to strip is the query
 /// marker alone, not `.svg?react` — the `.svg` must survive because that
 /// is the path the resolver/loader opens.
+#[must_use]
 pub fn strip_svg_react(spec: &str) -> Option<&str> {
     spec.strip_suffix("?react")
 }
@@ -238,7 +240,7 @@ mod tests {
 
     #[test]
     fn backtick_and_dollar_escaped() {
-        let svg = r#"<svg><text>a`b${c}</text></svg>"#;
+        let svg = r"<svg><text>a`b${c}</text></svg>";
         let tsx = svg_to_react_component(svg, "x.svg").unwrap();
         assert!(tsx.contains("a\\`b"));
         assert!(tsx.contains("\\${c}"));
