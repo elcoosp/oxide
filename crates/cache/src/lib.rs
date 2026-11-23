@@ -140,13 +140,13 @@ pub struct Entry {
 
 impl Entry {
     /// Fresh until `stored_at + ttl` (§11.3). `now` is unix ms.
-           #[must_use]
+    #[must_use]
     pub fn is_fresh(&self, now: u64) -> bool {
         now <= self.fresh_until()
     }
 
     /// Last unix-ms instant at which this entry is fresh.
-           #[must_use]
+    #[must_use]
     pub fn fresh_until(&self) -> u64 {
         self.stored_at
             .saturating_add(self.policy.ttl.as_millis() as u64)
@@ -154,7 +154,7 @@ impl Entry {
 
     /// Last unix-ms instant at which this entry may still be served stale (TTL + SWR).
     /// `stale_if_error` is honored by the caller (render layer), not by this window.
-           #[must_use]
+    #[must_use]
     pub fn stale_until(&self) -> u64 {
         let swr = self.policy.swr.map_or(0, |d| d.as_millis() as u64);
         self.fresh_until().saturating_add(swr)
@@ -212,7 +212,7 @@ pub enum Layer {
 }
 
 impl Layer {
-           #[must_use]
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Layer::L0 => "L0",
@@ -263,7 +263,7 @@ pub trait CacheHandler: Send + Sync {
 
 /// Build id: hash of the build manifest set — part of L0 keys (§11.2).
 /// Length-prefixed parts; first 16 hex chars of the blake3 digest.
-       #[must_use]
+#[must_use]
 pub fn build_id(parts: &[&[u8]]) -> String {
     let mut h = Hasher::new();
     for p in parts {
