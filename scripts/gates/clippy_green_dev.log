@@ -1,0 +1,16 @@
+# M1(b) GREEN transcript — oxide-fw-dev (69 RED findings -> 0, pedantic-clean)
+# rustc rustc 1.100.0 (0ef1bc386 2026-11-09)
+# $ cargo clippy -p oxide-fw-dev --all-targets -- -D warnings -W clippy::pedantic
+    Checking oxide-fw-dev v0.17.0 (/home/z/my-project/oxide/crates/dev)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.69s
+
+# $ cargo test -p oxide-fw-dev  (no-behavior-change proof)
+test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+EXIT=0
