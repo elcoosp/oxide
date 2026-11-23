@@ -34,9 +34,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oxide_rustfn::abi::{ABI_VERSION, FnEntry, FnTable, RawBuf, leak_name};
+use oxide_rustfn::abi::{ABI_VERSION, FnEntry, FnTable, RawBuf, STATUS_OK, leak_name};
 use oxide_rustfn::bridge::{decode_odf, encode_odf};
-use oxide_rustfn::host::{RegistryErrorKind, RustFnLibrary, RustFnRegistry};
+use oxide_rustfn::host::{RegistryErrorKind, RustFnHost, RustFnLibrary, RustFnRegistry};
 use oxide_rustfn::shim::run_shim;
 use oxide_rustfn::swap::{FnBinding, SwappableHost};
 
@@ -154,6 +154,27 @@ fn refusing_lib() -> RustFnLibrary {
     let entries: &'static [FnEntry] =
         Box::leak(vec![entry_named("refuse", refusing_shim)].into_boxed_slice());
     RustFnLibrary::from_static(table(entries), None).expect("a current-ABI table loads")
+}
+
+/// A fn that sleeps past the host's budget — the timeout arm. The
+/// `rustfn_tdd::registry_call_timeout_maps_to_504_fn_timeout` pin uses
+/// the same 250 ms / 50 ms shape; the sleep rides inside the
+/// `spawn_blocking` task the host's call path owns, never on the test
+/// thread.
+extern "C" fn slow_shim(_inp: *const u8, _len: usize, _out: *mut RawBuf) -> i32 {
+    std::thread::sleep(Duration::from_millis(250));
+    STATUS_OK
+}
+
+/// A library that exports the slow fn, for the `Timeout` wire arm.
+fn slow_lib() -> RustFnLibrary {
+    let entries: &'static [FnEntry] =
+        Box::leak(vec![entry_named("slow", slow_shim)].into_boxed_slice());
+    RustFnLibrary::from_static(table(entries), None).expect("a current-ABI table loads")
+}
+
+fn slow_binding(id: &str) -> FnBinding {
+    FnBinding::new(id, "slow")
 }
 
 fn echo_binding(id: &str) -> FnBinding {
@@ -307,26 +328,26 @@ fn call_on_bad_json_args_is_a_wire_error() {
 /// per-function budget refuses with `RegistryErrorKind::Timeout`, the
 /// 504 the envelope maps. The host with `with_timeout` sizes the
 /// budget; the swap state carries the host's timeout through the
-/// consult.
+/// consult (built via `SwappableHost::with_host` so the configured
+/// budget rides the swap lock the consult reads). The slow shim sleeps
+/// 250 ms inside the `spawn_blocking` task the host's call path owns;
+/// the 50 ms budget refuses before it returns — the clock pin, not just
+/// the type.
 #[test]
 fn call_over_budget_is_a_timeout() {
     let rt = runtime();
-    let host = Arc::new(SwappableHost::new());
-    host.swap(v1_lib(), &[echo_binding("id-echo")])
-        .expect("the echo lib mounts");
+    let host = Arc::new(SwappableHost::with_host(
+        RustFnHost::new().with_timeout(Duration::from_millis(50)),
+    ));
+    host.swap(slow_lib(), &[slow_binding("id-slow")])
+        .expect("the slow lib mounts");
     let registry: Arc<dyn RustFnRegistry> = host;
-    // The default budget is 30 s — a real timeout pin would dominate
-    // the test budget. The contract this pin locks is the SHAPE: a
-    // `Timeout` error carries the fn name and the budget. This pin
-    // asserts the happy path's success instead, so the timeout arm is
-    // covered by the type, not the clock. (The `call_serves_...` pin
-    // above already exercises the full success path through `call`.)
-    let out = rt
-        .block_on(registry.call("id-echo", &json_string("fast")))
-        .expect("the call is well under budget");
-    let reply: String = decode_odf(&out).expect("odf reply");
-    assert_eq!(reply, "v1:fast");
-    let _ = Duration::from_secs(1);
+    let err = rt
+        .block_on(registry.call("id-slow", b"{}"))
+        .expect_err("the fn is over budget");
+    assert!(matches!(err.kind, RegistryErrorKind::Timeout));
+    assert_eq!(err.status(), 504);
+    assert_eq!(err.envelope_code(), "FN-TIMEOUT");
 }
 
 /// `types_json` re-exports the first mounted library's payload (the
