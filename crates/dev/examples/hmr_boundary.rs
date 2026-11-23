@@ -29,10 +29,10 @@ fn p(rel: &str) -> PathBuf {
     PathBuf::from(format!("src/{rel}"))
 }
 
-fn show(title: &str, changed: &Path, graph_plan: Plan) {
+fn show(title: &str, changed: &Path, graph_plan: &Plan) {
     println!("{title}");
     println!("  changed: {}", changed.display());
-    match &graph_plan {
+    match graph_plan {
         Plan::Update(boundaries) => {
             println!(
                 "  plan    : update {} boundar(ies), in batch order:",
@@ -80,28 +80,28 @@ fn main() {
     show(
         "1) util.ts edited (chain: util.ts <- util2.ts <- page.tsx)",
         &p("lib/util.ts"),
-        plan(&p("lib/util.ts"), &importers, &accepting, &entries),
+        &plan(&p("lib/util.ts"), &importers, &accepting, &entries),
     );
 
     // 2. The wide fan-out: sorted, deduplicated boundary batch.
     show(
         "2) widget.ts edited (imported by comp/a.tsx + comp/b.tsx)",
         &p("lib/widget.ts"),
-        plan(&p("lib/widget.ts"), &importers, &accepting, &entries),
+        &plan(&p("lib/widget.ts"), &importers, &accepting, &entries),
     );
 
     // 3. The entry fallback: the dispatch table's identity is load-bearing.
     show(
         "3) api.ts edited (imported only by route.ts)",
         &p("lib/api.ts"),
-        plan(&p("lib/api.ts"), &importers, &accepting, &entries),
+        &plan(&p("lib/api.ts"), &importers, &accepting, &entries),
     );
 
     // 4. The orphan: nothing imports it — the `_ =>` arm of the walk.
     show(
         "4) orphan.ts edited (no importers)",
         &p("lib/orphan.ts"),
-        plan(&p("lib/orphan.ts"), &importers, &accepting, &entries),
+        &plan(&p("lib/orphan.ts"), &importers, &accepting, &entries),
     );
 
     // 5. The self-accepting scanner: what the adapter's compile step feeds
