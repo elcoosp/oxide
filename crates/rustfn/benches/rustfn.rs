@@ -18,6 +18,7 @@ use oxide_rustfn::bridge::encode_odf;
 use oxide_rustfn::chain::ChainedRegistry;
 use oxide_rustfn::host::{RustFnHost, RustFnLibrary, RustFnRegistry};
 use oxide_rustfn::shim::run_shim;
+use oxide_rustfn::stats::StatsRegistry;
 use oxide_rustfn::swap::{FnBinding, SwappableHost};
 use serde::{Deserialize, Serialize};
 
@@ -192,12 +193,48 @@ fn bench_chained_registry(c: &mut Criterion) {
     });
 }
 
+/// The M4 observability decorator: a `StatsRegistry` wrapping a
+/// boot-time `RustFnHost`, upcast to `Arc<dyn RustFnRegistry>` and
+/// called through the decorator — the per-call overhead the instrumented
+/// consult adds over the boot-time host's `host_registry_hit` floor
+/// (the two `Relaxed` `AtomicU64` fetch-adds + the `Arc` clone the
+/// decorator pays to delegate). The decorator never alters the call
+/// path's blocking work; this bench isolates the counter + delegate
+/// cost the dispatcher consult pays when the registry is instrumented.
+fn bench_stats_registry(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the bench runtime");
+    let mut host = RustFnHost::new();
+    let index = host.mount(loaded_library());
+    host.register("bench-id", index, "thumbnail");
+    let decorated = Arc::new(StatsRegistry::new(Arc::new(host)));
+    let registry: Arc<dyn RustFnRegistry> = decorated.clone();
+    let args = json_args(8);
+    c.bench_function("stats_registry_hit", |b| {
+        b.iter(|| {
+            let registry = registry.clone();
+            let args = args.clone();
+            rt.block_on(registry.call("bench-id", black_box(&args)))
+                .expect("the bench call succeeds")
+        });
+    });
+    // The decorator's snapshot read — the observability cost the dev
+    // overlay pays per refresh tick (eight `Relaxed` loads into one
+    // `CallStats`). Polled off the call path, but cheap to keep honest.
+    c.bench_function("stats_registry_snapshot", |b| {
+        b.iter(|| black_box(decorated.stats()));
+    });
+}
+
 criterion_group!(
     benches,
     bench_bridge,
     bench_shim,
     bench_host_registry,
     bench_swappable_registry,
-    bench_chained_registry
+    bench_chained_registry,
+    bench_stats_registry
 );
 criterion_main!(benches);
