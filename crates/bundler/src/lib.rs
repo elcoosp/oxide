@@ -568,6 +568,107 @@ pub struct ServerRoute {
     pub layout_chain: Vec<String>,
 }
 
+impl ClientManifest {
+    /// The npm packages whose code reached the bundle — the §V2-F20
+    /// module→package map the attest path intersects the lockfile with
+    /// (`docs/deviations.md` delta 5: "Intersecting `pnpm-lock.yaml` with
+    /// the client manifest's source list needs the bundler's
+    /// module-to-package map on the attest path"). One read over every
+    /// route's [`RouteBundle::modules`], folded through
+    /// [`packages_reached`]; the returned set is the package set, not the
+    /// module set (a package reached through N modules lists once).
+    ///
+    /// An empty set is the pre-F20 over-reporting shape: a manifest-less
+    /// or first-party-only build reaches no package, and the attest lists
+    /// every locked package (the safe direction for an SBOM). The value is
+    /// derived from the modules the bundler already records, so it stays
+    /// consistent with the manifest on disk without a stored field or a
+    /// serde migration.
+    #[must_use]
+    pub fn reached_packages(&self) -> BTreeSet<String> {
+        let mut reached: BTreeSet<String> = BTreeSet::new();
+        for route in self.routes.values() {
+            for pkg in packages_reached(&route.modules) {
+                reached.insert(pkg);
+            }
+        }
+        reached
+    }
+}
+
+/// Classify a route's source modules into the npm packages that own them
+/// — the module→package map the §V2-F20 attest path intersects the
+/// lockfile with. A module resolved under `node_modules/<pkg>/...` maps to
+/// `<pkg>`; a scoped package (`@scope/pkg`) folds its two-segment name; a
+/// first-party module (no `node_modules` segment) contributes nothing.
+///
+/// The classification walks the path's components and takes the package
+/// name from the LAST `node_modules` segment's successor. The "last"
+/// rule handles pnpm's virtual store layout
+/// (`node_modules/.pnpm/<pkg>@<ver>/node_modules/<pkg>/...`): the
+/// `.pnpm/<pkg>@<ver>` directory is the store, not a package, and the
+/// real package lives under the inner `node_modules/<pkg>` — the last
+/// `node_modules` is the one immediately above the package. A trailing
+/// `node_modules` with no successor (a directory scan artifact) reaches
+/// no package; a non-`node_modules` path reaches none either.
+///
+/// The set deduplicates: two modules from the same package list once. The
+/// function is pure and allocation-bounded by the module count, so the
+/// attest calls it once per `write_attestation` with no caching.
+#[must_use]
+pub fn packages_reached(modules: &[PathBuf]) -> BTreeSet<String> {
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for module in modules {
+        if let Some(pkg) = package_owning(module) {
+            reached.insert(pkg);
+        }
+    }
+    reached
+}
+
+/// The npm package a single resolved module belongs to, or `None` when the
+/// module is first-party (no `node_modules` segment) or the segment carries
+/// no successor. See [`packages_reached`] for the layout rules.
+fn package_owning(module: &Path) -> Option<String> {
+    use std::path::Component;
+
+    // Collect the normal segments (skip `.`, `..`, the root, and any
+    // Windows drive prefix) so the walk is cross-platform and stable.
+    let segments: Vec<&std::ffi::OsStr> = module
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    // The package sits immediately after the LAST `node_modules` segment.
+    let nm_idx = segments
+        .iter()
+        .rposition(|s| *s == std::ffi::OsStr::new("node_modules"))?;
+    let pkg_idx = nm_idx.checked_add(1)?;
+    let head = segments.get(pkg_idx)?;
+    // A scoped package (`@scope/pkg`) is two segments; a bare package is one.
+    let head_str = head.to_str()?;
+    if let Some(rest) = head_str.strip_prefix('@') {
+        // An `@`-prefixed segment with no package name after it (`@scope`
+        // alone, or a malformed path) reaches no package — never fabricate.
+        let scope = rest;
+        if scope.is_empty() {
+            return None;
+        }
+        let name_idx = pkg_idx.checked_add(1)?;
+        let name = segments.get(name_idx)?.to_str()?;
+        if name.is_empty() {
+            return None;
+        }
+        Some(format!("@{scope}/{name}"))
+    } else if head_str.is_empty() {
+        None
+    } else {
+        Some(head_str.to_string())
+    }
+}
+
 /// The bundler trait (D3 isolation point; Rolldown slots in here).
 pub trait Bundler: Send + Sync {
     fn bundle(&self, options: &BundleOptions) -> Result<BundleOutput>;
@@ -1028,11 +1129,7 @@ impl ChunkBundler {
         for name in &chunk_names {
             let members: Vec<&Module> = modules
                 .iter()
-                .filter(|m| {
-                    chunk_of
-                        .get(&m.resolved)
-                        .is_some_and(|c| c == name)
-                })
+                .filter(|m| chunk_of.get(&m.resolved).is_some_and(|c| c == name))
                 .collect();
             let js_mods: Vec<PathBuf> = members
                 .iter()
@@ -1084,7 +1181,8 @@ impl ChunkBundler {
                 let m = &by_path[cm];
                 let stem = m
                     .resolved
-                    .file_stem().map_or_else(|| "style".into(), |s| s.to_string_lossy().to_string());
+                    .file_stem()
+                    .map_or_else(|| "style".into(), |s| s.to_string_lossy().to_string());
                 let css_hash = Self::content_hash(&[m.hash.as_bytes()]);
                 let css_file = format!("{stem}-{css_hash}.css");
                 css_files.push((m.resolved.clone(), css_file));
