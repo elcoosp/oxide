@@ -68,6 +68,7 @@ pub enum BundleEnv {
 }
 
 impl BundleEnv {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             BundleEnv::Client => "client",
@@ -600,6 +601,7 @@ pub struct BundleOutput {
 /// module that ships to the browser would leak it into the bundle — this
 /// fails the build with `CMP-SECRET` naming the module and the env var.
 /// `PUBLIC_*`/`NX_*`/`npm_*` are allow-listed (conventionally public).
+#[must_use]
 pub fn scan_client_secrets(chunks: &[Chunk]) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for chunk in chunks {
@@ -648,7 +650,7 @@ fn is_secret_like(name: &str) -> bool {
         .any(|m| upper.contains(m))
 }
 
-/// Functional bundler: resolve (relative + tsconfig paths + node_modules `exports`),
+/// Functional bundler: resolve (relative + tsconfig paths + `node_modules` `exports`),
 /// scan imports via `oxide-fw-compiler`, topo-sort, split per route with a shared-chunk
 /// heuristic (modules used by ≥2 entries), emit content-hashed chunks + manifests.
 pub struct ChunkBundler {
@@ -692,11 +694,13 @@ impl ChunkBundler {
     }
 
     /// Shared-chunk decision: module used by ≥ `threshold` entries → shared chunk.
+    #[must_use]
     pub fn shared_threshold(&self) -> usize {
         2
     }
 
     /// Content-hash a chunk: blake3 of sorted module hashes + chunk kind + name.
+    #[must_use]
     pub fn content_hash(parts: &[&[u8]]) -> String {
         let mut h = Hasher::new();
         for p in parts {
@@ -770,25 +774,23 @@ impl ChunkBundler {
             // (a Svelte SFC's precompiled JS is the source for that path),
             // but BEFORE disk. A `Some(src)` overrides the disk read entirely
             // (a virtual module).
-            let load_hook_source = if !options.precompiled.contains_key(&rp) {
-                if let Some(hook) = options.load_hook.as_ref() {
-                    match hook.call(&rp.to_string_lossy()) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            diagnostics.push(Diagnostic::error(
-                                "BLD-PLUGIN",
-                                format!(
-                                    "plugin load({:?}) failed: {} {}",
-                                    rp.display(),
-                                    e.0.code,
-                                    e.0.message
-                                ),
-                            ));
-                            None
-                        }
+            let load_hook_source = if options.precompiled.contains_key(&rp) {
+                None
+            } else if let Some(hook) = options.load_hook.as_ref() {
+                match hook.call(&rp.to_string_lossy()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        diagnostics.push(Diagnostic::error(
+                            "BLD-PLUGIN",
+                            format!(
+                                "plugin load({:?}) failed: {} {}",
+                                rp.display(),
+                                e.0.code,
+                                e.0.message
+                            ),
+                        ));
+                        None
                     }
-                } else {
-                    None
                 }
             } else {
                 None
@@ -797,37 +799,32 @@ impl ChunkBundler {
                 s.clone()
             } else if let Some(s) = load_hook_source {
                 s
-            } else {
-                match std::fs::read_to_string(&rp) {
-                    Ok(s) => {
-                        if let Some(fw) = unsupported_framework_ext(&rp) {
-                            diagnostics.push(
-                                Diagnostic::error(
-                                    "BLD-FRAMEWORK",
-                                    format!(
-                                        "`{}` is a {fw} single-file component and was not \
-                                         precompiled — the caller must run the tooling-pool \
-                                         pass before invoking the bundler",
-                                        rp.display()
-                                    ),
-                                )
-                                .with_fix(
-                                    "call oxide_fw_bundler's precompile step or route the \
-                                     build through `oxide build`, which does so automatically",
-                                ),
-                            );
-                            continue;
-                        }
-                        s
-                    }
-                    Err(_) => {
-                        diagnostics.push(Diagnostic::error(
-                            "BLD-RESOLVE",
-                            format!("cannot read module `{}`", rp.display()),
-                        ));
-                        continue;
-                    }
+            } else if let Ok(s) = std::fs::read_to_string(&rp) {
+                if let Some(fw) = unsupported_framework_ext(&rp) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            "BLD-FRAMEWORK",
+                            format!(
+                                "`{}` is a {fw} single-file component and was not \
+                                 precompiled — the caller must run the tooling-pool \
+                                 pass before invoking the bundler",
+                                rp.display()
+                            ),
+                        )
+                        .with_fix(
+                            "call oxide_fw_bundler's precompile step or route the \
+                             build through `oxide build`, which does so automatically",
+                        ),
+                    );
+                    continue;
                 }
+                s
+            } else {
+                diagnostics.push(Diagnostic::error(
+                    "BLD-RESOLVE",
+                    format!("cannot read module `{}`", rp.display()),
+                ));
+                continue;
             };
             let hash = blake3::hash(source.as_bytes()).to_hex().to_string();
             let is_css = rp.extension().is_some_and(|e| e == "css");
@@ -1034,8 +1031,7 @@ impl ChunkBundler {
                 .filter(|m| {
                     chunk_of
                         .get(&m.resolved)
-                        .map(|c| c == name)
-                        .unwrap_or(false)
+                        .is_some_and(|c| c == name)
                 })
                 .collect();
             let js_mods: Vec<PathBuf> = members
@@ -1068,7 +1064,7 @@ impl ChunkBundler {
             }
             // content hash over sorted module hashes + kind + name (deterministic)
             let mut hashes: Vec<&str> = members.iter().map(|m| m.hash.as_str()).collect();
-            hashes.sort();
+            hashes.sort_unstable();
             let mut parts: Vec<&[u8]> = vec![
                 name.as_bytes(),
                 if kind == ChunkKind::Shared {
@@ -1088,9 +1084,7 @@ impl ChunkBundler {
                 let m = &by_path[cm];
                 let stem = m
                     .resolved
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "style".into());
+                    .file_stem().map_or_else(|| "style".into(), |s| s.to_string_lossy().to_string());
                 let css_hash = Self::content_hash(&[m.hash.as_bytes()]);
                 let css_file = format!("{stem}-{css_hash}.css");
                 css_files.push((m.resolved.clone(), css_file));
@@ -1219,8 +1213,7 @@ impl ChunkBundler {
                 let src = &m.source;
                 let is_module = src_path
                     .file_name()
-                    .map(|n| n.to_string_lossy().contains(".module."))
-                    .unwrap_or(false);
+                    .is_some_and(|n| n.to_string_lossy().contains(".module."));
                 let css = if let Some(hook) = &options.css_transform {
                     let path = src_path.to_string_lossy();
                     match hook.call(&path, src, is_module, options.minify) {
@@ -1267,7 +1260,7 @@ impl ChunkBundler {
         let js_size_of: BTreeMap<String, u64> = built
             .iter()
             .map(|b| {
-                let size = bodies.get(&b.file).map(|s| s.len()).unwrap_or(0) as u64;
+                let size = bodies.get(&b.file).map_or(0, std::string::String::len) as u64;
                 (b.name.clone(), size)
             })
             .collect();
@@ -1501,7 +1494,7 @@ fn lang_of(path: &Path) -> &'static str {
         Some("ts") => "ts",
         Some("tsx") => "tsx",
         Some("jsx") => "jsx",
-        Some("mjs") | Some("js") => "mjs",
+        Some("mjs" | "js") => "mjs",
         _ => "mjs",
     }
 }
