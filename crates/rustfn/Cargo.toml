@@ -26,6 +26,11 @@ libloading = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 criterion = { workspace = true }
+# V2-F08 M5: the tracing-decorator TDD pins assert one `tracing` span per
+# native call through a `tracing-subscriber` layer; the registry's own
+# production code never depends on a subscriber (the decorator emits, the
+# subscriber is the host's concern).
+tracing-subscriber = { workspace = true }
 
 [features]
 # V2-B09: exposes the criterion bench harness (plain `cargo test` never
