@@ -62,7 +62,7 @@ mod oxc_backend;
 pub mod precompile_engine;
 
 pub use cjs_exports::extract_cjs_export_names;
-pub use data_src::{DATA_OX_SRC_ATTR, inject_data_ox_src};
+pub use data_src::{DATA_OX_SRC_ATTR, inject_data_ox_src, inject_template_data_ox_src};
 pub use framework::{
     Framework, FrameworkCompiler, FrameworkInput, FrameworkOutput, ReactInline, SolidInline,
     ToolingDispatcher, compiler_for,
