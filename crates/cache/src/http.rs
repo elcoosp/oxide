@@ -104,7 +104,7 @@ const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /// 2. IMF-fixdate `Sun, 06 Nov 1994 08:49:37 GMT` (weekday is ignored; `GMT` required).
 ///
 /// Obsolete forms (RFC 850, asctime) are deliberately not supported.
-       #[must_use]
+#[must_use]
 pub fn parse_http_date(s: &str) -> Option<u64> {
     let s = s.trim();
     if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
@@ -140,7 +140,7 @@ pub fn parse_http_date(s: &str) -> Option<u64> {
 }
 
 /// Format unix seconds as an IMF-fixdate HTTP date (`Sun, 06 Nov 1994 08:49:37 GMT`).
-       #[must_use]
+#[must_use]
 pub fn http_date(unix_secs: u64) -> String {
     let days = (unix_secs / 86_400) as i64;
     let rem = unix_secs % 86_400;
@@ -184,7 +184,7 @@ fn civil_from_days(z: i64) -> (i64, i32, i32) {
 
 /// Key for [`FetchMemo`]: `METHOD url blake3(body)` — the body hash makes POST
 /// memoization safe; method is uppercased.
-       #[must_use]
+#[must_use]
 pub fn memo_key(method: &str, url: &str, body: &[u8]) -> String {
     let digest = blake3::hash(body).to_string();
     format!("{} {url} {digest}", method.to_ascii_uppercase())
@@ -205,7 +205,7 @@ impl FetchMemo {
     }
 
     /// Look a response up by precomputed key.
-           #[must_use]
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<Bytes> {
         self.inner.get(key).map(|b| Bytes::clone(&b))
     }
@@ -216,7 +216,7 @@ impl FetchMemo {
     }
 
     /// Look a response up for a request within the same request id.
-           #[must_use]
+    #[must_use]
     pub fn get_for_request(&self, method: &str, url: &str, body: &[u8]) -> Option<Bytes> {
         self.get(&memo_key(method, url, body))
     }
@@ -299,7 +299,7 @@ pub enum ServeOutcome {
 /// assert_eq!(status, 200);
 /// assert!(headers.contains(&("cache-control".into(), "public, max-age=60, s-maxage=60".into())));
 /// ```
-       #[must_use]
+#[must_use]
 pub fn serve_entry(entry: &Entry, req_headers: &[(String, String)], now_secs: u64) -> ServeOutcome {
     // The 304 arm: the canonical comparison, then the validator set a
     // 304 SHOULD carry (RFC 9110 §15.4.5).
