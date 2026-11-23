@@ -29,14 +29,36 @@
 //! and every wire-arm refusal lands in a [`stats::CallStats`] snapshot
 //! the dev overlay reads through the same "one consult surface"
 //! contract the posture snapshots hold.
+//!
+//! The per-call tracing decorator ([`tracing`]) is the observability
+//! arm beside the counters: `TracingRegistry` wraps
+//! `Arc<dyn RustFnRegistry>` and IS-A `RustFnRegistry` itself, so
+//! `Arc<TracingRegistry>` upcasts to `Arc<dyn RustFnRegistry>` and the
+//! dispatcher consults ONE traced registry — every native call opens a
+//! `tracing` span under `oxide::rustfn` carrying the id and the
+//! outcome, the cache plane's `TracingCacheObserver` (F22) transposed
+//! to the registry plane. The decorator composes with `StatsRegistry`
+//! (wrap an `Arc<StatsRegistry>` and the consult counts AND traces).
+//!
+//! The per-id hot-key attribution decorator ([`hot_keys`]) is the
+//! attribution arm beside the counters and the spans: `HotKeyRegistry`
+//! wraps `Arc<dyn RustFnRegistry>` and IS-A `RustFnRegistry` itself, so
+//! `Arc<HotKeyRegistry>` upcasts to `Arc<dyn RustFnRegistry>` and the
+//! dispatcher consults ONE attributed registry — every call attributes
+//! to its id, the cache plane's `HotKeyObserver` (F38) transposed to
+//! the registry plane. The decorator composes with `StatsRegistry` and
+//! `TracingRegistry` (wrap either and the consult counts/traces AND
+//! attributes).
 
 pub mod abi;
 pub mod bridge;
 pub mod chain;
 pub mod host;
+pub mod hot_keys;
 pub mod shim;
 pub mod stats;
 pub mod swap;
+pub mod tracing;
 pub mod types;
 
 use oxide_fw_diagnostics::OxideError;
@@ -67,6 +89,31 @@ pub use crate::chain::{ChainedRegistry, ChainedReport};
 // the substrate's own rustdocs name ("the registry has no traffic
 // counters to expose yet").
 pub use crate::stats::{CallStats, StatsRegistry};
+// V2-F08 M5: the per-call tracing decorator — `TracingRegistry` IS-A
+// `RustFnRegistry`, so the dispatcher consults ONE traced registry
+// through the same object-safe seam it already wires for the boot-time
+// host, the dev-loop host, the chain and the stats decorator. The
+// counters answer "how many calls succeeded vs fell back"; the tracing
+// arm answers "which id ran, how long, and what outcome" — the
+// per-call structured-trace surface the cache plane's
+// `TracingCacheObserver` (F22) already lands for cache events,
+// transposed to the registry plane. The decorator composes with
+// `StatsRegistry` (wrap an `Arc<StatsRegistry>` and the consult counts
+// AND traces).
+pub use crate::tracing::{RUSTFN_TRACE_TARGET, TracingRegistry};
+// V2-F08 M6: the per-id hot-key attribution decorator — `HotKeyRegistry`
+// IS-A `RustFnRegistry`, so the dispatcher consults ONE attributed
+// registry through the same object-safe seam it already wires for the
+// boot-time host, the dev-loop host, the chain, the stats decorator
+// and the tracing decorator. The counters answer "how many calls
+// succeeded vs fell back"; the tracing arm answers "which id ran, how
+// long, and what outcome"; the hot-key arm answers "which ids dominate
+// the registry's traffic" — the per-id ledger a traffic dashboard opens
+// with, the cache plane's `HotKeyObserver` (F38) transposed to the
+// registry plane. The decorator composes with `StatsRegistry` and
+// `TracingRegistry` (wrap either and the consult counts/traces AND
+// attributes).
+pub use crate::hot_keys::{HotKeyRegistry, HotKeyRow};
 // The macro namespace and the trait namespace share one name (the
 // serde pattern): `use oxide_rustfn::TsType` serves both
 // `#[derive(TsType)]` and `T: TsType`.
@@ -119,7 +166,9 @@ pub mod prelude {
     pub use crate::host::{
         RegistryError, RegistryReport, RustFnHost, RustFnLibrary, RustFnRegistry,
     };
+    pub use crate::hot_keys::HotKeyRegistry;
     pub use crate::stats::{CallStats, StatsRegistry};
     pub use crate::swap::{FnBinding, SwappableHost};
+    pub use crate::tracing::TracingRegistry;
     pub use crate::{TsType, export_table, server_fn};
 }
