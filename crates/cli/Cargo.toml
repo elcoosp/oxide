@@ -186,7 +186,10 @@ criterion = { workspace = true }
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-# V2-A02: this crate does not inherit the workspace lints yet (the recorded
-# dedicated hygiene pass adopts pedantic) — declared so the newer cargo
-# `missing_lints_inheritance` notice stays silent about the intent.
+# V2-A02 finish: this crate now inherits the workspace lint policy
+# (`[workspace.lints]` rust warnings=deny, clippy pedantic=warn). The
+# V8-free half (`--no-default-features`, the Node worker pool SSR path) is
+# pedantic-clean (0 own findings); the V8 feature gates the libclang-only
+# targets that the CI rust/lint job lints on a V8-capable runner.
 [lints]
+workspace = true
