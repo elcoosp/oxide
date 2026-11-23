@@ -357,6 +357,10 @@ impl crate::host::RustFnRegistry for SwappableHost {
         SwappableHost::has(self, id)
     }
 
+    fn ids(&self) -> Vec<String> {
+        SwappableHost::ids(self)
+    }
+
     fn types_json(&self) -> Option<String> {
         let st = self.state.lock().expect("the swap lock");
         st.host.types_json()
