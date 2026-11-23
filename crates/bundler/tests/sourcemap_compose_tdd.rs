@@ -43,7 +43,10 @@ fn identity(lines: u32, sources: &[&str]) -> V3Map {
     v3_from_toks(
         &toks,
         Some("out.js".to_string()),
-        sources.iter().map(std::string::ToString::to_string).collect(),
+        sources
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
         Vec::new(),
     )
 }
