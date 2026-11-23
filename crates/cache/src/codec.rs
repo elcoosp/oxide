@@ -25,6 +25,10 @@ struct WireEntry {
 }
 
 /// Encode an entry for the L2 wire (JSON envelope + base64+zstd body).
+///
+/// # Errors
+///
+/// Returns an error when the underlying operation fails.
 pub fn encode_entry(e: &Entry) -> Result<Vec<u8>> {
     let compressed =
         zstd::bulk::compress(&e.body, 3).map_err(|e| err("CACHE-CODEC", format!("zstd: {e}")))?;
@@ -41,6 +45,10 @@ pub fn encode_entry(e: &Entry) -> Result<Vec<u8>> {
 }
 
 /// Decode an L2 wire entry, enforcing [`MAX_ENTRY_BYTES`] on the decompressed body.
+///
+/// # Errors
+///
+/// Returns an error when the underlying operation fails.
 pub fn decode_entry(bytes: &[u8]) -> Result<Entry> {
     // Reject an absurd envelope before allocating the JSON tree.
     if bytes.len() > MAX_ENTRY_BYTES {
