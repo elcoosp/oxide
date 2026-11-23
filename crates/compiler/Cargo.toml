@@ -157,6 +157,14 @@ name = "data_src"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F17: the `data-ox-src` template-stamp bench (the Vue SFC `<template>`
+# and Svelte markup byte-scan + span-surgery cost the dev serve path pays
+# per served module), behind the same opt-in.
+[[bench]]
+name = "data_src_template"
+harness = false
+required-features = ["bench-util"]
+
 # V2-C02: the native-Solid walkthrough example. The module it imports
 # (`oxide_fw_compiler::solid`) is gated behind `native-solid`, so without
 # the explicit target + required-features the auto-discovered example
