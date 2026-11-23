@@ -73,6 +73,7 @@ pub fn resolve_with_virtual(
 /// Probing raw joined paths containing `..` fails on sandboxed filesystems and
 /// breaks stable hashes + `strip_prefix` on real ones, so every candidate is
 /// normalized before it is stat-ed or returned.
+#[must_use]
 pub fn normalize(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in p.components() {
@@ -92,7 +93,7 @@ pub fn normalize(p: &Path) -> PathBuf {
 /// Direct filesystem probe for non-JS asset extensions. Recognised suffixes:
 /// `.css`, `.png`, `.jpg`, `.jpeg`, `.svg`, `.gif`, `.webp`, `.avif`, `.woff`,
 /// `.woff2`, `.ttf`, `.otf`, `.txt`, `.json`, `.wasm`, `.html`.
-/// Reconcile a path returned by oxc_resolver with the caller-supplied `root`.
+/// Reconcile a path returned by `oxc_resolver` with the caller-supplied `root`.
 /// The resolver may have canonicalized macOS's `/var` → `/private/var` symlink;
 /// callers compare against the un-canonicalized root, so unwrap the same
 /// transformation when it's the only difference.
