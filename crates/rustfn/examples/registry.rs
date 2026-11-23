@@ -20,7 +20,6 @@
 //! between the two.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use oxide_rustfn::abi::{ABI_VERSION, FnEntry, FnTable, RawBuf, leak_name};
 use oxide_rustfn::host::{RustFnLibrary, RustFnRegistry};
@@ -215,7 +214,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The timeout budget the substrate carries: the host's default is
     // 30 s; the consult honors it through the registry seam (a call
     // over budget refuses with the `Timeout` wire mapping).
-    let _ = Duration::from_secs(30);
     println!("consult owns fn-greet: {}", registry.has("fn-greet"));
 
     // The M2 introspection surface: `report()` snapshots the host's
