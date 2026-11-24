@@ -257,3 +257,37 @@ fn read_build_id_tolerates_surrounding_whitespace() {
         "whitespace-trimmed read"
     );
 }
+
+#[test]
+fn the_native_dir_joins_the_covered_set_when_present() {
+    // §V2-F08 finish: `dist/native` is a covered input when the build
+    // emitted one — a rebuilt library is a new build identity — and its
+    // absence computes the same id as before the arm landed.
+    let a = TempDir::new().expect("tmp-a");
+    let ra = a.path();
+    write(ra, "dist/client/a.js", b"a");
+    let without = build_id_of_dist(&ra.join("dist")).expect("id without native");
+
+    let b = TempDir::new().expect("tmp-b");
+    let rb = b.path();
+    write(rb, "dist/client/a.js", b"a");
+    write(rb, "dist/native/lib-1.so", b"cdylib-bytes");
+    let with = build_id_of_dist(&rb.join("dist")).expect("id with native");
+    assert_ne!(without, with, "a native dir changes the identity");
+
+    // The identity tracks the native BYTES: a rebuilt library is a new id.
+    let c = TempDir::new().expect("tmp-c");
+    let rc = c.path();
+    write(rc, "dist/client/a.js", b"a");
+    write(rc, "dist/native/lib-1.so", b"cdylib-bytes-v2");
+    let rebuilt = build_id_of_dist(&rc.join("dist")).expect("rebuilt id");
+    assert_ne!(with, rebuilt, "new native bytes, new id");
+
+    // The manifest names the file (the covered-set contract).
+    let d = TempDir::new().expect("tmp-d");
+    let rd = d.path();
+    write(rd, "dist/client/a.js", b"a");
+    write(rd, "dist/native/types.json", b"{\"fns\":[]}");
+    let with_types = build_id_of_dist(&rd.join("dist")).expect("id with types");
+    assert_ne!(without, with_types, "the payload is covered too");
+}
