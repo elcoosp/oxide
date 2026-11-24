@@ -1,0 +1,69 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling oxide-fw-cli v0.17.0 (/home/z/my-project/oxide/crates/cli)
+error[E0560]: struct `precompile::PrecompilePlan<'_>` has no field named `data_ox_src`
+    --> crates/cli/src/precompile.rs:1117:13
+     |
+1117 |             data_ox_src: Some(&src_root),
+     |             ^^^^^^^^^^^ `precompile::PrecompilePlan<'_>` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0560]: struct `precompile::PrecompilePlan<'_>` has no field named `data_ox_src`
+    --> crates/cli/src/precompile.rs:1148:13
+     |
+1148 |             data_ox_src: None,
+     |             ^^^^^^^^^^^ `precompile::PrecompilePlan<'_>` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0560]: struct `precompile::PrecompilePlan<'_>` has no field named `data_ox_src`
+    --> crates/cli/src/precompile.rs:1195:13
+     |
+1195 |             data_ox_src: Some(&src_root),
+     |             ^^^^^^^^^^^ `precompile::PrecompilePlan<'_>` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0560]: struct `precompile::PrecompilePlan<'_>` has no field named `data_ox_src`
+    --> crates/cli/src/precompile.rs:1240:13
+     |
+1240 |             data_ox_src: Some(&src_root),
+     |             ^^^^^^^^^^^ `precompile::PrecompilePlan<'_>` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0560]: struct `precompile::PrecompilePlan<'_>` has no field named `data_ox_src`
+    --> crates/cli/src/precompile.rs:1259:13
+     |
+1259 |             data_ox_src: None,
+     |             ^^^^^^^^^^^ `precompile::PrecompilePlan<'_>` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0560]: struct `precompile::PrecompilePlan<'_>` has no field named `data_ox_src`
+    --> crates/cli/src/precompile.rs:1294:13
+     |
+1294 |             data_ox_src: Some(&src_root),
+     |             ^^^^^^^^^^^ `precompile::PrecompilePlan<'_>` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0560]: struct `precompile::PrecompilePlan<'_>` has no field named `data_ox_src`
+    --> crates/cli/src/precompile.rs:1309:13
+     |
+1309 |             data_ox_src: Some(&src_root),
+     |             ^^^^^^^^^^^ `precompile::PrecompilePlan<'_>` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0560]: struct `precompile::PrecompilePlan<'_>` has no field named `data_ox_src`
+    --> crates/cli/src/precompile.rs:1324:13
+     |
+1324 |             data_ox_src: None,
+     |             ^^^^^^^^^^^ `precompile::PrecompilePlan<'_>` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+For more information about this error, try `rustc --explain E0560`.
+error: could not compile `oxide-fw-cli` (lib test) due to 8 previous errors
