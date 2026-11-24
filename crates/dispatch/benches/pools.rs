@@ -88,5 +88,40 @@ fn bench_pools(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_pools);
+/// The brownout early-drop's drain cost (the F10 evict trigger's F12
+/// hook): each tick pops the OLDEST demoted generation — the VecDeque's
+/// front pop plus the handle the caller drains. The arm re-fills the
+/// deque from a fresh pool per iteration (the drain is destructive), so
+/// the shape measured is the pop itself at depth, not the refill.
+fn bench_pools_early_drop(c: &mut Criterion) {
+    let t0 = Instant::now();
+    let mut group = c.benchmark_group("pools_early_drop");
+    group.bench_function(BenchmarkId::new("evict_oldest", DEPTH), |b| {
+        b.iter_batched(
+            || {
+                let mut pools = GenerationPools::new(
+                    "0000000000000000".to_string(),
+                    Arc::new(BenchPool),
+                    WINDOW,
+                    DEPTH,
+                );
+                for i in 1..=DEPTH as u64 {
+                    pools.promote(
+                        format!("{i:016x}"),
+                        Arc::new(BenchPool),
+                        t0 + Duration::from_secs(i),
+                    );
+                }
+                pools
+            },
+            |mut pools| {
+                black_box(pools.evict_oldest());
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
+criterion_group!(benches, bench_pools, bench_pools_early_drop);
 criterion_main!(benches);
