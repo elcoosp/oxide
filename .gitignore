@@ -69,8 +69,6 @@ ship.toml
 /.github/pr-body.md
 
 # Ship ceremony artifacts (local-only)
-ship.toml
-.github/pr-body.md
 
 
 # local sandbox artifacts (not part of the delivery)
@@ -82,10 +80,6 @@ download/
 upload/
 
 # The ship delivery files (per-session, never committed)
-/ship.toml
-/.github/pr-body.md
-.github/pr-body.md
-ship.toml
 
 # V2-E05: the recorded plugin-compat dist trees under
 # conformance/plugins/logs/ are COMMITTED FIXTURES (the dry-run truth the
@@ -97,5 +91,5 @@ ship.toml
 !conformance/plugins/logs/*/dist/**
 
 # ship.toml delivery manifest + reviewer PR body (per-session, gitignored)
-ship.toml
-.github/pr-body.md
+
+# ship session artifacts (the delivery manifest + the PR body)
