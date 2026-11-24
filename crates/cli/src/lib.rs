@@ -103,6 +103,11 @@ mod l0_cache;
 // composes (the bench and the example reuse them; the module's
 // internals stay crate-internal, the framework_shim shape).
 pub use l0_cache::{CachedResponse, L0Cache, NONCE_SENTINEL};
+// §V2-E05: the WASM `load`/`resolveId` wire's public face — the builder
+// the bench group and the walkthrough consume (every other hook builder
+// stays crate-internal; this one is the seam a library consumer composing
+// their own build reuses, the `native_fns` shape).
+pub use hooks::build_wasm_load_resolve_hooks;
 pub mod loader_shim;
 /// §V2-E06: the `oxide add` config edit (span-based AST surgery on
 /// `oxide.config.ts`) + the package-manager detection table.
