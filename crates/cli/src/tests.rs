@@ -16638,3 +16638,466 @@ fn prerender_route_answers_take_the_innermost_error_boundary() {
         "an outer boundary serves a route below it"
     );
 }
+
+// ---- §V2-E05: the WASM `load`/`resolveId` CLI wire --------------------------
+//
+// The plan line these pins encode (docs/spec-v0.2-draft.md, Appendix V2.O,
+// the "E03, E05 to E10, E12, E13" row, E05 segment): "`WasmPlugin`'s
+// `call_load_hook`/`call_resolve_hook`; the CLI wire that feeds them into
+// the bundler's `BundleOptions.load_hook`/`resolve_hook` is the remaining
+// half." Until this wire, a `kind: wasm` plugin's `transform` hook reached
+// the bundler (`build_transform_hook`) but its `resolveId`/`load` hooks had
+// NO consumer outside the compat harness — the component was loaded, probed
+// and dropped.
+
+/// A component-model WAT exporting `resolve-id` with a static answer: a
+/// non-empty specifier resolves to `marker`; an empty one declines
+/// (`none` → the bundler's default resolver). The marker's byte length
+/// rides the option header the canonical ABI flattens to.
+fn resolve_component_wat(marker: &str) -> String {
+    let len = marker.len();
+    let (b1, b2, b3, b4) = (
+        len & 0xFF,
+        (len >> 8) & 0xFF,
+        (len >> 16) & 0xFF,
+        (len >> 24) & 0xFF,
+    );
+    format!(
+        r#"(component
+  (core module $m
+    (memory (export "memory") 1)
+    (data (i32.const 8) "\00\00\00\00\00\00\00\00\00\00\00\00")
+    (data (i32.const 24) "\01\00\00\00" "\28\00\00\00" "\{b1:02X}\{b2:02X}\{b3:02X}\{b4:02X}")
+    (data (i32.const 40) "{marker}")
+    (global $bump (mut i32) (i32.const 128))
+    (func (export "cabi_realloc") (param $o i32) (param $os i32) (param $a i32) (param $ns i32)
+      (result i32)
+      (local $ret i32)
+      (local.set $ret (global.get $bump))
+      (global.set $bump (i32.add (global.get $bump) (i32.const 64)))
+      (local.get $ret)
+    )
+    (func (export "resolve_dyn")
+      (param $p1 i32) (param $l1 i32) (param $p2 i32) (param $l2 i32)
+      (result i32)
+      (if (result i32) (i32.eqz (local.get $l1))
+        (then (i32.const 8))
+        (else (i32.const 24))
+      )
+    )
+  )
+  (core instance $inst (instantiate $m))
+  (alias core export $inst "memory" (core memory $mem))
+  (alias core export $inst "cabi_realloc" (core func $realloc))
+  (alias core export $inst "resolve_dyn" (core func $f))
+  (type $sig (func (param "specifier" string) (param "from" string) (result (option string))))
+  (func $lifted (type $sig) (canon lift (core func $f) (memory $mem) (realloc $realloc)))
+  (export "resolve-id" (func $lifted))
+)"#
+    )
+}
+
+/// The matching `load` component: a non-empty specifier serves `marker` as
+/// the virtual module's source; an empty one declines (the disk read wins).
+fn load_component_wat(marker: &str) -> String {
+    let len = marker.len();
+    let (b1, b2, b3, b4) = (
+        len & 0xFF,
+        (len >> 8) & 0xFF,
+        (len >> 16) & 0xFF,
+        (len >> 24) & 0xFF,
+    );
+    format!(
+        r#"(component
+  (core module $m
+    (memory (export "memory") 1)
+    (data (i32.const 8) "\00\00\00\00\00\00\00\00\00\00\00\00")
+    (data (i32.const 24) "\01\00\00\00" "\28\00\00\00" "\{b1:02X}\{b2:02X}\{b3:02X}\{b4:02X}")
+    (data (i32.const 40) "{marker}")
+    (global $bump (mut i32) (i32.const 128))
+    (func (export "cabi_realloc") (param $o i32) (param $os i32) (param $a i32) (param $ns i32)
+      (result i32)
+      (local $ret i32)
+      (local.set $ret (global.get $bump))
+      (global.set $bump (i32.add (global.get $bump) (i32.const 64)))
+      (local.get $ret)
+    )
+    (func (export "load_dyn") (param $p i32) (param $l i32) (result i32)
+      (if (result i32) (i32.eqz (local.get $l))
+        (then (i32.const 8))
+        (else (i32.const 24))
+      )
+    )
+  )
+  (core instance $inst (instantiate $m))
+  (alias core export $inst "memory" (core memory $mem))
+  (alias core export $inst "cabi_realloc" (core func $realloc))
+  (alias core export $inst "load_dyn" (core func $f))
+  (type $sig (func (param "specifier" string) (result (option string))))
+  (func $lifted (type $sig) (canon lift (core func $f) (memory $mem) (realloc $realloc)))
+  (export "load" (func $lifted))
+)"#
+    )
+}
+
+#[test]
+fn wasm_load_resolve_hooks_none_without_wasm_plugins() {
+    // The negative arm: no `kind: wasm` plugin configured → the pair is
+    // `(None, None)` and `BundleOptions` keeps the pre-wire shape (the
+    // hooks stay `None`, the bundler's default resolver owns every module).
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    write_config(&root, r#"{"plugins":[]}"#);
+    let cfg = crate::load_config_or_default(&root, "development");
+    let (resolve, load) = crate::build_wasm_load_resolve_hooks(&root, &cfg);
+    assert!(resolve.is_none(), "no wasm plugin → no resolve hook");
+    assert!(load.is_none(), "no wasm plugin → no load hook");
+}
+
+#[test]
+fn wasm_resolve_hook_rewrites_and_load_serves_the_virtual_module() {
+    // The acceptance arm: the same manifest the transform wire parses
+    // (`hooks: ["resolveId", "load"]`) drives BOTH new hooks. The resolve
+    // hook answers the component's rewritten specifier; the load hook
+    // serves the virtual module's source. Empty inputs decline (the
+    // component's own `none`), mirroring the JS bridge's `{id: null}`
+    // pass-through the bundler already consumes.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(
+        root.join("virtual.wasm"),
+        resolve_component_wat("../virtual/shim.ts"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("loader.wasm"),
+        load_component_wat("virtual-module-source"),
+    )
+    .unwrap();
+    write_config(
+        &root,
+        r#"{"plugins":[
+            {"kind":"wasm","path":"./virtual.wasm","name":"resolve","witWorld":"oxide:plugin/hooks@0.1.0","hooks":["resolveId"]},
+            {"kind":"wasm","path":"./loader.wasm","name":"load","witWorld":"oxide:plugin/hooks@0.1.0","hooks":["load"]}
+        ]}"#,
+    );
+    let cfg = crate::load_config_or_default(&root, "development");
+    let (resolve, load) = crate::build_wasm_load_resolve_hooks(&root, &cfg);
+    let resolve = resolve.expect("the resolveId-declaring component wires the resolve hook");
+    let load = load.expect("the load-declaring component wires the load hook");
+    assert_eq!(
+        resolve
+            .call("./missing.ts", "/proj/src/routes/page.tsx")
+            .unwrap(),
+        Some(std::path::PathBuf::from("../virtual/shim.ts")),
+        "the component's rewritten specifier is the resolved path"
+    );
+    assert_eq!(
+        resolve.call("", "/proj/src/routes/page.tsx").unwrap(),
+        None,
+        "the component's decline passes to the default resolver"
+    );
+    assert_eq!(
+        load.call("/proj/src/routes/shim.ts").unwrap(),
+        Some("virtual-module-source".to_string()),
+        "the component serves the virtual module's source"
+    );
+    assert_eq!(
+        load.call("").unwrap(),
+        None,
+        "the component's decline lets the disk read win"
+    );
+}
+
+#[test]
+fn wasm_hooks_first_plugin_to_answer_wins() {
+    // The chain contract (the Vite convention the JS bridge pins): plugins
+    // run in config-declaration order and the FIRST non-declining answer
+    // wins; a decline passes to the next plugin and then to the default.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(
+        root.join("a.wasm"),
+        resolve_component_wat("../virtual/a.ts"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("b.wasm"),
+        resolve_component_wat("../virtual/b.ts"),
+    )
+    .unwrap();
+    write_config(
+        &root,
+        r#"{"plugins":[
+            {"kind":"wasm","path":"./a.wasm","name":"a","witWorld":"oxide:plugin/hooks@0.1.0","hooks":["resolveId"]},
+            {"kind":"wasm","path":"./b.wasm","name":"b","witWorld":"oxide:plugin/hooks@0.1.0","hooks":["resolveId"]}
+        ]}"#,
+    );
+    let cfg = crate::load_config_or_default(&root, "development");
+    let (resolve, load) = crate::build_wasm_load_resolve_hooks(&root, &cfg);
+    let resolve = resolve.expect("two resolving components wire the resolve hook");
+    assert!(
+        load.is_none(),
+        "no component declares load → the load arm stays unwired"
+    );
+    assert_eq!(
+        resolve
+            .call("#anything", "/proj/src/routes/page.tsx")
+            .unwrap(),
+        Some(std::path::PathBuf::from("../virtual/a.ts")),
+        "the first plugin's answer wins"
+    );
+}
+
+#[test]
+fn wasm_hooks_skip_components_without_the_exported_hook() {
+    // A component that DECLARES `resolveId` in its manifest but does not
+    // EXPORT a callable `resolve-id` is skipped for that arm (the host
+    // probes the export set at load — the same rule the transform wire
+    // applies), so the hook never errors on a hook the guest cannot run.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    // The load component exports only `load`; the config declares both
+    // hooks on it.
+    std::fs::write(
+        root.join("only-load.wasm"),
+        load_component_wat("virtual-module-source"),
+    )
+    .unwrap();
+    write_config(
+        &root,
+        r#"{"plugins":[
+            {"kind":"wasm","path":"./only-load.wasm","name":"p","witWorld":"oxide:plugin/hooks@0.1.0","hooks":["resolveId","load"]}
+        ]}"#,
+    );
+    let cfg = crate::load_config_or_default(&root, "development");
+    let (resolve, load) = crate::build_wasm_load_resolve_hooks(&root, &cfg);
+    assert!(
+        resolve.is_none(),
+        "declared-but-unexported resolveId never wires the resolve arm"
+    );
+    let load = load.expect("the exported load still wires");
+    assert_eq!(
+        load.call("/proj/src/routes/shim.ts").unwrap(),
+        Some("virtual-module-source".to_string())
+    );
+}
+
+#[test]
+fn wasm_hooks_leave_the_transform_wire_untouched() {
+    // The transform arm's contract is unchanged by the new pass: a
+    // resolve/load-only component still yields `None` from
+    // `build_transform_hook` (it exports no `transform`), and the project
+    // with no wasm plugins keeps every arm at `None`.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(
+        root.join("only-load.wasm"),
+        load_component_wat("virtual-module-source"),
+    )
+    .unwrap();
+    write_config(
+        &root,
+        r#"{"plugins":[
+            {"kind":"wasm","path":"./only-load.wasm","name":"p","witWorld":"oxide:plugin/hooks@0.1.0","hooks":["load"]}
+        ]}"#,
+    );
+    let cfg = crate::load_config_or_default(&root, "development");
+    assert!(
+        crate::build_transform_hook(&root, &cfg).is_none(),
+        "the transform arm ignores a load-only component"
+    );
+}
+
+// ---- §V2-F10/F12: the brownout early-drop wire ------------------------------
+//
+// The plan lines the pins encode (docs/spec-v0.2-draft.md, Appendix V2.O):
+// the F10 row's remaining list names "the F12 brownout evict trigger" and
+// the F12 row's tail names "the F10-pool early shrink" — the governor's
+// `Emergency` rung releases the oldest demoted generation instead of
+// letting a lockup leak the drop. The substrate's `GenerationPools::
+// evict_oldest` was documented as "the brownout early-drop (the F12
+// hook)" with ZERO call sites; these pins hold the id-level counterpart
+// (`GenerationPool::evict_oldest`), the serving-level exposure
+// (`ServingPools::evict_oldest`), and the governor wiring
+// (`drain_one_early_drop` fires only at `Emergency`).
+
+/// A pool that is never called — the pin only exercises the routing and
+/// the eviction bookkeeping, so every call path is a loud refusal.
+struct DeadPool;
+
+#[async_trait::async_trait]
+impl oxide_fw_jshost::Pool for DeadPool {
+    async fn call(
+        &self,
+        _entry: oxide_fw_jshost::EntryRef,
+        _req: oxide_fw_jshost::CallInput,
+    ) -> oxide_fw_jshost::Result<oxide_fw_jshost::CallStream> {
+        Err(oxide_fw_diagnostics::OxideError(Box::new(
+            oxide_fw_diagnostics::Diagnostic::error("TST-POOL", "the pin never calls the pool"),
+        )))
+    }
+    fn stats(&self) -> oxide_fw_jshost::PoolStats {
+        oxide_fw_jshost::PoolStats {
+            workers: 0,
+            in_flight: 0,
+            completed: 0,
+            failed: 0,
+            recycles: 0,
+            crashed: 0,
+            queue_wait_ms_p50: 0.0,
+            queue_wait_ms_p99: 0.0,
+        }
+    }
+    fn abort_request(&self, _request_id: &str) {}
+    async fn drain(&self) {}
+}
+
+fn fake_generation() -> std::sync::Arc<crate::serve::generations::GenServing> {
+    std::sync::Arc::new(crate::serve::generations::GenServing {
+        pool: std::sync::Arc::new(DeadPool),
+        runner: None,
+        routes_root: std::path::PathBuf::from("/tmp/unused-snapshot"),
+    })
+}
+
+#[test]
+fn serving_pools_evict_oldest_drops_the_oldest_generation_and_its_route() {
+    let pools = crate::serve::generations::ServingPools::from_boot(
+        "aaaaaaaaaaaaaaaa",
+        fake_generation(),
+        std::time::Duration::from_secs(900),
+        3,
+    );
+    assert!(
+        pools.promote_booted("bbbbbbbbbbbbbbbb", fake_generation()),
+        "the reload promotes the second generation"
+    );
+    assert!(
+        pools.promote_booted("cccccccccccccccc", fake_generation()),
+        "a third deploy demotes the second"
+    );
+    assert_eq!(
+        pools.route_for(Some("aaaaaaaaaaaaaaaa")).map(|(_, g)| g),
+        Some(oxide_fw_dispatch::build::Gen::Previous),
+        "the oldest demoted generation routes to its own handle before the drop"
+    );
+    assert_eq!(
+        pools.evict_oldest(),
+        Some("aaaaaaaaaaaaaaaa".to_string()),
+        "the OLDEST demoted generation goes first"
+    );
+    assert!(
+        pools.route_for(Some("aaaaaaaaaaaaaaaa")).is_none(),
+        "the evicted generation no longer routes (the boot fallback takes over)"
+    );
+    assert_eq!(
+        pools.evict_oldest(),
+        Some("bbbbbbbbbbbbbbbb".to_string()),
+        "the next-oldest goes next"
+    );
+    assert_eq!(pools.evict_oldest(), None, "an empty pool evicts nothing");
+    assert_eq!(
+        pools.route_for(Some("cccccccccccccccc")).map(|(_, g)| g),
+        Some(oxide_fw_dispatch::build::Gen::Current),
+        "the current generation is never evicted"
+    );
+    assert_eq!(
+        pools.current().as_deref(),
+        Some("cccccccccccccccc"),
+        "the current id stands"
+    );
+}
+
+#[test]
+fn brownout_early_drop_fires_only_at_emergency() {
+    let cfg = oxide_fw_config::BrownoutConfig {
+        enabled: true,
+        ..Default::default()
+    };
+    let wiring = crate::serve::brownout::BrownoutWiring::from_config(
+        &cfg,
+        None,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+    )
+    .expect("enabled → wiring");
+    let evictions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = std::sync::Arc::clone(&evictions);
+    let wiring = wiring
+        .with_early_drop(std::sync::Arc::new(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some("aaaaaaaaaaaaaaaa".to_string())
+        }))
+        .unwrap_or_else(|_| panic!("the seam sets once"));
+
+    use oxide_fw_server::governor::Level;
+    // Normal (the boot level): no drop, the skew window keeps its contract.
+    assert_eq!(
+        crate::serve::brownout::drain_one_early_drop(&wiring),
+        None,
+        "the calm rung never drops a generation"
+    );
+    wiring.governor.set(Level::Shed as u8);
+    assert_eq!(
+        crate::serve::brownout::drain_one_early_drop(&wiring),
+        None,
+        "Shed sheds low-priority routes; the old generation keeps serving"
+    );
+    wiring.governor.set(Level::Emergency as u8);
+    assert_eq!(
+        crate::serve::brownout::drain_one_early_drop(&wiring),
+        Some("aaaaaaaaaaaaaaaa".to_string()),
+        "Emergency gives the oldest pool back (the graceful drain)"
+    );
+    assert_eq!(
+        evictions.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the seam ran exactly once across the three ticks"
+    );
+}
+
+#[test]
+fn brownout_early_drop_without_the_seam_is_an_honest_no_op() {
+    // A wiring built without the boot's seam (the pre-set ticks, or a
+    // consumer that never attached pools) never drops anything — the
+    // trigger is opt-in at the boot wire, greppable at the one call site.
+    let cfg = oxide_fw_config::BrownoutConfig {
+        enabled: true,
+        ..Default::default()
+    };
+    let wiring = crate::serve::brownout::BrownoutWiring::from_config(
+        &cfg,
+        None,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+    )
+    .expect("enabled → wiring");
+    wiring
+        .governor
+        .set(oxide_fw_server::governor::Level::Emergency as u8);
+    assert_eq!(
+        crate::serve::brownout::drain_one_early_drop(&wiring),
+        None,
+        "no seam attached → nothing to drain, nothing dropped"
+    );
+}
+
+#[test]
+fn brownout_early_drop_seam_sets_exactly_once() {
+    let cfg = oxide_fw_config::BrownoutConfig {
+        enabled: true,
+        ..Default::default()
+    };
+    let wiring = crate::serve::brownout::BrownoutWiring::from_config(
+        &cfg,
+        None,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+    )
+    .expect("enabled → wiring");
+    let first = wiring
+        .with_early_drop(std::sync::Arc::new(|| None))
+        .unwrap_or_else(|_| panic!("the first set takes"));
+    assert!(
+        first.with_early_drop(std::sync::Arc::new(|| None)).is_err(),
+        "the OnceLock refuses a second seam — the boot sets it once"
+    );
+}
