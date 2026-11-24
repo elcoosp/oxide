@@ -128,11 +128,30 @@ name = "sharded_resolver"
 harness = false
 required-features = ["bench-util"]
 
+# §V2-E05: the WASM `load`/`resolveId` wire's bench — the per-module cost
+# a `kind: wasm` plugin adds once the CLI composes the host into the
+# bundler's hook pair, behind the same bench-util opt-in.
+[[bench]]
+name = "wasm_hooks"
+harness = false
+required-features = ["bench-util"]
+
 # V2-E06: the `module_add` consumer example — a V8-free end-to-end
 # walkthrough of the config edit + manifest resolution against the
 # fixture app under `tests/fixtures/analytics-app/`.
 [[example]]
 name = "module_add"
+
+# §V2-E05: the WASM `load`/`resolveId` wire's consumer walkthrough — the
+# config entries, the hook pair and the resolve→load flow a build runs,
+# V8-free.
+[[example]]
+name = "wasm_hooks"
+
+# §V2-F10/F12: the brownout early-drop's consumer walkthrough — the
+# two-pool boot, the Emergency ladder and the oldest-first drain, V8-free.
+[[example]]
+name = "brownout_evict"
 
 [dependencies]
 chrono = { workspace = true }
