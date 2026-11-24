@@ -17,10 +17,11 @@ runner's recorded output) and pinned by `docs-check` (regenerate with
 **Status legend:**
 
 - ✅ **wired** — the hook is invoked by the pipeline and its result is used
+  (the WASM `load`/`resolveId` rows ride the §V2-E05 CLI wire since it
+  composed the host into the bundler's `BundleOptions.load_hook`/
+  `resolve_hook` beside the JS bridge)
 - 🟡 **partial** — the host can call the hook, but a call site is still
-  missing (today: the WASM `load`/`resolveId` ABI is callable through
-  `WasmPlugin`'s `call_load_hook`/`call_resolve_hook`; the CLI wire that feeds
-  them into the bundler's `BundleOptions.load_hook`/`resolve_hook` is pending)
+  missing (no cell carries this today)
 - 🚫 **unsupported** — no host path. For the JS bridge — and for
   `configureServer`/`cacheHandler` on every non-native kind — declaring it
   fails at load (`PLG-HOOK`); a WASM declaration of any other hook loads but
@@ -43,8 +44,8 @@ runner's recorded output) and pinned by `docs-check` (regenerate with
 | `configResolved` | 15.2 | ✅ | 🚫 | n/a | Read-only view after the config is frozen. |
 | `buildStart` | 15.2 | ✅ | 🚫 | n/a | Once per build. |
 | `buildEnd` | 15.2 | ✅ | 🚫 | n/a | Once per successful build with a summary. |
-| `resolveId` | 15.2 | ✅ | 🟡 | n/a | `(specifier, from) → id \| null`. |
-| `load` | 15.2 | ✅ | 🟡 | n/a | `(id) → code \| null`; virtual modules work. |
+| `resolveId` | 15.2 | ✅ | ✅ | n/a | `(specifier, from) → id \| null`. |
+| `load` | 15.2 | ✅ | ✅ | n/a | `(id) → code \| null`; virtual modules work. |
 | `transform` | 15.2 | ✅ | ✅ | n/a | `(code, id) → code`; also reaches `compile_module`. |
 | `renderChunk` | 15.2 | ✅ | 🚫 | n/a | `(file, code) → code`. |
 | `generateBundle` | 15.2 | ✅ | 🚫 | n/a | Called with the final bundle. |
@@ -111,12 +112,13 @@ starts an extra Node child.
 
 ## What "partial" means concretely
 
-WASM `transform` is wired end to end. WASM `load`/`resolveId` are the 🟡
-rows: the host speaks their ABI (`call_load_hook`/`call_resolve_hook`, the
-object-safe `HookHost` seam carries both), string fixtures exercise them
-end to end, and the remaining half is the CLI wire that composes a loaded
-component into `BundleOptions.load_hook`/`resolve_hook` alongside the JS
-bridge's hooks. Native plugins are feature backends selected by config
+WASM `transform`, `load` and `resolveId` are all wired end to end: the
+host speaks their ABI (`call_load_hook`/`call_resolve_hook`, the
+object-safe `HookHost` seam carries both), and the §V2-E05 CLI wire
+composes every loaded component into `BundleOptions.load_hook`/
+`resolve_hook` alongside the JS bridge's hooks — build and dev paths both,
+first non-declining answer wins, a decline falls through to the default
+resolver / disk read. Native plugins are feature backends selected by config
 (`images`, `fonts`, `i18n`, `mdx`, `tailwind`, `manifest`); they do not
 participate in the JS hook chain.
 
