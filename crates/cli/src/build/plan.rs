@@ -404,6 +404,14 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
     // composes with any in-flight edit elsewhere in that function.
     let js_resolve_hook = build_js_plugin_resolve_hook(rootp, cfg, stack.tooling_pool.as_ref());
     let js_load_hook = build_js_plugin_load_hook(rootp, cfg, stack.tooling_pool.as_ref());
+    // §V2-E05: the WASM components' `resolveId`/`load` hooks join the same
+    // chains — the host's `call_resolve_hook`/`call_load_hook` wrapped at
+    // the one place every other hook arm wraps (the transform wire's
+    // sibling). The order mirrors the transform composition's JS-then-WASM
+    // convention: the first-party `.server.rs` arm, then the JS bridge,
+    // then the WASM host; the first non-declining answer wins, a decline
+    // falls through to the default resolver / disk read.
+    let (wasm_resolve_hook, wasm_load_hook) = build_wasm_load_resolve_hooks(rootp, cfg);
     // §V2-F08 finish: the bundle-time `.server.rs` arms ride FIRST in the
     // chain (the server-rs resolve/load answers only when the specifier
     // names a first-party `*.server.rs` module; everything else falls
@@ -428,14 +436,26 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
         ),
         None => (None, None, None),
     };
-    client_opts.resolve_hook =
-        crate::native_fns::compose_resolve_hooks(rs_resolve.clone(), js_resolve_hook.clone());
-    client_opts.load_hook =
-        crate::native_fns::compose_load_hooks(rs_load_client, js_load_hook.clone());
+    client_opts.resolve_hook = crate::native_fns::compose_resolve_hooks(
+        rs_resolve.clone(),
+        crate::native_fns::compose_resolve_hooks(
+            js_resolve_hook.clone(),
+            wasm_resolve_hook.clone(),
+        ),
+    );
+    client_opts.load_hook = crate::native_fns::compose_load_hooks(
+        rs_load_client,
+        crate::native_fns::compose_load_hooks(js_load_hook.clone(), wasm_load_hook.clone()),
+    );
     let mut server_opts = server_opts;
-    server_opts.resolve_hook =
-        crate::native_fns::compose_resolve_hooks(rs_resolve, js_resolve_hook);
-    server_opts.load_hook = crate::native_fns::compose_load_hooks(rs_load_server, js_load_hook);
+    server_opts.resolve_hook = crate::native_fns::compose_resolve_hooks(
+        rs_resolve,
+        crate::native_fns::compose_resolve_hooks(js_resolve_hook, wasm_resolve_hook),
+    );
+    server_opts.load_hook = crate::native_fns::compose_load_hooks(
+        rs_load_server,
+        crate::native_fns::compose_load_hooks(js_load_hook, wasm_load_hook),
+    );
     // §15-B: the three post-emit / HTML hooks. renderChunk and generateBundle
     // run inside the bundler for both envs; transformHtml runs on each
     // prerendered document.
