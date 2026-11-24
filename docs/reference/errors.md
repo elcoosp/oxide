@@ -230,6 +230,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `RFN-002` | `*.server.rs` functions are present but target `{}` cannot load native functions (V2-F08) | Use Binary or Docker, or remove the Rust functions |
 | `RFN-003` | native function library failed to load: {e} | Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type = ["cdylib"]` shape) |
 | `RFN-004` | native function payload did not convert: {e} | The client stub sends JSON args; the host converts to ODF at the boundary — check the args shape against the generated types |
+| `RFN-005` | `{source}` is present but no cdylib crate is discoverable — the stubs would import ids nothing answers | Scaffold the native crate beside the app (a `Cargo.toml` with `[lib] crate-type = ["cdylib"]`) or remove the server-fn sources |
 | `RFN-LOAD` | the build secret is unavailable; the native server functions stay unmounted | ensure the build secret is readable, or drop `.oxide/rust` to run on the JS pool |
 | `RFN-PANIC` | a native function panicked; the host answers 500 and the library never unwinds across the boundary | Inspect the server log for the panic backtrace; panics are a bug in the function body |
 | `RFN-TYPES` | the native function types payload did not parse: {e} | Rebuild the user crate with the matching `oxide-rustfn` version |
