@@ -1,0 +1,9 @@
+{
+  "module_path": "__FIXTURE_DIR__/action_basic.mjs",
+  "action": "greet",
+  "form_json": "[[\"name\",\"Ada\"]]",
+  "params": {},
+  "url": "/",
+  "method": "POST",
+  "headers": [["cookie", "a=1"]]
+}
