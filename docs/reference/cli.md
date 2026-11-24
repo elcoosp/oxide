@@ -95,6 +95,7 @@ Start the production server (binary target, §12)
 | `--cache-plane-mount <CACHE_PLANE_MOUNT>` | V2-F59: the F57 cache plane's mount opt-in, beside the `OXIDE_CACHE_PLANE_MOUNT` env var (the flag wins). The mount is a production surface (the site AND the shared plane on one node), so the flag rides the serve boot too (the `root`/`port` multi-command shape). Default off: the boot's shape stays byte-identical |
 | `cache_plane_mount = true` |  |
 | `cache_plane_mount = false` |  |
+| `--generation <GEN>` | V2-F10 step 4: boot a RETAINED generation — `previous` or a build id (the copies the build's emit tail keeps under `.oxide/generations/<id>/dist`). The named generation is swapped into `dist/` before the boot (the rollback swap, no rebuild), so the server serves the old build's bytes |
 
 ### `oxide preview`
 
@@ -315,6 +316,15 @@ Verify an attested build (§V2-F20): the canonical form of the provenance, its e
 | `--rollback <ROLLBACK>` | Swap the pointer back to the previous build (the one-write rollback) |
 | `rollback = true` |  |
 | `rollback = false` |  |
+
+### `oxide rollback`
+
+Roll the serving `dist/` back to a retained generation (§V2-F10 step 4): the build's emit tail keeps the last `deploy.generations` dists under `.oxide/generations/<id>/dist`; this swaps one into `dist/` — no rebuild — and hangs up (`SIGHUP`) a running `oxide start` so its promote picks the rolled-back id up
+
+| argument | description |
+| --- | --- |
+| `--root <ROOT>` | Project directory (default: cwd) |
+| `--generation <GEN>` | The generation to serve: `previous` (the default) or a build id |
 
 ### `oxide verify`
 
