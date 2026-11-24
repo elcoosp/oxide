@@ -13,8 +13,8 @@ Generated from `oxide_fw_adapters::capability_markdown_table()`; the crate READM
 | node | F | F | F | F | F | D | F | F | F | F | D | D | U | D | F | D | D | F |
 | static | D | U | U | D | D | U | U | U | F | U | D | F | U | D | F | U | U | F |
 | docker | F | F | F | F | F | F | F | F | F | F | F | F | F | F | F | F | F | F |
-| cloudflare | D | D | U | U | F | U | F | D | D | U | D | D | U | U | F | U | U | F |
-| cloudflare-pages | D | D | U | U | F | U | F | D | D | U | D | D | U | U | F | U | U | F |
+| cloudflare | D | D | U | U | F | U | F | U | D | U | D | D | U | U | F | U | U | F |
+| cloudflare-pages | D | D | U | U | F | U | F | U | D | U | D | D | U | U | F | U | U | F |
 | lambda | D | D | U | D | F | D | U | D | F | U | D | D | U | D | F | U | U | F |
 | vercel | D | D | U | D | F | D | U | D | F | U | D | D | U | D | F | U | U | F |
 | vercel-functions | D | D | U | D | F | D | U | D | F | U | D | D | U | D | F | U | U | F |
@@ -41,13 +41,11 @@ Every `D` above with its documented reason (`oxide_fw_adapters::degradation` —
 | static | search | a prebuilt index ships with the bundle; queries are client-side |
 | cloudflare | l0-cache | KV/R2-backed cache with eventually-consistent fill |
 | cloudflare | isr | ISR via stale-while-revalidate at the edge |
-| cloudflare | live | Workers stream responses but do not guarantee long-lived connections; the client falls back to transport: 'poll' |
 | cloudflare | mixed-islands | every framework's client runtime ships in the worker bundle; no cross-island shared chunk |
 | cloudflare | skew | edge deploys propagate gradually; skew detection warns instead of blocking |
 | cloudflare | delta-deploy | the delta manifest is computed, but Workers upload the full bundle |
 | cloudflare-pages | l0-cache | KV/R2-backed cache with eventually-consistent fill |
 | cloudflare-pages | isr | ISR via stale-while-revalidate at the edge |
-| cloudflare-pages | live | Workers stream responses but do not guarantee long-lived connections; the client falls back to transport: 'poll' |
 | cloudflare-pages | mixed-islands | every framework's client runtime ships in the worker bundle; no cross-island shared chunk |
 | cloudflare-pages | skew | edge deploys propagate gradually; skew detection warns instead of blocking |
 | cloudflare-pages | delta-deploy | the delta manifest is computed, but Workers upload the full bundle |
