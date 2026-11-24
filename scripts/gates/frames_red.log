@@ -1,0 +1,499 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling zmij v1.0.23
+   Compiling syn v3.0.9
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.154
+   Compiling thiserror v2.0.21
+   Compiling thiserror-impl v2.0.21
+   Compiling serde_derive v1.0.229
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling oxide-fw-diagnostics v0.17.0 (/home/z/my-project/oxide/crates/diagnostics)
+error[E0422]: cannot find struct, variant or union type `StackFrame` in this scope
+   --> crates/diagnostics/src/lib.rs:277:13
+    |
+277 |     let f = StackFrame {
+    |             ^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find type `StackFrame` in this scope
+   --> crates/diagnostics/src/lib.rs:286:15
+    |
+286 |     let back: StackFrame = serde_json::from_str(&json).unwrap();
+    |               ^^^^^^^^^^ not found in this scope
+
+error[E0422]: cannot find struct, variant or union type `StackFrame` in this scope
+   --> crates/diagnostics/src/lib.rs:295:35
+    |
+295 |     let with = d.with_frames(vec![StackFrame {
+    |                                   ^^^^^^^^^^ not found in this scope
+
+error[E0422]: cannot find struct, variant or union type `StackFrame` in this scope
+   --> crates/diagnostics/src/lib.rs:313:18
+    |
+313 |     d.push_frame(StackFrame {
+    |                  ^^^^^^^^^^ not found in this scope
+
+error[E0422]: cannot find struct, variant or union type `StackFrame` in this scope
+   --> crates/diagnostics/src/lib.rs:320:18
+    |
+320 |     d.push_frame(StackFrame {
+    |                  ^^^^^^^^^^ not found in this scope
+
+error[E0422]: cannot find struct, variant or union type `StackFrame` in this scope
+   --> crates/diagnostics/src/lib.rs:335:9
+    |
+335 |         StackFrame {
+    |         ^^^^^^^^^^ not found in this scope
+
+error[E0422]: cannot find struct, variant or union type `StackFrame` in this scope
+   --> crates/diagnostics/src/lib.rs:342:9
+    |
+342 |         StackFrame {
+    |         ^^^^^^^^^^ not found in this scope
+
+error[E0599]: no method named `with_frames` found for struct `Diagnostic` in the current scope
+   --> crates/diagnostics/src/lib.rs:295:18
+    |
+ 51 | pub struct Diagnostic {
+    | --------------------- method `with_frames` not found for this struct
+...
+295 |     let with = d.with_frames(vec![StackFrame {
+    |                  ^^^^^^^^^^^ method not found in `Diagnostic`
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/diagnostics/src/lib.rs:305:21
+    |
+305 |     assert_eq!(back.frames.len(), 1);
+    |                     ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/diagnostics/src/lib.rs:306:21
+    |
+306 |     assert_eq!(back.frames[0].file, "src/comp.tsx");
+    |                     ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/diagnostics/src/lib.rs:307:18
+    |
+307 |     assert!(back.frames[0].mapped);
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0599]: no method named `push_frame` found for struct `Diagnostic` in the current scope
+   --> crates/diagnostics/src/lib.rs:313:7
+    |
+ 51 | pub struct Diagnostic {
+    | --------------------- method `push_frame` not found for this struct
+...
+313 |     d.push_frame(StackFrame {
+    |       ^^^^^^^^^^ method not found in `Diagnostic`
+
+error[E0599]: no method named `push_frame` found for struct `Diagnostic` in the current scope
+   --> crates/diagnostics/src/lib.rs:320:7
+    |
+ 51 | pub struct Diagnostic {
+    | --------------------- method `push_frame` not found for this struct
+...
+320 |     d.push_frame(StackFrame {
+    |       ^^^^^^^^^^ method not found in `Diagnostic`
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/diagnostics/src/lib.rs:327:18
+    |
+327 |     assert_eq!(d.frames.len(), 2);
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/diagnostics/src/lib.rs:328:18
+    |
+328 |     assert_eq!(d.frames[0].file, "a.ts");
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/diagnostics/src/lib.rs:329:18
+    |
+329 |     assert_eq!(d.frames[1].function.as_deref(), Some("helper"));
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0599]: no method named `with_frames` found for struct `Diagnostic` in the current scope
+   --> crates/diagnostics/src/lib.rs:334:50
+    |
+ 51 | pub struct Diagnostic {
+    | --------------------- method `with_frames` not found for this struct
+...
+334 |     let d = Diagnostic::error("RT-POOL", "boom").with_frames(vec![
+    |                                                  ^^^^^^^^^^^ method not found in `Diagnostic`
+
+Some errors have detailed explanations: E0422, E0425, E0599, E0609.
+For more information about an error, try `rustc --explain E0422`.
+error: could not compile `oxide-fw-diagnostics` (lib test) due to 17 previous errors
+=== dev frames_tdd:
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.9
+   Compiling serde v1.0.229
+   Compiling cfg-if v1.0.5
+   Compiling allocator-api2 v0.2.21
+   Compiling syn v2.0.119
+   Compiling serde_derive v1.0.229
+   Compiling libc v0.2.191
+   Compiling memchr v2.8.3
+   Compiling smallvec v1.16.4
+   Compiling synstructure v0.14.0
+   Compiling hashbrown v0.17.1
+   Compiling zerofrom-derive v0.1.8
+   Compiling yoke-derive v0.8.4
+   Compiling zerofrom v0.1.8
+   Compiling stable_deref_trait v1.2.1
+   Compiling zerovec-derive v0.11.7
+   Compiling yoke v0.8.4
+   Compiling siphasher v1.0.4
+   Compiling rustversion v1.0.23
+   Compiling phf_shared v0.14.0
+   Compiling displaydoc v0.2.7
+   Compiling zerovec v0.11.9
+   Compiling rustc-hash v2.1.3
+   Compiling bitflags v2.13.2
+   Compiling writeable v0.6.4
+   Compiling str_indices v0.4.4
+   Compiling ropey v1.6.1
+   Compiling castaway v0.2.4
+   Compiling static_assertions v1.1.0
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling oxc_data_structures v0.155.0
+   Compiling compact_str v0.10.0
+   Compiling tinystr v0.8.5
+   Compiling icu_locale_fallback_data v2.4.0
+   Compiling litemap v0.8.3
+   Compiling equivalent v1.0.3
+   Compiling icu_locale_core v2.4.0
+   Compiling oxc_allocator v0.155.0
+   Compiling potential_utf v0.1.6
+   Compiling zerotrie v0.2.5
+   Compiling phf v0.14.0
+   Compiling foldhash v0.2.0
+   Compiling fastrand v2.5.0
+   Compiling oxc_estree v0.155.0
+   Compiling icu_segmenter_data v2.4.0
+   Compiling phf_generator v0.14.0
+   Compiling oxc_str v0.155.0
+   Compiling oxc_ast_macros v0.155.0
+   Compiling icu_provider v2.4.0
+   Compiling utf8_iter v1.0.4
+   Compiling icu_collections v2.4.0
+   Compiling icu_locale_fallback v2.4.0
+   Compiling oxc_span v0.155.0
+   Compiling phf_macros v0.14.0
+   Compiling shlex v2.0.1
+   Compiling dragonbox_ecma v0.1.12
+   Compiling find-msvc-tools v0.1.15
+   Compiling cow-utils v0.1.3
+   Compiling cc v1.10.0
+   Compiling icu_segmenter v2.4.0
+   Compiling serde_json v1.0.154
+   Compiling smawk v0.3.3
+   Compiling unicode-width v0.2.3
+   Compiling nonmax v0.5.5
+   Compiling unicode-id-start v1.5.0
+   Compiling percent-encoding v2.3.2
+   Compiling oxc_index v5.0.0
+   Compiling textwrap v0.16.4
+   Compiling indexmap v2.14.2
+   Compiling thiserror-impl v2.0.21
+   Compiling unicode-segmentation v1.13.3
+   Compiling bytecount v0.6.9
+   Compiling oxc_diagnostics v0.155.0
+   Compiling thiserror v2.0.21
+   Compiling oxc_syntax v0.155.0
+   Compiling oxc_regular_expression v0.155.0
+   Compiling version_check v0.9.5
+   Compiling either v1.19.0
+   Compiling generic-array v0.14.7
+   Compiling num-integer v0.1.47
+   Compiling oxc_ast v0.155.0
+   Compiling pin-project-lite v0.2.17
+   Compiling num-bigint v0.5.1
+   Compiling parking_lot_core v0.9.12
+   Compiling once_cell v1.21.4
+   Compiling typenum v1.20.1
+   Compiling scopeguard v1.2.0
+   Compiling self_cell v1.3.0
+   Compiling log v0.4.34
+   Compiling lock_api v0.4.14
+   Compiling itertools v0.15.0
+   Compiling oxc_ecmascript v0.155.0
+   Compiling oxc_ast_visit v0.155.0
+   Compiling cobs v0.3.0
+   Compiling zerocopy v0.8.63
+   Compiling futures-core v0.3.34
+   Compiling futures-sink v0.3.34
+   Compiling adler2 v2.0.1
+   Compiling syn v1.0.109
+   Compiling oxc_semantic v0.155.0
+   Compiling miniz_oxide v0.9.1
+   Compiling futures-channel v0.3.34
+   Compiling postcard v1.1.3
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling tracing-core v0.1.36
+   Compiling hashbrown v0.16.1
+   Compiling tracing-attributes v0.1.31
+   Compiling zerocopy-derive v0.8.63
+   Compiling futures-macro v0.3.34
+   Compiling arrayvec v0.7.8
+   Compiling escape-simd v0.1.1
+   Compiling ref-cast v1.0.27
+   Compiling crossbeam-utils v0.8.23
+   Compiling outref v0.5.2
+   Compiling slab v0.4.12
+   Compiling base64 v0.23.1
+   Compiling oxc_sourcemap v9.0.0
+   Compiling futures-task v0.3.34
+   Compiling inotify-sys v0.1.8
+   Compiling futures-io v0.3.34
+   Compiling vsimd v0.8.0
+   Compiling rustix v1.1.6
+   Compiling futures-util v0.3.34
+   Compiling base64-simd v0.8.0
+   Compiling json-escape-simd v3.1.3
+   Compiling tracing v0.1.44
+   Compiling halfbrown v0.4.0
+   Compiling digest v0.10.7
+   Compiling oxc-browserslist v5.0.1
+   Compiling mio v1.2.4
+   Compiling oxide-fw-diagnostics v0.17.0 (/home/z/my-project/oxide/crates/diagnostics)
+   Compiling blake3 v1.8.7
+   Compiling ring v0.17.14
+   Compiling float-cmp v0.10.0
+   Compiling errno v0.3.14
+   Compiling ref-cast-impl v1.0.27
+   Compiling deranged v0.5.9
+   Compiling bytes v1.12.1
+   Compiling thiserror v1.0.69
+   Compiling num-conv v0.2.2
+   Compiling powerfmt v0.2.1
+   Compiling ryu v1.0.23
+   Compiling time-core v0.1.9
+   Compiling linux-raw-sys v0.12.1
+   Compiling cpufeatures v0.2.17
+   Compiling same-file v1.0.6
+   Compiling walkdir v2.5.0
+   Compiling sha2 v0.10.9
+   Compiling time v0.3.55
+   Compiling value-trait v0.12.3
+   Compiling neli-proc-macros v0.1.4
+   Compiling signal-hook-registry v1.4.8
+   Compiling oxc_compat v0.155.0
+   Compiling half v2.7.1
+   Compiling futures-executor v0.3.34
+   Compiling oxc_traverse v0.155.0
+   Compiling parking_lot v0.12.5
+   Compiling alloca v0.4.0
+   Compiling getrandom v0.2.17
+   Compiling socket2 v0.6.5
+   Compiling thiserror-impl v1.0.69
+   Compiling tokio-macros v2.7.2
+   Compiling ciborium-io v0.2.2
+   Compiling byteorder v1.5.0
+   Compiling getrandom v0.3.4
+   Compiling seq-macro v0.3.6
+   Compiling constant_time_eq v0.4.2
+   Compiling zeroize v1.9.1
+   Compiling untrusted v0.9.0
+   Compiling cpufeatures v0.3.1
+   Compiling hashbrown v0.14.5
+   Compiling anstyle v1.0.14
+   Compiling simdutf8 v0.1.5
+   Compiling hmac-sha1-compact v1.1.8
+   Compiling clap_lex v1.1.1
+   Compiling regex-syntax v0.8.11
+   Compiling dashmap v6.2.1
+   Compiling clap_builder v4.6.7
+   Compiling regex-automata v0.4.18
+   Compiling oxc_transformer v0.155.0
+   Compiling simd-json v0.18.1
+   Compiling oxc_parser v0.155.0
+   Compiling rustls-pki-types v1.15.1
+   Compiling tokio v1.54.1
+   Compiling neli v0.6.5
+   Compiling ciborium-ll v0.2.2
+   Compiling inotify v0.11.5
+   Compiling futures v0.3.34
+   Compiling oxc_codegen v0.155.0
+   Compiling yasna v0.6.0
+   Compiling oxide-fw-odf v0.17.0 (/home/z/my-project/oxide/crates/odf)
+   Compiling pem v4.0.0
+   Compiling fast-glob v1.1.2
+   Compiling itertools v0.13.0
+   Compiling notify-types v2.2.0
+   Compiling json-strip-comments v3.1.2
+   Compiling oxide-macros v0.17.0 (/home/z/my-project/oxide/crates/macros)
+   Compiling async-trait v0.1.92
+   Compiling libloading v0.8.9
+   Compiling cast v0.3.0
+   Compiling nodejs-built-in-modules v1.0.0
+   Compiling oxc_resolver v11.24.3
+   Compiling oxide-rustfn v0.17.0 (/home/z/my-project/oxide/crates/rustfn)
+   Compiling criterion-plot v0.8.2
+   Compiling notify v8.2.1
+   Compiling rcgen v0.14.10
+   Compiling oxide-fw-compiler v0.17.0 (/home/z/my-project/oxide/crates/compiler)
+   Compiling local-ip-address v0.5.7
+   Compiling ciborium v0.2.2
+   Compiling regex v1.13.1
+   Compiling clap v4.6.7
+   Compiling tinytemplate v1.2.1
+   Compiling page_size v0.6.0
+   Compiling anes v0.1.6
+   Compiling qrcode v0.14.1
+   Compiling oorandom v11.1.5
+   Compiling criterion v0.8.2
+   Compiling oxide-fw-dev v0.17.0 (/home/z/my-project/oxide/crates/dev)
+   Compiling tempfile v3.27.0
+error[E0432]: unresolved import `oxide_fw_diagnostics::StackFrame`
+  --> crates/dev/tests/frames_tdd.rs:26:50
+   |
+26 | use oxide_fw_diagnostics::{Diagnostic, Location, StackFrame};
+   |                                                  ^^^^^^^^^^ no `StackFrame` in the root
+
+error[E0432]: unresolved import `oxide_fw_dev::frames`
+  --> crates/dev/tests/frames_tdd.rs:27:19
+   |
+27 | use oxide_fw_dev::frames::{FrameMapper, ModuleMaps, NoMaps, OriginalPosition};
+   |                   ^^^^^^ could not find `frames` in `oxide_fw_dev`
+
+error[E0432]: unresolved import `oxide_fw_dev::overlay_payload_with_maps`
+  --> crates/dev/tests/frames_tdd.rs:28:32
+   |
+28 | use oxide_fw_dev::{HmrMessage, overlay_payload_with_maps, overlay_payload};
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^^ no `overlay_payload_with_maps` in the root
+
+error[E0432]: unresolved import `oxide_fw_dev::frames`
+   --> crates/dev/tests/frames_tdd.rs:247:19
+    |
+247 | use oxide_fw_dev::frames::map_diagnostic_frames;
+    |                   ^^^^^^ could not find `frames` in `oxide_fw_dev`
+
+error[E0432]: unresolved import `oxc_sourcemap`
+  --> crates/dev/tests/frames_tdd.rs:30:5
+   |
+30 | use oxc_sourcemap::Token;
+   |     ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `oxc_sourcemap`
+   |
+   = help: if you wanted to use a crate named `oxc_sourcemap`, use `cargo add oxc_sourcemap` to add it to your `Cargo.toml`
+
+error[E0433]: cannot find module or crate `oxc_sourcemap` in this scope
+  --> crates/dev/tests/frames_tdd.rs:46:15
+   |
+46 |     let map = oxc_sourcemap::SourceMap::new(
+   |               ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `oxc_sourcemap`
+   |
+   = help: if you wanted to use a crate named `oxc_sourcemap`, use `cargo add oxc_sourcemap` to add it to your `Cargo.toml`
+
+error[E0433]: cannot find module or crate `oxc_sourcemap` in this scope
+  --> crates/dev/tests/frames_tdd.rs:55:5
+   |
+55 |     oxc_sourcemap::OwnedSourceMap::new(map)
+   |     ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `oxc_sourcemap`
+   |
+   = help: if you wanted to use a crate named `oxc_sourcemap`, use `cargo add oxc_sourcemap` to add it to your `Cargo.toml`
+
+error[E0599]: no method named `with_frames` found for struct `Diagnostic` in the current scope
+  --> crates/dev/tests/frames_tdd.rs:80:10
+   |
+78 |     Diagnostic::error("RT-POOL", "boom in the pooled render")
+79 |         .at(Location::file(&frame.file, frame.line, frame.column))
+80 |         .with_frames(vec![frame])
+   |          ^^^^^^^^^^^ method not found in `Diagnostic`
+
+error[E0609]: no field `frames` on type `Diagnostic`
+  --> crates/dev/tests/frames_tdd.rs:92:23
+   |
+92 |     let frames = back.frames;
+   |                       ^^^^^^ unknown field
+   |
+   = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0599]: no method named `with_frames` found for struct `Diagnostic` in the current scope
+   --> crates/dev/tests/frames_tdd.rs:125:56
+    |
+125 |     let d = Diagnostic::error("RT-POOL", "two frames").with_frames(vec![stranger, beyond]);
+    |                                                        ^^^^^^^^^^^ method not found in `Diagnostic`
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/dev/tests/frames_tdd.rs:127:24
+    |
+127 |     let frames = &back.frames;
+    |                        ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/dev/tests/frames_tdd.rs:164:19
+    |
+164 |     let f = &back.frames[0];
+    |                   ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/dev/tests/frames_tdd.rs:180:18
+    |
+180 |     assert!(back.frames.is_empty(), "the default is the empty stack");
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/dev/tests/frames_tdd.rs:182:19
+    |
+182 |     assert!(empty.frames.is_empty());
+    |                   ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/dev/tests/frames_tdd.rs:199:19
+    |
+199 |     let f = &back.frames[0];
+    |                   ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0609]: no field `frames` on type `Diagnostic`
+   --> crates/dev/tests/frames_tdd.rs:239:33
+    |
+239 |             let f = &diagnostic.frames[0];
+    |                                 ^^^^^^ unknown field
+    |
+    = note: available fields are: `code`, `severity`, `message`, `location`, `code_frame` ... and 2 others
+
+error[E0433]: cannot find module or crate `oxc_sourcemap` in this scope
+  --> crates/dev/tests/frames_tdd.rs:42:20
+   |
+42 | fn module_map() -> oxc_sourcemap::OwnedSourceMap {
+   |                    ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `oxc_sourcemap`
+   |
+   = help: if you wanted to use a crate named `oxc_sourcemap`, use `cargo add oxc_sourcemap` to add it to your `Cargo.toml`
+
+Some errors have detailed explanations: E0432, E0433, E0599, E0609.
+For more information about an error, try `rustc --explain E0432`.
+error: could not compile `oxide-fw-dev` (test "frames_tdd") due to 17 previous errors
