@@ -27,7 +27,7 @@ pub async fn start_server(
     stack: crate::framework_shim::FrameworkStack,
 ) -> anyhow::Result<StartedServer> {
     let bind = port.map(|p| (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), p));
-    start_server_inner_full(root, bind, false, None, Vec::new(), stack, None).await
+    start_server_inner_full(root, bind, false, None, Vec::new(), stack, None, None).await
 }
 
 /// Dev server entry (§13): identical pipeline but with the `/__oxide`
