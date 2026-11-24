@@ -344,6 +344,42 @@ fn discover_jobs(
     jobs
 }
 
+/// §V2-F17: the dev DOM→source stamp's compile-side placement — the source
+/// the pool/native compile receives carries ` data-ox-src="src/<rel>:1"` on
+/// the first element each component renders (the cost endpoint's `?src=`
+/// spelling). The engine (`oxide_fw_compiler::inject_data_ox_src`) is the
+/// one definition site for both halves: the JSX visitor owns `tsx`/`jsx`
+/// (React and Solid), the template scan owns `vue`/`svelte`. A source the
+/// engine declines (no stampable element, already stamped, a language
+/// neither half owns) or a path outside `src_root` compiles the original
+/// bytes unchanged — a skipped stamp costs the overlay nothing, a wrong one
+/// misleads it.
+fn stamped_source<'a>(
+    source: &'a str,
+    kind: &str,
+    path: &Path,
+    src_root: &Path,
+) -> std::borrow::Cow<'a, str> {
+    let lang = match kind {
+        "vue" => "vue",
+        "svelte" => "svelte",
+        // Solid rides the JSX visitor on its own extension's source type.
+        "solid" => match path.extension().and_then(|e| e.to_str()) {
+            Some("tsx") => "tsx",
+            _ => "jsx",
+        },
+        _ => return std::borrow::Cow::Borrowed(source),
+    };
+    let Ok(rel) = path.strip_prefix(src_root) else {
+        return std::borrow::Cow::Borrowed(source);
+    };
+    let spelling = format!("src/{}", rel.to_string_lossy().replace('\\', "/"));
+    match oxide_fw_compiler::inject_data_ox_src(source, lang, &spelling) {
+        Ok(Some(stamped)) => std::borrow::Cow::Owned(stamped),
+        _ => std::borrow::Cow::Borrowed(source),
+    }
+}
+
 /// §V2-B07 phase 2's per-job pass — the spec's `compile_one`: the cache
 /// consulted first (the CAS short-circuit), then the kind dispatch over
 /// the existing pool compilers. `mdx` keeps its optional shape: a compile
@@ -364,8 +400,21 @@ async fn compile_one(
     svelte_generate: &str,
     cache: Option<&PrecompileCache>,
     tool_version: &str,
+    data_ox_src: Option<&Path>,
 ) -> anyhow::Result<Option<String>> {
     let PrecompileJob { path, kind, source } = job;
+    // §V2-F17: the dev pass compiles the STAMPED source — the stamp lands
+    // BEFORE the compile (native or pool), so every downstream shape (the
+    // CAS key fold, the pool payload, the native request) sees the stamped
+    // bytes consistently, and the rendered DOM carries the attribute.
+    let stamped;
+    let source: &str = match data_ox_src {
+        Some(src_root) => {
+            stamped = stamped_source(source, kind, path, src_root);
+            stamped.as_ref()
+        }
+        None => source,
+    };
     // The D40 tool-version fold: a native pick keys its artifacts under
     // `native:{id}@{version}`, the pool under the CLI's version string —
     // switching `compilerBackend` never reuses a stale artifact.
@@ -503,6 +552,15 @@ pub struct PrecompilePlan<'a> {
     pub native: Option<Arc<NativeRegistry>>,
     /// The resolved `framework.compilerBackend`.
     pub backend: Backend,
+    /// §V2-F17: the DEV pass's DOM→source stamp — `Some(src_root)` compiles
+    /// the STAMPED source (the engine's `inject_data_ox_src` runs before the
+    /// pool/native compile, so the rendered DOM carries
+    /// `data-ox-src="src/<rel>:1"` back to the component, the cost
+    /// endpoint's `?src=` spelling). `None` — the production shape — never
+    /// stamps; the CAS keys separate the two shapes because the stamp folds
+    /// into the source hash. The dev SSR shim passes `Some(<root>/src)`;
+    /// the build pass passes `None`.
+    pub data_ox_src: Option<&'a Path>,
 }
 
 pub async fn precompile_entries(
@@ -517,6 +575,7 @@ pub async fn precompile_entries(
         tool_version,
         native,
         backend,
+        data_ox_src,
     } = plan;
     let Some(pool) = pool else {
         return Ok(BTreeMap::new());
@@ -539,6 +598,7 @@ pub async fn precompile_entries(
                 svelte_generate,
                 cache,
                 tool_version,
+                data_ox_src,
             )
             .await
         }
@@ -887,6 +947,7 @@ mod native_pick_tests {
             tool_version: "0.0.0-test",
             native: Some(Arc::clone(&reg)),
             backend: Backend::Auto,
+            data_ox_src: None,
         })
         .await
         .expect("native pick compiles");
@@ -911,6 +972,7 @@ mod native_pick_tests {
             tool_version: "0.0.0-test",
             native: Some(Arc::clone(&reg)),
             backend: Backend::Auto,
+            data_ox_src: None,
         })
         .await
         .expect("second run compiles (cold cache)");
@@ -928,6 +990,7 @@ mod native_pick_tests {
             tool_version: "0.0.0-test",
             native: Some(Arc::clone(&reg)),
             backend: Backend::Auto,
+            data_ox_src: None,
         })
         .await
         .expect("third run");
@@ -958,6 +1021,7 @@ mod native_pick_tests {
             tool_version: "0.0.0-test",
             native: Some(Arc::new(upgraded)),
             backend: Backend::Auto,
+            data_ox_src: None,
         })
         .await
         .expect("upgraded backend compiles");
@@ -986,6 +1050,7 @@ mod native_pick_tests {
             tool_version: "0.0.0-test",
             native: Some(Arc::clone(&reg)),
             backend: Backend::Native,
+            data_ox_src: None,
         })
         .await
         .expect_err("`native` with no compiled-in backend fails the pass");
@@ -1016,10 +1081,337 @@ mod native_pick_tests {
             tool_version: "0.0.0-test",
             native: Some(reg),
             backend: Backend::Auto,
+            data_ox_src: None,
         })
         .await
         .expect("the pool compiles");
         assert_eq!(out.values().next(), Some(&"pool js".to_string()));
         assert_eq!(pool_calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(test)]
+mod data_src_stamp_tests {
+    //! §V2-F17 pins: the DOM→source stamp (`data-ox-src="src/<rel>:1"`, the
+    //! cost endpoint's `?src=` spelling) rides the DEV precompile payloads —
+    //! the pool compiles the STAMPED source so the rendered DOM carries the
+    //! attribute — and the production pass (the flag off) stays
+    //! byte-identical. The engine (`oxide_fw_compiler::inject_data_ox_src`)
+    //! is the one definition site; these pins hold the WIRE.
+
+    use super::*;
+    use bytes::Bytes;
+    use oxide_fw_compiler::native::{CompileOutput, NativeCompiler};
+    use oxide_fw_jshost::{CallStream, PoolConfig, ScriptedPool};
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A scripted pool that records every payload it is handed, so a pin
+    /// can assert the SOURCE the compile path actually sent.
+    fn capturing_pool(seen: Arc<Mutex<Vec<serde_json::Value>>>) -> Arc<dyn Pool> {
+        Arc::new(ScriptedPool::new(
+            Arc::new(move |_entry, req| {
+                seen.lock().unwrap().push(req.payload.clone());
+                Ok(CallStream::Complete(Bytes::from(
+                    serde_json::json!({ "js": "pool js" }).to_string(),
+                )))
+            }),
+            PoolConfig::default(),
+        ))
+    }
+
+    /// One `.vue` page under `<root>/src/routes/index/` — the discovery
+    /// walk reads the source, the compile path stamps it.
+    fn vue_entries(root: &Path) -> BTreeMap<String, PathBuf> {
+        let page = root.join("src/routes/index/page.vue");
+        std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+        std::fs::write(&page, "<template><p>hi</p></template>").unwrap();
+        let mut entries = BTreeMap::new();
+        entries.insert("routes/index".to_string(), page);
+        entries
+    }
+
+    /// A native vue backend that echoes the request source into its output,
+    /// so a pin can assert the source the NATIVE arm received.
+    struct EchoVueNative {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl NativeCompiler for EchoVueNative {
+        fn framework(&self) -> &'static str {
+            "vue"
+        }
+        fn id(&self) -> &'static str {
+            "vue-echo"
+        }
+        fn version(&self) -> String {
+            "0.0.0-test".to_string()
+        }
+        fn handles(&self, ext: &str) -> bool {
+            ext == "vue"
+        }
+        fn compile(&self, req: &CompileRequest<'_>) -> oxide_fw_compiler::Result<CompileOutput> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(CompileOutput {
+                js: format!("native js for {}", req.source),
+                css: None,
+                warnings: Vec::new(),
+                source_map: None,
+            })
+        }
+        fn health_fixture(&self) -> (&'static str, &'static str) {
+            ("fixture.vue", "<template />")
+        }
+    }
+
+    #[tokio::test]
+    async fn dev_stamp_rides_the_pool_payload_for_vue() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entries = vue_entries(tmp.path());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let pool = capturing_pool(Arc::clone(&seen));
+        let src_root = tmp.path().join("src");
+        precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: None,
+            tool_version: "0.0.0-test",
+            native: None,
+            backend: Backend::Auto,
+            data_ox_src: Some(&src_root),
+        })
+        .await
+        .expect("the dev pass compiles");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "one pool call");
+        let source = seen[0]
+            .get("source")
+            .and_then(|v| v.as_str())
+            .expect("payload source");
+        assert!(
+            source.contains(r#"data-ox-src="src/routes/index/page.vue:1""#),
+            "the pool must receive the STAMPED source (the ?src= spelling), got: {source}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stamp_off_keeps_the_pool_payload_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entries = vue_entries(tmp.path());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let pool = capturing_pool(Arc::clone(&seen));
+        precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: None,
+            tool_version: "0.0.0-test",
+            native: None,
+            backend: Backend::Auto,
+            data_ox_src: None,
+        })
+        .await
+        .expect("the production pass compiles");
+        let seen = seen.lock().unwrap();
+        let source = seen[0]
+            .get("source")
+            .and_then(|v| v.as_str())
+            .expect("payload source");
+        assert_eq!(
+            source, "<template><p>hi</p></template>",
+            "the production shape is byte-identical — no stamp in the payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn dev_stamp_covers_svelte_and_solid_kinds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svelte = tmp.path().join("src/routes/index/page.svelte");
+        std::fs::create_dir_all(svelte.parent().unwrap()).unwrap();
+        std::fs::write(
+            &svelte,
+            "<script>\nlet n = 0;\n</script>\n<main><span>n</span></main>\n",
+        )
+        .unwrap();
+        let tsx = tmp.path().join("src/routes/island.tsx");
+        std::fs::write(
+            &tsx,
+            "export default function Island() {\n  return <main>hi</main>;\n}\n",
+        )
+        .unwrap();
+        let mut entries = BTreeMap::new();
+        entries.insert("routes/index".to_string(), svelte);
+        entries.insert("routes/island".to_string(), tsx);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let pool = capturing_pool(Arc::clone(&seen));
+        let src_root = tmp.path().join("src");
+        precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("solid"),
+            cache: None,
+            tool_version: "0.0.0-test",
+            native: None,
+            backend: Backend::Auto,
+            data_ox_src: Some(&src_root),
+        })
+        .await
+        .expect("the dev pass compiles");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "svelte + solid payloads");
+        let sources: Vec<String> = seen
+            .iter()
+            .filter_map(|p| p.get("source").and_then(|v| v.as_str()))
+            .map(str::to_string)
+            .collect();
+        assert!(
+            sources
+                .iter()
+                .any(|s| s.contains(r#"data-ox-src="src/routes/index/page.svelte:1""#)),
+            "the svelte markup region's first tag carries the stamp, got: {sources:?}"
+        );
+        assert!(
+            sources
+                .iter()
+                .any(|s| s.contains(r#"data-ox-src="src/routes/island.tsx:1""#)),
+            "the solid JSX first element carries the stamp, got: {sources:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dev_stamp_rides_the_native_arm_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entries = vue_entries(tmp.path());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut reg = NativeRegistry::empty();
+        reg.register(Box::new(EchoVueNative {
+            calls: Arc::clone(&calls),
+        }));
+        let reg = Arc::new(reg);
+        let src_root = tmp.path().join("src");
+        let out = precompile_entries(PrecompilePlan {
+            pool: Some(&pool_never()),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: None,
+            tool_version: "0.0.0-test",
+            native: Some(Arc::clone(&reg)),
+            backend: Backend::Auto,
+            data_ox_src: Some(&src_root),
+        })
+        .await
+        .expect("the native arm compiles");
+        let js = out.values().next().expect("one compiled row");
+        assert!(
+            js.contains(r#"data-ox-src="src/routes/index/page.vue:1""#),
+            "the native backend received the STAMPED source (its output echoes it), got: {js}"
+        );
+        // The flag off: the same native arm receives the raw bytes.
+        let out = precompile_entries(PrecompilePlan {
+            pool: Some(&pool_never()),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: None,
+            tool_version: "0.0.0-test",
+            native: Some(reg),
+            backend: Backend::Auto,
+            data_ox_src: None,
+        })
+        .await
+        .expect("the native arm compiles");
+        let js = out.values().next().expect("one compiled row");
+        assert!(
+            !js.contains("data-ox-src"),
+            "the production native arm stays unstamped, got: {js}"
+        );
+    }
+
+    /// A pool the pin proves is never consulted (the native pick wins).
+    fn pool_never() -> Arc<dyn Pool> {
+        Arc::new(ScriptedPool::without_handler(PoolConfig::default()))
+    }
+
+    #[tokio::test]
+    async fn stamped_source_keys_separately_in_the_cas() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entries = vue_entries(tmp.path());
+        let pool_calls = Arc::new(AtomicUsize::new(0));
+        let pool = scripted_pool(Arc::clone(&pool_calls));
+        let cache_dir = tempfile::tempdir().unwrap();
+        let cache = PrecompileCache::open_soft(cache_dir.path());
+        let src_root = tmp.path().join("src");
+        // Warm the CAS under the DEV shape (stamped source).
+        precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: cache.as_ref(),
+            tool_version: "0.0.0-test",
+            native: None,
+            backend: Backend::Auto,
+            data_ox_src: Some(&src_root),
+        })
+        .await
+        .expect("the dev pass compiles");
+        assert_eq!(pool_calls.load(Ordering::SeqCst), 1);
+        // Same run again: the stamped key hits, the pool is not consulted.
+        precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: cache.as_ref(),
+            tool_version: "0.0.0-test",
+            native: None,
+            backend: Backend::Auto,
+            data_ox_src: Some(&src_root),
+        })
+        .await
+        .expect("the warm dev pass hits the CAS");
+        assert_eq!(
+            pool_calls.load(Ordering::SeqCst),
+            1,
+            "CAS hit, no recompile"
+        );
+        // The production shape (unstamped) does NOT reuse the stamped entry.
+        precompile_entries(PrecompilePlan {
+            pool: Some(&pool),
+            entries: &entries,
+            svelte_generate: "dom",
+            framework: Some("vue"),
+            cache: cache.as_ref(),
+            tool_version: "0.0.0-test",
+            native: None,
+            backend: Backend::Auto,
+            data_ox_src: None,
+        })
+        .await
+        .expect("the production pass compiles");
+        assert_eq!(
+            pool_calls.load(Ordering::SeqCst),
+            2,
+            "a stamped entry never serves the unstamped shape"
+        );
+    }
+
+    /// The repo's own scripted pool (the `native_pick_tests` shape): every
+    /// call answers `{"js": "pool js"}` and bumps the shared counter.
+    fn scripted_pool(calls: Arc<AtomicUsize>) -> Arc<dyn Pool> {
+        Arc::new(ScriptedPool::new(
+            Arc::new(move |_entry, _req| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(CallStream::Complete(Bytes::from(
+                    serde_json::json!({ "js": "pool js" }).to_string(),
+                )))
+            }),
+            PoolConfig::default(),
+        ))
     }
 }
