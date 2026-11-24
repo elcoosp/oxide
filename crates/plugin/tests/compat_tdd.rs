@@ -8,10 +8,11 @@
 //!    (the E11 `doc_table_matches_the_function` pattern, applied to
 //!    `docs/plugin-compat.md`);
 //! 2. the WASM host's `load`/`resolveId` call paths — the two hooks the
-//!    compatibility table carries as 🟡: the host can call them (string
-//!    fixtures lifted over the canonical ABI, including the option-return
-//!    shapes), the CLI call site that feeds them into the bundler's
-//!    `BundleOptions.load_hook`/`resolve_hook` is the remaining half.
+//!    compatibility table carries as ✅ since the §V2-E05 CLI wire landed:
+//!    the host can call them (string fixtures lifted over the canonical
+//!    ABI, including the option-return shapes), and the CLI composes the
+//!    loaded component into the bundler's
+//!    `BundleOptions.load_hook`/`resolve_hook` beside the JS bridge.
 //!
 //! The WAT fixtures follow `wasm_tdd.rs`'s hand-written-component pattern;
 //! string-carrying signatures ride static data segments (no allocation), and
@@ -80,13 +81,14 @@ fn matrix_wasm_transform_is_wired() {
 }
 
 #[test]
-fn matrix_wasm_load_and_resolve_id_are_host_callable_only() {
-    // The host can call both (this suite proves the ABI below); the CLI call
-    // site that feeds them into the bundler hooks is the remaining half.
-    assert_eq!(compat(PluginKind::Wasm, Hook::Load), SupportLevel::Partial);
+fn matrix_wasm_load_and_resolve_id_are_wired() {
+    // The host can call both (this suite proves the ABI below) AND the CLI
+    // call site feeds them into the bundler hooks (the §V2-E05 wire: the
+    // build and dev paths compose the host beside the JS bridge).
+    assert_eq!(compat(PluginKind::Wasm, Hook::Load), SupportLevel::Wired);
     assert_eq!(
         compat(PluginKind::Wasm, Hook::ResolveId),
-        SupportLevel::Partial
+        SupportLevel::Wired
     );
 }
 
@@ -424,7 +426,7 @@ fn descriptor(name: &str, kind: PluginKind, hooks: Vec<Hook>) -> oxide_fw_plugin
 
 #[test]
 fn host_invocable_hooks_matches_the_compat_model() {
-    // The host can invoke exactly the Wired + Partial cells of `compat`.
+    // The host can invoke exactly the Wired cells of `compat`.
     let js = host_invocable_hooks(PluginKind::Js);
     assert!(js.contains(&Hook::Transform));
     assert!(js.contains(&Hook::ResolveId));
