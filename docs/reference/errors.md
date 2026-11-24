@@ -71,6 +71,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `CAC-ZSTD` | compress: {e} | — |
 | `CACHE-CODEC` | zstd: {e} | — |
 | `CACHE-HTTP` | entry decode: {e} | — |
+| `CACHE-KV` | put tag {tag}: registration failed, entry rolled back ({e}) | Retry the write; the failed tag registration rolled its entry back so invalidate_tag never misses it |
 | `CACHE-REDIS` | open {redacted}: {e} | — |
 | `CACHE-S3` | s3 client: {e} | — |
 | `CAS-CORRUPT` | index entry {} has no blob file on disk | — |
