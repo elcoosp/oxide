@@ -956,5 +956,49 @@ pub(crate) async fn cmd_doctor(root: &str, w: Writer<'_>) -> anyhow::Result<i32>
             }
         }
     }
+    // §V2-E08 item 3's remaining checks — table-driven over the injected
+    // probe set (`crate::doctor_checks`; the spec's fake-probe pins live
+    // there, the real probes wire here). One print per row, the verdict
+    // marker carrying the severity: a `Fail` row flips the exit code, a
+    // `Warn`/`Skip` row reports without failing the doctor.
+    let probes = crate::doctor_checks::DoctorProbes {
+        tcp_connect: crate::doctor_checks::tcp_connect,
+        try_bind: crate::doctor_checks::try_bind,
+    };
+    let emit_row = |w: &mut dyn std::io::Write,
+                    row: crate::doctor_checks::CheckRow,
+                    all_ok: &mut bool|
+     -> anyhow::Result<()> {
+        match row.verdict {
+            crate::doctor_checks::Verdict::Ok => outln!(w, "[ok] {}", row.what),
+            crate::doctor_checks::Verdict::Warn => outln!(w, "[warn] {}", row.what),
+            crate::doctor_checks::Verdict::Fail => {
+                *all_ok = false;
+                outln!(w, "[fail] {}", row.what)
+            }
+            crate::doctor_checks::Verdict::Skip => outln!(w, "[--] {}", row.what),
+        }
+        Ok(())
+    };
+    for row in crate::doctor_checks::cache_handler_reachability(&cfg.cache.handler, &probes) {
+        emit_row(w, row, &mut all_ok)?;
+    }
+    emit_row(
+        w,
+        crate::doctor_checks::port_availability(&cfg.server.host, cfg.server.port, &probes),
+        &mut all_ok,
+    )?;
+    emit_row(
+        w,
+        crate::doctor_checks::fd_limit_check(crate::doctor_checks::fd_limit()),
+        &mut all_ok,
+    )?;
+    emit_row(
+        w,
+        crate::doctor_checks::clock_skew_check(crate::doctor_checks::authority_clock(
+            &cfg.cache.handler,
+        )),
+        &mut all_ok,
+    )?;
     Ok(if all_ok { 0 } else { 1 })
 }
