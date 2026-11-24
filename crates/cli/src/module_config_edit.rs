@@ -457,9 +457,13 @@ export default defineConfig({\n  modules: ['@oxide/tailwind'],\n})\n";
         let edit = add_module_to_config(src, "@oxide/analytics", Some("analytics")).unwrap();
         assert!(edit.bytes.contains("@oxide/tailwind"));
         assert!(edit.bytes.contains("@oxide/analytics"));
+        // The engine appends INSIDE the array (before the `]`), so the
+        // element lands beside the existing one — the old pin's
+        // `], '@oxide/analytics'` shape was malformed JS and predated the
+        // E06 engine's insert-before-bracket contract.
         assert!(
             edit.bytes
-                .contains("modules: ['@oxide/tailwind'], '@oxide/analytics'")
+                .contains("modules: ['@oxide/tailwind', '@oxide/analytics']")
         );
     }
 
@@ -467,8 +471,10 @@ export default defineConfig({\n  modules: ['@oxide/tailwind'],\n})\n";
     fn refuses_a_dynamic_config_with_two_line_fix() {
         let src = "export default JSON.parse(readFileSync('./cfg.json', 'utf8'))\n";
         let err = add_module_to_config(src, "@oxide/analytics", Some("analytics")).unwrap_err();
-        let msg = err.0.message.clone();
-        assert!(msg.contains("MOD-CONFIG-DYNAMIC"), "{msg}");
+        // The diagnostic carries the code as a FIELD (`err.0.code`) — the
+        // message text no longer embeds the code prefix (the registry's
+        // message is the render source, §V2-E11).
+        assert_eq!(err.0.code, "MOD-CONFIG-DYNAMIC");
         assert!(
             err.0
                 .fix
