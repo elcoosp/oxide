@@ -118,6 +118,14 @@ required-features = ["v8"]
 name = "snapshot_bundle_tdd"
 required-features = ["v8"]
 
+# V2-A08: the shared Node/V8 op-parity table (§V2-A08 step 3). Engine
+# dependent on BOTH hosts (a Node worker child + a V8 isolate), so it is
+# `#[ignore]`-gated and rides the `jshost-e2e` CI job; the `v8` requirement
+# keeps `--no-default-features` test compiles V8-free.
+[[test]]
+name = "op_parity"
+required-features = ["v8"]
+
 # The walkthrough drives `v8_ops` (the ops table + trace-parent helper).
 [[example]]
 name = "trace_propagation"
@@ -128,6 +136,13 @@ required-features = ["v8"]
 # checks, the `*.` wildcard rule and the default posture.
 [[example]]
 name = "per_route_permissions"
+required-features = ["v8"]
+
+# V2-A08: the endpoint + middleware parity walkthrough — the §8.4 route.ts
+# and §8.1 middleware.ts dispatch on the V8 backend (web globals, the
+# bootstrap entry points, the streamed-Response header-frame protocol).
+[[example]]
+name = "endpoint_middleware_parity"
 required-features = ["v8"]
 
 [package.metadata.docs.rs]
