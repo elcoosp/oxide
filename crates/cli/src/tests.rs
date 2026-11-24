@@ -1349,6 +1349,7 @@ async fn dev_server_serves_smoke_app_over_http() {
         Vec::new(),
         stack,
         None,
+        None,
     )
     .await
     .expect("start_dev_server_full");
@@ -9533,7 +9534,7 @@ fn lockfile_change_invalidates_the_resolver_graph() {
     let node = oxide_fw_graph::NodeKey::new("src/routes/page.tsx");
     let comp = FileComputeForTest(node.0.to_string());
     g.register(node.clone(), std::sync::Arc::new(comp));
-    let _ = g.get(node.clone(), &FileComputeForTest(node.0.to_string()));
+    let _ = g.get(&node.clone(), &FileComputeForTest(node.0.to_string()));
     assert_eq!(g.node_count(), 1, "node recorded");
 
     // The lockfile branch of `graph_invalidated` calls `invalidate(&[])`.
@@ -12091,6 +12092,7 @@ async fn dev_server_serves_esm_urls_over_http() {
         Vec::new(),
         stack,
         None,
+        None,
     )
     .await
     .expect("start_dev_server_full");
@@ -12227,6 +12229,7 @@ async fn dev_server_serves_react_refresh_prebundle() {
         Vec::new(),
         stack,
         None,
+        None,
     )
     .await
     .expect("start_dev_server_full");
@@ -12327,6 +12330,7 @@ async fn dev_server_serves_website_with_tailwind_css() {
         None,
         Vec::new(),
         stack,
+        None,
         None,
     )
     .await
@@ -13497,6 +13501,7 @@ async fn replay_reproduces_a_recorded_request_without_network() {
         Vec::new(),
         stack,
         None,
+        None,
     )
     .await
     .expect("record-phase server");
@@ -13729,6 +13734,7 @@ async fn build_identity_advertises_and_rejects_stale_on_the_wire() {
         None,
         Vec::new(),
         stack,
+        None,
         None,
     )
     .await
@@ -14161,6 +14167,7 @@ async fn live_pushes_snapshots_over_the_wire() {
         None,
         Vec::new(),
         stack,
+        None,
         None,
     )
     .await
@@ -14652,6 +14659,7 @@ async fn stream_resume_reattach_delivers_the_missed_bytes() {
         Vec::new(),
         stack,
         None,
+        None,
     )
     .await
     .expect("stream-phase server");
@@ -14882,6 +14890,7 @@ async fn brownout_sheds_low_and_reports_the_level() {
         None,
         Vec::new(),
         stack,
+        None,
         None,
     )
     .await
