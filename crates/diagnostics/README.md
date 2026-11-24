@@ -23,9 +23,11 @@ The code families are stable across releases, so a downstream tool can classify 
 - **`OxideError`** — a thin newtype used across every crate's `Result` alias
 - **`Severity`** — Error / Warning / Info
 - **`Location`** — file, line, column with span information
+- **`StackFrame`** — one stack frame with its coordinate system named (`mapped`: the original source vs the generated output; §V2-E08 item 1's overlay stack, `Diagnostic::frames`)
 - **Code-frame rendering** — for terminal and editor display
 - **`Diagnostic::error(code, message)`** — the standard constructor
 - **`.warning(...)`, `.at(loc)`, `.with_fix(...)`** — builder methods
+- **`.with_frames(...)`, `.push_frame(frame)`** — the §13.4 stack builders
 - **`impl From<Diagnostic> for OxideError`** and **`From<Box<Diagnostic>>`** — so a `?` conversion works in either direction
 
 ## Usage
