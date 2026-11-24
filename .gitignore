@@ -93,3 +93,5 @@ upload/
 # ship.toml delivery manifest + reviewer PR body (per-session, gitignored)
 
 # ship session artifacts (the delivery manifest + the PR body)
+/ship.toml
+/.github/pr-body.md
