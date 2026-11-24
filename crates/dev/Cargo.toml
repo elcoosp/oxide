@@ -35,6 +35,11 @@ oxide-rustfn = { workspace = true }
 # The §9.4 id bindings re-derive through the ONE `server_fn_id`
 # definition (§9.4, D6) — never a second digest implementation.
 oxide-fw-compiler = { workspace = true }
+# V2-E08 item 1 (the overlay's source-mapped stack frames): the frame
+# mapper consumes the compile outputs' maps — the same crate and 9.0.0 pin
+# the compiler's `TransformOutput` already carries, so no second sourcemap
+# implementation enters the graph.
+oxc_sourcemap = "9.0.0"
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -95,6 +100,15 @@ required-features = ["bench-util"]
 # (F10) tables riding the same state at 64/256 routes.
 [[bench]]
 name = "inspector"
+harness = false
+required-features = ["bench-util"]
+
+# V2-E08 item 1: criterion bench for the frame-mapping seam — the
+# per-frame source-map lookup the mapped overlay payload pays per error
+# (single frame and an 8-frame stack over a 2k-token module map, against
+# the `NoMaps` pass-through floor and the unmapped payload builder).
+[[bench]]
+name = "frames"
 harness = false
 required-features = ["bench-util"]
 
