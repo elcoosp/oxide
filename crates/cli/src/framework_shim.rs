@@ -702,8 +702,10 @@ fn backend_str(b: JsBackend) -> &'static str {
 /// §11.2 / SPEC-12: map the project's `cache.handler` selection onto the
 /// shared TieredCache. `http`, `redis`, and `s3` each build a real driver
 /// and attach as the REMOTE tier (`TieredCache::with_remote`) so `'use
-/// cache'` and the L0 response cache read/write through it. `memory`/`disk`
-/// are the local tiers the caller already materialized — no remote driver.
+/// cache'` and the L0 response cache read/write through it; `sharded`
+/// composes the F69 composite over the shards the config names (each
+/// shard builds through this same mapping). `memory`/`disk` are the
+/// local tiers the caller already materialized — no remote driver.
 ///
 /// Async because `RedisCacheHandler::new` opens a connection at build time.
 /// A construction failure logs and degrades to the local tier only —
@@ -720,6 +722,9 @@ pub async fn remote_cache_handler(
         Some(oxide_fw_config::CacheHandlerConfig::Http { url }) => {
             Some(Arc::new(oxide_fw_cache::HttpCacheHandler::new(url.clone()))
                 as Arc<dyn oxide_fw_cache::CacheHandler>)
+        }
+        Some(oxide_fw_config::CacheHandlerConfig::Sharded { shards }) => {
+            compose_sharded(shards).await
         }
         Some(oxide_fw_config::CacheHandlerConfig::Redis { url }) => {
             match oxide_fw_cache::RedisCacheHandler::new(url.clone()).await {
@@ -752,6 +757,111 @@ pub async fn remote_cache_handler(
         // `memory` needs no remote; `disk` is attached by the caller below.
         _ => None,
     }
+}
+
+/// V2-F69 config/CLI half: resolve the `shards: [...]` array into the F69
+/// composite. Each shard builds through [`remote_cache_handler`]'s own
+/// mapping (recursion — a nested sharded shard composes composites); a
+/// shard that resolves to no remote driver is skipped loud (`memory`/
+/// `disk` are the local tiers, not shards); the empty survivor set
+/// refuses loud under the minted `CAC-SHARD` and the caller keeps the
+/// local tier only (the §11.2 degrade contract — the boot must not fail
+/// because a cache is down).
+pub async fn compose_sharded(
+    shards: &[oxide_fw_config::CacheHandlerConfig],
+) -> Option<Arc<dyn oxide_fw_cache::CacheHandler>> {
+    let mut built: Vec<Arc<dyn oxide_fw_cache::CacheHandler>> = Vec::with_capacity(shards.len());
+    for shard in shards {
+        // `Box::pin` breaks the async-recursion cycle (a nested sharded
+        // shard re-enters this resolver through the same mapping).
+        match Box::pin(remote_cache_handler(Some(shard))).await {
+            Some(h) => built.push(h),
+            None => {
+                tracing::warn!(
+                    code = "CAC-SHARD",
+                    "cache.handler=sharded: a shard resolved to no remote driver \
+                     (memory/disk are the local tiers, not shards); the shard is skipped"
+                );
+            }
+        }
+    }
+    match oxide_fw_cache::ShardedCacheHandler::new(built) {
+        Ok(c) => Some(Arc::new(c) as Arc<dyn oxide_fw_cache::CacheHandler>),
+        Err(e) => {
+            tracing::warn!(
+                code = %e.0.code,
+                error = %e.0.message,
+                "cache.handler=sharded: composing the planes failed; \
+                 continuing with local tier only"
+            );
+            None
+        }
+    }
+}
+
+/// V2-F63 recorded pickup: the boot probe's own F60 deadline — a hung
+/// peer degrades inside the bound, never a serve loop that hangs on a
+/// dead plane at boot. Two seconds: generous enough for a real plane on
+/// the same fabric (the F63 example measured a healthy pull at tens of
+/// ms), tight enough that a dead plane costs the boot two seconds once,
+/// never a hang.
+pub const PLANE_BOOT_PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The byte-stable render of a plane's boot posture (the F63 pickup's
+/// line body): the same posture the F58 pull reports, one line, fixed
+/// field order — two renders over the same posture are byte-equal, so a
+/// log differ reads them the way the §20 scrape reads its families. Raw
+/// byte counts, no unit guessing (the prometheus exposition's honesty).
+pub fn render_plane_boot_line(health: &oxide_fw_cache::CacheHealth) -> String {
+    let disk = if health.disk_attached {
+        format!(
+            "disk attached {} B / {} evictions",
+            health.disk_bytes, health.disk_evictions
+        )
+    } else {
+        format!("disk off / {} evictions", health.disk_evictions)
+    };
+    let remote = if health.remote_attached {
+        format!(
+            "remote attached ({})",
+            health.remote_kind.as_deref().unwrap_or("unknown")
+        )
+    } else {
+        "remote off".to_string()
+    };
+    format!(
+        "cache.handler=http: the remote plane's posture at boot — memory {} \
+         entries / {} B / {} B cap, {disk}, {remote}, {} tags / {} keys, observer {}",
+        health.memory_entries,
+        health.memory_bytes,
+        health.memory_capacity_bytes,
+        health.tags_indexed,
+        health.keys_tracked,
+        if health.observer_attached {
+            "on"
+        } else {
+            "off"
+        },
+    )
+}
+
+/// Probe the plane at `url` once and render its boot line — the F63
+/// record's standing pickup: the `cache.handler = { type: 'http' }`
+/// node's own boot line (the two-node story's last unwired half). The
+/// probe rides the F63 seam (`PlanePeer::peer_health`) over a throwaway
+/// client whose F60 deadline IS the boot bound — the serving client's
+/// own shape (the unbounded default) is untouched. Errors carry the
+/// probe's stable `CACHE-HTTP` context (a non-200 names the status; a
+/// provider-less peer's F40 404 is an error, never a fabricated zeroed
+/// posture); the caller warns and continues on the local tiers.
+pub async fn remote_plane_boot_line(
+    url: &str,
+    deadline: std::time::Duration,
+) -> oxide_fw_cache::Result<String> {
+    use oxide_fw_cache::PlanePeer as _;
+    let probe = oxide_fw_cache::HttpCacheHandler::new(url).with_timeout(deadline);
+    let health = probe.peer_health().await?;
+    Ok(render_plane_boot_line(&health))
 }
 
 pub async fn build_framework_stack(
