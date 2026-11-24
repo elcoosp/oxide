@@ -1,0 +1,30 @@
+== example ==
+274 | pub(crate) fn try_bind(host: &str, port: u16) -> bool {
+    |               ^^^^^^^^
+
+error: function `fd_limit` is never used
+   --> crates/cli/src/doctor_checks.rs:281:15
+    |
+281 | pub(crate) fn fd_limit() -> Option<u64> {
+    |               ^^^^^^^^
+
+error: function `authority_clock` is never used
+   --> crates/cli/src/doctor_checks.rs:297:15
+    |
+297 | pub(crate) fn authority_clock(handler: &CacheHandlerConfig) -> Option<(i64, i64)> {
+    |               ^^^^^^^^^^^^^^^
+
+error: could not compile `oxide-fw-cli` (lib) due to 16 previous errors
+== lib tests ==
+    |               ^^^^^^^^^^^^^^^
+
+error: could not compile `oxide-fw-cli` (lib test) due to 4 previous errors
+== doctor wire red ==
+
+error: function `authority_clock` is never used
+   --> crates/cli/src/doctor_checks.rs:297:15
+    |
+297 | pub(crate) fn authority_clock(handler: &CacheHandlerConfig) -> Option<(i64, i64)> {
+    |               ^^^^^^^^^^^^^^^
+
+error: could not compile `oxide-fw-cli` (lib test) due to 4 previous errors
