@@ -841,9 +841,17 @@ fix = "Serve the module's value as JSON (the schema crate parses values, not TS)
 [SEC-SESSION]
 message = "a session codec needs at least one key (security.sessionKeys)"
 
+[SKW-GEN]
+message = "no retained generation matches the selector (nothing is retained yet, the id is unknown, or the selector is not a generation name)"
+fix = "run `oxide build` first (the emit tail retains the last deploy.generations dists), then roll back with `previous` or one of the listed ids"
+
 [SKW-POOL]
 message = "the promoted generation has no worker pool; the boot pool keeps serving every generation"
 fix = "the generation's pool failed to boot — inspect the serve log; the boot pool covers until the window closes"
+
+[SKW-RETAIN]
+message = "the dist could not be retained as a rollback generation (the copy, the stamp or the prune failed)"
+fix = "inspect the path in the warn; the build continues — the rollback surface just does not cover this build"
 
 [SKW-SNAPSHOT]
 message = "skew: a generation's loader sources could not be frozen; the two-pool route step stays inert and the boot handles serve every generation"
