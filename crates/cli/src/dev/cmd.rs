@@ -509,6 +509,18 @@ pub(crate) async fn cmd_dev(
         )
         .await;
     }
+    // §V2-F08 finish: the dev loop's live native-fn consult. Discovery
+    // runs once at boot; a crate mounts the newest existing generation
+    // into the swappable host and the loop task swaps under it — the
+    // consult `cmd_dev` hands the server answers the swapped generation
+    // without a restart. A project without a native crate keeps the
+    // pre-finish shape (the boot mount walk, then the JS pool).
+    let native_consult = match build_secret(&rootp) {
+        Ok(secret) => crate::native_fns::dev_native_consult(&rootp, &secret),
+        // No secret: ids cannot re-derive, so no live consult — the boot
+        // mount walk degrades the same way (`RFN-LOAD` warn).
+        Err(_) => None,
+    };
     let started = start_dev_server_full(
         root,
         flags.port,
@@ -517,6 +529,7 @@ pub(crate) async fn cmd_dev(
         proxy_rules,
         stack,
         Some(std::sync::Arc::clone(&hmr_hub)),
+        native_consult,
     )
     .await?;
     let local = oxide_fw_dev::local_url(started.addr.port(), flags.https);
@@ -1931,6 +1944,9 @@ pub(crate) async fn cmd_dev(
     }
 }
 
+/// The dev server start with the §V2-F08 finish's native consult threaded
+/// through: `native_fns` is the caller-held live host (`cmd_dev` passes the
+/// dev loop's handle; `None` rides the boot mount walk).
 pub async fn start_dev_server_full(
     root: &str,
     port: Option<u16>,
@@ -1939,6 +1955,7 @@ pub async fn start_dev_server_full(
     proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
     stack: crate::framework_shim::FrameworkStack,
     hmr: Option<std::sync::Arc<oxide_fw_dev::HmrHub>>,
+    native_fns: Option<std::sync::Arc<dyn oxide_fw_server::NativeFnSource>>,
 ) -> anyhow::Result<StartedServer> {
     start_server_inner_full(
         root,
@@ -1948,6 +1965,7 @@ pub async fn start_dev_server_full(
         proxy_rules,
         stack,
         hmr,
+        native_fns,
     )
     .await
 }
