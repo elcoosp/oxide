@@ -1,0 +1,6 @@
+16874 -     let (resolve, load) = crate::build_wasm_load_resolve_hooks(&root, &cfg);
+16874 +     let (resolve, load) = crate::build_js_plugin_resolve_hook(&root, &cfg);
+      |
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `oxide-fw-cli` (lib test) due to 4 previous errors
