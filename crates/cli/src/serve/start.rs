@@ -1348,6 +1348,26 @@ pub(crate) async fn start_server_inner_full(
             None => None,
         }
     };
+    // V2-F10 (the evict trigger's wire, the F12 hook): when the brownout
+    // mode is on, the governor's `Emergency` rung releases the OLDEST
+    // demoted generation — the id level stops accepting it (the stage
+    // 409s it) and the serving level hands its pool + runner back (the
+    // graceful drain). The seam sets through the `OnceLock` the sampler
+    // consults per tick: the ticks before this point honestly no-op (the
+    // pools did not exist yet either). One generation per tick — the
+    // drain spreads over the 500 ms cadence.
+    if let Some(bw) = brownout_wiring.as_ref() {
+        let skew_handle = skew_state.handle();
+        let pools = serving_pools.clone();
+        let _ = bw.early_drop.set(std::sync::Arc::new(move || {
+            let id_level = crate::serve::generations::evict_handle_oldest(&skew_handle);
+            let handle_level = pools.as_ref().and_then(|p| p.evict_oldest());
+            // The two pools promote in lockstep (the SIGHUP handler
+            // promotes both), so their oldest agree; whichever answered
+            // carries the id the log names.
+            id_level.or(handle_level)
+        }));
+    }
     // V2-F05: the live hub + rerun channel — built only for the `sse`
     // transport (`poll` subscribers re-fetch /__data themselves; there is
     // no endpoint and no hub to feed).
