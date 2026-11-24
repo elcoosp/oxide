@@ -1,0 +1,9 @@
+{
+  "module_path": "__FIXTURE_DIR__/middleware_redirect.mjs",
+  "method": "GET",
+  "url": "/admin",
+  "params": {},
+  "headers": [],
+  "body_b64": "",
+  "locals": {}
+}
