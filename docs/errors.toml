@@ -222,6 +222,10 @@ message = "zstd: {e}"
 [CACHE-HTTP]
 message = "entry decode: {e}"
 
+[CACHE-KV]
+message = "put tag {tag}: registration failed, entry rolled back ({e})"
+fix = "Retry the write; the failed tag registration rolled its entry back so invalidate_tag never misses it"
+
 [CACHE-REDIS]
 message = "open {redacted}: {e}"
 
