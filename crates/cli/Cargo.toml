@@ -136,6 +136,14 @@ name = "wasm_hooks"
 harness = false
 required-features = ["bench-util"]
 
+# §V2-F17: the `data-ox-src` compile-path wire's bench — the dev pass's
+# stamp cost (stamped vs unstamped over the mixed fixture set), behind the
+# same bench-util opt-in.
+[[bench]]
+name = "data_src_wire"
+harness = false
+required-features = ["bench-util"]
+
 # V2-E06: the `module_add` consumer example — a V8-free end-to-end
 # walkthrough of the config edit + manifest resolution against the
 # fixture app under `tests/fixtures/analytics-app/`.
@@ -147,6 +155,12 @@ name = "module_add"
 # V8-free.
 [[example]]
 name = "wasm_hooks"
+
+# §V2-F17: the `data-ox-src` compile-path wire's consumer walkthrough —
+# the dev SSR pass's stamped payloads beside the production shape and the
+# client arm's engine call, V8-free.
+[[example]]
+name = "data_src_wire"
 
 # §V2-F10/F12: the brownout early-drop's consumer walkthrough — the
 # two-pool boot, the Emergency ladder and the oldest-first drain, V8-free.
