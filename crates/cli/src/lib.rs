@@ -117,6 +117,10 @@ pub mod module_config_edit;
 pub mod modules_loader;
 pub mod precompile;
 mod precompile_cache;
+// §V2-E08 item 3: the doctor's table-driven check half — the cache-handler
+// reachability (A10), port availability, fd-limit and clock-skew probes
+// (the cmd_doctor wiring + the spec's fake-probe pins live here).
+pub mod doctor_checks;
 mod record_wire;
 
 // ----------------------------------------------------------------- helpers
