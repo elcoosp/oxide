@@ -1,0 +1,9 @@
+{
+  "module_path": "__FIXTURE_DIR__/endpoint_post.mjs",
+  "method": "POST",
+  "url": "/api/users",
+  "params": {},
+  "headers": [["content-type", "application/json"]],
+  "body_b64": "eyJuYW1lIjoiZ3JhY2UifQ==",
+  "locals": {}
+}
