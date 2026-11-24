@@ -42,6 +42,34 @@ rewritten or static (§4.1, D13) — enforced by `Pipeline::native_prefix` order
 
 ## What changed
 
+- The F10 rollback slice (2026-11-24): the §V2-F10 step-4 half the
+  two-pool record deferred — the build's emit tail retains the finished
+  dist as `.oxide/generations/<id>/dist` (`retain_dist_generation`, the
+  newest `deploy.generations` copies kept, a real copy per generation
+  after the hard-link pin caught the shared-inode mutation hazard), the
+  selector seam (`resolve_generation` — `previous` or an explicit id,
+  path-shaped selectors refused), the swap (`repoint_dist_to_generation`
+  — the retire/rename/restore dance, idempotent on the current id), the
+  `oxide start --generation <id|previous>` boot leg (the swap lands
+  before the boot reads any dist byte) and the `oxide rollback` command
+  (the swap + the SIGHUP to the serve boot's `.oxide/serve.pid`, the
+  liveness checked, the missing receiver reported — non-unix prints the
+  restart word). The `SKW-GEN`/`SKW-RETAIN` registry rows, the
+  `rollback_tdd` pins (the spec's own `rollback_swaps_dist` pin among
+  them), the `generation_rollback` criterion group and the
+  `generation_rollback` walkthrough ride along.
+- The E02 Link twins (2026-11-24): the typed `Link` for the Vue, Solid
+  and Svelte adapters (the F01 twins pattern — the React `Link` was the
+  landed reference): `hrefFor`-built hrefs, the `data-ox-link` forced
+  interception mark, verbatim anchor-prop spread, the vue slot-or-prop
+  children shape, the solid lazy `ssrElement` with the descriptor
+  fallback, the svelte `Link.svelte` SFC beside the `./link` subpath and
+  a plain-TS `link.ts` carrying the `href`/`goto`/`parseSearch`
+  re-exports (an SFC cannot re-export); every adapter's index now
+  exports the navigation surface (the react index re-export gap closed
+  for parity). The pins mirror the react `link.test.ts` shapes and ride
+  the package test scripts (the workspace's node_modules resolves the
+  peers).
 - The §20 trace context gets consumed (2026-11-17): the dev-plane trace
   feed (`trace_feed`: the `TraceSink` record seam, the bounded
   `RingTraceSink`, `RequestTrace::of` — one row per completed pipeline
