@@ -164,6 +164,20 @@ impl GenerationPool {
             .retain(|d| now.duration_since(d.since) <= self.window);
         before - self.demoted.len()
     }
+
+    /// The brownout early-drop at the ID level (the F10 evict trigger's
+    /// half on this pool — the F12 hook): pop the OLDEST demotion and
+    /// return its id, so the governor's `Emergency` rung stops ACCEPTING
+    /// the oldest old build at the same tick the serving pools
+    /// (`crate::pools::GenerationPools::evict_oldest`) hand its handle
+    /// back. Without this counterpart an evicted serving handle's id kept
+    /// being accepted and routed to the boot fallback — the early drop
+    /// must flip the acceptance verdict (the stage answers 409), not just
+    /// free the handle. `None` when nothing is demoted; the current id is
+    /// never evicted.
+    pub fn evict_oldest(&mut self) -> Option<String> {
+        self.demoted.pop_front().map(|d| d.id)
+    }
 }
 
 impl AcceptedGenerations for GenerationPool {
