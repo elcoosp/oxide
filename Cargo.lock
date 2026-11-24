@@ -6551,6 +6551,7 @@ dependencies = [
  "local-ip-address",
  "notify",
  "oxc_resolver",
+ "oxc_sourcemap 9.0.0",
  "oxide-fw-compiler",
  "oxide-fw-diagnostics",
  "oxide-rustfn",
