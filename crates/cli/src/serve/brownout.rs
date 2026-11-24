@@ -30,7 +30,7 @@ use std::time::Duration;
 use oxide_fw_config::BrownoutConfig;
 use oxide_fw_jshost::Pool;
 use oxide_fw_server::Metrics;
-use oxide_fw_server::governor::{Governor, Signals, Thresholds, parse_priority};
+use oxide_fw_server::governor::{Governor, Level, Signals, Thresholds, parse_priority};
 
 /// The sampler tick (§V2-F12: "A `Governor` computes a level from
 /// observable signals every 500 ms; the request path reads one atomic").
@@ -45,6 +45,15 @@ pub const LOOP_LAG_PROBE_MS: u64 = 100;
 /// zero-cast lints policy — the same shape the governor's
 /// `exit_ratio_pct` uses.
 pub const DEFAULT_STALE_CEILING_PCT: u64 = 10 * 100;
+
+/// The early-drop seam (the F10 evict trigger's wire half — the F12 row's
+/// "the F10-pool early shrink"): pops the OLDEST demoted generation and
+/// returns its id, from BOTH pools the boot holds (the id-level
+/// `GenerationPool` — the acceptance verdict flips, the stage 409s the
+/// evicted build — and the `ServingPools` handle, whose worker pool and
+/// loader runner go back to the current generation). `None` when nothing
+/// is demoted (the tick's honest no-op).
+pub type EarlyDrop = std::sync::Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
 /// The serve-side brownout state: the governor the request path reads,
 /// the config the enforcement consults, and the handles the sampler
@@ -68,6 +77,14 @@ pub struct BrownoutWiring {
     /// The metrics registry the sampler publishes
     /// `oxide_brownout_level` to.
     pub metrics: Arc<Metrics>,
+    /// The early-drop seam the sampler consults at `Emergency` (the F10
+    /// evict trigger). `from_config` leaves it unset — a wiring built
+    /// before the boot's pools exist — and the boot sets it once the
+    /// skew state and the serving pools stand (a `OnceLock`, so the
+    /// sampler's first ticks honestly no-op while the pools boot). A
+    /// wiring without the seam never drops anything: the trigger is
+    /// opt-in at the boot wire, greppable at the one call site.
+    pub early_drop: std::sync::OnceLock<EarlyDrop>,
 }
 
 impl BrownoutWiring {
@@ -107,7 +124,26 @@ impl BrownoutWiring {
             loop_lag_us: Arc::new(AtomicU64::new(0)),
             pool,
             metrics,
+            early_drop: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Attach the early-drop seam (the chainable F60 `#[must_use]` shape).
+    /// The boot calls this when the pools boot beside the wiring;
+    /// [`drain_one_early_drop`] consults the seam only at the
+    /// `Emergency` rung — the level whose contract is "give capacity
+    /// back" — so `Stale`/`Shed` keep the skew window's old-generation
+    /// contract and only the last rung releases the oldest pool.
+    ///
+    /// # Errors
+    ///
+    /// Setting the seam twice is a programming error — the `OnceLock`
+    /// refuses the second set and this builder forwards that refusal.
+    pub fn with_early_drop(self, drop: EarlyDrop) -> Result<Self, EarlyDrop> {
+        match self.early_drop.set(drop) {
+            Ok(()) => Ok(self),
+            Err(e) => Err(e),
+        }
     }
 
     /// The breach ladders from the config section (§V2-F12 wiring): the
@@ -188,6 +224,12 @@ impl BrownoutWiring {
                 );
                 wiring.governor.set(next);
                 wiring.metrics.set_brownout_level(next);
+                // The F10 evict trigger (the F12 hook): at `Emergency` the
+                // oldest demoted generation drains — ONE per tick (the
+                // `evict_oldest` contract), so the release spreads over
+                // the 500 ms cadence instead of dropping every old pool
+                // in a single tick.
+                let _evicted = drain_one_early_drop(&wiring);
             }
         })
     }
@@ -217,6 +259,28 @@ impl BrownoutWiring {
             }
         })
     }
+}
+
+/// The F10 evict trigger's tick (the F12 hook): at the `Emergency` rung
+/// the wiring's early-drop seam pops the OLDEST demoted generation — the
+/// id level stops accepting it (the stage 409s it), the serving level
+/// hands its pool and runner back — and the id lands in the log with the
+/// expiry task's convention. Any calmer rung (or a wiring without the
+/// seam) is an honest no-op: `None`.
+#[must_use]
+pub fn drain_one_early_drop(wiring: &BrownoutWiring) -> Option<String> {
+    if (wiring.governor.level() as u8) < Level::Emergency as u8 {
+        return None;
+    }
+    let drop = wiring.early_drop.get()?;
+    let evicted = drop();
+    if let Some(id) = evicted.as_ref() {
+        tracing::info!(
+            evicted = %id,
+            "skew: brownout early-drop released the oldest demoted generation              (the stage answers 409 for it from here)"
+        );
+    }
+    evicted
 }
 
 /// The pool's `queue_wait_ms_p99` gauge (f64 milliseconds) as exact µs.
