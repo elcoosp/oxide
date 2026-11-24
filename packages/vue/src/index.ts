@@ -122,3 +122,10 @@ export {
   SWAPPER_SRC, boundaryFallback, boundaryContent, islandElement, errorBoundary, hydrationBootstrap,
 } from './protocol.ts'
 export { Image, type ImageProps, type ImageVariantModule } from './image.ts'
+// V2-E02: the typed `Link` (the F01 twins) and the typed navigation
+// entries app code imports — the same names the generated overloads
+// declare.
+export {
+  Link, href, goto, parseSearch,
+  type LinkProps, type LinkSlots, type HrefOpts, type GotoOpts, type SearchParseResult,
+} from './link.ts'
