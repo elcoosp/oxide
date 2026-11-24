@@ -737,6 +737,28 @@ pub(crate) async fn start_server_inner_full(
              /entry/, /tag/, /invalidate/, GET /health and GET /metrics answer here"
         );
     }
+    // V2-F63 recorded pickup: the boot-side consumer of the peer probes —
+    // the `cache.handler = { type: 'http' }` node's own boot line (the
+    // two-node story's last unwired half). ONE bounded probe at boot, the
+    // posture rendered byte-stably; a failed probe is LOUD but non-fatal
+    // (the §11.2 contract: the remote cache is an optimization — the boot
+    // continues on the local tiers).
+    if let oxide_fw_config::CacheHandlerConfig::Http { url } = &cfg.cache.handler {
+        match crate::framework_shim::remote_plane_boot_line(
+            url,
+            crate::framework_shim::PLANE_BOOT_PROBE_DEADLINE,
+        )
+        .await
+        {
+            Ok(line) => tracing::info!("{line}"),
+            Err(e) => tracing::warn!(
+                code = %e.0.code,
+                error = %e.0.message,
+                "cache.handler=http: the remote plane's posture pull failed at boot; \
+                 continuing on the local tiers (§11.2)"
+            ),
+        }
+    }
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -1085,6 +1107,16 @@ pub(crate) async fn start_server_inner_full(
                                  continuing with local tier only",
                             );
                         }
+                    }
+                }
+                oxide_fw_config::CacheHandlerConfig::Sharded { shards } => {
+                    // V2-F69 config/CLI half: the same resolution the live
+                    // stack rides — the shards compose into the F69
+                    // composite and attach as the REMOTE tier; an empty
+                    // survivor set refuses loud (CAC-SHARD) and the boot
+                    // stays local-only.
+                    if let Some(remote) = crate::framework_shim::compose_sharded(shards).await {
+                        tier = tier.with_remote(remote);
                     }
                 }
             }
