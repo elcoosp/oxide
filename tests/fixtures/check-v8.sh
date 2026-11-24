@@ -249,6 +249,71 @@ else
             fail=1
             ;;
     esac
+
+    # V2-A08: §8.4 endpoint parity on the V8 backend — the smoke app's
+    # `route.ts` dispatches through the `endpoint:run` op (the parity arms
+    # added with the op-parity table). GET query-param echo and POST body
+    # echo (a `route.ts` bypasses loaders and layouts entirely).
+    ebody=$(curl -s "http://127.0.0.1:$PORT/api/users?name=v8" 2>/dev/null || true)
+    case "$ebody" in
+        *'"hello":"v8"'*'"method":"GET"'*)
+            printf '%-22s %-6s %s\n' "endpoint-get" "ok" "/api/users GET echoed via v8"
+            ;;
+        *)
+            printf '%-22s %-6s %s\n' "endpoint-get" "FAIL" "got: ${ebody:0:160}"
+            fail=1
+            ;;
+    esac
+    epbody=$(curl -s -X POST "http://127.0.0.1:$PORT/api/users" -d 'payload-v8' 2>/dev/null || true)
+    case "$epbody" in
+        *'"echo":"payload-v8"'*'"method":"POST"'*)
+            printf '%-22s %-6s %s\n' "endpoint-post" "ok" "/api/users POST echoed via v8"
+            ;;
+        *)
+            printf '%-22s %-6s %s\n' "endpoint-post" "FAIL" "got: ${epbody:0:160}"
+            fail=1
+            ;;
+    esac
+
+    # V2-A08: §8.1 middleware parity on the V8 backend — the routes-scoped
+    # middleware injects `locals.user`/`locals.role` (the /greeting loader
+    # renders them) and redirects `?gated=1` (the short-circuit envelope).
+    gbody=$(curl -s "http://127.0.0.1:$PORT/greeting" 2>/dev/null || true)
+    case "$gbody" in
+        *"hello, ada"*"admin"*)
+            printf '%-22s %-6s %s\n' "middleware-locals" "ok" "/greeting rendered middleware locals via v8"
+            ;;
+        *)
+            printf '%-22s %-6s %s\n' "middleware-locals" "FAIL" "locals missing: ${gbody:0:160}"
+            fail=1
+            ;;
+    esac
+    gated=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://127.0.0.1:$PORT/greeting?gated=1" 2>/dev/null || true)
+    case "$gated" in
+        307*/login*)
+            printf '%-22s %-6s %s\n' "middleware-redirect" "ok" "?gated=1 -> 307 /login via v8"
+            ;;
+        *)
+            printf '%-22s %-6s %s\n' "middleware-redirect" "FAIL" "got: $gated"
+            fail=1
+            ;;
+    esac
+
+    # V2-A08: §9.6 streaming-endpoint parity on the V8 backend — the plan's
+    # "/slow streaming" case; the fixture's streaming surface is /api/events
+    # (an SSE route.ts whose body is a ReadableStream — /slow itself grew
+    # into the slow-loader boundary fixture). The SSE ticks must arrive as
+    # streamed chunks, not one buffered document.
+    sbody=$(curl -s --max-time 5 "http://127.0.0.1:$PORT/api/events" 2>/dev/null || true)
+    case "$sbody" in
+        *"data: tick 0"*"data: tick 2"*)
+            printf '%-22s %-6s %s\n' "endpoint-stream" "ok" "/api/events streamed 3 SSE ticks via v8"
+            ;;
+        *)
+            printf '%-22s %-6s %s\n' "endpoint-stream" "FAIL" "got: ${sbody:0:160}"
+            fail=1
+            ;;
+    esac
 fi
 
 ( kill -9 "$SRV" ) 2>/dev/null || true
