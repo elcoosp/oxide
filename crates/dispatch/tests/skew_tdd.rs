@@ -243,3 +243,63 @@ fn the_pool_answers_the_four_data_plane_paths() {
     );
     assert!(html_allowed, "an HTML navigation never checks the build id");
 }
+
+// ---- the brownout early-drop (the F10 evict trigger's id-level half) ------
+//
+// The plan line the pins encode (docs/spec-v0.2-draft.md, Appendix V2.O, the
+// F10 row's remaining list): "the F12 brownout evict trigger" — the F12-side
+// tail the F12 row names "the F10-pool early shrink". `GenerationPools`
+// (pools.rs) already carries the handle-level `evict_oldest` documented as
+// "the brownout early-drop (the F12 hook)"; until this shape the ID-LEVEL
+// pool had no counterpart, so an evicted serving handle's id stayed
+// accepted and routed to the boot fallback — the early drop must flip the
+// acceptance verdict too (the stage answers 409), not just free the handle.
+
+#[test]
+fn pool_evict_oldest_drops_the_oldest_demotion_and_refuses_it_after() {
+    let t0 = Instant::now();
+    let mut pool = GenerationPool::new(A.to_string(), WINDOW, 4);
+    pool.promote(B.to_string(), t0); // demotes A — the oldest
+    pool.promote(C.to_string(), t0 + Duration::from_secs(1)); // demotes B
+    let later = t0 + Duration::from_secs(60);
+    assert_eq!(
+        pool.evict_oldest(),
+        Some(A.to_string()),
+        "the OLDEST demotion goes first (the drain spreads over ticks)"
+    );
+    assert_eq!(
+        pool.accepts(A, later),
+        None,
+        "the evicted id stops being accepted — the stage 409s it instead of \
+         routing it to the boot fallback"
+    );
+    assert_eq!(
+        pool.evict_oldest(),
+        Some(B.to_string()),
+        "the next-oldest demotion goes next"
+    );
+    assert_eq!(
+        pool.accepts(B, later),
+        None,
+        "the evicted id stops being accepted"
+    );
+    assert_eq!(pool.evict_oldest(), None, "an empty pool evicts nothing");
+    assert_eq!(
+        pool.accepts(C, later),
+        Some(Gen::Current),
+        "the current id is never evicted"
+    );
+    assert_eq!(pool.current(), C, "the current id stands");
+}
+
+#[test]
+fn pool_evict_oldest_is_a_no_op_when_nothing_is_demoted() {
+    let t0 = Instant::now();
+    let mut pool = GenerationPool::new(A.to_string(), WINDOW, 2);
+    assert_eq!(
+        pool.evict_oldest(),
+        None,
+        "no demotions — the trigger's tick is an honest no-op"
+    );
+    assert_eq!(pool.accepts(A, t0), Some(Gen::Current), "boot id untouched");
+}
