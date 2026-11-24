@@ -758,6 +758,10 @@ fix = "Rebuild the user crate (`oxide add rust` scaffolds the `[lib] crate-type 
 message = "native function payload did not convert: {e}"
 fix = "The client stub sends JSON args; the host converts to ODF at the boundary — check the args shape against the generated types"
 
+[RFN-005]
+message = "`{source}` is present but no cdylib crate is discoverable — the stubs would import ids nothing answers"
+fix = "Scaffold the native crate beside the app (a `Cargo.toml` with `[lib] crate-type = [\"cdylib\"]`) or remove the server-fn sources"
+
 [RFN-LOAD]
 message = "the build secret is unavailable; the native server functions stay unmounted"
 fix = "ensure the build secret is readable, or drop `.oxide/rust` to run on the JS pool"
