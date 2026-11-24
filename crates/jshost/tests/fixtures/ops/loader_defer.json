@@ -1,0 +1,9 @@
+{
+  "module_path": "__FIXTURE_DIR__/loader_defer.mjs",
+  "route": "/",
+  "params": {},
+  "url": "/",
+  "method": "GET",
+  "headers": [],
+  "locals": {}
+}
