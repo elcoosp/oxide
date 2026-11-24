@@ -171,6 +171,7 @@ pub(crate) async fn start_server_inner(
         Vec::new(),
         crate::framework_shim::FrameworkStack::default(),
         None,
+        None,
     )
     .await
 }
@@ -198,6 +199,7 @@ pub(crate) async fn start_server_inner_full(
     proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
     stack: crate::framework_shim::FrameworkStack,
     hmr: Option<std::sync::Arc<oxide_fw_dev::HmrHub>>,
+    native_fns: Option<std::sync::Arc<dyn oxide_fw_server::NativeFnSource>>,
 ) -> anyhow::Result<StartedServer> {
     // Canonicalize so every path derived here (route modules, the SSR entry,
     // the client manifest) is absolute — the worker resolves a module path
@@ -428,7 +430,11 @@ pub(crate) async fn start_server_inner_full(
     } else {
         None
     };
-    let server_fns = build_server_fn_dispatcher(&rootp, stack.pool.as_ref());
+    // §V2-F08 finish: the caller-held native source (the dev loop's live
+    // host) answers before the boot mount walk; `None` keeps the serve
+    // path's pre-finish shape (the boot mount off `.oxide/rust/`).
+    let server_fns =
+        crate::native_fns::build_server_fn_dispatcher_with(&rootp, stack.pool.as_ref(), native_fns);
     let actions = build_action_dispatcher(stack.pool.as_ref());
     let endpoint_dispatcher = build_endpoint_dispatcher(stack.pool.as_ref());
     let middleware_dispatcher = build_middleware_dispatcher(stack.pool.as_ref());
