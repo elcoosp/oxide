@@ -2140,6 +2140,31 @@ async fn doctor_all_pass_on_fixture() {
     assert!(out.contains("[ok] cache directory"), "{out}");
 }
 
+/// §V2-E08 item 3's remaining checks ride the doctor report: the port
+/// availability row (the fixture's configured port is free), the
+/// fd-limit row (the platform's real soft limit) and the clock-skew row
+/// (the memory handler names no HTTP time authority — the check skips).
+/// The table-driven fake-probe pins live in `doctor_checks`; this pin
+/// holds the WIRE (the rows must actually print).
+#[tokio::test]
+async fn doctor_reports_the_e08_item3_checks() {
+    let (_d, root) = fixture_project();
+    let (code, out) = run_ok(&["oxide", "doctor", "--root", root.to_str().unwrap()]).await;
+    assert_eq!(code, 0, "the new checks never fail the fixture: {out}");
+    assert!(out.contains("port 3000"), "the port row prints: {out}");
+    assert!(
+        out.contains("file-descriptor limit"),
+        "the fd-limit row prints: {out}"
+    );
+    assert!(out.contains("clock skew"), "the skew row prints: {out}");
+    // The fixture's handler is `memory` — a local tier names no remote
+    // endpoint, so no reachability row exists to warn about.
+    assert!(
+        !out.contains("cache handler unreachable"),
+        "the memory handler probes nothing: {out}"
+    );
+}
+
 // ----------------------------------------------------------------------- add
 
 #[tokio::test]
@@ -11542,6 +11567,7 @@ async fn bundle_edge_entry_accepts_mdx_reachable_from_the_entry() {
         tool_version: env!("CARGO_PKG_VERSION"),
         native: None,
         backend: oxide_fw_compiler::native::Backend::Auto,
+        data_ox_src: None,
     })
     .await
     .unwrap();
