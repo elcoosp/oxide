@@ -603,6 +603,100 @@ fn load_unknown_key_without_close_match_has_no_suggestion() {
     );
 }
 
+// --------------------------------------------- cache.handler: sharded (the V2-F69 config/CLI half)
+
+/// V2-F69 config/CLI half (HANDOFF.md, F69/F70 "Sandbox notes"): "a
+/// `cache.handler` config surface for the sharded client (a
+/// `shards: [...]` array the boot resolves into the composite — the
+/// config/CLI half of F69)". The typed shape parses with the same
+/// `type` tag the other handlers ride, the shards riding the same
+/// `CacheHandlerConfig` the boot's resolver already speaks.
+///
+/// Written FIRST (red): E0599 over the missing `Sharded` variant.
+#[test]
+fn cache_handler_sharded_shape_parses() {
+    let (_t, dir) = fixture(&[(
+        "oxide.config.json",
+        json_file(&serde_json::json!({
+            "framework": { "adapter": "react" },
+            "cache": {
+                "handler": {
+                    "type": "sharded",
+                    "shards": [
+                        { "type": "http", "url": "http://plane-a.internal:3100" },
+                        { "type": "http", "url": "http://plane-b.internal:3100" }
+                    ]
+                }
+            }
+        }))
+        .as_str(),
+    )]);
+    let loaded = load_with_env(&dir, "dev", BTreeMap::new(), &EMPTY_ENV).unwrap();
+    assert_eq!(
+        loaded.config.cache.handler,
+        oxide_fw_config::CacheHandlerConfig::Sharded {
+            shards: vec![
+                oxide_fw_config::CacheHandlerConfig::Http {
+                    url: "http://plane-a.internal:3100".into()
+                },
+                oxide_fw_config::CacheHandlerConfig::Http {
+                    url: "http://plane-b.internal:3100".into()
+                },
+            ]
+        }
+    );
+}
+
+/// A shard element speaks the same shape a top-level handler does: an
+/// unknown key inside a shard is the same rejection class the loader
+/// gives every other unknown key (typo suggestions included).
+#[test]
+fn cache_handler_sharded_rejects_unknown_shard_keys() {
+    let (_t, dir) = fixture(&[(
+        "oxide.config.json",
+        json_file(&serde_json::json!({
+            "framework": { "adapter": "react" },
+            "cache": {
+                "handler": {
+                    "type": "sharded",
+                    "shards": [ { "type": "http", "url": "http://plane-a", "shardz": 1 } ]
+                }
+            }
+        }))
+        .as_str(),
+    )]);
+    let e = load_with_env(&dir, "dev", BTreeMap::new(), &EMPTY_ENV).unwrap_err();
+    assert_eq!(e.0.code, "CFG-UNKNOWN-KEY");
+    assert!(
+        e.0.message.contains("shardz"),
+        "names the offending shard key: {}",
+        e.0.message
+    );
+}
+
+/// The wire shape a TS config (and the docs) speak: the `type` tag
+/// round-trips through serde as `"sharded"`, the shards beside it.
+#[test]
+fn cache_handler_sharded_round_trips_the_type_tag() {
+    let v = serde_json::to_value(oxide_fw_config::CacheHandlerConfig::Sharded {
+        shards: vec![oxide_fw_config::CacheHandlerConfig::Http {
+            url: "http://plane-a".into(),
+        }],
+    })
+    .unwrap();
+    assert_eq!(v["type"], "sharded");
+    assert_eq!(v["shards"][0]["type"], "http");
+    let back: oxide_fw_config::CacheHandlerConfig = serde_json::from_value(v).unwrap();
+    assert_eq!(
+        back,
+        oxide_fw_config::CacheHandlerConfig::Sharded {
+            shards: vec![oxide_fw_config::CacheHandlerConfig::Http {
+                url: "http://plane-a".into()
+            }],
+        }
+    );
+}
+
 #[test]
 fn load_missing_framework_adapter_errors_naming_file_and_key() {
     let (_t, dir) = fixture(&[(
