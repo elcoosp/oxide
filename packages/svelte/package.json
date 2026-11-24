@@ -26,7 +26,8 @@
       "default": "./dist/render.js"
     },
     "./image": "./src/Image.svelte",
-    "./defer": "./src/Defer.svelte"
+    "./defer": "./src/Defer.svelte",
+    "./link": "./src/Link.svelte"
   },
   "scripts": {
     "postbuild": "node ../../scripts/clean-stray-dts.mjs",
