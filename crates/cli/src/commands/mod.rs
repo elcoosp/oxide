@@ -18,5 +18,7 @@ mod perf;
 pub(crate) use perf::*;
 mod render;
 pub(crate) use render::*;
+mod rollback;
+pub(crate) use rollback::*;
 mod replay;
 pub(crate) use replay::*;
