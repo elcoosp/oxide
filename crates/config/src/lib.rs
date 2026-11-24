@@ -1287,6 +1287,20 @@ pub enum CacheHandlerConfig {
     Http {
         url: String,
     },
+    /// V2-F69 config/CLI half: the sharded multi-plane client — a
+    /// `shards: [...]` array the boot resolves into `ShardedCacheHandler`
+    /// (rendezvous-hashed entry routing over the planes a node fronts;
+    /// growth moves only the keys whose winner changed). Each shard
+    /// speaks the same shape a top-level handler does. The empty set
+    /// refuses loud at the boot wire under the minted `CAC-SHARD` (the
+    /// F69 composite's own contract); a shard element that resolves to
+    /// no remote driver (`memory`/`disk` are the local tiers, not
+    /// shards) is skipped under the same code — the §11.2 degrade
+    /// contract, per shard.
+    Sharded {
+        /// The planes this node fronts, resolved in construction order.
+        shards: Vec<CacheHandlerConfig>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
