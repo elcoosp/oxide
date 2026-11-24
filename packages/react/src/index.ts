@@ -135,7 +135,10 @@ export { hydrate, irHydrateIsland, mount, update, type ClientOptions }
 export { islandModules, pageComponent }
 export { reactHydrateIsland } from './hydrate-island-real.ts'
 export { Island, type IslandProps, type IslandStrategy } from './island.ts'
-export { Link, type LinkProps } from './link.ts'
+export {
+  Link, href, goto, parseSearch,
+  type LinkProps, type HrefOpts, type GotoOpts, type SearchParseResult,
+} from './link.ts'
 export { Image, type ImageProps, type ImageVariantModule } from './image.ts'
 export {
   el, t, raw, frag, deferred, island, hash6, escapeText, escapeAttr,
