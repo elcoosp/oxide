@@ -254,7 +254,9 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `SCHEMA-001` | SCHEMA-002 | — |
 | `SCHEMA-002` | the config module's value is not JSON (the schema crate's parse class) | Serve the module's value as JSON (the schema crate parses values, not TS) |
 | `SEC-SESSION` | a session codec needs at least one key (security.sessionKeys) | — |
+| `SKW-GEN` | no retained generation matches the selector (nothing is retained yet, the id is unknown, or the selector is not a generation name) | run `oxide build` first (the emit tail retains the last deploy.generations dists), then roll back with `previous` or one of the listed ids |
 | `SKW-POOL` | the promoted generation has no worker pool; the boot pool keeps serving every generation | the generation's pool failed to boot — inspect the serve log; the boot pool covers until the window closes |
+| `SKW-RETAIN` | the dist could not be retained as a rollback generation (the copy, the stamp or the prune failed) | inspect the path in the warn; the build continues — the rollback surface just does not cover this build |
 | `SKW-SNAPSHOT` | skew: a generation's loader sources could not be frozen; the two-pool route step stays inert and the boot handles serve every generation | inspect the snapshot error in the serve log; the generation downgrades to acceptance-only |
 | `SNAP-002` | top-level side effect | create connections lazily |
 | `SNP-FORMAT` | snapshot format {} is not supported (expected {}) | — |
