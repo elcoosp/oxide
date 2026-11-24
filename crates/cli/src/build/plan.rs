@@ -231,6 +231,7 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
         tool_version,
         native: Some(std::sync::Arc::clone(&native_registry)),
         backend: compiler_backend,
+        data_ox_src: None,
     })
     .await?;
     let server_precompiled = precompile::precompile_entries(precompile::PrecompilePlan {
@@ -242,6 +243,7 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
         tool_version,
         native: Some(std::sync::Arc::clone(&native_registry)),
         backend: compiler_backend,
+        data_ox_src: None,
     })
     .await?;
     // §4.2: bundle the config graph to ESM for the V8 backend, NOW that the
