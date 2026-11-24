@@ -1,0 +1,9 @@
+{
+  "module_path": "__FIXTURE_DIR__/endpoint_get.mjs",
+  "method": "GET",
+  "url": "/api/users?q=ada",
+  "params": {},
+  "headers": [["accept", "application/json"]],
+  "body_b64": "",
+  "locals": {}
+}
