@@ -1485,6 +1485,15 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
       parent: async () => parentData,
       defer,
       __oxideDeferredRegistry: registry,
+      // D1 (worker parity): the decoded session, mutable — a loader that
+      // changes it has the change persisted by the pipeline. This fork used
+      // to leave `event.session` undefined (the envelope had no `session`
+      // key either), so a `event.session.user = ...` write threw on V8 and
+      // silently no-op'd in the envelope comparison.
+      session:
+        input.locals && typeof input.locals === 'object' && input.locals.session
+          ? input.locals.session
+          : {},
     };
     let result;
     try {
@@ -1492,19 +1501,32 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
     } catch (err) {
       if (err && typeof err.status === 'number') {
         return JSON.stringify({ ok: true, status: err.status, location: err.location ?? null,
-          data: { message: err.message ?? '' }, setCookies: [...pending.values()], headers: extra });
+          data: { message: err.message ?? '' }, session: event.session, setCookies: [...pending.values()], headers: extra });
       }
       throw err;
     }
+    // §16-G (worker parity): a `page.server.ts` may export
+    // `meta = defineMeta(({ data }) => ({ ... }))`. Evaluated AFTER the load
+    // (its `data` argument is the load result) and kept separate from
+    // `data`; a throwing meta must not fail the route's render.
+    let meta = null;
+    if (typeof mod.meta === 'function') {
+      try {
+        const m = await mod.meta({ data: result ?? {}, params: input.params ?? {} });
+        if (m && typeof m === 'object') meta = m;
+      } catch (e) {
+        console.error('[oxide] meta() threw for ' + moduleUrl + ': ' + ((e && e.message) || e));
+      }
+    }
+    const pendingIds = [...registry.keys()].map(String);
     // B-03 / B2 (V8 parity): in streaming mode emit the initial payload at
     // loader speed, then one NDJSON settle line per `defer()` as it settles.
     // The host drives the returned promise (which awaits every settle) so the
     // event loop keeps running after the caller already has the stream.
     if (input && input.__oxide_stream) {
-      const pendingIds = [...registry.keys()].map(String);
       Deno.core.ops.op_oxide_loader_emit(JSON.stringify({ ok: true, status: 200, location: null,
-        deferred: {}, deferredPending: pendingIds, data: result ?? {},
-        setCookies: [...pending.values()], headers: extra }));
+        deferred: {}, deferredPending: pendingIds, data: result ?? {}, session: event.session,
+        meta: meta, setCookies: [...pending.values()], headers: extra }));
       const jobs = [];
       for (const [id, p] of registry) {
         jobs.push(Promise.resolve(p).then(
@@ -1521,8 +1543,10 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
     }
     // §7.1 / §9.2: await every `defer(promise)` marker and serialize
     // `{ id: value }`; a rejection surfaces as `{ __oxide_deferred_error }`
-    // so a partially-ready loader still renders (worker parity — this fork
-    // used to drop the registry entirely).
+    // so a partially-ready loader still renders. The envelope carries the
+    // same keys as the Node worker's folded stream outcome (`deferred`
+    // filled, `deferredPending` naming the ids, `session`/`meta` the head
+    // model) so the two backends agree under the op-parity table.
     const deferred = {};
     for (const [id, p] of registry) {
       try {
@@ -1531,7 +1555,8 @@ globalThis.__oxideLoaderRun = async function (moduleUrl, input) {
         deferred[String(id)] = { __oxide_deferred_error: String(e?.message ?? e) };
       }
     }
-    return JSON.stringify({ ok: true, status: 200, location: null, deferred, data: result ?? {},
+    return JSON.stringify({ ok: true, status: 200, location: null, deferred: deferred,
+      deferredPending: pendingIds, data: result ?? {}, session: event.session, meta: meta,
       setCookies: [...pending.values()], headers: extra });
   } catch (e) {
     return JSON.stringify({ __oxide_error: 'loader:run failed: ' + ((e && e.message) || e) });
@@ -1896,6 +1921,153 @@ globalThis.__oxideGenerateParamsRun = async function (moduleUrl) {
     return JSON.stringify({ __oxide_error: 'generate-params:run failed: ' + ((e && e.message) || e), __oxide_code: 'JSH-PARAMS' });
   }
 };
+
+// V2-A08: V8 dispatch parity for the §8.4 endpoint and §8.1 middleware
+// kinds. The Node worker special-cases both (dispatchEndpointRun /
+// dispatchMiddlewareRun): it builds a Web `Request`, resolves the method
+// handler (`mod[METHOD] ?? mod.default`) / the `middleware ?? default`
+// export, calls it `(request, ctx)`, and projects the `Response` into the
+// envelope the LoaderHost parses. The generic `__oxideDispatch` arm handed
+// the raw payload to those handlers instead — mis-executed on backend=v8.
+// These entry points port that logic to the V8 bootstrap (same logic, same
+// envelope shapes), over the web globals the `oxide:web_polyfill` provides.
+
+// Shared request construction for the two entry points: the payload shape
+// is the one `loader_host.rs` builds (`method`, `url`, `params`, `headers`,
+// `body_b64`, `locals`). GET/HEAD never carry a body; a relative URL gets
+// the `http://placeholder` origin the Node worker uses.
+globalThis.__oxideEndpointRequest = function (payload) {
+  const method = String(payload.method ?? 'GET').toUpperCase();
+  const headerList = Array.isArray(payload.headers) ? payload.headers : [];
+  const bodyBytes = payload.body_b64 ? Buffer.from(payload.body_b64, 'base64') : new Uint8Array();
+  const canHaveBody = method !== 'GET' && method !== 'HEAD';
+  const reqInit = { method: method, headers: headerList };
+  if (canHaveBody && bodyBytes.length > 0) reqInit.body = bodyBytes;
+  const url = payload.url == null ? '' : String(payload.url);
+  const absoluteUrl = url.startsWith('http') ? url : 'http://placeholder' + (url || '/');
+  return { request: new Request(absoluteUrl, reqInit), method: method };
+};
+
+// §8.4 endpoint dispatch. The streaming protocol matches the Node worker's:
+// every body-bearing `Response` streams a header frame
+// (`{status, headers, streaming:true}`) then raw body chunks through the
+// stream sink (`oxide.streamWrite`); the Rust receiver assembles the
+// EndpointOutcome. A handler error that carries a numeric `status` short-
+// circuits with the worker's exact envelope; every other failure resolves
+// with `{__oxide_error}` — the finish path pushes it as the first (header)
+// chunk, which the LoaderHost parses into a coded JSH-ENDPOINT error.
+globalThis.__oxideEndpointRun = async function (moduleUrl, input) {
+  const payload = input ?? {};
+  try {
+    const mod = await import(globalThis.__oxideVersioned(moduleUrl));
+    const built = globalThis.__oxideEndpointRequest(payload);
+    const handler = mod[built.method] ?? mod.default;
+    if (typeof handler !== 'function') {
+      return JSON.stringify({ __oxide_error: 'module at ' + moduleUrl + ' has no `' + built.method + '` export and no default export' });
+    }
+    const locals = payload.locals && typeof payload.locals === 'object' ? payload.locals : {};
+    let response;
+    try {
+      // Next-style: `(request, { params })`.
+      response = await handler(built.request, { params: payload.params ?? {}, locals: locals });
+    } catch (err) {
+      if (err && typeof err.status === 'number') {
+        return JSON.stringify({
+          status: err.status,
+          headers: err.location ? [['location', String(err.location)]] : [],
+          body_b64: '',
+        });
+      }
+      return JSON.stringify({ __oxide_error: 'endpoint:run failed: ' + ((err && err.message) || err) });
+    }
+    if (!(response instanceof Response)) {
+      return JSON.stringify({ __oxide_error: 'route.ts handler for ' + built.method + ' returned ' + (typeof response) + ', not a Response' });
+    }
+    const respHeaders = [];
+    response.headers.forEach(function (v, k) { respHeaders.push([k, v]); });
+    await oxide.streamWrite(JSON.stringify({ status: response.status, headers: respHeaders, streaming: true }));
+    if (response.body && typeof response.body.getReader === 'function') {
+      const reader = response.body.getReader();
+      for (;;) {
+        const step = await reader.read();
+        if (step.done) break;
+        if (step.value && step.value.length > 0) await oxide.streamWrite(step.value);
+      }
+    }
+    return 'streamed';
+  } catch (e) {
+    return JSON.stringify({ __oxide_error: 'endpoint:run failed: ' + ((e && e.message) || e) });
+  }
+};
+
+// §8.1 middleware dispatch. Never streams (the Node worker buffers the
+// directive envelope): `undefined`/`null` passes through, a `Response`
+// short-circuits with its body base64'd, an object is the directive
+// (redirect → short, else headers/rewrite/locals), anything else is a
+// JSH-MIDDLEWARE diagnostic.
+globalThis.__oxideMiddlewareRun = async function (moduleUrl, input) {
+  const payload = input ?? {};
+  try {
+    const mod = await import(globalThis.__oxideVersioned(moduleUrl));
+    const built = globalThis.__oxideEndpointRequest(payload);
+    const handler = mod.middleware ?? mod.default;
+    if (typeof handler !== 'function') {
+      return JSON.stringify({ __oxide_error: 'module at ' + moduleUrl + ' has no `middleware` export and no default export' });
+    }
+    const ctx = { params: payload.params ?? {}, locals: payload.locals ?? {} };
+    let result;
+    try {
+      result = await handler(built.request, ctx);
+    } catch (err) {
+      if (err && typeof err.status === 'number') {
+        return JSON.stringify({
+          short: true,
+          status: err.status,
+          headers: err.location ? [['location', String(err.location)]] : [],
+          body_b64: '',
+          redirect: err.location ?? null,
+        });
+      }
+      return JSON.stringify({ __oxide_error: 'middleware:run failed: ' + ((err && err.message) || err) });
+    }
+    if (result === undefined || result === null) {
+      return JSON.stringify({ short: false, status: 200, headers: [], body_b64: '' });
+    }
+    if (result instanceof Response) {
+      const respHeaders = [];
+      result.headers.forEach(function (v, k) { respHeaders.push([k, v]); });
+      const respBody = new Uint8Array(await result.arrayBuffer());
+      return JSON.stringify({
+        short: true,
+        status: result.status,
+        headers: respHeaders,
+        body_b64: respBody.length > 0 ? Buffer.from(respBody).toString('base64') : '',
+      });
+    }
+    if (typeof result === 'object') {
+      if (typeof result.redirect === 'string') {
+        return JSON.stringify({
+          short: true,
+          status: typeof result.status === 'number' ? result.status : 307,
+          headers: [['location', result.redirect]],
+          body_b64: '',
+          redirect: result.redirect,
+        });
+      }
+      return JSON.stringify({
+        short: false,
+        status: 200,
+        headers: Array.isArray(result.headers) ? result.headers : [],
+        body_b64: '',
+        rewrite: typeof result.rewrite === 'string' ? result.rewrite : null,
+        locals: result.locals ?? null,
+      });
+    }
+    return JSON.stringify({ __oxide_error: 'middleware returned ' + (typeof result) + '; expected undefined, an object directive, or a Response' });
+  } catch (e) {
+    return JSON.stringify({ __oxide_error: 'middleware:run failed: ' + ((e && e.message) || e) });
+  }
+};
 "#;
 
 /// The single V8 extension every worker uses — and the one the startup
@@ -1927,10 +2099,20 @@ pub(crate) fn oxide_extension() -> deno_core::Extension {
         "oxide:url_polyfill",
         Arc::from(url_polyfill_src.as_str()),
     );
+    // V2-A08: the web globals (Headers/Request/Response) the §8.4 endpoint
+    // and §8.1 middleware handlers speak. Registered beside the URL
+    // polyfill so the worker load AND the snapshot build (both construct
+    // the extension through this one function) carry the same files in the
+    // same order.
+    let web_polyfill_src = crate::snapshot::escape_non_ascii(include_str!("init/web_polyfill.js"));
+    let web_polyfill = ExtensionFileSource::new_computed(
+        "oxide:web_polyfill",
+        Arc::from(web_polyfill_src.as_str()),
+    );
     deno_core::Extension {
         name: "oxide_runtime",
         deps: &[],
-        js_files: Cow::Owned(vec![bootstrap, url_polyfill]),
+        js_files: Cow::Owned(vec![bootstrap, url_polyfill, web_polyfill]),
         esm_files: Cow::Borrowed(&[]),
         lazy_loaded_esm_files: Cow::Borrowed(&[]),
         lazy_loaded_js_files: Cow::Borrowed(&[]),
@@ -2116,7 +2298,13 @@ fn spawn_v8_worker(
                                         deno_core::v8::Local::new(scope, value)
                                             .to_rust_string_lossy(scope)
                                     };
-                                    crate::v8_ops::finish_loader_stream(text);
+                                    crate::v8_ops::finish_loader_stream(text.clone());
+                                    // V2-A08: the endpoint arm rides the same
+                                    // pending-promise drive; a call that never
+                                    // streamed (an early `{__oxide_error}`
+                                    // exit) pushes its resolution as the
+                                    // header chunk so the error surfaces.
+                                    crate::v8_ops::finish_stream_call(text);
                                 }
                                 // Drop the sinks: closes the chunk stream.
                                 crate::v8_ops::set_stream_sink(None);
@@ -2282,6 +2470,59 @@ async fn v8_dispatch(
             .map_err(|e| err("JSH-V8", format!("loader returned non-JSON: {e}")))?;
         if let Some(m) = v.get("__oxide_error").and_then(|x| x.as_str()) {
             return Err(err("JSH-LOADER", m.to_string()));
+        }
+        let bytes = serde_json::to_vec(&v).unwrap_or_default();
+        return Ok(CallStream::Complete(Bytes::from(bytes)));
+    }
+
+    // V2-A08: the §8.4 endpoint kind. The bootstrap builds the Web `Request`,
+    // resolves `mod[METHOD] ?? default`, and streams the header frame + body
+    // chunks through the stream sink (the Node worker's exact protocol); the
+    // promise is stashed so chunks flow live while the isolate drives it. An
+    // early `{__oxide_error}` resolution is pushed as the header chunk by
+    // `finish_stream_call`, which the LoaderHost parses into a coded error.
+    if entry.kind == "endpoint:run" {
+        let url = v8_module_url(&entry.module)?;
+        let u = serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".into());
+        let inp = serde_json::to_string(&input.payload).unwrap_or_else(|_| "{}".into());
+        let script = format!("globalThis.__oxideEndpointRun({u}, {inp})");
+        let promise = js
+            .execute_script("oxide:endpoint", script)
+            .map_err(|e| err("JSH-V8", format!("endpoint dispatch: {e}")))?;
+        let (tx, rx) = mpsc::channel::<Result<Bytes>>(16);
+        crate::v8_ops::set_stream_sink(Some(tx));
+        crate::v8_ops::PENDING_STREAM.with(|slot| {
+            *slot.borrow_mut() = Some(promise);
+        });
+        return Ok(CallStream::Chunked(rx));
+    }
+
+    // V2-A08: the §8.1 middleware kind. The directive envelope never
+    // streams (the Node worker buffers it), so the promise resolves here and
+    // the envelope rides the `Complete` arm the LoaderHost's middleware
+    // parser consumes.
+    if entry.kind == "middleware:run" {
+        let url = v8_module_url(&entry.module)?;
+        let u = serde_json::to_string(&url).unwrap_or_else(|_| "\"\"".into());
+        let inp = serde_json::to_string(&input.payload).unwrap_or_else(|_| "{}".into());
+        let script = format!("globalThis.__oxideMiddlewareRun({u}, {inp})");
+        let promise = js
+            .execute_script("oxide:middleware", script)
+            .map_err(|e| err("JSH-V8", format!("middleware dispatch: {e}")))?;
+        let resolve = js.resolve(promise);
+        let resolved = js
+            .with_event_loop_promise(resolve, deno_core::PollEventLoopOptions::default())
+            .await
+            .map_err(|e| err("JSH-V8", format!("middleware await: {e}")))?;
+        let s = {
+            deno_core::scope!(scope, js);
+            let local = deno_core::v8::Local::new(scope, resolved);
+            local.to_rust_string_lossy(scope)
+        };
+        let v: serde_json::Value = serde_json::from_str(&s)
+            .map_err(|e| err("JSH-V8", format!("middleware returned non-JSON: {e}")))?;
+        if let Some(m) = v.get("__oxide_error").and_then(|x| x.as_str()) {
+            return Err(err("JSH-MIDDLEWARE", m.to_string()));
         }
         let bytes = serde_json::to_vec(&v).unwrap_or_default();
         return Ok(CallStream::Complete(Bytes::from(bytes)));
