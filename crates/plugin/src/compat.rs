@@ -80,9 +80,10 @@ impl SupportLevel {
 /// - Native: `n/a` for every hook (feature backends never cross the bridge).
 /// - JS: a hook the bridge supports is wired; the two the bridge refuses are
 ///   the fail-at-load cells ([`Hook::supported_in_bridge`] is the model).
-/// - WASM: `transform` is wired end to end; `load`/`resolveId` are
-///   host-callable (the option-returning string ABI) with the bundler-feed
-///   call site pending; everything else has no host path.
+/// - WASM: `transform`, `load` and `resolveId` are wired end to end (the
+///   §V2-E05 CLI feed composes the host's `call_resolve_hook`/`call_load_hook`
+///   into the bundler's `BundleOptions.load_hook`/`resolve_hook` beside the
+///   JS bridge); everything else has no host path.
 #[must_use]
 pub fn compat(kind: PluginKind, hook: Hook) -> SupportLevel {
     match kind {
@@ -95,8 +96,7 @@ pub fn compat(kind: PluginKind, hook: Hook) -> SupportLevel {
             }
         }
         PluginKind::Wasm => match hook {
-            Hook::Transform => SupportLevel::Wired,
-            Hook::Load | Hook::ResolveId => SupportLevel::Partial,
+            Hook::Transform | Hook::Load | Hook::ResolveId => SupportLevel::Wired,
             _ => SupportLevel::Unsupported,
         },
     }
