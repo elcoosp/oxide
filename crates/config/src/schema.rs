@@ -306,9 +306,22 @@ fn cache_schema() -> Value {
             "handler": {
                 "type": "object",
                 "properties": {
-                    "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http"], "description": "§5.3: the L2 cache-handler backend the build wires (memory/disk are local; redis/s3/http are remote)." },
+                    "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http", "sharded"], "description": "§5.3: the L2 cache-handler backend the build wires (memory/disk are local; redis/s3/http are remote; sharded composes the F69 multi-plane client)." },
                     "url": { "type": "string", "description": "Remote base URL for `type: \"http\"` or `type: \"redis\"`." },
-                    "bucket": { "type": "string", "description": "Bucket name for `type: \"s3\"`." }
+                    "bucket": { "type": "string", "description": "Bucket name for `type: \"s3\"`." },
+                    "shards": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": { "type": "string", "enum": ["memory", "disk", "redis", "s3", "http", "sharded"], "description": "The shard's handler backend (the same enum a top-level handler speaks; nested sharded composes composites)." },
+                                "url": { "type": "string", "description": "Remote base URL for a `type: \"http\"` or `type: \"redis\"` shard." },
+                                "bucket": { "type": "string", "description": "Bucket name for a `type: \"s3\"` shard." }
+                            },
+                            "required": ["type"]
+                        },
+                        "description": "V2-F69 config/CLI half: the planes this node fronts — the boot resolves the array into the F69 ShardedCacheHandler (rendezvous-hashed entry routing; growth moves only the keys whose winner changed). An empty set refuses loud at the boot wire under the minted CAC-SHARD; a shard element that resolves to no remote driver (memory/disk are the local tiers) is skipped under the same code — the §11.2 degrade contract, per shard."
+                    }
                 },
                 "required": ["type"]
             },
