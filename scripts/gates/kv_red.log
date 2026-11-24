@@ -1,0 +1,19 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling oxide-fw-cache v0.17.0 (/home/z/my-project/oxide/crates/cache)
+error[E0432]: unresolved imports `oxide_fw_cache::KvCacheHandler`, `oxide_fw_cache::KvStore`
+  --> crates/cache/tests/kv_handler_tdd.rs:17:43
+   |
+17 | use oxide_fw_cache::{CacheHandler, Entry, KvCacheHandler, KvStore};
+   |                                           ^^^^^^^^^^^^^^  ^^^^^^^ no `KvStore` in the root
+   |                                           |
+   |                                           no `KvCacheHandler` in the root
+   |
+help: a similar name exists in the module
+   |
+17 - use oxide_fw_cache::{CacheHandler, Entry, KvCacheHandler, KvStore};
+17 + use oxide_fw_cache::{CacheHandler, Entry, CacheHandler, KvStore};
+   |
+
+For more information about this error, try `rustc --explain E0432`.
+error: could not compile `oxide-fw-cache` (test "kv_handler_tdd") due to 1 previous error
