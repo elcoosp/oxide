@@ -7225,3 +7225,71 @@ is untouched (wasmtime/hyper/quinn dep tree not built in this sandbox). The five
 F47→F69 deferral postscripts and the 2026-11-22 partial-delivery record stay OPEN
 until cache + server clear and the guard goes 23/23 GREEN. No `#[allow]]`/`#[expect]]`/
 lint downgrade landed or is planned.
+
+## V2-E05's remaining half — the WASM `load`/`resolveId` CLI wire + the F10 evict trigger's F12 hook (`feat/wasm-plugin-load-resolve-wire` + `feat/brownout-pool-evict`, 2026-11-24)
+
+**M1 — the wire (the E05 row's recorded remaining half).** The host spoke
+the ABI (`WasmPlugin::call_load_hook`/`call_resolve_hook`, probed, pinned by
+`compat_tdd`) and the compat harness verified ten third-party plugins, but
+NOTHING fed a loaded component into a real build: every `BundleOptions`
+construction site passed `load_hook: None`/`resolve_hook: None` for the WASM
+arm, and `crates/cli/src/docs_gen.rs` recorded the feed as pending. The wire
+lands in the transform wire's own module: `load_wasm_plugins` (one load pass
+over every `kind: wasm` entry — confinement, bytes, manifest parse shared
+with `build_transform_hook` via `wasm_plugin_manifest_from_entry`, broken
+entries warn-and-skip, the documented degrade-not-fail posture) and
+`build_wasm_load_resolve_hooks` (the components that declare AND export
+each hook chain in config declaration order; the FIRST non-declining answer
+wins, a decline falls through, a trap propagates as the `BLD-PLUGIN`
+diagnostic the bundler's hook arms already raise). The build path composes
+`rs → js → wasm` (the transform composition's JS-then-WASM convention
+beside the F08 first-party arm) into BOTH envs' options; the dev client
+bundle composes `js → wasm`. `bundle_env_options`' signature is untouched —
+the arms assign by field, the §15-E comment's own contract. The compat
+model flips (`compat(Wasm, Load|ResolveId) = Wired`), the generated table
+re-embeds byte-identical (`plugin_compat_doc_embeds_the_generated_table`
+green), and the page's legend/prose match. 5 CLI pins (real WAT components
+lifted over the canonical ABI, the compat fixtures' shape), the
+`wasm_hooks` bench (answer/decline/chain round trips) and the `wasm_hooks`
+walkthrough ride along; the builder is the wire's public seam (the
+`native_fns` shape). Deltas: the transform arm keeps its first-transform-
+exporting-plugin shape (the pre-wire behavior, byte-identical); JS-plugin
+`load`/`resolveId` through the tooling pool was already wired (the dev
+path's `build_js_plugin_*`) and is unchanged.
+
+**M2 — the F10 evict trigger (the F12 hook's missing consumer).**
+`GenerationPools::evict_oldest` was documented as "the brownout early-drop
+(the F12 hook)" with ZERO call sites, and the id-level
+`GenerationPool` had no counterpart — an evicted serving handle's id would
+have stayed accepted and routed to the boot fallback. The wire: `skew::
+GenerationPool::evict_oldest` (the id level, the stage 409s the evicted
+build), `ServingPools::evict_oldest` + `evict_handle_oldest` (the serving
+level, poison-recovered like `route_for`), `BrownoutWiring.early_drop`
+(a `OnceLock<EarlyDrop>` — the boot sets it after the pools stand, the
+sampler's first ticks honestly no-op) + `with_early_drop` (the chainable
+F60 shape) + `drain_one_early_drop` (fires ONLY at the `Emergency` rung —
+the level whose contract is "give capacity back"; `Stale`/`Shed` keep the
+skew window; one generation per 500 ms tick, the drain spreads), and the
+boot wire in `start_server_inner_full` (both pools in lockstep, the id
+level first). 2 dispatch pins + 4 CLI pins, the `pools_early_drop` bench
+group and the `brownout_evict` walkthrough ride along. Deltas: the
+`overload.sh` load test (the F12 row's other recorded tail) stays open —
+it is an ops script, not a capability; the two-pool route fallback
+semantics are untouched (an evicted id answers 409 through the stage
+BEFORE routing runs).
+
+**Gates (this sandbox: 2 cores, rustc 1.100.0, no libclang — the V8 chain
+cannot build, so the cli/jshost gates run `--no-default-features`, the
+recorded sandbox posture):** `cargo fmt --all --check` exit 0; cli lib
+517/0 (the 9 new pins among them), dispatch all suites 0 failed, plugin
+49/0; benches in test mode green (cli + dispatch incl. the two new
+groups); the zero-`#[allow]`/`#[expect]` grep empty; the pedantic sweep
+over every region this session added prints ZERO findings. Pre-existing
+RED in untouched code stands: `crates/jshost` carries 130 clippy findings
+under `-D warnings` (the 2026-11-24 op-parity session landed after the
+A02 finish without re-running the V8-free gate — the A02 record's "jshost
+V8-free half 0" predates it), `oxide-fw-cache`/`oxide-fw-server` hold the
+recorded hygiene debt, and the full-workspace unified gate stays the
+hygiene pass's work. The V8-dependent gates (the `rust` CI job,
+`docs-check`, the `op_parity` ignored pins, the e2e scripts) did NOT run
+here; the generated-doc edit is replica-verified by the byte-identity pin.
