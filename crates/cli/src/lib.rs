@@ -89,8 +89,14 @@ mod framework_shim;
 // surface answers, the typed-tier adapter behind the server crate's
 // `CachePosture` trait, and the boot's two-halves gate (the bench group
 // and the walkthrough reuse them; the rest of the shim stays
-// crate-internal, the `mod args; pub use args::*` shape).
-pub use framework_shim::{TierCachePosture, cache_posture_probe_json, posture_probe_provider};
+// crate-internal, the `mod args; pub use args::*` shape). V2-F63/F69:
+// the boot posture line's own seams (the bounded probe + the byte-stable
+// render) ride the same public face — the bench group and the walkthrough
+// reuse them too.
+pub use framework_shim::{
+    PLANE_BOOT_PROBE_DEADLINE, TierCachePosture, cache_posture_probe_json, compose_sharded,
+    posture_probe_provider, remote_cache_handler, remote_plane_boot_line, render_plane_boot_line,
+};
 mod l0_cache;
 // V2-F55: the L0 conditional seam's public face — the cache handle, the
 // hit envelope and the nonce sentinel the conditional walkthrough
