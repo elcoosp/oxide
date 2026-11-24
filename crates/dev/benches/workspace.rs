@@ -73,14 +73,14 @@ fn bench_workspace_links(c: &mut Criterion) {
     for n in [8usize, 16] {
         let (ws, app) = fixture_workspace(n);
         group.bench_with_input(BenchmarkId::new("discovery", n), &app, |b, app| {
-            b.iter(|| ManifestWorkspaceLinks.links(app).expect("discovery"))
+            b.iter(|| ManifestWorkspaceLinks.links(app).expect("discovery"));
         });
         drop(ws);
     }
     let (ws, _app) = fixture_workspace(1);
     let pkg_root = ws.path().join("packages/pkg0");
     group.bench_function("real_path", |b| {
-        b.iter(|| real_path(&pkg_root).expect("canonicalize"))
+        b.iter(|| real_path(&pkg_root).expect("canonicalize"));
     });
     group.finish();
 }
