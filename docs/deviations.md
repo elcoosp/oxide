@@ -7364,3 +7364,94 @@ tail (the doctor additions). This diff's own rows: the F17 injection
 tail (the compile-path wire) and the doctor tail. `docs/architecture.md`'s
 compiler row names the compile-path wire and the cli row names the
 doctor check table; the README test badge re-measured (the 13 new pins).
+
+## The §V2-E08 overlay learns its source-mapped stack frames (`feat/overlay-mapped-frames`, this diff)
+
+**M1 — the overlay's source-mapped stack frames (§V2-E08 item 1's
+remaining half; §13.4's "source-mapped stacks").** The open-in-editor
+endpoint had landed (`feat/open-in-editor-endpoint`, 2026-11-17) but the
+overlay's frames did not exist anywhere in the tree: `Diagnostic` carried
+no stack (`rg "frames" crates/diagnostics/src` empty), and nothing
+consumed a sourcemap for an error position (`rg
+"find_token|orig_line|lookup_token" crates/dev crates/server
+crates/diagnostics` empty) — an error thrown inside a pool-compiled
+module named the generated output, and the overlay drew it verbatim.
+`Diagnostic.frames: Vec<StackFrame>` (`oxide-fw-diagnostics`) is the
+wire shape: one frame per stack step, 1-based line/column (the crate's
+`Location` convention) either way, the `mapped` flag naming the
+coordinate system — the original source when `true`, the generated
+output when `false` — additive on the wire (`serde(default)` decodes
+every pre-frames payload; `skip_serializing_if` keeps the frame-less
+JSON byte-identical, the F40 default-shape doctrine). `crates/dev/src/
+frames.rs` is the seam: the object-safe `FrameMapper`
+(`original_of(file, line, col)`), `NoMaps` the pass-through default
+spelled as a type (the `AdmitAllKeys` shape — a caller without maps
+keeps today's payload through the unchanged `overlay_payload` entry),
+`ModuleMaps` the production mapper over the compile outputs' maps keyed
+by the exact generated module path (the SAME oxc 9.0.0 pin the
+compiler's `TransformOutput` carries — no second sourcemap
+implementation enters the graph; the per-lookup table is oxc's own
+`generate_lookup_table` + `lookup_token_approx`, the browsers'
+greatest-lower-bound remap semantics for a runtime column), `map_
+diagnostic_frames` the ONE mapping seam (a generated frame maps and
+says so; a frame no map speaks for keeps its generated position
+verbatim — never fabricated; an already-source frame is never mapped
+twice), and `overlay_payload_with_maps` the mapped §13.4 payload
+builder. The CLI adoption (the `cmd_dev` publish sites passing the
+boot's module-map store over the three `HmrMessage::Error`
+constructors) remains V8-host work — recorded, not stubbed: the dev
+crate's seam and pins prove the chain end to end, the publish sites are
+one-liners on a V8-capable host.
+
+**Micro-debt (additive, behavior unchanged).** The watcher's silent
+failure arms learned the loud `DEV-NOTIFY` convention (the F65-session
+repair's class): `add_watch_dir`'s raced-deletion kinds
+(`PathNotFound`/`WatchNotFound` — the churn the walk itself produces)
+stay quiet, every other refusal warns naming the directory and the
+error, and `add_pruned_watches`' unreadable-root early return warns the
+same way (a silently unwatched subtree was edits that never fire HMR
+and never said why).
+
+**Docs drift repaired (deliverable-side records only).** The E-group
+row gains the landing record (the frames segment); the diagnostics
+README names `StackFrame` and the stack builders; the README badge AND
+prose re-measured to 3607 (the attribute-count rule the
+`check-launch-content` gate runs — 20 new pins across the two
+milestones plus the 10-test pre-existing drift the previous 3577 badge
+had missed).
+
+## The §V2-E09 edge KV cache handler lands (`feat/edge-kv-handler`, this diff)
+
+**M2 — the KV cache handler for the edge (§V2-E09's "tags via a KV
+index key per tag with a size cap, documented as best effort").** The
+A10 remote-handler family (redis/s3/http) had no member for the edge
+store the §V2-E09 worker template itself rides (`env.OXIDE_KV` — flat
+string keys, opaque bytes, an optional expiry). `crates/cache/src/
+kv_handler.rs`: the object-safe `KvStore` seam (get/put/delete over the
+binding's shape — a host binds its own KV client, the handler adds no
+client dependency, no feature gate) and `KvCacheHandler` carrying the
+family contract verbatim: the sealed codec blob (`cache:entry:<key>`,
+the S-06 MAC — a tampered payload is a miss), tags via ONE index key
+per tag (`cache:tag:<tag>`, a JSON key list) under the spec's SIZE CAP
+(`DEFAULT_TAG_CAP` = 1,024, this milestone's documented default — the
+index stops appending, the entry still exists and serves, the tag
+discovery names only the cap's worth, the spec's own "documented as
+best effort"), the §11.2 degradation (a store failure is a miss/no-op
+on the reads with the loud warn, `set` the loud arm, the B-20 rollback
+on a failed index registration so `invalidate_tag` never loses an
+entry), `with_tag_cap`/`with_ttl` the F60 builder shape, `tag_cap()`/
+`ttl()` the introspection seam, `handler_kind()` = `"kv"`. Deltas: the
+s3 driver's tag-markers stay s3-only (the KV contract is explicitly
+best-effort; the strict posture is the s3 family's), and the worker's
+`expirationTtl` rides `with_ttl` as the per-put TTL. E09's remaining
+halves (the core-wasm ports — the router match over B02's
+`CandidateIndex`, the rules engine, the `NonceSplicer`/`KeyStr`/`ODP1`/
+`sse_frame` re-exports — and the Cloudflare e2e) are recorded, not
+stubbed: the wasm build chain (wasm-bindgen CLI, wasm-opt, the 400 KB
+budget) is a V8-host-class toolchain this sandbox does not carry.
+
+**Docs drift repaired (deliverable-side records only).** The `CACHE-KV`
+registry row (`docs/errors.toml` + the rendered `errors.md` — the page
+edit replica-verified byte-exact against the ErrorsPage fold before and
+after, the F69 method); the E-group row gains the landing segment; the
+cache README gains the KV bullet.
