@@ -277,7 +277,7 @@ fn bench_bindings(c: &mut Criterion) {
     group.bench_function("16_fns", |b| {
         b.iter(|| {
             let _ = bindings_from_types(&payload, "bench-secret").expect("the bindings");
-        })
+        });
     });
     group.finish();
 }
@@ -293,12 +293,12 @@ fn bench_filter(c: &mut Criterion) {
     group.bench_function("server_module", |b| {
         b.iter(|| {
             let _ = oxide_fw_dev::server_lib::is_server_lib_event(&server_event, &spec);
-        })
+        });
     });
     group.bench_function("plain_source", |b| {
         b.iter(|| {
             let _ = oxide_fw_dev::server_lib::is_server_lib_event(&plain_event, &spec);
-        })
+        });
     });
     drop(dir);
     group.finish();
