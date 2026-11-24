@@ -8,7 +8,7 @@
 //! The bench is gated behind `bench-util` (the V2-F18 pattern: plain
 //! `cargo test` never pays the criterion build).
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use oxide_fw_cli::module_config_edit::add_module_to_config;
 use oxide_fw_cli::modules_loader::{resolve_one, to_manifest};
 use std::hint::black_box as bb;
@@ -47,7 +47,7 @@ fn bench_config_edit(c: &mut Criterion) {
         b.iter(|| {
             let edit = add_module_to_config(FIXTURE_CONFIG, "@oxide/analytics", Some("analytics"))
                 .expect("config edit");
-            black_box(edit.bytes.len());
+            bb(edit.bytes.len());
         });
     });
     group.bench_function("add_module_to_config_idempotent", |b| {
@@ -58,7 +58,7 @@ fn bench_config_edit(c: &mut Criterion) {
             let edit = add_module_to_config(&once.bytes, "@oxide/analytics", Some("analytics"))
                 .expect("idempotent edit");
             assert!(!edit.import_added && !edit.module_added);
-            black_box(edit.bytes.len());
+            bb(edit.bytes.len());
         });
     });
     group.finish();
@@ -71,14 +71,14 @@ fn bench_manifest_resolution(c: &mut Criterion) {
     group.bench_function("resolve_one", |b| {
         b.iter(|| {
             let m = resolve_one(&pkg, "@oxide/analytics".to_string()).expect("resolve");
-            black_box(m.adapters.len());
+            bb(m.adapters.len());
         });
     });
     group.bench_function("to_manifest", |b| {
         let m = resolve_one(&pkg, "@oxide/analytics".to_string()).expect("resolve");
         b.iter(|| {
             let manifest = to_manifest(bb(&m));
-            black_box(manifest.hooks.len());
+            bb(manifest.hooks.len());
         });
     });
     group.finish();
