@@ -1,0 +1,9 @@
+{
+  "module_path": "__FIXTURE_DIR__/middleware_locals.mjs",
+  "method": "GET",
+  "url": "/greeting",
+  "params": { "name": "ada" },
+  "headers": [],
+  "body_b64": "",
+  "locals": {}
+}
