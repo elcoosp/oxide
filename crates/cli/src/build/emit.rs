@@ -374,6 +374,22 @@ pub(crate) async fn phase_emit(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
         written.len(),
         target.as_str()
     );
+    // §V2-F10 step 4: retain the finished dist as a generation copy
+    // (`.oxide/generations/<id>/dist`) the rollback path serves — the
+    // spec's "written at the end of `phase_emit`". Degrades to a warn:
+    // the retention is a rollback convenience, never a build requirement
+    // (the same posture the serve-side snapshot takes).
+    if let Err(e) = crate::serve::generations::retain_dist_generation(
+        rootp,
+        &stamped_build_id,
+        cfg.deploy.generations,
+    ) {
+        tracing::warn!(
+            code = "SKW-RETAIN",
+            msg = %e,
+            "skew: the finished dist could not be retained as a rollback generation"
+        );
+    }
     // §5-A: record a DemandGraph over this build's inputs and persist it so
     // `oxide analyze` and the MCP `oxide_fw_graph` tool can report real
     // recompute counts (node granularity: module / chunk / manifest /
