@@ -693,7 +693,21 @@ impl DiskTier {
             // PERF-L1: forget the order entry.
             self.order_forget_placement(key, idx.stored_at);
             // Best-effort blob removal; a missing file is already "deleted".
-            let _ = std::fs::remove_file(self.root.join(&idx.path));
+            // A failure that is NOT the missing-file arm leaves the blob
+            // orphaned past its index row (the S-08 budget already
+            // decremented) — say so loudly (the house convention;
+            // behavior unchanged).
+            if let Err(e) = std::fs::remove_file(self.root.join(&idx.path))
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(
+                    code = "CAC-DISK",
+                    key = %key,
+                    error = %e,
+                    "the disk tier's blob unlink failed; the blob is orphaned \
+                     past its index row"
+                );
+            }
             Ok(true)
         } else {
             Ok(false)
