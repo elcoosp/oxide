@@ -17127,3 +17127,107 @@ fn brownout_early_drop_seam_sets_exactly_once() {
         "the OnceLock refuses a second seam — the boot sets it once"
     );
 }
+
+// ---- §V2-F10 step 4: `oxide rollback` (the retained-generation swap) ----
+
+/// Hand-stamp a fake dist: the same shape the deploy pins use — the A04
+/// id is a plain file (`dist/build-id`) to every reader here; the real
+/// digest mint is `oxide_fw_cache::stamp_build_id`'s business and is
+/// pinned in the cache crate.
+fn rollback_stamp_dist(rootp: &std::path::Path, id: &str, body: &[u8]) {
+    let dist = rootp.join("dist");
+    std::fs::create_dir_all(dist.join("client/assets")).expect("dist tree");
+    std::fs::write(dist.join("client/assets/a.js"), body).expect("chunk");
+    std::fs::write(dist.join("build-id"), id).expect("stamp");
+}
+
+#[tokio::test]
+async fn cmd_rollback_swaps_dist_to_the_previous_retained_generation() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let rootp = tmp.path();
+    rollback_stamp_dist(rootp, "1111111111111111", b"v1");
+    crate::serve::generations::retain_dist_generation(rootp, "1111111111111111", 3)
+        .expect("retain v1");
+    // The rebuild: same root, new id — the emit tail retains it too (the
+    // pin drives the seam the pipeline calls).
+    rollback_stamp_dist(rootp, "2222222222222222", b"v2");
+    crate::serve::generations::retain_dist_generation(rootp, "2222222222222222", 3)
+        .expect("retain v2");
+
+    let mut out: Vec<u8> = Vec::new();
+    let w: &mut (dyn std::io::Write + Send) = &mut out;
+    let code = cmd_rollback(rootp.to_str().expect("utf8"), None, w)
+        .await
+        .expect("rollback runs");
+    assert_eq!(code, 0);
+    let printed = String::from_utf8_lossy(&out);
+    assert!(
+        printed
+            .contains("rollback ok — dist serves build-id 1111111111111111 (was 2222222222222222)"),
+        "the verdict names both ids, got: {printed}"
+    );
+    assert!(
+        printed.contains("no serve pid file"),
+        "no serve is running in the pin: the missing receiver is reported, got: {printed}"
+    );
+    assert_eq!(
+        std::fs::read(rootp.join("dist/client/assets/a.js")).expect("bytes"),
+        b"v1",
+        "dist serves the rolled-back bytes"
+    );
+    assert_eq!(
+        std::fs::read_to_string(rootp.join("dist/build-id"))
+            .expect("id")
+            .trim(),
+        "1111111111111111",
+        "dist carries the rolled-back id"
+    );
+}
+
+#[tokio::test]
+async fn cmd_rollback_fails_coded_when_nothing_is_retained() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let rootp = tmp.path();
+    rollback_stamp_dist(rootp, "3333333333333333", b"v3");
+    let mut out: Vec<u8> = Vec::new();
+    let w: &mut (dyn std::io::Write + Send) = &mut out;
+    let code = cmd_rollback(rootp.to_str().expect("utf8"), None, w)
+        .await
+        .expect("rollback runs");
+    assert_eq!(code, 1, "an operational failure, not a usage error");
+    let printed = String::from_utf8_lossy(&out);
+    assert!(
+        printed.contains("SKW-GEN"),
+        "the refusal is the coded one, got: {printed}"
+    );
+    assert!(
+        rootp.join("dist/build-id").exists(),
+        "the failed rollback left the live dist alone"
+    );
+}
+
+#[tokio::test]
+async fn cmd_rollback_honours_an_explicit_generation_selector() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let rootp = tmp.path();
+    for (id, body) in [
+        ("1111111111111111", &b"v1"[..]),
+        ("2222222222222222", b"v2".as_slice()),
+        ("4444444444444444", b"v4".as_slice()),
+    ] {
+        rollback_stamp_dist(rootp, id, body);
+        crate::serve::generations::retain_dist_generation(rootp, id, 3).expect("retain");
+    }
+    rollback_stamp_dist(rootp, "4444444444444444", b"v4");
+    let mut out: Vec<u8> = Vec::new();
+    let w: &mut (dyn std::io::Write + Send) = &mut out;
+    let code = cmd_rollback(rootp.to_str().expect("utf8"), Some("2222222222222222"), w)
+        .await
+        .expect("rollback runs");
+    assert_eq!(code, 0);
+    assert_eq!(
+        std::fs::read(rootp.join("dist/client/assets/a.js")).expect("bytes"),
+        b"v2",
+        "the explicit selector wins over the newest"
+    );
+}
