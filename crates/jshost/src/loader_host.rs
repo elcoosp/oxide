@@ -673,6 +673,14 @@ impl ServerFnHost {
 /// A host for `endpoint:run`. Loads the route's `route.ts`, calls the
 /// method handler in a worker, and returns the raw response (status,
 /// headers, body bytes).
+///
+/// Backend-agnostic (§4.2): the op rides the pool the boot selected. On the
+/// Node backend the worker's `dispatchEndpointRun` builds the Web `Request`
+/// and projects the `Response`; on the V8 backend (V2-A08) the
+/// `__oxideEndpointRun` bootstrap entry point ports those semantics over
+/// the `oxide:web_polyfill` globals, streaming a body-bearing `Response` as
+/// the header-frame protocol (`Chunked`) the same way. The parity contract
+/// between the two backends is pinned by `tests/op_parity.rs`.
 pub struct EndpointHost {
     pool: Arc<dyn Pool>,
 }
@@ -864,6 +872,12 @@ impl EndpointHost {
 pub struct MiddlewareHost {
     pool: Arc<dyn Pool>,
 }
+
+/// A host for `middleware:run`. Backend-agnostic (§4.2): the Node worker's
+/// `dispatchMiddlewareRun` and the V8 backend's `__oxideMiddlewareRun`
+/// bootstrap entry point (V2-A08) produce the same directive envelope
+/// (`short` / `headers` / `locals` / `rewrite` / `redirect`); the parity
+/// contract is pinned by `tests/op_parity.rs`.
 
 /// The result of a middleware invocation, mirroring the worker op reply.
 /// Field meanings:
