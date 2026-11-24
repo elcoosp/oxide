@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use oxide_fw_diagnostics::OxideError;
 use oxide_fw_dispatch::skew::GenerationPool;
 use oxide_fw_jshost::Pool;
 use oxide_fw_server::LoaderRunner;
@@ -263,6 +264,13 @@ fn gen_err(code: &'static str, msg: impl Into<String>) -> oxide_fw_diagnostics::
 /// failure with the path in the message; `SRV-GEN-DEPTH` — the depth
 /// guard); a failed snapshot downgrades the generation to "acceptance
 /// only" (the pools skip the route step) instead of failing the boot.
+///
+/// The same generations directory also holds the §V2-F10 step-4
+/// retention: [`retain_dist_generation`] freezes the emitted
+/// `dist/` into `.oxide/generations/<id>/dist`, [`resolve_generation`]
+/// names one (`previous` or an explicit id) and
+/// [`repoint_dist_to_generation`] swaps it into `dist/` — the rollback
+/// path `oxide rollback` and `oxide start --generation` drive.
 pub fn snapshot_generation_sources(
     root: &std::path::Path,
     id: &str,
@@ -321,6 +329,332 @@ fn copy_tree(
         // loader byte.
     }
     Ok(())
+}
+
+/// The retention stamp's file name, inside
+/// `.oxide/generations/<id>/retained-at`: the unix-epoch nanos the copy
+/// was written at. The write ORDER is what `previous` and the prune walk
+/// read — build ids are digests, not ordered, so the stamp is the only
+/// clock the layout has. Nanos keep two retains in one emit-tick from
+/// tying (the tiebreak is the id, ascending).
+const RETAINED_AT: &str = "retained-at";
+
+/// Copy one file into the retained generation tree.
+///
+/// The spec's step-4 letter says "hard-linked copies ... fallback to
+/// copy", but a hard link shares the source's inode — and the build's
+/// own writers rewrite non-hashed files IN PLACE on the next build
+/// (`fs::write` truncates the existing path), which silently mutates the
+/// retained snapshot behind the link. The `rollback_swaps_dist` pin
+/// caught exactly that: a retained v1 whose chunk bytes had become v2
+/// while its build-id file (written through a temp+rename) still said
+/// v1. The retained tree is a FROZEN snapshot, so the fallback is the
+/// default: a real copy, no shared inodes. Recorded as a deliberate
+/// delta in `docs/deviations.md`.
+fn copy_dist_file(src: &std::path::Path, dest: &std::path::Path) -> Result<(), OxideError> {
+    std::fs::copy(src, dest)
+        .map(|_| ())
+        .map_err(|e| gen_err("SKW-RETAIN", format!("copy {}: {e}", src.display())))
+}
+
+/// The retention walk's tree copier — [`copy_tree`]'s linked twin, coding
+/// its failures `SKW-RETAIN` (the build-time degrade) instead of the
+/// serve-time `SRV-GEN-IO`.
+fn copy_tree_linked(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+    depth: usize,
+) -> Result<(), OxideError> {
+    if depth > SNAPSHOT_MAX_DEPTH {
+        return Err(gen_err(
+            "SKW-RETAIN",
+            format!(
+                "retained tree deeper than {SNAPSHOT_MAX_DEPTH} at {}",
+                src.display()
+            ),
+        ));
+    }
+    std::fs::create_dir_all(dest)
+        .map_err(|e| gen_err("SKW-RETAIN", format!("mkdir {}: {e}", dest.display())))?;
+    let entries = std::fs::read_dir(src)
+        .map_err(|e| gen_err("SKW-RETAIN", format!("read_dir {}: {e}", src.display())))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| gen_err("SKW-RETAIN", format!("dir entry: {e}")))?;
+        let p = entry.path();
+        let target = dest.join(entry.file_name());
+        let ft = entry
+            .file_type()
+            .map_err(|e| gen_err("SKW-RETAIN", format!("file_type {}: {e}", p.display())))?;
+        if ft.is_dir() {
+            copy_tree_linked(&p, &target, depth + 1)?;
+        } else if ft.is_file() {
+            copy_dist_file(&p, &target)?;
+        }
+        // Symlinks skipped, as in `copy_tree`: the retained dist is a
+        // build artifact tree; a linked tree outside `dist/` is not one.
+    }
+    Ok(())
+}
+
+/// The unix-epoch nanos (`u128`) as the retention clock; the layout keeps
+/// them decimal in `retained-at`.
+fn now_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+/// Retain the CURRENT build's `dist/` as
+/// `.oxide/generations/<id>/dist` (§V2-F10 step 4: "Keep
+/// `.oxide/generations/<id>` as ... copies ... of the last N
+/// builds, written at the end of `phase_emit`" — a real copy, not the
+/// spec's hard link: see [`copy_dist_file`]'s delta note), then prune
+/// the copies past the `keep` bound (the newest `keep.max(1)` survive;
+/// the rest lose their `dist/` tree — a serve snapshot's `src/` in the
+/// same generation directory is never touched).
+///
+/// Re-retaining the same build id is a no-op that returns the existing
+/// copy (the id is a digest of the dist bytes: same id, same content).
+///
+/// # Errors
+///
+/// [`SKW-RETAIN`] when `dist/` is missing, the generation directory
+/// cannot be created, a byte cannot be copied, or a pruned
+/// tree cannot be removed. The emit call-site degrades a retention
+/// failure to a `SKW-RETAIN` warn — a rollback convenience must never
+/// fail the build it rides.
+pub fn retain_dist_generation(
+    root: &std::path::Path,
+    build_id: &str,
+    keep: u32,
+) -> Result<PathBuf, OxideError> {
+    let dist = root.join("dist");
+    if !dist.is_dir() {
+        return Err(gen_err(
+            "SKW-RETAIN",
+            format!("no dist/ tree at {}", root.display()),
+        ));
+    }
+    if build_id.is_empty() || build_id.contains('/') || build_id.contains('\\') {
+        return Err(gen_err(
+            "SKW-RETAIN",
+            format!("`{build_id}` is not a build id (a directory name, not a path)"),
+        ));
+    }
+    let gen_root = root.join(".oxide").join("generations").join(build_id);
+    let dest = gen_root.join("dist");
+    if !dest.is_dir() {
+        std::fs::create_dir_all(&gen_root)
+            .map_err(|e| gen_err("SKW-RETAIN", format!("mkdir {}: {e}", gen_root.display())))?;
+        copy_tree_linked(&dist, &dest, 0)?;
+        std::fs::write(gen_root.join(RETAINED_AT), now_nanos().to_string()).map_err(|e| {
+            gen_err(
+                "SKW-RETAIN",
+                format!("stamp {}: {e}", gen_root.join(RETAINED_AT).display()),
+            )
+        })?;
+    }
+    prune_retained_generations(root, keep, build_id)?;
+    Ok(dest)
+}
+
+/// The retained build ids, newest-first: the generations directory's
+/// entries that carry BOTH a `retained-at` stamp and a `dist/` tree (a
+/// serve-only snapshot directory — `src/` without a retained dist — is
+/// not a retained build and is never listed or pruned here). Ties (two
+/// stamps in the same nanosecond) break on the id, ascending.
+///
+/// A missing or corrupt stamp file sorts as the oldest possible instant
+/// rather than failing the walk: the listing feeds `previous` and the
+/// prune bound, and one unreadable stamp must not hide the others.
+#[must_use]
+pub fn retained_generations(root: &std::path::Path) -> Vec<String> {
+    let gens = root.join(".oxide").join("generations");
+    let Ok(entries) = std::fs::read_dir(&gens) else {
+        return Vec::new();
+    };
+    let mut retained: Vec<(u128, String)> = entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter(|e| e.path().join("dist").is_dir())
+        .filter_map(|e| {
+            let id = e.file_name().to_string_lossy().into_owned();
+            let nanos: u128 = std::fs::read_to_string(e.path().join(RETAINED_AT))
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0);
+            Some((nanos, id))
+        })
+        .collect();
+    retained.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    retained.into_iter().map(|(_, id)| id).collect()
+}
+
+/// Prune the retained dist copies past the `keep` bound: the newest
+/// `keep.max(1)` copies survive (the current build's own copy is the
+/// newest by construction), the rest lose their `dist/` trees. The
+/// generation DIRECTORIES stay — a serve snapshot's `src/` beside a
+/// pruned copy belongs to a live demoted generation and is never this
+/// walk's business.
+///
+/// # Errors
+///
+/// [`SKW-RETAIN`] when a victim tree cannot be removed.
+fn prune_retained_generations(
+    root: &std::path::Path,
+    keep: u32,
+    current_id: &str,
+) -> Result<(), OxideError> {
+    let keep = usize::try_from(keep.max(1)).unwrap_or(1);
+    let gens = root.join(".oxide").join("generations");
+    for victim in retained_generations(root).into_iter().skip(keep) {
+        if victim == current_id {
+            continue;
+        }
+        std::fs::remove_dir_all(gens.join(&victim).join("dist")).map_err(|e| {
+            gen_err(
+                "SKW-RETAIN",
+                format!("prune {}: {e}", gens.join(&victim).join("dist").display()),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Resolve a generation selector to its retained `dist/` tree. `previous`
+/// names the newest retained build whose id differs from `current_id`
+/// (the spec's "`oxide start --generation previous`"); any other spelling
+/// must name a retained build id exactly.
+///
+/// # Errors
+///
+/// [`SKW-GEN`] when the selector is not a generation name (empty, or a
+/// path-shaped traversal attempt — the trust boundary is the generations
+/// directory itself), when nothing was retained yet, or when the named
+/// build id carries no retained copy.
+pub fn resolve_generation(
+    root: &std::path::Path,
+    spec: &str,
+    current_id: Option<&str>,
+) -> Result<PathBuf, OxideError> {
+    let path_shaped = spec.is_empty()
+        || spec == "."
+        || spec == ".."
+        || spec.contains('/')
+        || spec.contains('\\')
+        || spec.contains('\0');
+    if path_shaped {
+        return Err(gen_err(
+            "SKW-GEN",
+            format!(
+                "`{spec}` is not a generation selector: `previous` or a build id (no path segments)"
+            ),
+        ));
+    }
+    let gens = root.join(".oxide").join("generations");
+    if spec == "previous" {
+        let retained = retained_generations(root);
+        let target = retained
+            .into_iter()
+            .find(|id| current_id != Some(id.as_str()))
+            .ok_or_else(|| {
+                gen_err(
+                    "SKW-GEN",
+                    match current_id {
+                        Some(current) => format!(
+                            "no previous generation is retained besides the current build {current}"
+                        ),
+                        None => "no generation is retained yet — build once first".to_string(),
+                    },
+                )
+            })?;
+        return Ok(gens.join(target).join("dist"));
+    }
+    let dest = gens.join(spec).join("dist");
+    if !dest.is_dir() {
+        let retained = retained_generations(root).join(", ");
+        let hint = if retained.is_empty() {
+            "nothing is retained yet — build once first".to_string()
+        } else {
+            format!("retained: {retained}")
+        };
+        return Err(gen_err(
+            "SKW-GEN",
+            format!("no retained generation `{spec}` ({hint})"),
+        ));
+    }
+    Ok(dest)
+}
+
+/// Swap a retained generation's `dist/` tree into the live
+/// `<root>/dist` (§V2-F10 step 4: "`oxide rollback` repoints `dist`
+/// ... No rebuild"). The live tree is retired under the generations
+/// store first, the target renamed into its place (same filesystem —
+/// one atomic `rename`), the retired tree removed. A failed swap
+/// restores the live tree before returning.
+///
+/// Re-pointing at the build `dist/` already serves is a no-op: the
+/// idempotent re-deploy never disturbs the served bytes. The target must
+/// live inside the generations store and carry a `build-id` stamp.
+///
+/// # Errors
+///
+/// [`SKW-GEN`] when the target is outside the generations store or
+/// carries no build id; [`SKW-RETAIN`] when a rename fails (the live
+/// tree is restored first).
+pub fn repoint_dist_to_generation(
+    root: &std::path::Path,
+    gen_dist: &std::path::Path,
+) -> Result<(), OxideError> {
+    let gens = root.join(".oxide").join("generations");
+    if !gen_dist.starts_with(&gens) {
+        return Err(gen_err(
+            "SKW-GEN",
+            format!(
+                "{} is not a retained generation tree (the swap only moves trees out of {})",
+                gen_dist.display(),
+                gens.display()
+            ),
+        ));
+    }
+    let Some(target_id) = oxide_fw_cache::read_build_id(gen_dist) else {
+        return Err(gen_err(
+            "SKW-GEN",
+            format!("{} carries no build-id stamp", gen_dist.display()),
+        ));
+    };
+    let dist = root.join("dist");
+    if oxide_fw_cache::read_build_id(&dist).as_deref() == Some(target_id.as_str()) {
+        return Ok(());
+    }
+    let retire = gens.join(format!(".retiring-{}-{}", std::process::id(), now_nanos()));
+    let had_live = dist.is_dir();
+    if had_live {
+        std::fs::rename(&dist, &retire)
+            .map_err(|e| gen_err("SKW-RETAIN", format!("retire {}: {e}", dist.display())))?;
+    }
+    match std::fs::rename(gen_dist, &dist) {
+        Ok(()) => {
+            if had_live {
+                let _ = std::fs::remove_dir_all(&retire);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if had_live {
+                let _ = std::fs::rename(&retire, &dist);
+            }
+            Err(gen_err(
+                "SKW-RETAIN",
+                format!(
+                    "swap {} -> {}: {e} (the live dist was restored)",
+                    gen_dist.display(),
+                    dist.display()
+                ),
+            ))
+        }
+    }
 }
 
 /// The §V2-F10 step-3 expiry task: every 30 s the expired demotions are
