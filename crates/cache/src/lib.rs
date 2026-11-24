@@ -85,6 +85,14 @@ pub mod s3_handler;
 #[cfg_attr(docsrs, doc(cfg(feature = "s3")))]
 pub use s3_handler::S3CacheHandler;
 
+/// §V2-E09: the edge KV cache handler — the A10 family's member over the
+/// worker template's `env.OXIDE_KV` shape (flat keys, opaque bytes, an
+/// optional expiry), tags via a KV index key per tag with a size cap,
+/// documented best effort. No feature gate: the seam is injected, the
+/// handler adds no client dependency.
+pub mod kv_handler;
+pub use kv_handler::{KvCacheHandler, KvStore};
+
 use blake3::Hasher;
 use oxide_fw_diagnostics::{Diagnostic, OxideError};
 use serde::{Deserialize, Serialize};
