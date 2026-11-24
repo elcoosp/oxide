@@ -1,0 +1,459 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling oxide-fw-diagnostics v0.17.0 (/home/z/my-project/oxide/crates/diagnostics)
+    Finished `test` profile [unoptimized] target(s) in 0.34s
+     Running unittests src/lib.rs (target/debug/build/oxide-fw-dev/f90a22b4deaac027/out/oxide_fw_dev-f90a22b4deaac027)
+
+running 57 tests
+test boundary::tests::full_reload_diagnostic_is_a_warning_with_the_dev_hmr_code ... ok
+test boundary::tests::self_accept_scans_the_call_not_the_module_system ... ok
+test boundary::tests::plan_update_is_sorted_and_deduped_for_diamond_graphs ... ok
+test dev_server::tests::dev_cert_is_pem_and_covers_localhost ... ok
+test dev_server::tests::local_url_shape ... ok
+test dev_server::tests::network_url_is_scheme_correct_when_present ... ok
+test dev_server::tests::proxy_longest_prefix_wins ... ok
+test dev_server::tests::proxy_matches_prefix_at_segment_boundary ... ok
+test dev_server::tests::proxy_no_rules_returns_none ... ok
+test dev_server::tests::proxy_preserves_query ... ok
+test dev_server::tests::proxy_strip_prefix ... ok
+test dev_server::tests::proxy_target_trailing_slash_is_normalised ... ok
+test dev_server::tests::dev_cert_is_deterministic_in_shape_across_calls ... ok
+test dev_server::tests::qr_renders_multiple_lines_of_block_characters ... ok
+test esm_module_update_tests::wire_v1_entry_accepted_path_deserializes_default ... ok
+test esm_module_update_tests::wire_v1_entry_roundtrips_with_accepted_path ... ok
+test state::tests::wire_spelling_is_internally_tagged_on_policy ... ok
+test tests::classify_event_created_layout_is_structural ... ok
+test tests::classify_event_delegates_for_css ... ok
+test tests::classify_event_delegates_for_non_page_server_module ... ok
+test tests::classify_event_delegates_for_page_server_loader ... ok
+test tests::classify_event_modified_layout_is_component ... ok
+test tests::classify_event_modified_page_is_component ... ok
+test tests::classify_event_modified_route_ts_stays_structural ... ok
+test tests::classify_event_modified_socket_stays_structural ... ok
+test tests::classify_event_outside_routes_is_component ... ok
+test tests::classify_event_removed_layout_is_structural ... ok
+test dev_server::tests::qr_is_deterministic_for_same_input ... ok
+test tests::classify_event_true_created_on_brand_new_file_is_structural ... ok
+test tests::from_json_warns_and_returns_none_on_bad_frames ... ok
+test tests::hmr_behavior_matches_spec_strategy_table ... ok
+test tests::hmr_hub_broadcasts_to_two_subscribers ... ok
+test tests::hmr_messages_roundtrip_through_json_all_variants ... ok
+test tests::hmr_wire_v1_frame_survives_a_pretty_json_object_path ... ok
+test tests::hmr_wire_v1_rejects_the_retired_wire ... ok
+test tests::inspector_renders_live_and_generation_tables ... ok
+test tests::inspector_renders_waterfalls ... ok
+test tests::inspector_state_carries_live_and_generation_rows ... ok
+test tests::inspector_state_roundtrips_through_json ... ok
+test tests::notify_backend_reports_a_real_change ... ok
+test tests::overlay_payload_serializes_the_diagnostic ... ok
+test tests::poll_lists_removed_before_other_events_and_sorts_by_path ... ok
+test tests::poll_reports_created_then_noop_on_unchanged_content ... ok
+test tests::poll_reports_modified_only_when_content_hash_changes ... ok
+test tests::poll_skips_git_node_modules_oxide_and_target_dirs ... ok
+test tests::record_staged_merges_by_request_id ... ok
+test tests::record_staged_settle_first_still_merges ... ok
+test tests::render_inspector_html_escapes_and_lists_routes ... ok
+test tests::route_table_inspector_from_router_table ... ok
+test tests::route_table_inspector_wires_live_and_generation_rows ... ok
+test tests::schema_mismatch_diagnostic_is_dev_hmr_003 ... ok
+test tests::try_from_json_is_the_fallible_decode_seam ... ok
+test tests::try_to_json_is_the_fallible_seal_of_the_same_wire_bytes ... ok
+test tests::update_frame_is_the_singular_and_the_batch_alike ... ok
+test tests::wire_helpers_stamp_entries_deterministically ... ok
+test tests::wire_v1_update_entry_spells_the_spec_fields ... ok
+test tests::classify_event_spurious_created_on_existing_file_is_modified ... ok
+
+test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+     Running tests/boundary_tdd.rs (target/debug/build/oxide-fw-dev/a5a1b4daf4b03151/out/boundary_tdd-a5a1b4daf4b03151)
+
+running 21 tests
+test a_loader_change_classifies_as_data_and_walks_normally ... ok
+test a_component_change_through_the_classified_planner_keeps_the_walk ... ok
+test a_stylesheet_change_is_always_an_in_place_swap_even_orphaned ... ok
+test a_stylesheet_in_the_accepting_set_plans_as_its_own_boundary ... ok
+test an_entry_that_is_also_self_accepting_stops_as_a_boundary ... ok
+test an_import_cycle_without_a_boundary_yields_an_empty_update ... ok
+test an_orphan_module_is_a_full_reload_not_imported ... ok
+test changed_module_that_self_accepts_is_its_own_boundary ... ok
+test changed_path_types_flow_through_plan_unchanged ... ok
+test css_orphan_diagnostic_is_a_warning_with_the_dev_hmr_002_code ... ok
+test css_self_accepts_covers_the_style_extensions_only ... ok
+test entry_module_reached_without_a_boundary_is_a_full_reload ... ok
+test full_reload_diagnostic_carries_code_and_fix_help ... ok
+test multiple_boundaries_are_sorted_and_deduped ... ok
+test plan_classified_is_deterministic_across_calls ... ok
+test plan_is_deterministic_regardless_of_importer_order ... ok
+test source_self_accepts_recognizes_the_hot_accept_registration ... ok
+test the_watcher_change_kind_maps_onto_the_wire_kind ... ok
+test update_kind_wire_spellings_are_the_spec_verbatim_kinds ... ok
+test walk_continues_through_non_boundary_importers ... ok
+test walk_stops_at_the_first_self_accepting_importer ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/frames_tdd.rs (target/debug/build/oxide-fw-dev/7f8fb2c0c4494a24/out/frames_tdd-7f8fb2c0c4494a24)
+
+running 9 tests
+test approx_column_maps_to_the_token ... ok
+test already_mapped_frames_never_remap ... ok
+test frameless_payload_is_byte_identical ... ok
+test mapper_trait_object_shape ... ok
+test no_maps_is_the_pass_through_default ... ok
+test hmr_error_frame_roundtrips_mapped_frames ... ok
+test payload_carries_source_mapped_frames ... ok
+test pre_frames_payloads_decode ... ok
+test unmapped_frames_pass_through_honestly ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/inspector_modules_tdd.rs (target/debug/build/oxide-fw-dev/9b3a43fbc75cacd0/out/inspector_modules_tdd-9b3a43fbc75cacd0)
+
+running 14 tests
+test a_blank_query_is_every_row_and_a_miss_is_no_rows ... ok
+test html_renders_the_modules_table_with_counts_and_escape ... ok
+test html_treats_a_blank_query_as_no_query ... ok
+test html_with_a_query_renders_only_the_matching_rows_and_the_count_note ... ok
+test html_without_a_query_renders_every_module_row ... ok
+test render_inspector_html_is_the_no_query_render ... ok
+test search_is_case_insensitive ... ok
+test search_matches_an_importer_path_substring ... ok
+test search_matches_the_module_path_substring ... ok
+test search_over_an_empty_graph_is_empty ... ok
+test search_preserves_the_sorted_input_order ... ok
+test the_default_state_stays_honest_with_no_graph ... ok
+test with_module_graph_wires_the_rows_into_the_state ... ok
+test the_searched_state_shape_is_unchanged_on_the_wire ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration.rs (target/debug/build/oxide-fw-dev/d217ad0d6d92b17a/out/integration-d217ad0d6d92b17a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/server_lib_tdd.rs (target/debug/build/oxide-fw-dev/16b97554092f5308/out/server_lib_tdd-16b97554092f5308)
+
+running 13 tests
+test a_failed_load_refuses_and_keeps_the_previous_mount ... ok
+test a_failed_build_refuses_and_keeps_the_previous_mount ... ok
+test bindings_from_types_maps_the_payload_and_sorts_by_id ... ok
+test cargo_failure_is_a_coded_dev_rfn_001_with_the_stderr_tail ... ignored, runs a real `cargo build` (the spec's fixture rule: `#[ignore]` in the quick profile)
+test bindings_from_types_refuses_a_corrupt_payload_with_dev_rfn_002 ... ok
+test poll_once_builds_loads_and_swaps_on_a_server_rs_edit ... ok
+test poll_once_ignores_target_output_and_plain_sources ... ok
+test the_event_filter_is_exactly_the_spec_watch_set ... ok
+test poll_once_is_none_without_a_relevant_change ... ok
+test the_loop_hands_the_loader_the_built_artifact_and_the_mount_dir ... ok
+test the_real_loop_swaps_a_rebuilt_cdylib ... ignored, runs real `cargo build`s (the spec's fixture rule: `#[ignore]` in the quick profile)
+test the_loop_swaps_a_real_host_and_the_new_behavior_serves ... ok
+test the_watcher_feed_carries_the_server_rs_edit ... ok
+
+test result: ok. 11 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/state_tdd.rs (target/debug/build/oxide-fw-dev/d230ffb6d00fa5d4/out/state_tdd-d230ffb6d00fa5d4)
+
+running 7 tests
+test a_clear_verdict_serializes_its_reason ... ok
+test a_pre_substrate_frame_decodes_to_keep ... ok
+test default_policy_clears_state_on_a_full_reload_with_the_planners_reason ... ok
+test default_policy_keeps_state_on_a_boundary_update ... ok
+test preservation_defaults_to_keep ... ok
+test the_policy_seam_is_injectable ... ok
+test update_frame_carries_the_preserve_verdict_through_the_wire ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/workspace_tdd.rs (target/debug/build/oxide-fw-dev/8efbc11c6b205e0b/out/workspace_tdd-8efbc11c6b205e0b)
+
+running 11 tests
+test a_malformed_workspace_manifest_is_a_loud_dev_ws_001 ... ok
+test a_non_workspace_app_yields_no_links ... ok
+test a_candidate_outside_the_workspace_globs_is_not_a_link ... ok
+test a_workspace_package_the_app_does_not_depend_on_is_not_a_link ... ok
+test linked_package_is_cloneable_and_comparable_for_the_wiring ... ok
+test an_uninstalled_workspace_dependency_is_skipped_loudly_not_fatal ... ok
+test links_resolve_the_real_package_root_not_the_node_modules_link ... ok
+test links_are_sorted_by_name_for_deterministic_roots ... ok
+test real_path_canonicalizes_through_the_node_modules_link ... ok
+test the_package_json_workspaces_shape_discovers_too ... ok
+test watcher_roots_gain_the_linked_packages_source_dirs ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/build/oxide-fw-diagnostics/6fc3dc2aef1d4500/out/oxide_fw_diagnostics-6fc3dc2aef1d4500)
+
+running 9 tests
+test diagnostic_display_includes_code_frame ... ok
+test display_renders_the_stack_frames ... ok
+test push_frame_builds_the_stack_in_order ... ok
+test diagnostic_frames_are_additive_and_skip_while_empty ... ok
+test render_code_frame_formats_with_gutter ... ok
+test render_code_frame_line_only_has_no_caret ... ok
+test stack_frame_roundtrips_through_json ... ok
+test tests::diagnostic_roundtrips_through_json ... ok
+test tests::display_includes_code_and_fix ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration.rs (target/debug/build/oxide-fw-diagnostics/90946c0a57b39ddd/out/integration-90946c0a57b39ddd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lint_uniformity.rs (target/debug/build/oxide-fw-diagnostics/87c5fac521a74ba9/out/lint_uniformity-87c5fac521a74ba9)
+
+running 5 tests
+test lints_table_body_finds_the_bare_header ... ok
+test lints_table_body_flags_a_bare_header ... ok
+test lints_table_body_flags_a_missing_table ... ok
+test lints_table_body_flags_an_override_subtable ... ok
+test every_workspace_member_inherits_the_workspace_lint_policy ... FAILED
+
+failures:
+
+---- every_workspace_member_inherits_the_workspace_lint_policy stdout ----
+
+thread 'every_workspace_member_inherits_the_workspace_lint_policy' (11594) panicked at crates/diagnostics/tests/lint_uniformity.rs:203:5:
+workspace lint-policy drift — these members do not inherit `[lints] workspace = true` (the one workspace lint contract; see crates/diagnostics/tests/lint_uniformity.rs and the root Cargo.toml's [workspace.lints]). Fix each by replacing its [lints] table with:
+  [lints]
+  workspace = true
+
+Offenders:
+  - crates/server: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+  - crates/cache: bare [lints] table (header only, no `workspace = true`) — the crate opts out of the workspace lint policy
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    every_workspace_member_inherits_the_workspace_lint_policy
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p oxide-fw-diagnostics --test lint_uniformity`
+=== benches test-mode:
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling oxide-fw-dev v0.17.0 (/home/z/my-project/oxide/crates/dev)
+    Finished `test` profile [unoptimized] target(s) in 2.80s
+     Running unittests src/lib.rs (target/debug/build/oxide-fw-dev/f90a22b4deaac027/out/oxide_fw_dev-f90a22b4deaac027)
+
+running 57 tests
+test boundary::tests::full_reload_diagnostic_is_a_warning_with_the_dev_hmr_code ... ok
+test boundary::tests::self_accept_scans_the_call_not_the_module_system ... ok
+test boundary::tests::plan_update_is_sorted_and_deduped_for_diamond_graphs ... ok
+test dev_server::tests::dev_cert_is_pem_and_covers_localhost ... ok
+test dev_server::tests::local_url_shape ... ok
+test dev_server::tests::network_url_is_scheme_correct_when_present ... ok
+test dev_server::tests::proxy_longest_prefix_wins ... ok
+test dev_server::tests::proxy_matches_prefix_at_segment_boundary ... ok
+test dev_server::tests::proxy_no_rules_returns_none ... ok
+test dev_server::tests::proxy_preserves_query ... ok
+test dev_server::tests::proxy_strip_prefix ... ok
+test dev_server::tests::proxy_target_trailing_slash_is_normalised ... ok
+test dev_server::tests::dev_cert_is_deterministic_in_shape_across_calls ... ok
+test dev_server::tests::qr_renders_multiple_lines_of_block_characters ... ok
+test esm_module_update_tests::wire_v1_entry_accepted_path_deserializes_default ... ok
+test esm_module_update_tests::wire_v1_entry_roundtrips_with_accepted_path ... ok
+test state::tests::wire_spelling_is_internally_tagged_on_policy ... ok
+test tests::classify_event_created_layout_is_structural ... ok
+test tests::classify_event_delegates_for_css ... ok
+test tests::classify_event_delegates_for_non_page_server_module ... ok
+test tests::classify_event_delegates_for_page_server_loader ... ok
+test tests::classify_event_modified_layout_is_component ... ok
+test tests::classify_event_modified_page_is_component ... ok
+test tests::classify_event_modified_route_ts_stays_structural ... ok
+test tests::classify_event_modified_socket_stays_structural ... ok
+test tests::classify_event_outside_routes_is_component ... ok
+test tests::classify_event_removed_layout_is_structural ... ok
+test dev_server::tests::qr_is_deterministic_for_same_input ... ok
+test tests::classify_event_true_created_on_brand_new_file_is_structural ... ok
+test tests::from_json_warns_and_returns_none_on_bad_frames ... ok
+test tests::hmr_behavior_matches_spec_strategy_table ... ok
+test tests::hmr_hub_broadcasts_to_two_subscribers ... ok
+test tests::hmr_messages_roundtrip_through_json_all_variants ... ok
+test tests::hmr_wire_v1_frame_survives_a_pretty_json_object_path ... ok
+test tests::hmr_wire_v1_rejects_the_retired_wire ... ok
+test tests::inspector_renders_live_and_generation_tables ... ok
+test tests::inspector_renders_waterfalls ... ok
+test tests::inspector_state_carries_live_and_generation_rows ... ok
+test tests::inspector_state_roundtrips_through_json ... ok
+test tests::notify_backend_reports_a_real_change ... ok
+test tests::overlay_payload_serializes_the_diagnostic ... ok
+test tests::poll_lists_removed_before_other_events_and_sorts_by_path ... ok
+test tests::poll_reports_created_then_noop_on_unchanged_content ... ok
+test tests::poll_reports_modified_only_when_content_hash_changes ... ok
+test tests::poll_skips_git_node_modules_oxide_and_target_dirs ... ok
+test tests::record_staged_merges_by_request_id ... ok
+test tests::record_staged_settle_first_still_merges ... ok
+test tests::render_inspector_html_escapes_and_lists_routes ... ok
+test tests::route_table_inspector_from_router_table ... ok
+test tests::route_table_inspector_wires_live_and_generation_rows ... ok
+test tests::schema_mismatch_diagnostic_is_dev_hmr_003 ... ok
+test tests::try_from_json_is_the_fallible_decode_seam ... ok
+test tests::try_to_json_is_the_fallible_seal_of_the_same_wire_bytes ... ok
+test tests::update_frame_is_the_singular_and_the_batch_alike ... ok
+test tests::wire_helpers_stamp_entries_deterministically ... ok
+test tests::wire_v1_update_entry_spells_the_spec_fields ... ok
+test tests::classify_event_spurious_created_on_existing_file_is_modified ... ok
+
+test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+     Running benches/boundary.rs (target/debug/build/oxide-fw-dev/b2b61a397f4a51b0/out/boundary-b2b61a397f4a51b0)
+Testing boundary_deep_chain/10
+Success
+Testing boundary_deep_chain/50
+Success
+Testing boundary_deep_chain/200
+Success
+
+Testing boundary_wide_fanout/10
+Success
+Testing boundary_wide_fanout/100
+Success
+
+Testing boundary_diamond/shared_top_boundary
+Success
+
+Testing boundary_reload_fallback/orphan_module
+Success
+
+Testing boundary_css_terminal/orphan_stylesheet_collapse
+Success
+
+Testing boundary_css_edge/stylesheet_own_boundary
+Success
+
+Testing boundary_classified_js/deep_chain_50_js
+Success
+
+     Running benches/frames.rs (target/debug/build/oxide-fw-dev/eb12136677bb452d/out/frames-eb12136677bb452d)
+Testing map_frame/stack/1
+Success
+Testing map_frame/stack/8
+Success
+Testing map_frame/no_maps
+Success
+
+Testing payload/with_maps
+Success
+Testing payload/plain
+Success
+
+     Running benches/hmr_wire.rs (target/debug/build/oxide-fw-dev/c398fb8e6bce42d0/out/hmr_wire-c398fb8e6bce42d0)
+Testing wire_encode/1
+Success
+Testing wire_encode/16
+Success
+Testing wire_encode/64
+Success
+
+Testing wire_decode/1
+Success
+Testing wire_decode/16
+Success
+Testing wire_decode/64
+Success
+
+Testing encode_full_reload
+Success
+
+Testing encode_ox_data
+Success
+
+     Running benches/inspector.rs (target/debug/build/oxide-fw-dev/127487a0013e47b6/out/inspector-127487a0013e47b6)
+Testing inspector_state/64
+Success
+Testing inspector_state/256
+Success
+
+Testing inspector_html/64
+Success
+Testing inspector_html/256
+Success
+
+Testing module_search/256
+Success
+Testing module_search/1024
+Success
+
+Testing inspector_html_search/256
+Success
+Testing inspector_html_search/1024
+Success
+
+     Running benches/server_lib.rs (target/debug/build/oxide-fw-dev/5405fd0bb185e92c/out/server_lib-5405fd0bb185e92c)
+Testing server_lib_loop/poll_idle/8
+Success
+Testing server_lib_loop/poll_idle/32
+Success
+Testing server_lib_loop/step/16
+Success
+
+Testing server_lib_swap/bindings/4
+Success
+Testing server_lib_swap/bindings/16
+Success
+
+Testing bindings_from_types/16_fns
+Success
+
+Testing server_lib_filter/server_module
+Success
+Testing server_lib_filter/plain_source
+Success
+
+     Running benches/state.rs (target/debug/build/oxide-fw-dev/ace95aa36292c395/out/state-ace95aa36292c395)
+Testing state_preservation/verdict_batch/1
+Success
+Testing state_preservation/verdict_batch/16
+Success
+Testing state_preservation/verdict_batch/64
+Success
+Testing state_preservation/verdict_full_reload
+Success
+Testing state_preservation/verdict_serde
+Success
+
+     Running benches/workspace.rs (target/debug/build/oxide-fw-dev/f2ef91549830478f/out/workspace-f2ef91549830478f)
+Testing workspace_links/discovery/8
+Success
+Testing workspace_links/discovery/16
+Success
+Testing workspace_links/real_path
+Success
+
+=== example:
+  at src/components/counter.tsx:10:9 (Counter) [source]
+  at node_modules/.vite/deps/react.js:41:9 (?) [generated]
+
+success: the pooled error's stack names src/components/counter.tsx
+=== bench real:
+Benchmarking map_frame/stack/1
+Benchmarking map_frame/stack/1: Warming up for 1.0000 s
+Benchmarking map_frame/stack/1: Collecting 100 samples in estimated 2.0094 s (561k iterations)
+Benchmarking map_frame/stack/1: Analyzing
+map_frame/stack/1       time:   [3.5840 µs 3.5866 µs 3.5893 µs]
+Benchmarking map_frame/stack/8
+Benchmarking map_frame/stack/8: Warming up for 1.0000 s
+Benchmarking map_frame/stack/8: Collecting 100 samples in estimated 2.0318 s (71k iterations)
+Benchmarking map_frame/stack/8: Analyzing
+map_frame/stack/8       time:   [28.466 µs 28.483 µs 28.502 µs]
+Benchmarking map_frame/no_maps
+Benchmarking map_frame/no_maps: Warming up for 1.0000 s
+Benchmarking map_frame/no_maps: Collecting 100 samples in estimated 2.0001 s (2.8M iterations)
+Benchmarking map_frame/no_maps: Analyzing
+map_frame/no_maps       time:   [711.06 ns 711.47 ns 711.85 ns]
+Benchmarking payload/with_maps
+Benchmarking payload/with_maps: Warming up for 1.0000 s
+Benchmarking payload/with_maps: Collecting 100 samples in estimated 2.1196 s (71k iterations)
+Benchmarking payload/with_maps: Analyzing
+payload/with_maps       time:   [29.930 µs 30.381 µs 30.987 µs]
+Benchmarking payload/plain
+Benchmarking payload/plain: Warming up for 1.0000 s
+Benchmarking payload/plain: Collecting 100 samples in estimated 2.0033 s (874k iterations)
+Benchmarking payload/plain: Analyzing
+payload/plain           time:   [2.2871 µs 2.2888 µs 2.2908 µs]
