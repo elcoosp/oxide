@@ -326,12 +326,68 @@ pub(crate) fn build_js_plugin_hook(
 // the order the config declares them.
 //
 // This is the infrastructure §15-B hooks the bundler and prerender
-// pipeline against; the wiring itself (BundleOptions.resolve_hook etc.)
-// lands in a follow-up commit.
-pub(crate) fn build_transform_hook(
-    root: &Path,
-    cfg: &OxideConfig,
-) -> Option<oxide_fw_bundler::TransformHook> {
+// pipeline against; the WASM host's arm (`build_wasm_load_resolve_hooks`)
+// rides the same pass, and the build/dev call sites compose every arm
+// into `BundleOptions.load_hook`/`resolve_hook` beside the JS bridge.
+
+/// The `WasmPluginManifest` one config plugin entry parses into. Shared by
+/// the transform wire and the §V2-E05 load/resolveId wire so both read the
+/// SAME `kind: wasm` shape (`path`, `name`, `witWorld`, `capabilities`,
+/// `hooks` — the transform/load/resolveId spellings).
+fn wasm_plugin_manifest_from_entry(p: &serde_json::Value) -> oxide_fw_plugin::WasmPluginManifest {
+    oxide_fw_plugin::WasmPluginManifest {
+        name: p
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("wasm-plugin")
+            .to_string(),
+        wit_world: p
+            .get("witWorld")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        capabilities: p
+            .get("capabilities")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        hooks: p
+            .get("hooks")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| match s {
+                        "transform" => Some(oxide_fw_plugin::Hook::Transform),
+                        "load" => Some(oxide_fw_plugin::Hook::Load),
+                        "resolveId" | "resolve_id" => Some(oxide_fw_plugin::Hook::ResolveId),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// One `kind: wasm` entry that passed confinement and loaded: the
+/// instantiated component plus the absolute path it came from (the
+/// diagnostics' subject). A broken entry never reaches this — the loader
+/// warns and skips (the documented degrade-not-fail posture).
+struct LoadedWasmPlugin {
+    plugin: std::sync::Arc<std::sync::Mutex<oxide_fw_plugin::WasmPlugin>>,
+}
+
+/// Load every `kind: wasm` entry the config declares, in declaration
+/// order, with the load-time probe done once. Broken entries (no path,
+/// confinement refusal, unreadable file, `PLG-*` load failure) warn on
+/// stderr and drop out — a broken plugin never fails a build, matching
+/// the transform wire's documented posture.
+fn load_wasm_plugins(root: &Path, cfg: &OxideConfig) -> Vec<LoadedWasmPlugin> {
+    let mut loaded = Vec::new();
     for p in &cfg.plugins {
         let kind = p.get("kind").and_then(|v| v.as_str());
         if kind != Some("wasm") {
@@ -348,46 +404,11 @@ pub(crate) fn build_transform_hook(
             eprintln!("warn: wasm plugin {} not readable; skipping", abs.display());
             continue;
         };
-
-        let manifest = oxide_fw_plugin::WasmPluginManifest {
-            name: p
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("wasm-plugin")
-                .to_string(),
-            wit_world: p
-                .get("witWorld")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            capabilities: p
-                .get("capabilities")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            hooks: p
-                .get("hooks")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str())
-                        .filter_map(|s| match s {
-                            "transform" => Some(oxide_fw_plugin::Hook::Transform),
-                            "load" => Some(oxide_fw_plugin::Hook::Load),
-                            "resolveId" | "resolve_id" => Some(oxide_fw_plugin::Hook::ResolveId),
-                            _ => None,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-        };
-
-        let plugin = match oxide_fw_plugin::WasmPlugin::load(&bytes, manifest, Some(&abs)) {
-            Ok(p) => p,
+        let manifest = wasm_plugin_manifest_from_entry(p);
+        match oxide_fw_plugin::WasmPlugin::load(&bytes, manifest, Some(&abs)) {
+            Ok(plugin) => loaded.push(LoadedWasmPlugin {
+                plugin: std::sync::Arc::new(std::sync::Mutex::new(plugin)),
+            }),
             Err(e) => {
                 eprintln!(
                     "warn: wasm plugin {} failed to load: {} {}; skipping",
@@ -395,17 +416,27 @@ pub(crate) fn build_transform_hook(
                     e.0.code,
                     e.0.message
                 );
-                continue;
             }
-        };
+        }
+    }
+    loaded
+}
+
+pub(crate) fn build_transform_hook(
+    root: &Path,
+    cfg: &OxideConfig,
+) -> Option<oxide_fw_bundler::TransformHook> {
+    for loaded in load_wasm_plugins(root, cfg) {
+        let plugin = std::sync::Arc::clone(&loaded.plugin);
         // Only a plugin that declares *and* exports `transform` gets a hook.
-        if !plugin
+        let has_transform = plugin
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
             .available_hooks()
-            .contains(&oxide_fw_plugin::Hook::Transform)
-        {
+            .contains(&oxide_fw_plugin::Hook::Transform);
+        if !has_transform {
             continue;
         }
-        let plugin = std::sync::Mutex::new(plugin);
         return Some(oxide_fw_bundler::TransformHook::new_code(
             move |_id, source| {
                 // `call_string_hook` takes `&mut self` (the store is stateful);
@@ -419,6 +450,78 @@ pub(crate) fn build_transform_hook(
     None
 }
 
+/// §V2-E05: the WASM `resolveId`/`load` wire — the recorded remaining half
+/// of the E05 row ("the CLI wire that feeds the host into the bundler's
+/// `BundleOptions.load_hook`/`resolve_hook`"). Every `kind: wasm` entry
+/// that declares AND exports a hook joins that hook's chain in config
+/// order; the FIRST non-declining answer wins (the Vite convention the JS
+/// bridge pins), a decline (`None`) passes to the next plugin and then to
+/// the bundler's default resolver / disk read, and a trap propagates as
+/// the `BLD-PLUGIN` diagnostic the bundler's hook arms already raise. A
+/// component whose manifest declares a hook it does not export never
+/// joins that chain (the load-time probe's verdict), so the wire cannot
+/// error on a hook the guest cannot run.
+///
+/// The hooks are sync closures over the stateful stores (`Mutex`, the
+/// transform wire's shape); plugins are not hot enough for the lock to
+/// matter and the bundler owns the only reference.
+pub fn build_wasm_load_resolve_hooks(
+    root: &Path,
+    cfg: &OxideConfig,
+) -> (
+    Option<oxide_fw_bundler::ResolveHook>,
+    Option<oxide_fw_bundler::LoadHook>,
+) {
+    let loaded = load_wasm_plugins(root, cfg);
+    let resolvers: Vec<_> = loaded
+        .iter()
+        .filter(|l| {
+            l.plugin
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .available_hooks()
+                .contains(&oxide_fw_plugin::Hook::ResolveId)
+        })
+        .map(|l| std::sync::Arc::clone(&l.plugin))
+        .collect();
+    let loaders: Vec<_> = loaded
+        .iter()
+        .filter(|l| {
+            l.plugin
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .available_hooks()
+                .contains(&oxide_fw_plugin::Hook::Load)
+        })
+        .map(|l| std::sync::Arc::clone(&l.plugin))
+        .collect();
+
+    let resolve = (!resolvers.is_empty()).then(|| {
+        oxide_fw_bundler::ResolveHook::new(move |specifier: &str, from: &str| {
+            for plugin in &resolvers {
+                let mut guard = plugin.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(id) = guard.call_resolve_hook(specifier, from)? {
+                    return Ok(Some(std::path::PathBuf::from(id)));
+                }
+            }
+            Ok(None)
+        })
+    });
+
+    let load = (!loaders.is_empty()).then(|| {
+        oxide_fw_bundler::LoadHook::new(move |id: &str| {
+            for plugin in &loaders {
+                let mut guard = plugin.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(source) = guard.call_load_hook(id)? {
+                    return Ok(Some(source));
+                }
+            }
+            Ok(None)
+        })
+    });
+
+    (resolve, load)
+}
 pub(crate) fn load_client_assets(rootp: &Path) -> Option<oxide_fw_server::StaticAssets> {
     let dist = rootp.join("dist");
     let public = rootp.join("public");
