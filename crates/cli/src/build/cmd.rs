@@ -30,6 +30,10 @@ pub(crate) async fn cmd_build(
         return Ok(0);
     };
     phase_plan(&mut cx).await?;
+    // §V2-F08 finish: the native emission runs BEFORE the bundles — the
+    // bundle-time `.server.rs` stub hooks read the payload it writes, and
+    // the cdylib bytes it deploys join the A04 covered set.
+    phase_native(&mut cx).await?;
     phase_bundle_client(&mut cx).await?;
     phase_bundle_server(&mut cx).await?;
     phase_prerender(&mut cx).await?;
