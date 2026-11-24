@@ -297,6 +297,14 @@ thread_local! {
     /// a thread-local (not a map) is the right scope.
     static STREAM_SINK: RefCell<Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_fw_diagnostics::OxideError>>>> =
         const { RefCell::new(None) };
+
+    /// V2-A08: whether the in-flight stream call emitted anything through
+    /// [`STREAM_SINK`]. The endpoint bootstrap streams a header frame before
+    /// any body chunk, but an early `{__oxide_error}` resolution (a missing
+    /// export, a handler throw) writes nothing — the finish path then pushes
+    /// the resolved text as the first (header) chunk so the LoaderHost's
+    /// header parse surfaces the coded error instead of an empty 200.
+    static STREAM_EMITTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 thread_local! {
@@ -358,6 +366,25 @@ pub fn set_stream_sink(
     sink: Option<tokio::sync::mpsc::Sender<Result<bytes::Bytes, oxide_fw_diagnostics::OxideError>>>,
 ) {
     STREAM_SINK.with(|s| *s.borrow_mut() = sink);
+    // V2-A08: each call starts with a clean emitted flag (see
+    // [`finish_stream_call`]).
+    STREAM_EMITTED.with(|e| e.set(false));
+}
+
+/// V2-A08: after the stream call's promise resolves, push its return value
+/// as the first chunk when nothing was emitted (an early
+/// `{__oxide_error}` exit — or a status-carrying envelope — that skipped
+/// the header frame). The LoaderHost's header-frame parse turns the pushed
+/// JSON into the coded error / envelope outcome instead of an empty 200.
+pub(crate) fn finish_stream_call(resolved: String) {
+    let emitted = STREAM_EMITTED.with(|e| e.get());
+    if emitted || resolved.is_empty() {
+        return;
+    }
+    let tx = STREAM_SINK.with(|s| s.borrow().clone());
+    if let Some(tx) = tx {
+        let _ = tx.try_send(Ok(bytes::Bytes::from(resolved)));
+    }
 }
 
 /// `oxide.streamWrite(id, bytes)` — push one render chunk to the host. Returns
@@ -376,6 +403,9 @@ pub async fn op_oxide_stream_write(#[string] data_b64: String) -> String {
     let data = base64::engine::general_purpose::STANDARD
         .decode(&data_b64)
         .unwrap_or_default();
+    // V2-A08: record that this call's stream produced bytes, so the finish
+    // path never appends the promise's return value behind real chunks.
+    STREAM_EMITTED.with(|e| e.set(true));
     // AWAIT the send: backpressure. A `try_send` would DROP the tail of a fast
     // render when the consumer is momentarily behind — silent data loss.
     if tx.send(Ok(bytes::Bytes::from(data))).await.is_ok() {
