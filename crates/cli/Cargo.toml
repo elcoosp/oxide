@@ -104,6 +104,14 @@ name = "module_api"
 harness = false
 required-features = ["bench-util"]
 
+# The §V2-F08 finish's cost benches — the live-host consult path, the
+# bundle-time `.server.rs` stub arms and the discovery walk. Behind the
+# same `bench-util` opt-in.
+[[bench]]
+name = "native_fns"
+harness = false
+required-features = ["bench-util"]
+
 # V2-E06: the `module_add` consumer example — a V8-free end-to-end
 # walkthrough of the config edit + manifest resolution against the
 # fixture app under `tests/fixtures/analytics-app/`.
@@ -179,6 +187,9 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# The native-finish pins (native_finish_tdd) drive the consult's async
+# surface from the sync test body through the current-thread runtime.
+tokio = { workspace = true }
 # V2-F18: the perf-bisect engine benches (behind `bench-util`).
 criterion = { workspace = true }
 
