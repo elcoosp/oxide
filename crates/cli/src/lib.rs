@@ -68,6 +68,11 @@ mod audit;
 pub mod docs_gen;
 pub mod llms;
 pub mod mcp;
+// §V2-F08 finish: the CLI adoption legs — the live-host consult, the dev
+// task wiring, the `dist/native` emission and the bundle-time `.server.rs`
+// stub hooks (public: the walkthrough example and the native_finish pins
+// exercise the seams).
+pub mod native_fns;
 mod native_plugins;
 pub mod perf_bisect;
 pub mod serve;
