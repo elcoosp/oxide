@@ -1,0 +1,509 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling oxide-fw-cache v0.17.0 (/home/z/my-project/oxide/crates/cache)
+    Finished `test` profile [unoptimized] target(s) in 23.56s
+     Running unittests src/lib.rs (target/debug/build/oxide-fw-cache/446c0e367e776d2d/out/oxide_fw_cache-446c0e367e776d2d)
+
+running 63 tests
+test auth::tests::short_input_is_rejected ... ok
+test auth::tests::tampered_body_is_rejected ... ok
+test auth::tests::seal_open_roundtrip ... ok
+test auth::tests::tampered_mac_is_rejected ... ok
+test codec::tests::rejects_oversized_envelope ... ok
+test codec::tests::decodes_legacy_plain_entry ... ok
+test fanout::tests::a_fan_over_the_exporter_counts_its_rows ... ok
+test fanout::tests::an_empty_fan_delivers_nowhere ... ok
+test feed::tests::oversized_capacity_does_not_preallocate_the_bound ... ok
+test feed::tests::shared_returns_the_drainable_half ... ok
+test health::tests::a_populated_posture_renders_the_live_rows ... ok
+test health::tests::the_default_posture_renders_the_zeroed_exposition ... ok
+test health::tests::the_snapshot_round_trips_through_json ... ok
+test codec::tests::roundtrips_and_compresses_repetitive_body ... ok
+test hot_keys::tests::count_saturates_instead_of_wrapping ... ok
+test hot_keys::tests::escape_leaves_plain_values_verbatim ... ok
+test http::tests::cache_control_zero_ttl_is_no_store_even_with_swr ... ok
+test http::tests::etag_header_edge_cases ... ok
+test http::tests::http_date_roundtrips_known_rfc_value ... ok
+test http::tests::parse_http_date_accepts_unix_ms_numbers_and_rejects_garbage ... ok
+test http::tests::fetch_memo_remember_and_get_for_request ... ok
+test http_handler::tests::http_cache_handler_roundtrips ... ok
+test key_hash_tdd::key_hash_display_is_hex ... ok
+test key_hash_tdd::key_hash_is_128_bit_truncated_blake3 ... ok
+test http_handler::tests::http_handler_tampered_entry_is_a_miss ... ok
+test key_hash_tdd::tag_index_no_json_roundtrip ... ok
+test key_hash_tdd::tag_index_reverse_lookup ... ok
+test keyhash::tests::deterministic ... ok
+test keyhash::tests::every_component_participates ... ok
+test keyhash::tests::key_of_is_keyhash_hex ... ok
+test keyhash::tests::matches_canonical_display ... ok
+test keyhash::tests::prefix_free ... ok
+test metrics::tests::fresh_exporter_renders_the_zero_scrape ... ok
+test metrics::tests::saturating_byte_accounting_never_wraps ... ok
+test observer::tests::kinds_are_stable_names ... ok
+test observer::tests::tracing_observer_takes_every_row ... ok
+test redis_handler::tests::redis_roundtrip_and_tag_invalidation ... ignored, requires OXIDE_TEST_REDIS_URL
+test s3_handler::tests::s3_handler_roundtrips_with_in_memory_store ... ok
+test shard::tests::an_empty_ring_refuses_with_the_stable_code ... ok
+test shard::tests::every_component_of_the_weight_participates ... ok
+test shard::tests::the_keys_spread_across_a_four_shard_ring ... ok
+test shard::tests::the_route_is_deterministic_in_range_and_agrees_between_rings ... ok
+test single_flight::tests::acquire_owner_then_followers_then_cleanup ... ok
+test single_flight::tests::follower_slot_cleanup_is_a_no_op_publish ... ok
+test single_flight::tests::owner_guard_dropped_on_early_exit_clears_the_map ... ok
+test single_flight::tests::owner_guard_publish_delivers_and_clears ... ok
+test single_flight::tests::owner_guard_publish_returns_the_follower_count ... ok
+test single_flight::tests::owner_guard_publish_with_no_followers_returns_zero ... ok
+test tests::build_id_is_stable_16_hex_and_length_prefixed ... ok
+test tests::canonical_key_is_deterministic_and_prefix_free ... ok
+test tests::entry_freshness_windows ... ok
+test tests::err_carries_stable_code ... ok
+test tiers::tests::disk_blob_name_sanitizes_path_like_keys ... ok
+test tiers::tests::disk_delete_keeps_byte_counter_exact ... ok
+test tiers::tests::disk_hash_mismatch_is_a_miss ... ok
+test tiers::tests::disk_open_is_idempotent_and_reopens_existing_index ... ok
+test key_hash_tdd::tag_index_insert_is_o1 ... ok
+test tiers::tests::disk_rejects_entry_over_per_entry_cap ... ok
+test tiers::tests::memory_remove_and_clear_reset_accounting ... ok
+test tiers::tests::memory_replacement_updates_weight_accounting ... ok
+test tiers::tests::memory_respects_cap_under_churn ... ok
+test tiers::tests::tiered_cache_key_and_layer_helpers_available ... ok
+test tiers::tests::disk_prunes_oldest_to_stay_under_budget ... ok
+
+test result: ok. 62 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+     Running tests/build_id_tdd.rs (target/debug/build/oxide-fw-cache/bed18fa6eeb8f3ae/out/build_id_tdd-bed18fa6eeb8f3ae)
+
+running 14 tests
+test build_id_of_dist_is_stable_and_order_independent ... ok
+test covers_client_server_and_routes_manifest ... ok
+test id_is_16_hex ... ok
+test empty_trees_still_yield_a_deterministic_id ... ok
+test missing_dist_is_an_error ... ok
+test missing_routes_manifest_and_missing_server_dir_are_tolerated ... ok
+test nested_client_dirs_are_covered ... ok
+test one_changed_byte_changes_the_id ... ok
+test paths_outside_the_covered_trees_are_ignored ... ok
+test read_build_id_tolerates_surrounding_whitespace ... ok
+test stamp_over_a_missing_dist_errors_and_read_of_a_missing_file_is_none ... ok
+test stamp_writes_both_files_and_read_round_trips ... ok
+test stamp_is_idempotent_and_id_narrows_to_the_covered_set ... ok
+test the_native_dir_joins_the_covered_set_when_present ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/cache_tdd.rs (target/debug/build/oxide-fw-cache/c0e321becfb90313/out/cache_tdd-c0e321becfb90313)
+
+running 36 tests
+test cache_control_strings ... ok
+test build_id_stable_and_16_hex ... ok
+test canonical_key_deterministic_and_component_sensitive ... ok
+test conditional_response_etag_paths ... ok
+test conditional_response_if_modified_since ... ok
+test delete_cleans_tag_sets ... ok
+test disk_corrupt_blob_is_a_miss_and_self_heals ... ok
+test disk_delete_removes_blob_and_index ... ok
+test disk_open_creates_dirs_and_roundtrips_compressed ... ok
+test disk_tag_keys_track_set_and_delete ... ok
+test entry_and_policy_serialize_with_camel_case_free_stable_shape ... ok
+test fetch_memo_roundtrip_and_body_sensitivity ... ok
+test follower_drop_does_not_remove_the_owners_entry ... ok
+test fresh_stale_expired_transitions ... ok
+test invalidate_path_via_set_with_path ... ok
+test invalidate_tag_soft_vs_hard ... ok
+test memory_byte_accounting_stays_under_cap ... ok
+test memory_evicts_to_stay_under_cap ... ok
+test disk_tag_lookup ... ok
+test no_swr_means_stale_is_a_miss ... ok
+test oversize_entry_is_rejected_not_stored ... ok
+test owner_drop_clears_entry_even_with_a_live_follower ... ok
+test migrates_v1_tag_table ... ok
+test remote_read_through_and_write_through ... ok
+test retag_removes_stale_membership ... ok
+test s3_client_error_does_not_name_the_bucket ... ok
+test single_flight_coalesces_five_concurrent_acquires ... ok
+test single_flight_owner_cleanup_allows_next_owner ... ok
+test single_flight_publish_without_followers_is_fine ... ok
+test seed_inserts_and_stats_count ... ok
+test tag_insert_is_idempotent ... ok
+test tag_insert_scales ... ignored
+test tags_are_deduped_across_sets ... ok
+test tampered_sealed_entry_never_verifies ... ok
+test tier_promotion_disk_hit_promotes_to_memory ... ok
+test soft_invalidation_survives_disk_tier ... ok
+
+test result: ok. 35 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/client_inflight_tdd.rs (target/debug/build/oxide-fw-cache/61822806f18f0a68/out/client_inflight_tdd-61822806f18f0a68)
+
+running 6 tests
+test a_generous_cap_changes_no_legit_answer ... ok
+test the_default_is_unbounded_and_the_builder_carries_the_cap ... ok
+test the_probes_ride_the_same_gate ... ok
+test the_uncapped_default_runs_exchanges_concurrently ... ok
+test under_cap_one_the_second_exchange_waits_for_the_wire ... ok
+test the_deadline_bounds_the_queue_too ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/client_keepalive_tdd.rs (target/debug/build/oxide-fw-cache/bbdf6f356dd2b03d/out/client_keepalive_tdd-bbdf6f356dd2b03d)
+
+running 7 tests
+test a_close_shape_peer_still_serves_the_keepalive_client ... ok
+test a_zero_bound_never_parks_a_socket ... ok
+test keep_alive_reuses_one_connection_for_two_exchanges ... ok
+test the_default_client_still_speaks_close ... ok
+test the_default_has_no_pool_and_the_builder_carries_the_bound ... ok
+test the_shell_honors_keepalive_and_keeps_the_close_shape ... ok
+test the_deadline_bounds_the_keepalive_exchange ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/client_name_guard_tdd.rs (target/debug/build/oxide-fw-cache/f1309a88a67ad259/out/client_name_guard_tdd-f1309a88a67ad259)
+
+running 6 tests
+test a_bad_tag_refuses_the_tag_verbs ... ok
+test a_crlf_key_is_refused_before_any_wire_byte ... ok
+test the_guard_names_the_offending_byte ... ok
+test a_space_key_is_refused_before_any_wire_byte ... ok
+test the_plane_name_predicate_pins_the_table ... ok
+test utf8_and_punctuation_names_roundtrip_over_the_wire ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/client_read_limit_tdd.rs (target/debug/build/oxide-fw-cache/09da5951d35e1cdf/out/client_read_limit_tdd-09da5951d35e1cdf)
+
+running 7 tests
+test a_bounded_client_answers_legit_traffic_unchanged ... ok
+test a_terminatorless_flood_stops_at_the_cap ... ok
+test the_accessor_pins_the_read_bound_state ... ok
+test an_answer_past_the_cap_is_refused_loudly ... ok
+test the_cap_rides_the_peer_trait_object ... ok
+test the_refusal_costs_no_wire_roundtrip ... ok
+test the_deadline_and_the_cap_compose ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/coalesce_tdd.rs (target/debug/build/oxide-fw-cache/7bee7096c1fbc68b/out/coalesce_tdd-7bee7096c1fbc68b)
+
+running 7 tests
+test the_exporter_render_stays_deterministic_with_the_new_families ... ok
+test the_coalesce_row_rides_the_push_channel ... ok
+test the_kind_name_is_stable ... ok
+test the_feed_carries_the_row_off_the_hot_path ... ok
+test tracing_observer_takes_the_row ... ok
+test the_metrics_exporter_counts_the_flights_and_the_joins ... ok
+test zero_followers_still_records_the_completed_flight ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/conn_cap_tdd.rs (target/debug/build/oxide-fw-cache/6378f182ab6ba0e9/out/conn_cap_tdd-6378f182ab6ba0e9)
+
+running 6 tests
+test the_backlog_drains_when_the_bound_frees ... ok
+test the_default_is_unbounded_and_the_builder_carries_the_cap ... ok
+test a_generous_cap_changes_no_legit_answer ... ok
+test the_pure_core_never_waits_on_the_bound ... ok
+test the_uncapped_default_runs_exchanges_concurrently ... ok
+test under_cap_one_the_second_exchange_waits_for_the_first ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/eviction_tdd.rs (target/debug/build/oxide-fw-cache/dbf25a5f6638214b/out/eviction_tdd-dbf25a5f6638214b)
+
+running 11 tests
+test an_explicit_delete_is_not_an_eviction ... ok
+test cache_stats_evictions_rides_the_pull_channel ... ok
+test stats_json_round_trips_with_the_evictions_field ... ok
+test health_json_gains_the_disk_evictions_field ... ok
+test the_disk_tier_counts_its_prune_victims ... ok
+test the_evict_kind_name_is_stable_and_kind_driven_consumers_take_it ... ok
+test the_exporter_counts_evictions_and_renders_the_families ... ok
+test the_evict_event_rides_the_seam_with_its_freed_bytes ... ok
+test the_health_exposition_renders_the_eviction_gauge_last ... ok
+test the_tracing_observer_takes_the_evict_row ... ok
+test the_health_pull_carries_the_disk_eviction_total ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/exchange_bounds_tdd.rs (target/debug/build/oxide-fw-cache/7a299241545fc1dc/out/exchange_bounds_tdd-7a299241545fc1dc)
+
+running 5 tests
+test a_custom_cap_refuses_a_body_the_default_would_serve ... ok
+test an_oversized_content_length_answers_413_without_draining ... ok
+test the_default_limit_rides_the_codec_bound ... ok
+test a_legit_exchange_under_the_cap_still_serves ... ok
+test unbounded_restores_the_pre_f64_drain ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/fanout_tdd.rs (target/debug/build/oxide-fw-cache/0510e0db4c19b97d/out/fanout_tdd-0510e0db4c19b97d)
+
+running 8 tests
+test debug_names_the_child_count ... ok
+test fanout_children_count_names_the_fan ... ok
+test fanout_children_see_the_same_payload ... ok
+test empty_fanout_is_the_honest_no_op ... ok
+test fanout_delivers_in_construction_order ... ok
+test fanout_is_a_cache_observer_and_children_see_every_event ... ok
+test fanouts_nest ... ok
+test shared_returns_the_attached_half ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/feed_gate_tdd.rs (target/debug/build/oxide-fw-cache/e59e888a41839ba4/out/feed_gate_tdd-e59e888a41839ba4)
+
+running 9 tests
+test admit_all_matches_the_ungated_feed_row_for_row ... ok
+test a_host_gate_predicate_is_honored ... ok
+test gated_feed_attaches_through_the_seam ... ok
+test gated_is_the_shared_shape_with_the_narrowing ... ok
+test kind_gate_admits_only_the_named_kinds ... ok
+test rejections_are_not_drops_and_never_warn ... ok
+test the_bound_composes_behind_the_gate ... ok
+test zero_capacity_with_admit_all_retains_nothing ... ok
+test gated_feed_over_real_traffic_keeps_only_admitted_kinds ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/feed_tdd.rs (target/debug/build/oxide-fw-cache/f30a26f31931a7b3/out/feed_tdd-f30a26f31931a7b3)
+
+running 9 tests
+test drain_returns_everything_in_order ... ok
+test feed_is_a_cache_observer_over_real_traffic ... ok
+test feed_is_fifo_and_pop_empties_one_row_at_a_time ... ok
+test first_drop_warns_once_then_the_rows_drop_silently ... ok
+test saturation_drops_the_arriving_row ... ok
+test sustained_overshoot_counts_every_drop ... ok
+test zero_capacity_records_nothing ... ok
+test zero_capacity_warns_once ... ok
+test concurrent_producers_and_a_draining_consumer_stay_honest ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/health_tdd.rs (target/debug/build/oxide-fw-cache/44ea26eb8abb3922/out/health_tdd-44ea26eb8abb3922)
+
+running 14 tests
+test default_posture_reports_an_empty_memory_only_cache ... ok
+test handler_kind_defaults_to_custom_for_host_drivers ... ok
+test handler_kind_names_every_in_crate_driver ... ok
+test handler_kind_names_the_redis_driver ... ignored, requires OXIDE_TEST_REDIS_URL
+test disk_posture_names_attachment_and_bytes ... ok
+test health_is_the_value_shaped_default_snapshot ... ok
+test health_snapshot_round_trips_through_json ... ok
+test memory_occupancy_agrees_with_the_stats_pull ... ok
+test observer_attachment_is_honest_posture ... ok
+test remote_posture_names_the_handler_kind ... ok
+test render_prometheus_is_the_deterministic_gauge_exposition ... ok
+test render_prometheus_reflects_live_posture ... ok
+test tag_index_pressure_is_reported_and_invalidation_decreases_it ... ok
+test handler_kind_names_the_s3_driver ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/hot_key_gate_tdd.rs (target/debug/build/oxide-fw-cache/ec3b0d9bda1776e6/out/hot_key_gate_tdd-ec3b0d9bda1776e6)
+
+running 10 tests
+test admit_all_keys_matches_the_ungated_ledger_row_for_row ... ok
+test a_host_gate_predicate_is_honored ... ok
+test gated_is_the_shared_shape_with_the_narrowing ... ok
+test debug_names_the_gated_shape ... ok
+test gated_ledger_attaches_through_the_seam ... ok
+test hot_key_kind_gate_admits_only_the_named_kinds ... ok
+test rejections_are_not_refusals_and_never_warn ... ok
+test the_bound_composes_behind_the_gate ... ok
+test zero_capacity_with_admit_all_keys_refuses_every_admitted_row ... ok
+test gated_ledger_over_real_traffic_attributes_only_admitted_kinds ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hot_keys_tdd.rs (target/debug/build/oxide-fw-cache/39c88c736d7162d6/out/hot_keys_tdd-39c88c736d7162d6)
+
+running 24 tests
+test count_answers_tracked_keys_only ... ok
+test coverage_exposition_renders_the_families_deterministically ... ok
+test coverage_exposition_tracks_the_live_state ... ok
+test debug_names_the_ledger_shape ... ok
+test every_op_kind_attributes_to_its_key ... ok
+test exposition_renders_the_labeled_family_deterministically ... ok
+test exposition_escapes_label_values_and_bounds_the_window ... ok
+test hot_keys_composes_beside_the_feed ... ok
+test fanout_composite_exporter_and_ledger_agree ... ok
+test reset_starts_a_fresh_window ... ok
+test resident_keys_keep_counting_past_the_bound ... ok
+test hot_keys_is_a_cache_observer_and_attributes_real_traffic ... ok
+test snapshot_answers_the_whole_ledger_in_one_value ... ok
+test snapshot_carries_the_unattributed_score ... ok
+test snapshot_on_the_zero_bound_ledger ... ok
+test shared_returns_the_attached_half ... ok
+test snapshot_window_bounds_the_rows_not_the_aggregates ... ok
+test take_hands_over_the_whole_window_and_starts_a_fresh_one ... ok
+test take_on_an_empty_ledger_hands_an_empty_window ... ok
+test take_restarts_first_sight_admission ... ok
+test top_sorts_count_desc_then_key_asc_and_bounds_n ... ok
+test unattributed_counts_every_refused_event ... ok
+test zero_capacity_retains_nothing ... ok
+test take_rearms_the_sticky_warn ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/http_handler_deadline_tdd.rs (target/debug/build/oxide-fw-cache/e22d5041b4d42ad3/out/http_handler_deadline_tdd-e22d5041b4d42ad3)
+
+running 5 tests
+test a_healthy_exchange_round_trips_under_the_deadline ... ok
+test hung_peer_degrades_a_get_to_a_miss_within_the_deadline ... ok
+test refused_connect_degrades_to_a_miss_under_the_deadline ... ok
+test the_deadline_state_rides_the_builder ... ok
+test hung_peer_fails_a_set_within_the_deadline ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/http_service_tdd.rs (target/debug/build/oxide-fw-cache/48a5bc3773d93836/out/http_service_tdd-48a5bc3773d93836)
+
+running 14 tests
+test a_handler_error_answers_5xx_loudly ... ok
+test delete_removes_204 ... ok
+test get_miss_is_404 ... ok
+test get_hit_serves_the_sealed_entry ... ok
+test keys_and_tags_with_slashes_route_verbatim ... ok
+test invalidate_serves_the_count ... ok
+test plane_types_are_constructible ... ok
+test put_forged_is_400_and_never_stored ... ok
+test put_sealed_stores_through_the_backing_handler ... ok
+test malformed_requests_answer_400_and_the_loop_survives ... ok
+test put_tampered_is_400 ... ok
+test tag_keys_serves_the_json_list ... ok
+test unknown_paths_and_methods_are_404_and_405 ... ok
+test wire_roundtrip_with_the_real_client ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/integration.rs (target/debug/build/oxide-fw-cache/8dcf323500fde598/out/integration-8dcf323500fde598)
+
+running 3 tests
+test single_flight_coalesces_a_rebuild_over_the_tiered_store ... ok
+test key_digest_names_the_row_and_the_freshness_window_decays ... ok
+test soft_tag_invalidation_flips_the_row_stale_across_tiers ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/kv_handler_tdd.rs (target/debug/build/oxide-fw-cache/1c53b4879b0e1a40/out/kv_handler_tdd-1c53b4879b0e1a40)
+
+running 7 tests
+test handler_kind_names_the_driver ... ok
+test invalidate_tag_deletes_every_indexed_key ... ok
+test kv_handler_roundtrips_with_one_index_key_per_tag ... ok
+test store_failures_degrade_on_reads_and_are_loud_on_set ... ok
+test tampered_payload_is_a_miss ... ok
+test ttl_rides_the_puts_and_accessors_report_the_state ... ok
+test tag_index_stops_appending_at_the_cap ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/metrics_tdd.rs (target/debug/build/oxide-fw-cache/a7d795adebf34c2d/out/metrics_tdd-a7d795adebf34c2d)
+
+running 8 tests
+test counters_track_real_traffic ... ok
+test invalidate_aggregates_rows_and_keys ... ok
+test per_layer_hits_and_the_stale_flag ... ok
+test record_shaped_events_drive_the_deltas ... ok
+test render_prometheus_row_shape ... ok
+test render_reflects_the_counters ... ok
+test metrics_observer_is_a_cache_observer ... ok
+test snapshot_is_a_value_type ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/observer_tdd.rs (target/debug/build/oxide-fw-cache/089043b2ae473af1/out/observer_tdd-089043b2ae473af1)
+
+running 6 tests
+test no_observer_default_keeps_stats_green ... ok
+test observer_sees_stale_expired_and_invalidate ... ok
+test op_and_record_shapes_pin ... ok
+test tracing_observer_impls_the_seam ... ok
+test with_observer_sees_the_write_read_delete_story ... ok
+test disk_hit_reports_the_disk_layer ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/peer_posture_tdd.rs (target/debug/build/oxide-fw-cache/4791fdf9266bffb0/out/peer_posture_tdd-4791fdf9266bffb0)
+
+running 6 tests
+test a_garbage_health_body_is_a_loud_decode_err ... ok
+test peer_health_pulls_the_live_posture ... ok
+test peer_metrics_pulls_the_live_exposition ... ok
+test probes_fail_loudly_against_a_provider_less_peer ... ok
+test the_peer_trait_rides_dyn ... ok
+test probes_ride_the_exchange_deadline ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/plane_health_tdd.rs (target/debug/build/oxide-fw-cache/61d6a1519781ba6b/out/plane_health_tdd-61d6a1519781ba6b)
+
+running 7 tests
+test configured_health_answers_the_provider_json ... ok
+test configured_non_get_is_405_unconfigured_stays_404 ... ok
+test has_health_provider_reflects_the_attached_state ... ok
+test the_health_arm_rides_the_socket_shell ... ok
+test the_health_pull_reads_live_state ... ok
+test the_tiered_cache_is_a_plane_health_provider ... ok
+test unconfigured_health_answers_404 ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/plane_metrics_tdd.rs (target/debug/build/oxide-fw-cache/187552ca612ab34f/out/plane_metrics_tdd-187552ca612ab34f)
+
+running 10 tests
+test an_injected_provider_answers_verbatim ... ok
+test configured_metrics_answers_the_provider_exposition ... ok
+test configured_non_get_is_405 ... ok
+test the_exposition_order_is_counters_then_gauges ... ok
+test has_metrics_provider_reflects_the_attached_state ... ok
+test the_metrics_plane_source_composes_the_boot_halves ... ok
+test the_metrics_arm_rides_the_socket_shell ... ok
+test the_metrics_pull_reads_live_traffic ... ok
+test two_scrapes_without_traffic_are_byte_equal ... ok
+test unconfigured_metrics_answers_404 ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/serve_tdd.rs (target/debug/build/oxide-fw-cache/937f9f069a0a9978/out/serve_tdd-937f9f069a0a9978)
+
+running 6 tests
+test an_entry_without_a_validator_never_answers_304 ... ok
+test generated_set_never_duplicates_stored_headers ... ok
+test if_modified_since_alone_answers_304_when_unchanged ... ok
+test matched_etag_answers_304_with_the_validator_set ... ok
+test no_store_policy_answers_no_store_in_both_arms ... ok
+test non_matching_etag_serves_full_with_the_generated_set ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/sharded_client_tdd.rs (target/debug/build/oxide-fw-cache/f8228b2f2e77ba9e/out/sharded_client_tdd-f8228b2f2e77ba9e)
+
+running 8 tests
+test an_empty_shard_set_refuses_loudly ... ok
+test the_composite_names_itself_and_composes_as_a_trait_object ... ok
+test the_entry_verbs_reach_exactly_one_shard ... ok
+test the_keys_spread_across_the_shards ... ok
+test the_routing_is_deterministic_and_in_range ... ok
+test growing_the_shard_set_moves_a_minority ... ok
+test the_wire_round_trips_through_real_planes ... ok
+test the_tag_verbs_fan_out_across_every_shard ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests oxide_fw_cache
+
+running 7 tests
+test crates/cache/src/fanout.rs - fanout::FanoutCacheObserver (line 54) ... ok
+test crates/cache/src/feed.rs - feed::EventFeed (line 139) ... ok
+test crates/cache/src/http.rs - http::serve_entry (line 280) ... ok
+test crates/cache/src/lib.rs - (line 82) ... ignored
+test crates/cache/src/hot_keys.rs - hot_keys::HotKeyObserver (line 262) ... ok
+test crates/cache/src/metrics.rs - metrics::MetricsCacheObserver (line 255) ... ok
+test crates/cache/src/shard.rs - shard::ShardedCacheHandler (line 140) ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+all doctests ran in 0.44s; merged doctests compilation took 0.43s
+success: the edge KV handler serves the §11.2 contract over the worker binding's shape
