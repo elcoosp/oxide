@@ -1557,6 +1557,10 @@ pub async fn dev_component_sources(
         // pick arm never fires.
         native: None,
         backend: oxide_fw_compiler::native::Backend::Auto,
+        // §V2-F17: the DEV component map compiles the STAMPED source so the
+        // rendered DOM carries `data-ox-src` back to the component (the
+        // cost endpoint's `?src=` spelling). The build pass passes `None`.
+        data_ox_src: Some(&project_root.join("src")),
     })
     .await
     .unwrap_or_default();
