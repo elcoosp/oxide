@@ -346,6 +346,12 @@ pub fn build_id_of_dist(dist: &std::path::Path) -> Result<String> {
 
     cover(&dist.join("client"))?;
     cover(&dist.join("server"))?;
+    // §V2-F08 finish: the deployed native cdylib + its types payload ride
+    // the covered set when the build emitted one — a rebuilt library is a
+    // new build identity (the spec's "records its hash in the build id
+    // inputs (A04)"), and a build without `dist/native` computes the same
+    // id as before (the cover skips an absent dir).
+    cover(&dist.join("native"))?;
     // The route table is contract: it lives at the project root, outside
     // dist, and participates under its root-relative name when present.
     let routes = root.join(".oxide").join("routes.manifest");
