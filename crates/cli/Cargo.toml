@@ -95,6 +95,14 @@ name = "l0_conditional"
 harness = false
 required-features = ["bench-util"]
 
+# §V2-F10 step 4: the rollback slice's cost bench — the emit-tail
+# retention (a 64-file dist copy) and the resolve+swap latency (the
+# operator's rollback path), V8-free.
+[[bench]]
+name = "generation_rollback"
+harness = false
+required-features = ["bench-util"]
+
 # V2-E06: the Module API v1 bench — the config-edit path on a fixture
 # config and the manifest resolution (`resolve_one` → `to_manifest`).
 # Behind the same `bench-util` opt-in (plain `cargo test` never pays the
@@ -166,6 +174,12 @@ name = "data_src_wire"
 # two-pool boot, the Emergency ladder and the oldest-first drain, V8-free.
 [[example]]
 name = "brownout_evict"
+
+# §V2-F10 step 4: the generation-rollback walkthrough — the retained
+# generations layout, the `previous` resolution and the dist swap
+# `oxide rollback` performs, over synthetic dists, V8-free.
+[[example]]
+name = "generation_rollback"
 
 [dependencies]
 chrono = { workspace = true }
