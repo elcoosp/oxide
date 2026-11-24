@@ -1584,12 +1584,25 @@ pub(crate) async fn resolve_port(requested: u16) -> u16 {
 pub(crate) async fn cmd_serve(
     root: &str,
     port: Option<u16>,
+    generation: Option<&str>,
     label: &str,
     w: Writer<'_>,
 ) -> anyhow::Result<i32> {
     // §7 / §9.1: build the framework stack (renderer + loader) for the
     // production server. Same wiring as `cmd_dev`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| std::path::PathBuf::from(root));
+    // §V2-F10 step 4: a `--generation` selector (the spec's
+    // "`oxide start --generation previous`") swaps the named retained
+    // generation into `dist/` BEFORE the boot — the same swap
+    // `oxide rollback` performs, no rebuild — so every dist read below
+    // (the client manifest, the build id, the static assets) resolves to
+    // the selected generation's bytes. A resolution or swap failure is
+    // fatal here: the operator asked to serve a DIFFERENT build than the
+    // one on disk, and silently serving the current one is the failure
+    // the rollback exists to undo.
+    if let Some(selector) = generation {
+        swap_generation_before_boot(&rootp, selector, w)?;
+    }
     let mut cfg = load_config_or_default(&rootp, "production");
     let config_path_opt = find_config_file(&rootp).ok();
     let transform_handler = framework_shim::build_transform_handler(&rootp, &cfg);
@@ -1627,6 +1640,12 @@ pub(crate) async fn cmd_serve(
         "{label} — listening on http://{} (health: /_oxide/health, Ctrl-C to stop, SIGHUP to promote a rebuilt dist)",
         started.addr
     );
+    // §V2-F10 step 4: the pid file `oxide rollback` reads to hang the
+    // running serve up after it repoints `dist` — the spec's "sends
+    // SIGHUP" needs the signal to have a receiver. Best-effort: a serve
+    // that cannot write its pid still serves; the rollback then reports
+    // the missing receiver honestly instead of signalling blindly.
+    write_serve_pid(&rootp);
     // V2-F12: the ops surface the brownout wiring serves. `None` means
     // `brownout.enabled` is off (the default posture); when wired, the
     // sampler drives the governor's level and the ops endpoints report it
@@ -1651,65 +1670,16 @@ pub(crate) async fn cmd_serve(
                 _ = tokio::signal::ctrl_c() => {}
                 _ = hup.recv() => {
                     if let Some(gens) = &started.generations {
-                        let dist = rootp.join("dist");
-                        match crate::serve::generations::promote_handle_from_dist(gens, &dist) {
-                            Some(new_id) => {
-                                outln!(
-                                    w,
-                                    "skew: build-id {new_id} is current — the previous generation stays accepted for its skew window"
-                                );
-                                // V2-F10 step 1 (the second pool): freeze the NEW
-                                // generation's loader sources, boot its stack over
-                                // the rebuilt dist (a fresh pool + runner), and
-                                // demote the boot handles together — accepted
-                                // old-build data-plane requests run the OLD
-                                // generation's handles (its loader bytes are the
-                                // frozen snapshot, not the edited sources).
-                                if let Some(sp) = &started.serving_pools {
-                                    match crate::serve::generations::snapshot_generation_sources(&rootp, &new_id) {
-                                        Ok(snapshot_root) => {
-                                            let next = crate::framework_shim::build_framework_stack(
-                                                promote_config_path.as_deref(),
-                                                promote_backend,
-                                                None,
-                                                Some(&promote_cache_handler),
-                                                // §V2-A09: the promoted generation serves
-                                                // live — Source, like the boot above.
-                                                oxide_fw_jshost::ModuleSource::Source,
-                                            )
-                                            .await;
-                                            match next.pool.clone() {
-                                                Some(pool) => {
-                                                    let next_gen = std::sync::Arc::new(
-                                                        crate::serve::generations::GenServing {
-                                                            pool,
-                                                            runner: next.loader_runner.clone(),
-                                                            routes_root: snapshot_root,
-                                                        },
-                                                    );
-                                                    if sp.promote_booted(&new_id, next_gen) {
-                                                        outln!(
-                                                            w,
-                                                            "skew: generation {new_id} booted over the rebuilt dist — its pool serves; the previous pool drains at window end"
-                                                        );
-                                                    }
-                                                }
-                                                None => tracing::warn!(
-                                                    code = "SKW-POOL",
-                                                    msg = "the promoted generation has no worker pool; the boot pool keeps serving every generation",
-                                                ),
-                                            }
-                                        }
-                                        Err(e) => tracing::warn!(
-                                            code = "SKW-SNAPSHOT",
-                                            msg = %e,
-                                            "skew: the promoted generation's loader sources could not be frozen; the boot handles keep serving",
-                                        ),
-                                    }
-                                }
-                            }
-                            None => outln!(w, "skew: dist unchanged — no generation promoted"),
-                        }
+                        promote_sighup_generation(
+                            gens,
+                            &started.serving_pools,
+                            &rootp,
+                            promote_config_path.as_deref(),
+                            promote_backend,
+                            &promote_cache_handler,
+                            w,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -1722,5 +1692,135 @@ pub(crate) async fn cmd_serve(
         let _ = tokio::signal::ctrl_c().await;
     }
     let _ = started.shutdown.send(true);
+    // The §V2-F10 pid file's clean-shutdown removal: a rolled-back serve
+    // that exits leaves no receiver behind for the next `oxide rollback`
+    // to signal (a stale pid would still be liveness-checked there —
+    // this just keeps the state tidy).
+    remove_serve_pid(&rootp);
     Ok(0)
+}
+
+/// The §V2-F10 step-1 promote half of the SIGHUP handler (moved out of
+/// [`cmd_serve`] verbatim): read the repointed dist's id, demote the
+/// current generation into its skew window, and — when the serving pools
+/// are up — freeze the new generation's loader sources and boot its stack
+/// (a fresh pool + runner) over the rebuilt dist, so accepted old-build
+/// data-plane requests run the OLD generation's handles (its loader bytes
+/// are the frozen snapshot, not the edited sources).
+async fn promote_sighup_generation(
+    gens: &std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>,
+    serving_pools: &Option<std::sync::Arc<crate::serve::generations::ServingPools>>,
+    rootp: &std::path::Path,
+    promote_config_path: Option<&std::path::Path>,
+    promote_backend: oxide_fw_config::JsBackend,
+    promote_cache_handler: &oxide_fw_config::CacheHandlerConfig,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let dist = rootp.join("dist");
+    match crate::serve::generations::promote_handle_from_dist(gens, &dist) {
+        Some(new_id) => {
+            outln!(
+                w,
+                "skew: build-id {new_id} is current — the previous generation stays accepted for its skew window"
+            );
+            // V2-F10 step 1 (the second pool): freeze the NEW generation's
+            // loader sources, boot its stack over the rebuilt dist (a fresh
+            // pool + runner), and demote the boot handles together.
+            if let Some(sp) = serving_pools {
+                match crate::serve::generations::snapshot_generation_sources(rootp, &new_id) {
+                    Ok(snapshot_root) => {
+                        let next = crate::framework_shim::build_framework_stack(
+                            promote_config_path,
+                            promote_backend,
+                            None,
+                            Some(promote_cache_handler),
+                            // §V2-A09: the promoted generation serves live —
+                            // Source, like the boot above.
+                            oxide_fw_jshost::ModuleSource::Source,
+                        )
+                        .await;
+                        match next.pool.clone() {
+                            Some(pool) => {
+                                let next_gen =
+                                    std::sync::Arc::new(crate::serve::generations::GenServing {
+                                        pool,
+                                        runner: next.loader_runner.clone(),
+                                        routes_root: snapshot_root,
+                                    });
+                                if sp.promote_booted(&new_id, next_gen) {
+                                    outln!(
+                                        w,
+                                        "skew: generation {new_id} booted over the rebuilt dist — its pool serves; the previous pool drains at window end"
+                                    );
+                                }
+                            }
+                            None => tracing::warn!(
+                                code = "SKW-POOL",
+                                msg = "the promoted generation has no worker pool; the boot pool keeps serving every generation",
+                            ),
+                        }
+                    }
+                    Err(e) => tracing::warn!(
+                        code = "SKW-SNAPSHOT",
+                        msg = %e,
+                        "skew: the promoted generation's loader sources could not be frozen; the boot handles keep serving",
+                    ),
+                }
+            }
+        }
+        None => outln!(w, "skew: dist unchanged — no generation promoted"),
+    }
+    Ok(())
+}
+
+/// The §V2-F10 step-4 boot leg for `oxide start --generation <GEN>` (the
+/// spec's "`oxide start --generation previous`"): resolve the selector
+/// against the retained generations and swap the named one into `dist/`
+/// BEFORE the boot — the same swap `oxide rollback` performs, no rebuild
+/// — so every dist read after it (the client manifest, the build id, the
+/// static assets) resolves to the selected generation's bytes.
+///
+/// # Errors
+///
+/// Propagates the resolution's [`SKW-GEN`](oxide_fw_diagnostics) and the
+/// swap's [`SKW-RETAIN`](oxide_fw_diagnostics) refusals. Fatal here: the
+/// operator asked to serve a DIFFERENT build than the one on disk, and
+/// silently serving the current one is the failure the rollback exists
+/// to undo.
+fn swap_generation_before_boot(
+    rootp: &std::path::Path,
+    selector: &str,
+    w: Writer<'_>,
+) -> anyhow::Result<()> {
+    let current = oxide_fw_cache::read_build_id(&rootp.join("dist"));
+    let gen_dist =
+        crate::serve::generations::resolve_generation(rootp, selector, current.as_deref())?;
+    crate::serve::generations::repoint_dist_to_generation(rootp, &gen_dist)?;
+    outln!(
+        w,
+        "skew: serving retained generation {selector} — dist repointed{}",
+        match current {
+            Some(id) => format!(" from build-id {id}"),
+            None => String::new(),
+        }
+    );
+    Ok(())
+}
+
+/// The §V2-F10 step-4 receiver state: the serve boot's pid file (the
+/// signal half of `oxide rollback`). Best-effort — a serve that cannot
+/// write its pid still serves.
+fn write_serve_pid(rootp: &std::path::Path) {
+    let _ = std::fs::write(
+        rootp.join(".oxide").join("serve.pid"),
+        std::process::id().to_string(),
+    );
+}
+
+/// The pid file's clean-shutdown removal: a serve that exits leaves no
+/// receiver behind for the next `oxide rollback` to signal (a stale pid
+/// would still be liveness-checked there — this just keeps the state
+/// tidy).
+fn remove_serve_pid(rootp: &std::path::Path) {
+    let _ = std::fs::remove_file(rootp.join(".oxide").join("serve.pid"));
 }
