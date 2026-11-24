@@ -86,7 +86,7 @@ fn bench_deep_chain(c: &mut Criterion) {
     for depth in [10, 50, 200] {
         let (changed, importers, accepting) = deep_chain(depth);
         group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, _| {
-            b.iter(|| plan(&changed, &importers, &accepting, &HashSet::new()))
+            b.iter(|| plan(&changed, &importers, &accepting, &HashSet::new()));
         });
     }
     group.finish();
@@ -97,7 +97,7 @@ fn bench_wide_fanout(c: &mut Criterion) {
     for n in [10, 100] {
         let (changed, importers, accepting) = wide_fanout(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter(|| plan(&changed, &importers, &accepting, &HashSet::new()))
+            b.iter(|| plan(&changed, &importers, &accepting, &HashSet::new()));
         });
     }
     group.finish();
@@ -107,7 +107,7 @@ fn bench_diamond(c: &mut Criterion) {
     let mut group = c.benchmark_group("boundary_diamond");
     let (changed, importers, accepting) = diamond();
     group.bench_function("shared_top_boundary", |b| {
-        b.iter(|| plan(&changed, &importers, &accepting, &HashSet::new()))
+        b.iter(|| plan(&changed, &importers, &accepting, &HashSet::new()));
     });
     group.finish();
 }
@@ -123,7 +123,7 @@ fn bench_reload_fallback(c: &mut Criterion) {
                 &HashSet::new(),
                 &HashSet::new(),
             )
-        })
+        });
     });
     group.finish();
 }
@@ -144,7 +144,7 @@ fn bench_css_terminal(c: &mut Criterion) {
                 &HashSet::new(),
                 &HashSet::new(),
             )
-        })
+        });
     });
     group.finish();
 }
@@ -163,7 +163,7 @@ fn bench_css_edge(c: &mut Criterion) {
                 &accepting,
                 &HashSet::new(),
             )
-        })
+        });
     });
     group.finish();
 }
@@ -182,7 +182,7 @@ fn bench_classified_js(c: &mut Criterion) {
                 &accepting,
                 &HashSet::new(),
             )
-        })
+        });
     });
     group.finish();
 }
