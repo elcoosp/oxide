@@ -130,3 +130,11 @@ export {
 export {
   SWAPPER_SRC, boundaryFallback, boundaryContent, islandElement, errorBoundary, hydrationBootstrap,
 } from './protocol.ts'
+// V2-E02: the typed navigation entries app code imports — the same
+// names the generated overloads declare. The `Link` COMPONENT ships as
+// source via the `./link` subpath (an SFC cannot be re-exported from a
+// plain module); the navigation names ride the root beside it.
+export {
+  href, goto, parseSearch,
+  type HrefOpts, type GotoOpts, type SearchParseResult,
+} from './link.ts'
