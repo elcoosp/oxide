@@ -46,6 +46,30 @@ impl Location {
     }
 }
 
+/// A single stack frame on the §13.4 error overlay (§V2-E08 item 1's
+/// "source-mapped stack frames"): where the error points, in ONE coordinate
+/// system named by `mapped`. `true` — the coordinates are the ORIGINAL
+/// source's (the frame went through the module's source map, or the
+/// producer knew its provenance). `false` — the generated output's, the
+/// honest no-vouch shape when no map speaks for the file or the lookup
+/// misses. `line`/`column` are 1-based, the crate's [`Location`]
+/// convention, whatever `mapped` says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StackFrame {
+    /// The file the frame names: the original source when `mapped`, the
+    /// generated module path when not.
+    pub file: String,
+    /// 1-based line in `file`.
+    pub line: u32,
+    /// 1-based column in `file`.
+    pub column: u32,
+    /// The function the stack reported, when the host carried one.
+    pub function: Option<String>,
+    /// The coordinate system: `true` = original source coordinates, `false`
+    /// = the generated output's (unmapped or unmappable).
+    pub mapped: bool,
+}
+
 /// A single diagnostic: stable code, source-mapped frame, cause, fix (spec §19.4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Diagnostic {
@@ -58,6 +82,12 @@ pub struct Diagnostic {
     pub causes: Vec<String>,
     /// The fix when one is known, e.g. "make the connection lazy so the app snapshot succeeds".
     pub fix: Option<String>,
+    /// The stack the error came with (§V2-E08 item 1; §13.4's
+    /// "source-mapped stacks"), outermost first. Additive: absent on
+    /// pre-frames payloads (decoded as empty) and skipped while empty, so
+    /// every existing payload keeps its bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<StackFrame>,
 }
 
 impl Diagnostic {
@@ -70,6 +100,7 @@ impl Diagnostic {
             code_frame: None,
             causes: Vec::new(),
             fix: None,
+            frames: Vec::new(),
         }
     }
     pub fn warning(code: impl Into<String>, message: impl Into<String>) -> Self {
@@ -107,6 +138,16 @@ impl Diagnostic {
     pub fn with_code_frame(mut self, frame: impl Into<String>) -> Self {
         self.code_frame = Some(frame.into());
         self
+    }
+    /// Attach the stack (outermost first; §V2-E08 item 1).
+    #[must_use]
+    pub fn with_frames(mut self, frames: Vec<StackFrame>) -> Self {
+        self.frames = frames;
+        self
+    }
+    /// Append one frame to the stack (§V2-E08 item 1).
+    pub fn push_frame(&mut self, frame: StackFrame) {
+        self.frames.push(frame);
     }
     /// Serialize the diagnostic to JSON (the §19.4 wire shape).
     ///
@@ -166,6 +207,17 @@ impl std::fmt::Display for Diagnostic {
             && let Some(file) = &loc.file
         {
             write!(f, " at {file}:{}", loc.line)?;
+        }
+        // §V2-E08 item 1: the stack renders as one `at file:line:col` line
+        // per frame (outermost first), the function name in parentheses
+        // when the host carried one. Unmapped frames are not marked — the
+        // mapped flag is the payload's contract, the terminal line just
+        // names where the frame points.
+        for frame in &self.frames {
+            write!(f, "\n  at {}:{}:{}", frame.file, frame.line, frame.column)?;
+            if let Some(name) = &frame.function {
+                write!(f, " ({name})")?;
+            }
         }
         // SPEC-19E: a code frame (source snippet with a marker) is displayed
         // when the diagnostic carries one. Producers populate this when the
@@ -263,4 +315,101 @@ fn diagnostic_display_includes_code_frame() {
     let rendered = format!("{d}");
     assert!(rendered.contains("[TEST-E] boom"));
     assert!(rendered.contains("2 | error here"), "frame: {rendered}");
+}
+
+// §V2-E08 item 1 (the overlay's source-mapped stack frames; spec §13.4's
+// "source-mapped stacks"): the diagnostic carries a stack — one frame per
+// wire step — and the frames ride the JSON payload additively (`serde`
+// default, skipped while empty, so every pre-frames payload keeps its
+// bytes). Red-first: these pins failed to compile before `StackFrame`
+// existed.
+
+#[test]
+fn stack_frame_roundtrips_through_json() {
+    let f = StackFrame {
+        file: "dist/.oxide/pool/comp.tsx".to_string(),
+        line: 4,
+        column: 1,
+        function: Some("Counter".to_string()),
+        mapped: false,
+    };
+    let json = serde_json::to_string(&f).unwrap();
+    assert!(json.contains("\"line\":4"), "plain field spelling: {json}");
+    let back: StackFrame = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, f);
+}
+
+#[test]
+fn diagnostic_frames_are_additive_and_skip_while_empty() {
+    let d = Diagnostic::error("CFG-001", "old shape");
+    let json = d.to_json();
+    assert!(!json.contains("frames"), "empty stack: no field, no bytes");
+    let with = d.with_frames(vec![StackFrame {
+        file: "src/comp.tsx".to_string(),
+        line: 3,
+        column: 8,
+        function: None,
+        mapped: true,
+    }]);
+    let json = with.to_json();
+    assert!(
+        json.contains("\"frames\":[{"),
+        "present stack rides: {json}"
+    );
+    let back = Diagnostic::from_json(&json).unwrap();
+    assert_eq!(back.frames.len(), 1);
+    assert_eq!(back.frames[0].file, "src/comp.tsx");
+    assert!(back.frames[0].mapped);
+}
+
+#[test]
+fn push_frame_builds_the_stack_in_order() {
+    let mut d = Diagnostic::error("RT-POOL", "boom");
+    d.push_frame(StackFrame {
+        file: "a.ts".to_string(),
+        line: 1,
+        column: 1,
+        function: None,
+        mapped: false,
+    });
+    d.push_frame(StackFrame {
+        file: "b.ts".to_string(),
+        line: 2,
+        column: 1,
+        function: Some("helper".to_string()),
+        mapped: true,
+    });
+    assert_eq!(d.frames.len(), 2);
+    assert_eq!(d.frames[0].file, "a.ts");
+    assert_eq!(d.frames[1].function.as_deref(), Some("helper"));
+}
+
+#[test]
+fn display_renders_the_stack_frames() {
+    let d = Diagnostic::error("RT-POOL", "boom").with_frames(vec![
+        StackFrame {
+            file: "src/comp.tsx".to_string(),
+            line: 7,
+            column: 5,
+            function: Some("Counter".to_string()),
+            mapped: true,
+        },
+        StackFrame {
+            file: "pool/comp.tsx".to_string(),
+            line: 4,
+            column: 1,
+            function: None,
+            mapped: false,
+        },
+    ]);
+    let rendered = format!("{d}");
+    assert!(
+        rendered.contains("at src/comp.tsx:7:5"),
+        "frame line: {rendered}"
+    );
+    assert!(rendered.contains("Counter"), "the function name renders");
+    assert!(
+        rendered.contains("at pool/comp.tsx:4:1"),
+        "second frame: {rendered}"
+    );
 }
