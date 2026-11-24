@@ -46,6 +46,14 @@ name = "keys"
 harness = false
 required-features = ["bench-util"]
 
+# V2-E09: criterion bench for the edge KV cache handler — the per-op cost
+# the handler adds over the store's own round-trip (the tagged set's index
+# RMW, the decode path's get, the invalidation sweep, the cap's stop).
+[[bench]]
+name = "kv"
+harness = false
+required-features = ["bench-util"]
+
 # V2-A04: criterion bench for the canonical `build_id_of_dist` walk+hash.
 [[bench]]
 name = "build_id"
