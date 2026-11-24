@@ -208,6 +208,13 @@ pub enum Command {
         /// shape stays byte-identical.
         #[arg(long)]
         cache_plane_mount: bool,
+        /// V2-F10 step 4: boot a RETAINED generation — `previous` or a
+        /// build id (the copies the build's emit tail keeps under
+        /// `.oxide/generations/<id>/dist`). The named generation is
+        /// swapped into `dist/` before the boot (the rollback swap, no
+        /// rebuild), so the server serves the old build's bytes.
+        #[arg(long, value_name = "GEN")]
+        generation: Option<String>,
     },
     /// Preview the production build locally.
     Preview {
@@ -442,6 +449,19 @@ pub enum Command {
         #[arg(long)]
         rollback: bool,
     },
+    /// Roll the serving `dist/` back to a retained generation (§V2-F10
+    /// step 4): the build's emit tail keeps the last `deploy.generations`
+    /// dists under `.oxide/generations/<id>/dist`; this swaps one into
+    /// `dist/` — no rebuild — and hangs up (`SIGHUP`) a running
+    /// `oxide start` so its promote picks the rolled-back id up.
+    Rollback {
+        /// Project directory (default: cwd).
+        #[arg(long, default_value = ".")]
+        root: String,
+        /// The generation to serve: `previous` (the default) or a build id.
+        #[arg(long, value_name = "GEN")]
+        generation: Option<String>,
+    },
     Verify {
         /// Project directory (default: cwd).
         #[arg(long, default_value = ".")]
@@ -549,6 +569,7 @@ impl Command {
             | Command::Perf { root, .. }
             | Command::Docs { root, .. }
             | Command::Verify { root, .. }
+            | Command::Rollback { root, .. }
             | Command::Deploy { root, .. } => root.as_str(),
             Command::Schema => return None,
         })
@@ -879,8 +900,11 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // V2-F59: same posture — the mount opt-in rode
             // `apply_startup_env` into its override slot pre-runtime.
             cache_plane_mount: _,
-        } => cmd_serve(&root, port, "oxide start", w).await,
-        Command::Preview { root } => cmd_serve(&root, None, "oxide preview", w).await,
+            // §V2-F10 step 4: the generation selector is resolved and
+            // swapped into `dist/` inside `cmd_serve`, before the boot.
+            generation,
+        } => cmd_serve(&root, port, generation.as_deref(), "oxide start", w).await,
+        Command::Preview { root } => cmd_serve(&root, None, None, "oxide preview", w).await,
         Command::Routes { root } => cmd_routes(&root, w).await,
         Command::Analyze { root } => cmd_analyze(&root, w).await,
         Command::Check { root } => cmd_check(&root, w).await,
@@ -947,6 +971,9 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             prune,
             rollback,
         } => cmd_deploy(&target, &root, prune, rollback, w),
+        Command::Rollback { root, generation } => {
+            cmd_rollback(&root, generation.as_deref(), w).await
+        }
     }
     .map_err(|e| {
         tracing::error!(error = %e, "command failed");
