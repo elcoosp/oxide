@@ -227,8 +227,19 @@ pub(crate) async fn build_client_bundle(
         sourcemap_on: true,
         minify: false,
     });
-    client_opts.resolve_hook = build_js_plugin_resolve_hook(rootp, cfg, pool);
-    client_opts.load_hook = build_js_plugin_load_hook(rootp, cfg, pool);
+    // §V2-E05: the WASM components' `resolveId`/`load` hooks ride the dev
+    // client chain too (JS bridge first, WASM host second — the build
+    // path's order without the first-party `.server.rs` arm, which dev
+    // consults through the native swap instead).
+    let (wasm_resolve_hook, wasm_load_hook) = build_wasm_load_resolve_hooks(rootp, cfg);
+    client_opts.resolve_hook = crate::native_fns::compose_resolve_hooks(
+        build_js_plugin_resolve_hook(rootp, cfg, pool),
+        wasm_resolve_hook,
+    );
+    client_opts.load_hook = crate::native_fns::compose_load_hooks(
+        build_js_plugin_load_hook(rootp, cfg, pool),
+        wasm_load_hook,
+    );
     client_opts.render_chunk_hook = build_js_plugin_render_chunk_hook(rootp, cfg, pool);
     client_opts.generate_bundle_hook = build_js_plugin_generate_bundle_hook(rootp, cfg, pool);
     outln!(w, "dev: rebuilding client bundle...");
