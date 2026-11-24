@@ -112,6 +112,22 @@ name = "native_fns"
 harness = false
 required-features = ["bench-util"]
 
+# V2-F63 recorded pickup: the boot posture line's cost — the byte-stable
+# render over a fixed posture and the bounded probe + render over a live
+# plane. Behind the same `bench-util` opt-in.
+[[bench]]
+name = "plane_boot_line"
+harness = false
+required-features = ["bench-util"]
+
+# V2-F69 config/CLI half: the boot resolver's compose cost — the
+# `shards: [...]` array resolved into the F69 composite at one/four/eight
+# planes. Behind the same `bench-util` opt-in.
+[[bench]]
+name = "sharded_resolver"
+harness = false
+required-features = ["bench-util"]
+
 # V2-E06: the `module_add` consumer example — a V8-free end-to-end
 # walkthrough of the config edit + manifest resolution against the
 # fixture app under `tests/fixtures/analytics-app/`.
