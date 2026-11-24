@@ -139,6 +139,9 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 ### `modules`
 
 - `modules` — `string[]` — default —: §15.4: distributable modules to install.
+### `modulesConfig`
+
+- `modulesConfig` — `object` — default —: §V2-E06: per-module config defaults (merged from each module's `oxide.module.configDefaults` under `modules.<name>`). The key is the sanitized module name (`@scope/pkg` → `scope-pkg`).
 ### `offline`
 
 - `offline` — `object` — default —: V2-F14: the offline-first knobs. Wired: the CLI emission gate writes dist/sw.js from the produced client manifest and the boot module answers the worker's activate fan-out with a queue flush; the server-side stage the outbox's retries hit is dispatch::idem::stage_idempotency (the x-oxide-idem replay key). A bad precache spelling or a wrong-typed knob fails the load (CFG-OFFLINE).
@@ -152,6 +155,12 @@ A key without a description refuses the render (`DOC-001`) — the E11 acceptanc
 - `og.rateLimit` — `object` — default —: A3: per-peer token-bucket limit applied before rasterization.
 - `og.rateLimit.max` — `integer` — default `10`: A3: the images per window per peer before the bucket refills.
 - `og.rateLimit.windowSecs` — `integer` — default `60`: A3: the rate-limit window length in seconds.
+### `permissions`
+
+- `permissions.default` — `enum: `"allow"` \| `"deny"`` — default —: V2-F19: the default posture when a route declares no `permissions` block. `allow` (the v0.2 default) permits every capability; `deny` is the opt-in so an undeclared route gets no capability by default.
+- `permissions.env` — `any` — default —: V2-F19: the env-var-name allow-list for `process.env` reads. `null` = unrestricted; `[]` = no name. Names match exactly (case-sensitive).
+- `permissions.fs` — `any` — default —: V2-F19: the fs-path-prefix allow-list for file reads. `null` = unrestricted; `[]` = no path. A `./data` entry allows `./data/anything` (prefix match, `./`-normalized).
+- `permissions.net` — `any` — default —: V2-F19: the host-pattern allow-list for `fetch`. `null` = unrestricted; `[]` = no host. A `*.internal` pattern matches `api.internal` (label-boundary, not bare suffix).
 ### `plugins`
 
 - `plugins` — `object[]` — default —: §15: plugin entries (native, wasm, or js).
