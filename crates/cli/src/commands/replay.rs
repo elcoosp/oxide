@@ -172,6 +172,7 @@ pub(crate) async fn run_replay(
         Vec::new(),
         stack,
         None,
+        None,
     )
     .await?;
 
