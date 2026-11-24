@@ -70,10 +70,10 @@ fn workspace_members(root: &std::path::Path) -> Vec<String> {
         // Each member line is `"crates/<name>",` (trailing comma optional on
         // the last entry). Strip a trailing comma, then the surrounding quotes.
         let no_comma = trimmed.trim_end_matches(',');
-        if let Some(stripped) = no_comma.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
-            if !stripped.is_empty() {
-                out.push(stripped.to_string());
-            }
+        if let Some(stripped) = no_comma.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+            && !stripped.is_empty()
+        {
+            out.push(stripped.to_string());
         }
     }
     assert!(
@@ -135,13 +135,8 @@ fn lints_table_body(toml: &str) -> Option<String> {
 /// `Err(reason)` — the table is missing, bare (opted out), or divergent (an
 /// override sub-table or an extra key alongside `workspace = true`).
 fn lint_uniformity_verdict(toml: &str) -> Result<(), String> {
-    let body = match lints_table_body(toml) {
-        None => {
-            return Err(
-                "no [lints] table — the crate opts out of the workspace lint policy".into(),
-            );
-        }
-        Some(b) => b,
+    let Some(body) = lints_table_body(toml) else {
+        return Err("no [lints] table — the crate opts out of the workspace lint policy".into());
     };
     if body.is_empty() {
         return Err(
@@ -168,6 +163,8 @@ fn lint_uniformity_verdict(toml: &str) -> Result<(), String> {
         "divergent [lints] table — expected exactly `workspace = true`, got:\n{body}",
     ))
 }
+
+use std::fmt::Write as _;
 
 #[test]
 fn every_workspace_member_inherits_the_workspace_lint_policy() {
@@ -201,7 +198,7 @@ fn every_workspace_member_inherits_the_workspace_lint_policy() {
          [lints]\n  workspace = true\n\nOffenders:\n",
     );
     for (member, reason) in &offenders {
-        msg.push_str(&format!("  - {member}: {reason}\n"));
+        let _ = writeln!(msg, "  - {member}: {reason}");
     }
     panic!("{msg}");
 }
