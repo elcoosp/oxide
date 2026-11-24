@@ -214,6 +214,38 @@ impl ServingPools {
         };
         p.expire(Instant::now())
     }
+
+    /// The brownout early-drop (the F10 evict trigger's serving half):
+    /// pop the OLDEST demoted generation and return its id — its worker
+    /// pool and loader runner go with it, so the current generation
+    /// reclaims the capacity when the governor hits `Emergency` instead
+    /// of a lockup leaking the drop. `None` when nothing is demoted.
+    /// The read recovers a poisoned lock (the house shape — the drop is
+    /// the graceful path a panicking holder must not skip; a silent
+    /// `None` here would strand the old pool past the mode's own
+    /// shutdown intent, the bug class `route_for`'s recovery fixed).
+    pub fn evict_oldest(&self) -> Option<String> {
+        let mut p = self
+            .pools
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        p.evict_oldest().map(|(id, _pool)| id)
+    }
+}
+
+/// The brownout early-drop over a SHARED id-level pool handle (the shape
+/// the boot's early-drop closure holds — the `SkewState` owner stays with
+/// the wiring; the handle rides into the closure like the SIGHUP path's
+/// does). See [`oxide_fw_dispatch::skew::GenerationPool::evict_oldest`]
+/// for the contract: the OLDEST demotion's id comes back and stops being
+/// accepted (the stage 409s it from here on).
+pub fn evict_handle_oldest(
+    pool: &std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>,
+) -> Option<String> {
+    let mut p = pool
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    p.evict_oldest()
 }
 
 /// The snapshot refusals' coded constructor — the crate-wide diagnostic
