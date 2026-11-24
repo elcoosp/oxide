@@ -308,6 +308,14 @@ const WATCH_PRUNE_DIRS: &[&str] = &[".git", "target", ".oxide", ".pnpm", ".bin",
 
 /// §1.3: register a single non-recursive watch on `dir`. Best-effort: a
 /// registration racing the directory's deletion fails and is ignored.
+///
+/// The loud-convention repair (the F65-session repair's class — behavior
+/// unchanged, the failure visible): the classification runs on the TYPED
+/// notify error before it wraps — the raced deletion the walk itself
+/// creates (`PathNotFound`/`WatchNotFound`) stays quiet, every other
+/// refusal (permissions, the inotify watch budget) warns under `DEV-NOTIFY`
+/// naming the directory, because a silently unwatched subtree is edits
+/// that never fire HMR and never say why.
 fn add_watch_dir(
     watcher: &std::sync::Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
     dir: &Path,
@@ -317,7 +325,19 @@ fn add_watch_dir(
         .lock()
         .map_err(|_| crate::err("DEV-NOTIFY", "watcher lock poisoned"))?;
     w.watch(dir, RecursiveMode::NonRecursive)
-        .map_err(|e| crate::err("DEV-NOTIFY", format!("watch {}: {e}", dir.display())))
+        .map_err(|e| {
+            if !matches!(
+                e.kind,
+                notify::ErrorKind::PathNotFound | notify::ErrorKind::WatchNotFound
+            ) {
+                tracing::warn!(
+                    dir = %dir.display(),
+                    error = %e,
+                    "DEV-NOTIFY: watch registration failed; edits under this directory will not fire HMR"
+                );
+            }
+            crate::err("DEV-NOTIFY", format!("watch {}: {e}", dir.display()))
+        })
 }
 
 /// §1.3 (watch budget): walk `root` and register a NON-recursive inotify
@@ -335,8 +355,20 @@ fn add_pruned_watches(
 ) {
     const NODE_MODULES_MAX_DEPTH: u8 = 2;
     let _ = add_watch_dir(watcher, root);
-    let Ok(md) = std::fs::metadata(root) else {
-        return;
+    // An unreadable root stops the walk — warn under the same convention
+    // unless it is the raced deletion (NotFound), which the churn above
+    // legitimately produces.
+    let md = match std::fs::metadata(root) {
+        Ok(md) => md,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            tracing::warn!(
+                dir = %root.display(),
+                error = %e,
+                "DEV-NOTIFY: watch walk skipped; edits under this directory will not fire HMR"
+            );
+            return;
+        }
     };
     if !md.is_dir() {
         return;
@@ -1031,9 +1063,14 @@ impl Default for HmrHub {
 
 /// Error overlay payload: miette-style diagnostics serialized as JSON — code frames,
 /// source-mapped stacks, hints with fixes (§13.4). Drawn by a small overlay in dev.
+///
+/// The unmapped entry point: the diagnostic serializes verbatim (the
+/// pre-frames byte shape — a caller without maps keeps today's payload).
+/// The boot holding the compile outputs' maps opts into the mapped shape
+/// through [`overlay_payload_with_maps`] (§V2-E08 item 1).
 #[must_use]
 pub fn overlay_payload(diag: &Diagnostic) -> String {
-    diag.to_json()
+    frames::overlay_payload_with_maps(diag, &frames::NoMaps)
 }
 
 /// `/__oxide` inspector data model (§13.4): module graph, `oxide why` explanations,
@@ -1657,6 +1694,15 @@ pub use state::{DefaultStatePolicy, Preservation, StatePolicy};
 /// monorepo, plus the `real_path` package-edge bridge (§V2-E12).
 pub mod workspace;
 pub use workspace::{DEV_WS_001, LinkedPackage, ManifestWorkspaceLinks, WorkspaceLinks, real_path};
+
+/// V2-E08 item 1's frame half: the overlay's source-mapped stack frames —
+/// the [`frames::FrameMapper`] seam, the [`frames::NoMaps`] pass-through
+/// default, the [`frames::ModuleMaps`] production mapper over the compile
+/// outputs' maps, and the mapped §13.4 payload builder. The §13.4
+/// diagnostic stack itself rides `Diagnostic::frames`
+/// (`oxide-fw-diagnostics`).
+pub mod frames;
+pub use frames::{FrameMapper, ModuleMaps, NoMaps, OriginalPosition, overlay_payload_with_maps};
 
 #[cfg(test)]
 mod tests;
