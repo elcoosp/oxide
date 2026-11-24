@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use oxide_fw_compiler::{inject_hmr_boundary, lower_to_js_with_refresh};
+use oxide_fw_compiler::{inject_data_ox_src, inject_hmr_boundary, lower_to_js_with_refresh};
 use oxide_fw_server::{OxideRequest, OxideResponse};
 
 /// Directory (project-relative) where prebundled deps and copied framework
@@ -244,6 +244,25 @@ fn pool_op_for(rel_path: &str) -> (&'static str, &'static str) {
 /// On a pool error the response is a JS module that throws — the browser
 /// surfaces it through the HMR overlay (`HMR-IMPORT`) instead of silently
 /// serving stale code.
+/// The §V2-F17 stamp lang for a pool-compiled client module — `None` when
+/// the extension is not a stampable source (the engine's own no-vouch
+/// direction; the JSX visitor owns `tsx`/`jsx`, the template scan owns
+/// `vue`/`svelte`).
+fn stamp_lang_for(rel_path: &str) -> Option<&'static str> {
+    let lower = rel_path.to_ascii_lowercase();
+    if lower.ends_with(".vue") {
+        Some("vue")
+    } else if lower.ends_with(".svelte") {
+        Some("svelte")
+    } else if lower.ends_with(".tsx") {
+        Some("tsx")
+    } else if lower.ends_with(".jsx") {
+        Some("jsx")
+    } else {
+        None
+    }
+}
+
 pub async fn serve_pool_compiled_module(
     state: &EsmDevState,
     rel_path: &str,
@@ -280,6 +299,19 @@ pub async fn serve_pool_compiled_module(
         return fail("tooling pool unavailable — cannot compile SFC/Solid client module".into());
     };
     let (op_kind, generate) = pool_op_for(rel_path);
+    // §V2-F17: the dev client compile stamps the source BEFORE the pool's
+    // transform — the rendered DOM carries `data-ox-src="src/<rel>:1"` back
+    // to the component (the cost endpoint's `?src=` spelling). This serve
+    // path is dev-only by construction (the ESM dev server), so the stamp
+    // is unconditional here; the production bundling never rides this fn.
+    // A source the engine declines serves the original bytes unchanged.
+    let src = match stamp_lang_for(rel_path) {
+        Some(lang) => inject_data_ox_src(&src, lang, &format!("src/{rel_path}"))
+            .ok()
+            .flatten()
+            .unwrap_or(src),
+        None => src,
+    };
     let payload = serde_json::json!({
         "source": src,
         "filename": format!("src/{rel_path}"),
@@ -594,8 +626,33 @@ fn read_framework_exports(root: &Path) -> Option<Vec<(String, String)>> {
 }
 
 fn read_exports_at(pkg_json: &Path) -> Option<Vec<(String, String)>> {
-    let raw = std::fs::read_to_string(pkg_json).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let raw = match std::fs::read_to_string(pkg_json) {
+        Ok(raw) => raw,
+        Err(e) => {
+            // A package directory whose manifest cannot be read is a real
+            // misconfiguration, not "no exports": the boot entry would
+            // later fail with the misleading `missing ./client/hot export`
+            // even when the export exists. Loud, behavior unchanged (the
+            // walk still skips the package).
+            tracing::warn!(
+                path = %pkg_json.display(),
+                error = %e,
+                "framework package.json unreadable; skipping its exports"
+            );
+            return None;
+        }
+    };
+    let json: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::warn!(
+                path = %pkg_json.display(),
+                error = %e,
+                "framework package.json malformed; skipping its exports"
+            );
+            return None;
+        }
+    };
     let name = json.get("name")?.as_str()?;
     if !name.starts_with("@oxide-fw/") {
         return None;
@@ -1928,5 +1985,59 @@ mod integration_tests {
         // the pool compile, so the vue/svelte arms are framework-agnostic.
         assert!(needs_pool_compile(&react_state, "routes/index/page.vue"));
         assert!(needs_pool_compile(&react_state, "routes/index/page.svelte"));
+    }
+
+    /// §V2-F17: the dev CLIENT compile stamps the source before the pool
+    /// sees it — the payload's `source` carries `data-ox-src` (the cost
+    /// endpoint's `?src=` spelling) so the client-rendered DOM maps back to
+    /// the component. The serve path is dev-only by construction (the ESM
+    /// dev server), so the stamp is unconditional here — the production
+    /// bundling never rides this fn.
+    #[tokio::test]
+    async fn pool_compiled_client_payload_carries_the_dev_stamp() {
+        use bytes::Bytes;
+        use oxide_fw_jshost::{CallInput, CallStream, EntryRef, PoolConfig, ScriptedPool};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let page = tmp.path().join("src/routes/index/page.vue");
+        std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+        std::fs::write(&page, "<template><p>hi</p></template>").unwrap();
+        let mut map = BTreeMap::new();
+        map.insert(
+            "@oxide-fw/core/client/hot".to_string(),
+            "/@prebundle/@oxide-fw/core/dist/client-hot.js".to_string(),
+        );
+        let state = EsmDevState {
+            root: tmp.path().to_path_buf(),
+            jsx_import_source: None,
+            rewrite_map: Arc::new(map),
+            framework: "vue".to_string(),
+            islands: None,
+            warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
+        };
+        let seen: Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_for_handler = Arc::clone(&seen);
+        let pool: Arc<dyn oxide_fw_jshost::Pool> = Arc::new(ScriptedPool::new(
+            Arc::new(move |_entry: EntryRef, req: CallInput| {
+                seen_for_handler.lock().unwrap().push(req.payload.clone());
+                Ok(CallStream::Complete(Bytes::from(
+                    serde_json::json!({ "js": "export default null;" }).to_string(),
+                )))
+            }),
+            PoolConfig::default(),
+        ));
+        let resp = serve_pool_compiled_module(&state, "routes/index/page.vue", Some(&pool)).await;
+        assert_eq!(resp.status, 200, "the pool compile serves");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "one pool call");
+        let source = seen[0]
+            .get("source")
+            .and_then(|v| v.as_str())
+            .expect("payload source");
+        assert!(
+            source.contains(r#"data-ox-src="src/routes/index/page.vue:1""#),
+            "the client compile must send the STAMPED source, got: {source}"
+        );
     }
 }
