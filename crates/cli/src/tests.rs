@@ -4330,6 +4330,210 @@ async fn remote_cache_handler_maps_handler_config() {
     assert!(f(None).await.is_none());
 }
 
+// ------------------------------------------------ V2-F63: the boot posture line
+
+/// A full plane on a real socket — the construction the boot probes: the
+/// tier rooted as both the backing store and the F58 health provider, the
+/// §20 exporter fanned onto it and composed into the F61 metrics source.
+/// The same fixture shape the cache crate's `peer_posture_tdd` rides.
+async fn boot_probe_plane() -> std::net::SocketAddr {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    let metrics = std::sync::Arc::new(oxide_fw_cache::MetricsCacheObserver::new());
+    let tier = std::sync::Arc::new(
+        oxide_fw_cache::TieredCache::new(64 * 1024 * 1024)
+            .with_observer(metrics.clone() as std::sync::Arc<dyn oxide_fw_cache::CacheObserver>),
+    );
+    let svc = oxide_fw_cache::HttpCacheService::new(
+        std::sync::Arc::clone(&tier) as std::sync::Arc<dyn oxide_fw_cache::CacheHandler>
+    )
+    .with_health(std::sync::Arc::clone(&tier) as std::sync::Arc<dyn oxide_fw_cache::PlaneHealth>)
+    .with_metrics(std::sync::Arc::new(oxide_fw_cache::MetricsPlaneSource::new(
+        metrics,
+        tier.clone() as std::sync::Arc<dyn oxide_fw_cache::PlaneHealth>,
+    )) as std::sync::Arc<dyn oxide_fw_cache::PlaneMetrics>);
+    tokio::spawn(async move {
+        svc.serve(l).await.expect("the accept loop serves");
+    });
+    addr
+}
+
+/// The acceptance criterion is the F63 record's standing pickup
+/// (HANDOFF.md, F63 "Where to pick up"): "wire the boot's serve loop to
+/// report the remote plane's posture through `PlanePeer` (the
+/// `cache.handler = { type: 'http' }` node's own boot line — the
+/// two-node story's last unwired half)". The pull is LIVE — a fresh
+/// `GET /health` per boot, never a value frozen at attach — and the line
+/// names the posture the plane actually reports.
+#[tokio::test]
+async fn boot_posture_line_renders_the_live_pull() {
+    let addr = boot_probe_plane().await;
+    let line = crate::framework_shim::remote_plane_boot_line(
+        &format!("http://{addr}"),
+        std::time::Duration::from_secs(2),
+    )
+    .await
+    .expect("the probe answers the live plane");
+    assert!(
+        line.starts_with("cache.handler=http:"),
+        "the line names the wire that produced it: {line}"
+    );
+    assert!(
+        line.contains("observer on"),
+        "the seam's own posture state is named: {line}"
+    );
+}
+
+/// A provider-less plane answers the F40 404 for `/health`; the boot line
+/// fails LOUD (the house convention) — a probe that silently reported a
+/// zeroed posture would be worse than one that fails.
+#[tokio::test]
+async fn boot_posture_line_names_a_provider_less_peer_loudly() {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    let svc = oxide_fw_cache::HttpCacheService::new(std::sync::Arc::new(
+        oxide_fw_cache::TieredCache::new(64 * 1024 * 1024),
+    )
+        as std::sync::Arc<dyn oxide_fw_cache::CacheHandler>);
+    tokio::spawn(async move {
+        svc.serve(l).await.expect("the accept loop serves");
+    });
+    let e = crate::framework_shim::remote_plane_boot_line(
+        &format!("http://{addr}"),
+        std::time::Duration::from_secs(2),
+    )
+    .await
+    .expect_err("a provider-less peer is an error, never a fabricated posture");
+    assert_eq!(e.0.code, "CACHE-HTTP", "the probe's stable code");
+    assert!(
+        e.0.message.contains("404"),
+        "the status is named: {}",
+        e.0.message
+    );
+}
+
+/// The render is byte-stable: two renders over the same posture are
+/// byte-equal, and a fixed posture renders the exact recorded line — the
+/// contract an operator (or a log differ) relies on.
+#[test]
+fn boot_posture_line_is_byte_stable() {
+    let health = oxide_fw_cache::CacheHealth {
+        memory_entries: 3,
+        memory_bytes: 1234,
+        memory_capacity_bytes: 67_108_864,
+        disk_attached: true,
+        disk_bytes: 4096,
+        remote_attached: true,
+        remote_kind: Some("tiered".into()),
+        tags_indexed: 12,
+        keys_tracked: 34,
+        observer_attached: true,
+        disk_evictions: 4,
+    };
+    let line = crate::framework_shim::render_plane_boot_line(&health);
+    assert_eq!(
+        line,
+        "cache.handler=http: the remote plane's posture at boot — memory 3 \
+         entries / 1234 B / 67108864 B cap, disk attached 4096 B / 4 evictions, \
+         remote attached (tiered), 12 tags / 34 keys, observer on"
+    );
+    assert_eq!(crate::framework_shim::render_plane_boot_line(&health), line);
+}
+
+/// A hung peer degrades within the probe's own F60 deadline — the boot
+/// line fails LOUD inside the bound, never hangs the serve loop's boot
+/// (the §11.2 "a remote cache is an optimization" contract).
+#[tokio::test]
+async fn boot_posture_probe_rides_its_deadline() {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((s, _)) = l.accept().await {
+            // Hold the socket open and answer nothing: the deadline is
+            // the only bound the probe rides.
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            drop(s);
+        }
+    });
+    let started = std::time::Instant::now();
+    let e = crate::framework_shim::remote_plane_boot_line(
+        &format!("http://{addr}"),
+        std::time::Duration::from_millis(50),
+    )
+    .await
+    .expect_err("a hung peer is a deadline error");
+    assert_eq!(e.0.code, "CACHE-HTTP");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "the probe degrades within the bound, took {:?}",
+        started.elapsed()
+    );
+}
+
+// ----------------------------- V2-F69 config/CLI half: the sharded cache.handler
+
+/// The F69 config/CLI half (HANDOFF.md, F69/F70 "Sandbox notes"): "a
+/// `cache.handler` config surface for the sharded client (a
+/// `shards: [...]` array the boot resolves into the composite — the
+/// config/CLI half of F69)". The resolver composes the F69
+/// `ShardedCacheHandler` over the shards the config names.
+///
+/// Written FIRST (red): E0599 over the missing `Sharded` variant.
+#[tokio::test]
+async fn remote_cache_handler_resolves_a_sharded_config() {
+    use oxide_fw_config::CacheHandlerConfig;
+    let f = crate::framework_shim::remote_cache_handler;
+    let handler = f(Some(&CacheHandlerConfig::Sharded {
+        shards: vec![
+            CacheHandlerConfig::Http {
+                url: "https://plane-a".into(),
+            },
+            CacheHandlerConfig::Http {
+                url: "https://plane-b".into(),
+            },
+        ],
+    }))
+    .await
+    .expect("two http shards compose");
+    assert_eq!(handler.handler_kind(), "sharded");
+}
+
+/// The F69 composite's own contract: an empty set refuses loud under the
+/// minted `CAC-SHARD`; at the boot wire the refusal surfaces as the
+/// `None` the caller's local-tier fallback rides (the §11.2 degrade
+/// contract — the build must not fail because a cache is down).
+#[tokio::test]
+async fn remote_cache_handler_refuses_an_empty_shard_set_loudly() {
+    use oxide_fw_config::CacheHandlerConfig;
+    let f = crate::framework_shim::remote_cache_handler;
+    assert!(
+        f(Some(&CacheHandlerConfig::Sharded { shards: vec![] }))
+            .await
+            .is_none(),
+        "the empty set refuses: the boot stays local-only"
+    );
+}
+
+/// memory/disk are the LOCAL tiers — not shards; a shard element that
+/// resolves to no remote driver is skipped (the §11.2 degrade contract,
+/// per shard) and the composite is the planes that survived.
+#[tokio::test]
+async fn remote_cache_handler_skips_local_shard_elements() {
+    use oxide_fw_config::CacheHandlerConfig;
+    let f = crate::framework_shim::remote_cache_handler;
+    let handler = f(Some(&CacheHandlerConfig::Sharded {
+        shards: vec![
+            CacheHandlerConfig::Memory,
+            CacheHandlerConfig::Http {
+                url: "https://plane-a".into(),
+            },
+        ],
+    }))
+    .await
+    .expect("the http shard survives");
+    assert_eq!(handler.handler_kind(), "sharded");
+}
+
 // -------------------------------- §8.1/§8.4 middleware parity (headers+locals)
 
 /// A `MiddlewareDispatcher` that always succeeds, adds fixed response
