@@ -1,0 +1,4 @@
+    |              ^^^^^^^^^^^^ method not found in `GenerationPool`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `oxide-fw-dispatch` (test "skew_tdd") due to 4 previous errors
