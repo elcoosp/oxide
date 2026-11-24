@@ -404,11 +404,38 @@ pub(crate) async fn phase_plan(cx: &mut BuildCtx<'_>) -> anyhow::Result<()> {
     // composes with any in-flight edit elsewhere in that function.
     let js_resolve_hook = build_js_plugin_resolve_hook(rootp, cfg, stack.tooling_pool.as_ref());
     let js_load_hook = build_js_plugin_load_hook(rootp, cfg, stack.tooling_pool.as_ref());
-    client_opts.resolve_hook = js_resolve_hook.clone();
-    client_opts.load_hook = js_load_hook.clone();
+    // §V2-F08 finish: the bundle-time `.server.rs` arms ride FIRST in the
+    // chain (the server-rs resolve/load answers only when the specifier
+    // names a first-party `*.server.rs` module; everything else falls
+    // through to the JS-plugin arm). The hooks read the payload the
+    // emission phase writes — lazily, at first bundle call.
+    let native_crate = crate::native_fns::discover_native_crate(rootp);
+    let (rs_resolve, rs_load_client, rs_load_server) = match native_crate.as_ref() {
+        Some(nc) => (
+            crate::native_fns::server_rs_resolve_hook(nc),
+            crate::native_fns::server_rs_load_hook(
+                rootp,
+                nc,
+                &build_secret_for_fp,
+                oxide_fw_compiler::Env::Client,
+            ),
+            crate::native_fns::server_rs_load_hook(
+                rootp,
+                nc,
+                &build_secret_for_fp,
+                oxide_fw_compiler::Env::Ssr,
+            ),
+        ),
+        None => (None, None, None),
+    };
+    client_opts.resolve_hook =
+        crate::native_fns::compose_resolve_hooks(rs_resolve.clone(), js_resolve_hook.clone());
+    client_opts.load_hook =
+        crate::native_fns::compose_load_hooks(rs_load_client, js_load_hook.clone());
     let mut server_opts = server_opts;
-    server_opts.resolve_hook = js_resolve_hook;
-    server_opts.load_hook = js_load_hook;
+    server_opts.resolve_hook =
+        crate::native_fns::compose_resolve_hooks(rs_resolve, js_resolve_hook);
+    server_opts.load_hook = crate::native_fns::compose_load_hooks(rs_load_server, js_load_hook);
     // §15-B: the three post-emit / HTML hooks. renderChunk and generateBundle
     // run inside the bundler for both envs; transformHtml runs on each
     // prerendered document.
