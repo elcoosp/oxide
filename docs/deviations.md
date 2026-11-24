@@ -7293,3 +7293,74 @@ recorded hygiene debt, and the full-workspace unified gate stays the
 hygiene pass's work. The V8-dependent gates (the `rust` CI job,
 `docs-check`, the `op_parity` ignored pins, the e2e scripts) did NOT run
 here; the generated-doc edit is replica-verified by the byte-identity pin.
+
+## The §V2-F17 stamp learns its compile paths and the doctor learns the §V2-E08 item-3 check table (`feat/data-ox-src-wire` + `feat/doctor-checks`, this diff)
+
+**M1 — the DOM→source stamp's compile-path wire (the F17 row's recorded
+injection half).** The engine was a seam with no consumer: the 2026-11-23
+template-stamp commits landed `inject_template_data_ox_src` (the
+vue/svelte half of `inject_data_ox_src`, 12 pins + the bench + the
+walkthrough) but NOTHING called it — the React/JSX half rides
+`lower_to_js_with_refresh` and the three pool frameworks (`.vue`,
+`.svelte`, Solid `.tsx`) compile through paths the engine never saw. The
+wire: `PrecompilePlan::data_ox_src: Option<&Path>` (the `src/` root;
+presence enables the stamp, the value gives the `?src=` spelling) —
+`compile_one` stamps the job's source BEFORE the native/pool compile, so
+every downstream shape (the CAS key fold, the pool payload, the native
+request) sees the stamped bytes consistently; the dev SSR shim
+(`dev_component_sources`) passes `Some(<root>/src)`, the production build
+pass passes `None`, and the ESM dev server's client arm
+(`serve_pool_compiled_module`) stamps unconditionally (the serve path is
+dev-only by construction). The stamp lands on the SOURCE text before the
+compile hooks (the engine's own contract), so the rendered DOM carries
+`data-ox-src="src/<rel>:1"` for all four frameworks in dev. 6 TDD pins
+(payload-stamp for vue/svelte/solid, the flag-off byte-identical shape,
+the native-arm source, the CAS key separation) + the esm_dev client-arm
+pin; the `data_src_wire` bench (stamped vs unstamped pass cost) and the
+`data_src_wire` walkthrough ride along. Deltas: a source the engine
+declines (no stampable element, a path outside `src_root`) compiles the
+original bytes — a skipped stamp costs the overlay nothing, a wrong one
+misleads it (the engine's own no-vouch direction).
+
+**M2 — the doctor's §V2-E08 item-3 check table (the recorded "doctor
+additions" tail).** `cmd_doctor` carried the native-compiler health and
+the tool inventory (the 2026-11-17 half) but nothing for the four
+remaining checks. `crates/cli/src/doctor_checks.rs`: the table-driven
+check half — `remote_cache_endpoints` parses the A10 handler spellings
+(redis/http URLs to host:port pairs, the sharded composite folding its
+remote members, s3 naming its bucket without a probeable endpoint),
+`cache_handler_reachability` (a down remote plane WARNS — the §11.2
+contract makes a remote cache an optimization lost, never an outage),
+`port_availability` (a taken port FAILS — dev/start refuses to boot),
+`fd_limit_check` (under the spec's 4,096 WARNS),
+`clock_skew_check` (beyond the recorded 60-second tolerance FAILS — the
+tolerance is this milestone's documented default, the spec names none;
+the authority is the cache plane's own `Date` header over a
+1-second-bounded HTTP/1.0 HEAD). Every check maps an INJECTED fact to a
+`Verdict` (`Ok`/`Warn`/`Fail`/`Skip`) — the spec's "doctor checks are
+table-driven with fake probes" test contract; 12 fake-probe pins + the
+cmd_doctor wire pin (the rows must print). Deltas: an `https`-only
+plane skips the skew check honestly (std cannot speak TLS), a platform
+without `/proc/self/limits` skips the fd check.
+
+**Micro-debt (additive, behavior unchanged each time).**
+`read_framework_exports`' per-package failures are loud now (an
+unreadable or malformed `package.json` under `node_modules/@oxide-fw/`
+or `packages/` warns naming the path and the io/parse error before the
+walk skips it — the boot entry's later `missing ./client/hot export`
+error can no longer mask the real cause); `copy_framework_dist`'s
+prebundle copy failures warn under the same convention (a silently
+missing `dist/` used to surface only as browser 404s at `/@prebundle/`).
+
+**Docs drift repaired.** The spec's V2.O status rows whose recorded
+remainders provably landed in newer sessions: A08 (the op-parity arms +
+the pinned parity table), A09 (the `ModuleSource` prerender wire),
+F08 (the phase_native/consult/live-rebuild halves), F09 (the
+`@oxide-fw/core/search` export), F10 (the F11 rollback slice landed),
+F12 (the hedger + the oha overload script + the pool evict), E01 (the
+Vue/Solid refresh boundary emit), E11 (the endpoints/plugin-compat
+pages), the E-group row's stale "remain todo" sentence, and the E08
+tail (the doctor additions). This diff's own rows: the F17 injection
+tail (the compile-path wire) and the doctor tail. `docs/architecture.md`'s
+compiler row names the compile-path wire and the cli row names the
+doctor check table; the README test badge re-measured (the 13 new pins).
