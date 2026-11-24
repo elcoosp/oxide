@@ -1276,9 +1276,10 @@ pub(crate) async fn plugin_render_head(
 /// among the drivers the CLI already builds — a deploy plugin knows whether
 /// its platform wants redis, s3, an HTTP cache, or memory.
 ///
-/// Each plugin returns `{ kind: "memory" | "disk" | "redis" | "s3" | "http",
-/// url?, bucket? }`. The last plugin to return a valid kind wins. An unknown
-/// kind, or a missing url/bucket, is reported and the config's choice stands.
+/// Each plugin returns `{ kind: "memory" | "disk" | "redis" | "s3" |
+/// "http" | "sharded", url?, bucket?, shards? }`. The last plugin to
+/// return a valid kind wins. An unknown kind, or a missing url/bucket/
+/// shards payload, is reported and the config's choice stands.
 pub(crate) async fn resolve_cache_handler_via_plugin(
     root: &Path,
     cfg: &OxideConfig,
@@ -1328,6 +1329,35 @@ pub(crate) async fn resolve_cache_handler_via_plugin(
                     url: url.to_string(),
                 }
             }),
+            "sharded" => {
+                // V2-F69 config/CLI half: the plugin surface speaks the
+                // same `shards: [...]` shape the config file does — each
+                // element maps through the same per-kind match (a nested
+                // sharded shard composes composites); elements that do
+                // not map are named and skipped (the loud convention —
+                // the count warn, not a per-element outln inside the
+                // filter_map, keeps the closure Option-pure).
+                match r.get("shards").and_then(|s| s.as_array()) {
+                    Some(arr) => {
+                        let shards: Vec<oxide_fw_config::CacheHandlerConfig> = arr
+                            .iter()
+                            .filter_map(cache_handler_from_hook_result)
+                            .collect();
+                        if shards.len() < arr.len() {
+                            outln!(
+                                w,
+                                "warn: cacheHandler sharded: {} of {} shard \
+                                 elements are not valid handler shapes; ignored",
+                                arr.len() - shards.len(),
+                                arr.len()
+                            );
+                        }
+                        Some(oxide_fw_config::CacheHandlerConfig::Sharded { shards })
+                    }
+                    // The shared missing-shards warn rides below.
+                    None => None,
+                }
+            }
             other => {
                 outln!(
                     w,
@@ -1338,14 +1368,54 @@ pub(crate) async fn resolve_cache_handler_via_plugin(
         };
         if let Some(c) = candidate {
             chosen = Some(c);
-        } else if matches!(kind, "redis" | "s3" | "http") {
+        } else if matches!(kind, "redis" | "s3" | "http" | "sharded") {
             outln!(
                 w,
-                "warn: cacheHandler kind `{kind}` is missing its url/bucket; ignored"
+                "warn: cacheHandler kind `{kind}` is missing its url/bucket/shards; ignored"
             );
         }
     }
     Ok(chosen)
+}
+
+/// Map ONE plugin hook result object onto the config it names — the
+/// per-kind match [`resolve_cache_handler_via_plugin`]'s loop rides, kept
+/// as its own function so the `sharded` kind can recurse into it for the
+/// elements of its `shards` array (a nested sharded shard composes
+/// composites). `None` means the object names no kind the enum speaks
+/// (or names one without its url/bucket/shards payload).
+fn cache_handler_from_hook_result(
+    r: &serde_json::Value,
+) -> Option<oxide_fw_config::CacheHandlerConfig> {
+    let kind = r.get("kind").and_then(|k| k.as_str())?;
+    match kind {
+        "memory" => Some(oxide_fw_config::CacheHandlerConfig::Memory),
+        "disk" => Some(oxide_fw_config::CacheHandlerConfig::Disk),
+        "redis" => r.get("url").and_then(|u| u.as_str()).map(|url| {
+            oxide_fw_config::CacheHandlerConfig::Redis {
+                url: url.to_string(),
+            }
+        }),
+        "s3" => r.get("bucket").and_then(|b| b.as_str()).map(|bucket| {
+            oxide_fw_config::CacheHandlerConfig::S3 {
+                bucket: bucket.to_string(),
+            }
+        }),
+        "http" => r.get("url").and_then(|u| u.as_str()).map(|url| {
+            oxide_fw_config::CacheHandlerConfig::Http {
+                url: url.to_string(),
+            }
+        }),
+        "sharded" => r.get("shards").and_then(|s| s.as_array()).map(|arr| {
+            oxide_fw_config::CacheHandlerConfig::Sharded {
+                shards: arr
+                    .iter()
+                    .filter_map(cache_handler_from_hook_result)
+                    .collect(),
+            }
+        }),
+        _ => None,
+    }
 }
 
 /// Render a plugin's neutral head model (`renderHead`'s return value) into
