@@ -57,7 +57,12 @@ pub struct SwConfig {
     /// The offline-fallback route the worker serves for a navigation
     /// miss. Default `/offline` when the build produced that route;
     /// otherwise `/` (the precached shell). `sw.offlineFallback`
-    /// overrides it.
+    /// overrides it. The resolved route ALWAYS joins the precache set
+    /// (the plan's r9-K3 guarantee): the install fetch is the only thing
+    /// that can answer `FALLBACK_ROUTE` offline, so the fallback rides it
+    /// even when no prerendered shell carries the URL. A URL no build
+    /// artifact answers warns loudly at emission — it may still be
+    /// answered at runtime by an SSR route or a server rewrite.
     #[serde(default)]
     pub offline_fallback: Option<String>,
 }
