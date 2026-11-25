@@ -1366,7 +1366,14 @@ pub(crate) async fn cmd_dev(
                                     message = %diag.message,
                                     "DEV-HMR-002: orphan stylesheet"
                                 );
-                                hub.publish(&HmrMessage::Error { diagnostic: diag });
+                                hub.publish(&HmrMessage::Error {
+                                    diagnostic: crate::esm_dev::mapped_hmr_error(
+                                        started.module_maps.as_ref(),
+                                        &rootp,
+                                        &changed_pb,
+                                        diag,
+                                    ),
+                                });
                             }
                             let root_str = rootp.to_string_lossy();
                             let rel = pstr.strip_prefix(root_str.as_ref()).unwrap_or(&pstr);
@@ -1494,7 +1501,14 @@ pub(crate) async fn cmd_dev(
                                 "DEV-BUNDLE",
                                 format!("rebuild failed for {pstr}: {err_msg}"),
                             );
-                            hub.publish(&HmrMessage::Error { diagnostic: diag });
+                            hub.publish(&HmrMessage::Error {
+                                diagnostic: crate::esm_dev::mapped_hmr_error(
+                                    started.module_maps.as_ref(),
+                                    &rootp,
+                                    std::path::Path::new(&pstr),
+                                    diag,
+                                ),
+                            });
                         } else if cfg.dev.esm {
                             tracing::info!("HMR: publishing update entries for ESM file");
                             let root_str = rootp.to_string_lossy();
@@ -1642,7 +1656,12 @@ pub(crate) async fn cmd_dev(
                                                 let diag =
                                                     oxide_fw_dev::full_reload_diagnostic(&reason);
                                                 hub.publish(&HmrMessage::Error {
-                                                    diagnostic: diag,
+                                                    diagnostic: crate::esm_dev::mapped_hmr_error(
+                                                        started.module_maps.as_ref(),
+                                                        &rootp,
+                                                        std::path::Path::new(&pstr),
+                                                        diag,
+                                                    ),
                                                 });
                                                 tick_reload_reason = Some(reason.clone());
                                                 hub.publish(&HmrMessage::FullReload { reason });
