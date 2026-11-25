@@ -15,7 +15,12 @@
 //!    hashed asset the client manifest carries — the navigation shell
 //!    rides both) and the resolved offline fallback (`sw.offlineFallback`
 //!    override → `/offline` when the build produced it → `/`, the
-//!    `SwConfig` comment's exact order).
+//!    `SwConfig` comment's exact order). The plan keeps the navigation
+//!    contract's precache half the shells alone could not: **the resolved
+//!    fallback always joins the precache set** — the install step fetches
+//!    `PRECACHE` and only `PRECACHE`, so a fallback outside it (the
+//!    override, or the no-shell SPA posture) resolved and rendered but
+//!    could never answer an offline navigation (the r9-K3 hazard).
 //! 3. [`sw_source`] / [`emit_pwa`] — the deterministic worker source and
 //!    its write to the dist root (`/sw.js`, the scope the worker needs to
 //!    answer navigations) plus the registration snippet the page loads
@@ -79,7 +84,10 @@ pub struct PrecachePlan {
     /// caches and the activate step deletes the stale ones.
     pub cache_name: String,
     /// The URLs to precache at install — deduped and byte-sorted (a
-    /// stable diff across builds).
+    /// stable diff across builds). Always carries the resolved
+    /// [`PrecachePlan::offline_fallback`]: the install step fetches
+    /// exactly this list, so a fallback outside it could never answer
+    /// the offline navigation it exists for.
     pub precache: Vec<String>,
     /// The resolved navigation-fallback route: `sw.offlineFallback`
     /// override → `/offline` when the build produced it → `/`.
@@ -98,6 +106,20 @@ pub struct PrecachePlan {
 /// every hashed asset the manifest carries (`/client/<file>` — the head
 /// producer's URL spelling, so a precached chunk is the one the manifest's
 /// integrity map digests).
+///
+/// The resolved [`PrecachePlan::offline_fallback`] ALWAYS joins the set —
+/// the navigation contract's precache half (§V2-F14: "navigation falls
+/// back to the cached route shell or `/offline`"): the install step
+/// fetches exactly `PRECACHE`, so a fallback the shells did not carry
+/// (the `sw.offlineFallback` override, or the SPA posture with no
+/// prerendered shell) resolved, rendered into `FALLBACK_ROUTE`, and still
+/// answered every offline navigation with a cache miss — the knob was
+/// dead in exactly the deployments that need it. A fallback that is
+/// already a shell dedupes (one fetch, not two); the `BTreeSet` keeps the
+/// list byte-sorted, so the emission stays deterministic either way.
+/// Whether the URL can actually be ANSWERED at install time (a build
+/// artifact, an SSR route, a server rewrite) is the call site's audit —
+/// the pure plan sees only the manifest and the shells.
 #[must_use]
 pub fn plan_precache(
     manifest: &ClientManifest,
@@ -120,6 +142,10 @@ pub fn plan_precache(
             precache.insert(client_url(file));
         }
     }
+    // The navigation contract's precache half: the fallback rides the
+    // install fetch even when no shell carries it (dedup against the
+    // shell case is the `BTreeSet` insert itself).
+    precache.insert(offline_fallback.clone());
     PrecachePlan {
         build_id: manifest.build_id.clone(),
         cache_name: format!("ox-{}", manifest.build_id),
