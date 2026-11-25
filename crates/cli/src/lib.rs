@@ -437,3 +437,11 @@ pub(crate) use observability::*;
 mod prerender;
 pub use prerender::*;
 pub use serve::*;
+// §10.4 / P0-4: the build-time shell seed's public contract — the row/manifest
+// encode + the boot's parse are the seed seam's consumer API (the criterion
+// bench and the walkthrough example ride them; the store itself stays
+// crate-internal, the boot's artifact).
+pub use build::ppr_seed::{
+    PprSeedSource, PprShellSeed, PprShellSeedRow, l0_params_string, parse_ppr_shell_seed,
+    ppr_shell_seed_manifest, ppr_shell_seed_rows,
+};
