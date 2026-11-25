@@ -84,6 +84,16 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
     // `SwappableRouteTree` builds per generation; the walk below no longer
     // re-scans `tree.entries` per page route).
     let ctx_table = oxide_fw_router::RouteContextTable::build_with_default_pattern(&tree.entries);
+    // §10.4 / P0-4: the build-time shell sources, collected beside the L0
+    // seed bodies while the walk renders (the manifest `phase_ppr_seed`
+    // writes; a ppr-off build collects nothing — no split, no manifest, the
+    // pre-M1 shape). The vary fingerprint an EMPTY request produces under
+    // the boot's own vary config — the seeded key must match what the serve
+    // boot's render stage computes for exactly that request (the default
+    // `cache.l0.vary` = `accept-language` yields the seed_l0 doc's `lang=`).
+    let mut ppr_shell_sources: Vec<crate::build::PprSeedSource> = Vec::new();
+    let ppr_collect = cfg.render.ppr;
+    let ppr_vary = l0_cache::vary_of(&[], &cfg.cache.l0.vary);
     let mut prerendered: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // PERF-04: (route_id, url_path, sentineled html) for the L0 seed manifest.
     // (route_id, url, sentineled_html, status, locale) — the locale is
@@ -245,13 +255,24 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
                     let PrerenderTarget {
                         rel,
                         url_path,
+                        params,
                         locale,
                         ..
                     } = t;
+                    let sentineled = splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL);
+                    if ppr_collect {
+                        ppr_shell_sources.push(crate::build::PprSeedSource {
+                            route_id: route_id.clone(),
+                            url_path: url_path.clone(),
+                            params: crate::build::l0_params_string(&params),
+                            sentineled_html: sentineled.clone(),
+                            locale: locale.clone(),
+                        });
+                    }
                     seed_bodies.push((
                         route_id.clone(),
                         url_path.clone(),
-                        splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL),
+                        sentineled,
                         prerender_status,
                         locale,
                     ));
@@ -360,13 +381,24 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
                             let PrerenderTarget {
                                 rel,
                                 url_path,
+                                params,
                                 locale,
                                 ..
                             } = t;
+                            let sentineled = splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL);
+                            if ppr_collect {
+                                ppr_shell_sources.push(crate::build::PprSeedSource {
+                                    route_id: route_id.clone(),
+                                    url_path: url_path.clone(),
+                                    params: crate::build::l0_params_string(&params),
+                                    sentineled_html: sentineled.clone(),
+                                    locale: locale.clone(),
+                                });
+                            }
                             seed_bodies.push((
                                 route_id.clone(),
                                 url_path.clone(),
-                                splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL),
+                                sentineled,
                                 prerender_status,
                                 locale,
                             ));
@@ -523,10 +555,23 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
                             .await?
                         }
                     };
+                    let sentineled = splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL);
+                    if ppr_collect {
+                        // The Absent arm's targets carry no params: the
+                        // seeded key's params slot stays empty, exactly the
+                        // route stage's `l0_params` for a paramless URL.
+                        ppr_shell_sources.push(crate::build::PprSeedSource {
+                            route_id: route_id.clone(),
+                            url_path: url_path.clone(),
+                            params: String::new(),
+                            sentineled_html: sentineled.clone(),
+                            locale: locale.clone(),
+                        });
+                    }
                     seed_bodies.push((
                         route_id.clone(),
                         url_path.clone(),
-                        splice_nonce(&html, &nonce, l0_cache::NONCE_SENTINEL),
+                        sentineled,
                         prerender_status,
                         locale.clone(),
                     ));
@@ -595,6 +640,14 @@ pub(crate) async fn phase_prerender(cx: &mut BuildCtx<'_>) -> anyhow::Result<()>
     // >>> phase-wrapper (not part of the moved body; split_selfcheck --phases strips this block)
     cx.prerendered = Some(prerendered);
     cx.seed_bodies = Some(seed_bodies);
+    // §10.4 / P0-4: the shell rows the manifest phase writes (empty when
+    // `render.ppr` is off — no split ran, no manifest lands).
+    cx.ppr_shell_rows = Some(crate::build::ppr_shell_seed_rows(
+        &ppr_shell_sources,
+        build_id,
+        &ppr_vary,
+        &cfg.i18n.default_locale,
+    ));
     cx.static_override = Some(static_override);
     cx.new_prerender_records = Some(new_prerender_records);
     Ok(())
