@@ -93,6 +93,12 @@ pub(crate) struct DispatchDeps {
     /// endpoints report the level); `None` for the test helper and every
     /// `enabled: false` boot (the stage is inert, the pre-F12 shapes).
     pub brownout: Option<std::sync::Arc<crate::serve::brownout::BrownoutWiring>>,
+    /// P0-2 (the response-envelope side): the largest `/__data` envelope
+    /// the pipeline answers (`Limits::max_data_envelope`, the request
+    /// `max_body` twin). The data-route stage threads it into
+    /// `RouteDataArgs::max_envelope`; an envelope past it refuses with
+    /// the minted `DSP-117` instead of riding the wire.
+    pub max_data_envelope: usize,
     /// PERF-04: single-flight coalescing. Concurrent misses for the same L0
     /// key run one render; the rest await the owner's entry.
     pub flight_map: std::sync::Arc<FlightMap>,
