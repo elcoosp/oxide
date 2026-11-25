@@ -17413,3 +17413,260 @@ async fn data_route_envelope_default_cap_is_the_limits_twin() {
         "the response-envelope default is the request max_body twin"
     );
 }
+
+// ------------------------------------------------- §10.4 / P0-4: the build-time PPR shell seed
+//
+// The scorecard's P0-4 verdict names the gap this section closes: "runtime
+// shell cache wired and bounded ... still no build-time shell, no rebuild
+// invalidation". §10.4's contract is the acceptance line the first pin
+// encodes: "the static shell up to each boundary is cached in L0, and only
+// the holes render per request and stream into the cached shell". The
+// build-time half rides the PERF-04 L0-seed pattern: the prerender walk
+// already renders every static page, so the shell is extractable there and
+// persisted as a manifest the boot seeds — the first request after a deploy
+// is a shell HIT, not a warm-up tap.
+
+/// One boundary-carrying page body, sentineled the way the prerender walk
+/// emits its `seed_bodies` rows (`splice_nonce` swapped the build nonce for
+/// [`NONCE_SENTINEL`]).
+fn ppr_seed_fixture_html() -> String {
+    let html = "<!doctype html><html><head><meta nonce=\"r9-real\"></head>\
+<body><h1>STATIC-SHELL</h1>\
+<template data-ox-b='1'><p>fallback</p></template>\
+<template data-ox-c='1'><p>LIVE-HOLE</p></template>\
+</body></html>";
+    splice_nonce(html, "r9-real", NONCE_SENTINEL)
+}
+
+#[test]
+fn ppr_seed_rows_split_boundaries_and_key_like_the_runtime() {
+    // §10.4: "the static shell up to each boundary is cached in L0" — the
+    // seeded row's key IS the canonical L0 key the runtime's render stage
+    // computes for the same (route, params, vary, build) request, so the
+    // seeded row is hit by the very request that would otherwise tap. The
+    // vary is the runtime's own fingerprint of an empty request under the
+    // default `accept-language` config (the build derives it the same way —
+    // the seed_l0 manifest's hardcoded `lang=` spelling predates the §11.2
+    // fingerprint shape and never matches it; the pr-body drift note owns
+    // that record).
+    let vary = l0_cache::vary_of(&[], &["accept-language".to_string()]);
+    let sources = vec![crate::build::PprSeedSource {
+        route_id: "routes/index".to_string(),
+        url_path: "/".to_string(),
+        params: String::new(),
+        sentineled_html: ppr_seed_fixture_html(),
+        locale: String::new(),
+    }];
+    let rows = crate::build::ppr_shell_seed_rows(&sources, "b1", &vary, "en");
+    assert_eq!(rows.len(), 1, "one boundary carries one shell row");
+    let row = &rows[0];
+    assert_eq!(
+        row.key,
+        crate::l0_cache::L0Cache::key_for("routes/index", "", &vary, "b1"),
+        "the seed key is the runtime's render-stage shell key"
+    );
+    assert!(
+        row.shell.contains("<ox-hole id=\"1\">"),
+        "the boundary became a hole: {}",
+        row.shell
+    );
+    assert!(
+        !row.shell.contains("<p>fallback</p>"),
+        "the fallback content left the shell: {}",
+        row.shell
+    );
+    assert!(
+        row.shell.contains(NONCE_SENTINEL),
+        "the sentineled nonce survives the split (the boot swap re-materializes it)"
+    );
+    assert_eq!(
+        row.tags,
+        vec!["routes/index".to_string(), "path:/".to_string()],
+        "the tags mirror the runtime tap's (route, path) pair"
+    );
+}
+
+#[test]
+fn ppr_seed_skips_boundary_free_pages_and_non_default_locales() {
+    // A boundary-free page has no shell to cache (§10.4: the shell exists
+    // only "up to each boundary"); a non-default locale would write a row
+    // the runtime never hits (the PERF-04 seed's own §16.4/O2 rule — the
+    // L0 vary is header-only today, so locale variants collapse onto the
+    // default-locale key).
+    let with_boundary = ppr_seed_fixture_html();
+    let boundary_free = splice_nonce(
+        "<!doctype html><html><body><p>plain</p></body></html>",
+        "r9-real",
+        NONCE_SENTINEL,
+    );
+    let sources = vec![
+        crate::build::PprSeedSource {
+            route_id: "routes/index".to_string(),
+            url_path: "/".to_string(),
+            params: String::new(),
+            sentineled_html: boundary_free,
+            locale: String::new(),
+        },
+        crate::build::PprSeedSource {
+            route_id: "routes/index".to_string(),
+            url_path: "/".to_string(),
+            params: String::new(),
+            sentineled_html: with_boundary.clone(),
+            locale: "fr".to_string(),
+        },
+        crate::build::PprSeedSource {
+            route_id: "routes/index".to_string(),
+            url_path: "/".to_string(),
+            params: String::new(),
+            sentineled_html: with_boundary,
+            locale: "en".to_string(),
+        },
+    ];
+    let rows = crate::build::ppr_shell_seed_rows(
+        &sources,
+        "b1",
+        &l0_cache::vary_of(&[], &["accept-language".to_string()]),
+        "en",
+    );
+    assert_eq!(
+        rows.len(),
+        1,
+        "the boundary-free page and the fr variant contribute nothing: {rows:?}"
+    );
+    assert!(
+        rows[0].shell.contains("<ox-hole"),
+        "the en row is the shell"
+    );
+}
+
+#[test]
+fn ppr_seed_manifest_round_trips_and_guards_the_build() {
+    // The manifest is the boot contract: same-build bytes parse back into
+    // the exact rows; a manifest from ANOTHER build is the normal
+    // post-redeploy artifact (skipped, the L0 seed's same_build rule); a
+    // present-but-corrupt manifest is the loud CACHE-SEED posture.
+    let sources = vec![crate::build::PprSeedSource {
+        route_id: "routes/index".to_string(),
+        url_path: "/".to_string(),
+        params: String::new(),
+        sentineled_html: ppr_seed_fixture_html(),
+        locale: String::new(),
+    }];
+    let rows = crate::build::ppr_shell_seed_rows(&sources, "b1", "lang=", "en");
+    let bytes = crate::build::ppr_shell_seed_manifest(&rows, "b1");
+    match crate::build::parse_ppr_shell_seed(&bytes, "b1") {
+        crate::build::PprShellSeed::Rows(parsed) => assert_eq!(parsed, rows, "byte-faithful"),
+        other => panic!("expected rows for the same build, got {other:?}"),
+    }
+    assert_eq!(
+        crate::build::parse_ppr_shell_seed(&bytes, "b2"),
+        crate::build::PprShellSeed::StaleBuild,
+        "another build's manifest is the stale-build skip, not a seed"
+    );
+    assert!(
+        matches!(
+            crate::build::parse_ppr_shell_seed(b"{not json", "b1"),
+            crate::build::PprShellSeed::Corrupt(_)
+        ),
+        "a corrupt manifest names itself (the boot warns under CACHE-SEED)"
+    );
+}
+
+/// The §10.4 acceptance, end to end and V8-free: the SAME dispatch that
+/// taps a shell on the first request against an empty store serves a seeded
+/// store's shell WITHOUT tapping — the seeded row is a first-request hit,
+/// not a warm-up miss. The seeded key is built with the exact identity the
+/// render stage computes for this request (route `routes/index`, no params,
+/// vary `lang=` over the default `accept-language` fingerprint, the dev
+/// boot's `"dev"` build id), so a key divergence fails the pin as a tap.
+#[tokio::test]
+async fn ppr_seed_boot_store_serves_the_first_request_without_a_tap() {
+    use std::sync::Arc;
+
+    // Baseline: the pre-M1 shape — an empty store taps on the first request.
+    let tapped: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            page_renderer: renderer,
+            vary_headers: vec!["accept-language".to_string()],
+            ppr_shells: Some(Arc::clone(&tapped)),
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+    let body = collect_response_body(resp).await;
+    assert!(
+        body.windows(b"STATIC-SHELL".len())
+            .any(|w| w == b"STATIC-SHELL"),
+        "the streamed render carries the static shell text"
+    );
+    assert_eq!(
+        tapped.lock().unwrap().len(),
+        1,
+        "the unseeded store taps the first request (the runtime half)"
+    );
+
+    // The build-time half: the walk's shell rows, persisted and seeded —
+    // keyed with the SAME identity the render stage just tapped under (the
+    // tap's own key is read back so a route/params/vary/build divergence
+    // names itself instead of failing as an unexplained warm-up miss).
+    let tap_key = tapped.lock().unwrap().keys()[0].clone();
+    let sources = vec![crate::build::PprSeedSource {
+        route_id: "routes/index".to_string(),
+        url_path: "/".to_string(),
+        params: String::new(),
+        sentineled_html: ppr_seed_fixture_html(),
+        locale: String::new(),
+    }];
+    let rows = crate::build::ppr_shell_seed_rows(
+        &sources,
+        "dev",
+        &l0_cache::vary_of(&[], &["accept-language".to_string()]),
+        "en",
+    );
+    assert_eq!(rows.len(), 1, "one boundary carries one shell row");
+    assert_eq!(
+        rows[0].key, tap_key,
+        "the manifest's key IS the runtime's shell key (the canonical L0 identity for this request) — a divergent seed key is a row the runtime never hits"
+    );
+    let bytes = crate::build::ppr_shell_seed_manifest(&rows, "dev");
+    let seeded: crate::PprShells = Arc::new(std::sync::Mutex::new(crate::PprShellStore::default()));
+    match crate::build::parse_ppr_shell_seed(&bytes, "dev") {
+        crate::build::PprShellSeed::Rows(parsed) => {
+            let mut store = seeded.lock().unwrap();
+            for row in parsed {
+                store.insert_tagged(row.key, row.shell, row.tags);
+            }
+        }
+        other => panic!("the same-build manifest must seed: {other:?}"),
+    }
+    let renderer: Option<Arc<dyn oxide_fw_server::PageRenderer>> = Some(Arc::new(PprRenderer));
+    let dispatch = build_dispatch(
+        tree_with_static_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            page_renderer: renderer,
+            vary_headers: vec!["accept-language".to_string()],
+            ppr_shells: Some(Arc::clone(&seeded)),
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/")).await;
+    let body = collect_response_body(resp).await;
+    assert!(
+        body.windows(b"STATIC-SHELL".len())
+            .any(|w| w == b"STATIC-SHELL")
+            && body.windows(b"<ox-hole".len()).any(|w| w == b"<ox-hole")
+            && !body.windows(b"data-ox-b".len()).any(|w| w == b"data-ox-b"),
+        "the shell filter served the seeded shell with its hole (no boundary template passthrough): {}",
+        String::from_utf8_lossy(&body)
+    );
+    assert_eq!(
+        seeded.lock().unwrap().len(),
+        1,
+        "the seeded row is the only entry — the first request HIT it (no tap row was added; a miss would tap a second row) (§10.4: the shell is cached, only the holes render)"
+    );
+}
