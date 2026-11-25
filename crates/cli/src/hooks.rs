@@ -228,7 +228,9 @@ pub(crate) fn build_js_plugin_hook(
                         })?;
                     rt.block_on(async move {
                         let need_load = {
-                            let mut g = loaded.lock().unwrap();
+                            let mut g = loaded
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             if *g {
                                 false
                             } else {
@@ -631,7 +633,9 @@ pub(crate) fn build_js_plugin_resolve_hook(
                             })?;
                         rt.block_on(async move {
                             let need_load = {
-                                let mut g = loaded.lock().unwrap();
+                                let mut g = loaded
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 if *g {
                                     false
                                 } else {
@@ -738,7 +742,9 @@ pub(crate) fn build_js_plugin_load_hook(
                         })?;
                     rt.block_on(async move {
                         let need_load = {
-                            let mut g = loaded.lock().unwrap();
+                            let mut g = loaded
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             if *g {
                                 false
                             } else {
@@ -876,7 +882,9 @@ pub(crate) fn build_js_plugin_render_chunk_hook(
                             })?;
                         rt.block_on(async move {
                             let need_load = {
-                                let mut g = loaded.lock().unwrap();
+                                let mut g = loaded
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 if *g {
                                     false
                                 } else {
@@ -983,7 +991,9 @@ pub(crate) fn build_js_plugin_generate_bundle_hook(
                         })?;
                     rt.block_on(async move {
                         let need_load = {
-                            let mut g = loaded.lock().unwrap();
+                            let mut g = loaded
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             if *g {
                                 false
                             } else {
@@ -1089,7 +1099,9 @@ pub(crate) fn build_js_plugin_transform_html_hook(
                             })?;
                         rt.block_on(async move {
                             let need_load = {
-                                let mut g = loaded.lock().unwrap();
+                                let mut g = loaded
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                                 if *g {
                                     false
                                 } else {
