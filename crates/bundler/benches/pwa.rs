@@ -10,6 +10,9 @@
 //!   the smoke-app and full-site shell counts.
 //! - `pwa_plan/all_32`: the `all` breadth over a 32-route manifest (the
 //!   route-map walk + the asset union).
+//! - `pwa_plan/fallback_gap_32`: the same shape with an override
+//!   `sw.offlineFallback` the shells do not carry — the r9-K3 contract's
+//!   plan-side insert (the fallback joins the set undeduped).
 //! - `pwa_source`: the deterministic render over a 32-route precache list.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,7 +21,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxide_fw_bundler::pwa::{ShellSource, plan_precache, sw_source};
 use oxide_fw_bundler::{ClientManifest, RouteBundle};
-use oxide_fw_config::{OfflineConfig, OfflinePrecache};
+use oxide_fw_config::{OfflineConfig, OfflinePrecache, SwConfig};
 
 /// A manifest with `routes` route bundles (each with an entry, two
 /// preloads and a css file) and one shared asset — the shape the emitter
@@ -81,7 +84,7 @@ fn bench_plan(c: &mut Criterion) {
         precache: OfflinePrecache::All,
         outbox: true,
     };
-    let sw = Default::default();
+    let sw = SwConfig::default();
     for count in [8, 32] {
         let manifest = manifest_fixture(count);
         let shells = shells_fixture(count);
@@ -94,7 +97,18 @@ fn bench_plan(c: &mut Criterion) {
     let manifest = manifest_fixture(32);
     let shells = shells_fixture(32);
     g.bench_with_input("all_32", &(&manifest, &shells), |b, (m, sh)| {
-        b.iter(|| plan_precache(black_box(m), &sw, &offline_all, sh))
+        b.iter(|| plan_precache(black_box(m), &sw, &offline_all, sh));
+    });
+    // The r9-K3 contract's plan-side cost: the fallback joins the set —
+    // the override spelling the shells do NOT carry (one insert, no
+    // dedup), the shape a site with an explicit `sw.offlineFallback`
+    // rides on every build.
+    let sw_gap = SwConfig {
+        offline_fallback: Some("/help-offline".to_string()),
+        ..SwConfig::default()
+    };
+    g.bench_with_input("fallback_gap_32", &(&manifest, &shells), |b, (m, sh)| {
+        b.iter(|| plan_precache(black_box(m), &sw_gap, &offline_all, sh));
     });
     g.finish();
 }
@@ -108,7 +122,7 @@ fn bench_sw_source(c: &mut Criterion) {
         precache: OfflinePrecache::All,
         outbox: true,
     };
-    let plan = plan_precache(&manifest, &Default::default(), &offline, &shells);
+    let plan = plan_precache(&manifest, &SwConfig::default(), &offline, &shells);
     g.bench_function("all_32", |b| b.iter(|| sw_source(black_box(&plan))));
     g.finish();
 }
