@@ -63,6 +63,9 @@ pub(crate) struct BuildCtx<'w> {
     // ---- phase_prerender outputs ----
     pub(crate) prerendered: Option<std::collections::BTreeMap<String, Vec<String>>>,
     pub(crate) seed_bodies: Option<Vec<SeedBody>>,
+    /// §10.4 / P0-4: the build-time shell rows (empty when `render.ppr` is
+    /// off — `phase_ppr_seed` writes no manifest for them).
+    pub(crate) ppr_shell_rows: Option<Vec<crate::build::PprShellSeedRow>>,
     pub(crate) static_override: Option<std::collections::BTreeSet<String>>,
     pub(crate) new_prerender_records: Option<Vec<crate::build_graph::RoutePrerenderRecord>>,
 }
