@@ -84,6 +84,10 @@ mod search_emit;
 mod build_cache;
 mod build_graph;
 mod esm_dev;
+// §V2-E08 item 1: the module-map store's publish-site helper + the frame
+// key derivation — the walkthrough example (and any external driver)
+// exercises the same arc the `cmd_dev` watcher runs.
+pub use esm_dev::{mapped_hmr_error, src_rel_key};
 mod framework_shim;
 // V2-F49: the posture probe's public seam — the wire body the `/-/health`
 // surface answers, the typed-tier adapter behind the server crate's
