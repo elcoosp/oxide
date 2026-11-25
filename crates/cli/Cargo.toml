@@ -95,6 +95,14 @@ name = "l0_conditional"
 harness = false
 required-features = ["bench-util"]
 
+# P0-2: the /__data response-envelope bound's cost — the under-cap build
+# (the bound check rides every envelope), the over-cap refusal and the
+# encoder-refusal arm, behind the same `bench-util` opt-in.
+[[bench]]
+name = "data_envelope"
+harness = false
+required-features = ["bench-util"]
+
 # §V2-F10 step 4: the rollback slice's cost bench — the emit-tail
 # retention (a 64-file dist copy) and the resolve+swap latency (the
 # operator's rollback path), V8-free.
