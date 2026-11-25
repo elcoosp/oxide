@@ -1,0 +1,66 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+    Blocking waiting for file lock on package cache
+   Compiling oxide-fw-cli v0.17.0 (/home/z/my-project/oxide/crates/cli)
+error[E0061]: this function takes 7 arguments but 6 arguments were supplied
+    --> crates/cli/src/serve/start.rs:1763:35
+     |
+1763 |                   let _dist_watch = crate::serve::generations::spawn_dist_watch_task(
+     |  ___________________________________^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-
+1764 | |                     std::sync::Arc::clone(gens),
+1765 | |                     started.serving_pools.clone(),
+1766 | |                     rootp.clone(),
+...    |
+1769 | |                     promote_cache_handler.clone(),
+1770 | |                 );
+     | |_________________- argument #7 of type `std::option::Option<std::sync::Arc<std::sync::Mutex<prerender::PprShellStore>>>` is missing
+     |
+note: function defined here
+    --> crates/cli/src/serve/generations.rs:847:8
+     |
+ 847 | pub fn spawn_dist_watch_task(
+     |        ^^^^^^^^^^^^^^^^^^^^^
+...
+ 854 |     ppr_shells: Option<crate::PprShells>,
+     |     ------------------------------------
+help: provide the argument
+     |
+1763 |                 let _dist_watch = crate::serve::generations::spawn_dist_watch_task(
+ ...
+1769 |                     promote_cache_handler.clone(),
+1770 ~                     /* Option<Arc<Mutex<PprShellStore>>> */,
+1771 ~                 );
+     |
+
+error[E0061]: this function takes 7 arguments but 6 arguments were supplied
+    --> crates/cli/src/serve/start.rs:1848:11
+     |
+1848 |       match crate::serve::generations::promote_generation_over_dist(
+     |  ___________^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-
+1849 | |         gens,
+1850 | |         serving_pools,
+1851 | |         rootp,
+...    |
+1854 | |         promote_cache_handler,
+1855 | |     )
+     | |_____- argument #7 of type `&std::option::Option<std::sync::Arc<std::sync::Mutex<prerender::PprShellStore>>>` is missing
+     |
+note: function defined here
+    --> crates/cli/src/serve/generations.rs:756:21
+     |
+ 756 | pub(crate) async fn promote_generation_over_dist(
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 763 |     ppr_shells: &Option<crate::PprShells>,
+     |     -------------------------------------
+help: provide the argument
+     |
+1848 |     match crate::serve::generations::promote_generation_over_dist(
+ ...
+1854 |         promote_cache_handler,
+1855 ~         /* &Option<Arc<Mutex<PprShellStore>>> */,
+1856 ~     )
+     |
+
+For more information about this error, try `rustc --explain E0061`.
+error: could not compile `oxide-fw-cli` (lib test) due to 2 previous errors
