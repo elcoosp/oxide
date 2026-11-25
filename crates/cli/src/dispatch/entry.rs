@@ -73,7 +73,6 @@ impl SwappableRouteTree {
 /// call site to pass `None, None, false, Vec::new(), None, None` eight
 /// times, hiding the two or three values the test actually varied.
 #[cfg(test)]
-#[derive(Default)]
 pub(crate) struct DispatchOpts {
     pub(crate) proxy_rules: Vec<oxide_fw_dev::ProxyRule>,
     pub(crate) page_renderer: Option<std::sync::Arc<dyn oxide_fw_server::PageRenderer>>,
@@ -106,6 +105,11 @@ pub(crate) struct DispatchOpts {
     /// `None` keeps the pre-F12 shapes (no enforcement stage); the
     /// brownout pins construct one.
     pub(crate) brownout: Option<std::sync::Arc<crate::serve::brownout::BrownoutWiring>>,
+    /// P0-2 (the response-envelope side): the `/__data` envelope bound the
+    /// pins boot with. The default is the server `Limits` twin (never 0 —
+    /// a derived `Default` would have capped every envelope at nothing),
+    /// so the under-cap pins stay byte-identical.
+    pub(crate) max_data_envelope: usize,
     /// V2-F04: the experiments the pipeline pins run with (converted
     /// engine shapes — the pins build them directly, no config parse).
     /// Empty keeps the pre-F04 shapes.
@@ -113,6 +117,38 @@ pub(crate) struct DispatchOpts {
     /// V2-F09: the pins' search mode (`Some("server")` exercises the
     /// flag-script arm). `None` keeps the pre-F09 shapes.
     pub(crate) search_flag: Option<&'static str>,
+}
+
+#[cfg(test)]
+impl Default for DispatchOpts {
+    fn default() -> Self {
+        Self {
+            proxy_rules: Vec::new(),
+            page_renderer: None,
+            loader_runner: None,
+            routes_root: std::path::PathBuf::new(),
+            boot_script_url: None,
+            boot_script_integrity: None,
+            l0: None,
+            l0_tiered: None,
+            actions: None,
+            archived: None,
+            pool: None,
+            i18n_cfg: None,
+            endpoint_dispatcher: None,
+            middleware_dispatcher: None,
+            vary_headers: Vec::new(),
+            waterfall: None,
+            session_codec: None,
+            ppr_shells: None,
+            streams: None,
+            brownout: None,
+            // The P0-2 twin — the same default the server boots with.
+            max_data_envelope: oxide_fw_server::Limits::default().max_data_envelope,
+            experiments: Vec::new(),
+            search_flag: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -144,6 +180,7 @@ pub(crate) fn build_dispatch(
         ppr_shells: opts.ppr_shells,
         streams: opts.streams,
         brownout: opts.brownout,
+        max_data_envelope: opts.max_data_envelope,
         esm_state: None,
         record: None,
         recordings: std::sync::Arc::new(crate::record_wire::Recordings::new()),
