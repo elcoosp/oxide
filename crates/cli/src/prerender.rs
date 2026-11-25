@@ -1025,9 +1025,20 @@ impl PprShellStore {
         self.order.clear();
     }
 
-    #[cfg(test)]
+    /// The live entry count (the invalidation log's dropped count; the
+    /// pins assert it directly).
     pub(crate) fn len(&self) -> usize {
         self.map.len()
+    }
+
+    /// Test-only introspection: the live keys, sorted (the seed pin reads
+    /// the TAP's key to prove the build-side manifest keys with the exact
+    /// same identity).
+    #[cfg(test)]
+    pub(crate) fn keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.map.keys().cloned().collect();
+        keys.sort();
+        keys
     }
 
     /// Insert, evicting the oldest live key when at capacity.
