@@ -463,6 +463,10 @@ fix = "Fix the `prefetch` section"
 message = "the idempotency store refused `{key}`: {detail}"
 fix = "Check the store backend's availability — the stage degrades loud-then-run, so the request itself is unaffected"
 
+[DSP-117]
+message = "the `/__data` route-data envelope is past the {limit} byte response bound ({actual} encoded), or the ODF encoder refused it: {detail}"
+fix = "Shrink the route's loader data (large `defer()` payloads are the usual cause), or raise the server's `max_data_envelope` limit — the request `max_body` twin"
+
 [EDGE-101]
 message = "routes manifest must be an array of route rows or {\"routes\": [...]} (router typegen §8.3)"
 
