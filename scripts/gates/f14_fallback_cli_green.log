@@ -1,0 +1,6 @@
+test tests::sw_emitter_precaches_the_prerendered_shell_urls ... ok
+test tests::sw_emitter_skips_when_offline_disabled ... ok
+test tests::sw_emitter_warns_when_the_fallback_is_not_answerable_by_the_build ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 574 filtered out; finished in 0.00s
+
