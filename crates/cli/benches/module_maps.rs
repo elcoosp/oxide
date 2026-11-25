@@ -9,7 +9,7 @@
 //! criterion).
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use oxide_fw_cli::esm_dev::mapped_hmr_error;
+use oxide_fw_cli::mapped_hmr_error;
 use oxide_fw_compiler::lower_to_js_with_refresh;
 use oxide_fw_dev::frames::ModuleMaps;
 use oxide_fw_diagnostics::{Diagnostic, StackFrame};
@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 /// A 64-module store filled with REAL lowered maps (a page per module —
 /// the store's steady-state shape deep into a dev session).
 fn seeded_store() -> Arc<Mutex<ModuleMaps>> {
-    let maps = ModuleMaps::default();
+    let mut maps = ModuleMaps::default();
     for i in 0..64 {
         let path = format!("src/routes/page{i}.tsx");
         let src = format!("export default function Page{i}() {{\n  return <main>hi</main>;\n}}\n");
