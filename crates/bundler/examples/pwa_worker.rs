@@ -109,7 +109,9 @@ fn main() {
     };
     let sw = SwConfig::default();
 
-    // 1. Plan: shells + every hashed asset, sorted and deduped.
+    // 1. Plan: shells + every hashed asset, sorted and deduped — plus
+    //    the resolved fallback (the r9-K3 contract: the fallback ALWAYS
+    //    rides the install fetch, shell or not).
     let plan = plan_precache(&manifest, &sw, &offline, &shells);
     println!("build id:         {}", plan.build_id);
     println!("cache name:       {}", plan.cache_name);
@@ -120,7 +122,18 @@ fn main() {
         println!("  {url}");
     }
 
-    // 2. Emit: the worker source is deterministic — the same plan emits
+    // 2. The SPA posture (the case the guarantee exists for): a build
+    //    with NO prerendered shell still precaches the resolved fallback
+    //    — the install fetch answers it from the live server, so an
+    //    offline navigation falls back to the cached copy instead of a
+    //    dead `cache.match`.
+    let plan = plan_precache(&manifest, &sw, &offline, &Prerendered(BTreeSet::new()));
+    println!(
+        "\nSPA posture (no shells): fallback {} precached as {:?}",
+        plan.offline_fallback, plan.precache
+    );
+
+    // 3. Emit: the worker source is deterministic — the same plan emits
     //    byte-identical bytes on every build (the reproducibility
     //    contract), so a rebuild swaps only when the build id changes.
     //    The registration snippet rides the same emission: the boot entry
