@@ -290,7 +290,10 @@ pub fn snapshot_generation_sources(
     Ok(dest.join("src"))
 }
 
-const SNAPSHOT_MAX_DEPTH: usize = 24;
+/// The tree-walk depth guard the snapshot and the releases boot view
+/// share (`pub(crate)`: the F11 releases leg's link walk uses the same
+/// bound).
+pub(crate) const SNAPSHOT_MAX_DEPTH: usize = 24;
 
 fn copy_tree(
     src: &std::path::Path,
@@ -684,6 +687,186 @@ pub fn spawn_expiry_task(pool: Arc<RwLock<GenerationPool>>) -> tokio::task::Join
     })
 }
 
+/// The §V2-F10 step-1 `--watch-dist` poll cadence. The spec names the
+/// trigger but not a cadence; 2 s notices a deploy swap promptly while a
+/// poll costs one small-file read (`dist/build-id`), the same shape the
+/// 30 s expiry task's interval takes.
+pub const DIST_WATCH_POLL_SECS: u64 = 2;
+
+/// The `--watch-dist` tick's detection half (§V2-F10 step 1's second
+/// trigger): read the served dist's build id and name the REBUILT one —
+/// `None` when the dist is absent/unreadable (nothing to promote; a serve
+/// must not churn on a half-written dist) or still carries the last-seen
+/// id (an idempotent re-deploy is a no-op). The spawned task performs the
+/// promote through [`promote_generation_over_dist`]; this pure half is
+/// what the pins hold.
+#[must_use]
+pub fn dist_watch_next_id(last_seen: Option<&str>, dist: &std::path::Path) -> Option<String> {
+    let id = oxide_fw_cache::read_build_id(dist)?;
+    if last_seen == Some(id.as_str()) {
+        return None;
+    }
+    Some(id)
+}
+
+/// One promote's outcome (§V2-F10 step 1): the id the rebuilt dist
+/// carries and whether the serving pools booted its stack (the second
+/// pool). `booted` is `false` when the pools are off (dev, or the boot
+/// snapshot failed — acceptance-only skew) or the boot declined (the
+/// pool-less stack); the caller logs the difference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DistPromote {
+    pub new_id: String,
+    pub booted: bool,
+}
+
+/// The §V2-F10 step-1 promote CORE, shared by the SIGHUP handler and the
+/// `--watch-dist` task (one definition site — the two triggers must reach
+/// the same verdicts, the same snapshots and the same second-pool boot).
+/// Demotes the current generation into its skew window when the dist
+/// names a NEW build id, and — when the serving pools are up — freezes
+/// the new generation's loader sources and boots its stack over the
+/// rebuilt dist, so accepted old-build data-plane requests run the OLD
+/// generation's handles (its loader bytes are the frozen snapshot, not
+/// the edited sources).
+///
+/// `Ok(None)` means "nothing changed" (an unchanged or unreadable dist —
+/// the id-level promote's own contract). The caller logs; this core is
+/// silent so both triggers can carry their surfaces.
+///
+/// # Errors
+///
+/// Propagates the stack boot's failures (the SIGHUP arm treats a failed
+/// reload as fatal; the watch task logs and keeps polling).
+pub(crate) async fn promote_generation_over_dist(
+    gens: &std::sync::Arc<std::sync::RwLock<GenerationPool>>,
+    serving_pools: &Option<std::sync::Arc<ServingPools>>,
+    rootp: &std::path::Path,
+    config_path: Option<&std::path::Path>,
+    backend: oxide_fw_config::JsBackend,
+    cache_handler: &oxide_fw_config::CacheHandlerConfig,
+) -> anyhow::Result<Option<DistPromote>> {
+    let dist = rootp.join("dist");
+    let Some(new_id) = promote_handle_from_dist(gens, &dist) else {
+        return Ok(None);
+    };
+    let mut booted = false;
+    // V2-F10 step 1 (the second pool): freeze the NEW generation's loader
+    // sources, boot its stack over the rebuilt dist (a fresh pool +
+    // runner), and demote the boot handles together.
+    if let Some(sp) = serving_pools {
+        match snapshot_generation_sources(rootp, &new_id) {
+            Ok(snapshot_root) => {
+                let next = crate::framework_shim::build_framework_stack(
+                    config_path,
+                    backend,
+                    None,
+                    Some(cache_handler),
+                    // §V2-A09: the promoted generation serves live —
+                    // Source, like the boot above.
+                    oxide_fw_jshost::ModuleSource::Source,
+                )
+                .await;
+                match next.pool.clone() {
+                    Some(pool) => {
+                        let next_gen = std::sync::Arc::new(GenServing {
+                            pool,
+                            runner: next.loader_runner.clone(),
+                            routes_root: snapshot_root,
+                        });
+                        booted = sp.promote_booted(&new_id, next_gen);
+                        if !booted {
+                            tracing::warn!(
+                                code = "SKW-POOL",
+                                msg = "the promoted generation's id is already current; its freshly-booted pool was not swapped in (the idempotent re-deploy contract)"
+                            );
+                        }
+                    }
+                    None => tracing::warn!(
+                        code = "SKW-POOL",
+                        msg = "the promoted generation has no worker pool; the boot pool keeps serving every generation",
+                    ),
+                }
+            }
+            Err(e) => tracing::warn!(
+                code = "SKW-SNAPSHOT",
+                msg = %e,
+                "skew: the promoted generation's loader sources could not be frozen; the boot handles keep serving",
+            ),
+        }
+    }
+    Ok(Some(DistPromote { new_id, booted }))
+}
+
+/// The §V2-F10 step-1 `--watch-dist` task: the spec's second reload
+/// trigger — `oxide start --watch-dist` polls the served dist every
+/// [`DIST_WATCH_POLL_SECS`] and promotes a REBUILT build id through the
+/// SAME promote core the SIGHUP handler runs
+/// ([`promote_generation_over_dist`]), while the previous generation
+/// stays accepted for its skew window. An unchanged or unreadable dist
+/// promotes nothing; a failed promote logs and keeps polling (the next
+/// tick re-reads the dist — the deploy may still be mid-flight).
+///
+/// The task lives for the server's lifetime (the same posture the expiry
+/// task takes); it logs through `tracing` because the serve loop's
+/// writer is a borrowed handle the spawn cannot hold.
+pub fn spawn_dist_watch_task(
+    gens: Arc<RwLock<GenerationPool>>,
+    serving_pools: Option<Arc<ServingPools>>,
+    rootp: std::path::PathBuf,
+    config_path: Option<std::path::PathBuf>,
+    backend: oxide_fw_config::JsBackend,
+    cache_handler: oxide_fw_config::CacheHandlerConfig,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let dist = rootp.join("dist");
+        let mut last = oxide_fw_cache::read_build_id(&dist);
+        let mut tick = tokio::time::interval(Duration::from_secs(DIST_WATCH_POLL_SECS));
+        loop {
+            tick.tick().await;
+            let Some(next) = dist_watch_next_id(last.as_deref(), &dist) else {
+                continue;
+            };
+            match promote_generation_over_dist(
+                &gens,
+                &serving_pools,
+                &rootp,
+                config_path.as_deref(),
+                backend,
+                &cache_handler,
+            )
+            .await
+            {
+                Ok(Some(p)) => {
+                    tracing::info!(
+                        build_id = %p.new_id,
+                        booted = p.booted,
+                        "skew: --watch-dist promoted the rebuilt dist — the previous generation stays accepted for its skew window"
+                    );
+                    last = Some(p.new_id);
+                }
+                Ok(None) => {
+                    // The detection and the promote raced (the dist moved
+                    // between the reads): trust the promote's verdict and
+                    // stop re-reading the same id this tick.
+                    tracing::warn!(
+                        code = "SKW-POOL",
+                        msg = "skew: --watch-dist saw a rebuilt dist the promote declined; waiting for the next change"
+                    );
+                    last = Some(next);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        msg = %e,
+                        "skew: the --watch-dist promote failed; the task keeps polling"
+                    );
+                    last = Some(next);
+                }
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -769,5 +952,92 @@ mod tests {
         let handle = s.handle();
         let g = handle.read().expect("unpoisoned");
         assert_eq!(g.current(), promoted);
+    }
+
+    // -- §V2-F10 step 1: the `--watch-dist` trigger ------------------------
+
+    #[test]
+    fn the_watch_tick_detects_a_rebuilt_dist_and_ignores_the_rest() {
+        // §V2-F10 step 1, verbatim: "On `SIGHUP` or `oxide start
+        // --watch-dist`, it loads the new `dist/` as G2, calls
+        // `GenerationSet::promote`" — the tick's job is to NAME the new
+        // dist honestly and nothing else.
+        let tmp = tempfile::tempdir().expect("tmp");
+        // An absent dist: nothing to promote, never a churn.
+        assert_eq!(dist_watch_next_id(None, &tmp.path().join("dist")), None);
+        let dist = stamp_dist(tmp.path(), b"v1");
+        let id_a = oxide_fw_cache::read_build_id(&dist).expect("read");
+        // First sighting (the task's boot read is the `last`).
+        assert_eq!(dist_watch_next_id(None, &dist), Some(id_a.clone()));
+        // Same id: the idempotent re-deploy changes nothing.
+        assert_eq!(dist_watch_next_id(Some(id_a.as_str()), &dist), None);
+        // A rebuilt dist (a changed loader moves the A04 id) names B.
+        std::fs::write(dist.join("client/a.js"), b"v2").expect("rewrite");
+        let id_b = oxide_fw_cache::stamp_build_id(&dist).expect("restamp");
+        assert_ne!(id_a, id_b, "a changed loader must move the build id");
+        assert_eq!(dist_watch_next_id(Some(id_a.as_str()), &dist), Some(id_b));
+    }
+
+    #[tokio::test]
+    async fn the_watch_promote_core_demotes_and_keeps_the_previous_generation() {
+        // The promote CORE the SIGHUP handler and the --watch-dist task
+        // share: the rebuilt dist's id becomes CURRENT, the boot build
+        // stays accepted for its skew window (the §V2-F10 step-1 "keeps
+        // G1's pool" arm), an unknown id is refused, and an unchanged
+        // dist is a no-op. The serving pools are off here (the V8-free
+        // shape — the two-pool boot arm is the SIGHUP arm's, whose
+        // verdicts the same core drives on a V8-capable host).
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dist = stamp_dist(tmp.path(), b"v1");
+        let id_a = oxide_fw_cache::read_build_id(&dist).expect("read");
+        let s = SkewState::from_boot(&id_a, "15m", 3);
+        // A rebuilt dist names B.
+        std::fs::write(dist.join("client/a.js"), b"v2").expect("rewrite");
+        let id_b = oxide_fw_cache::stamp_build_id(&dist).expect("restamp");
+        let no_pools: Option<std::sync::Arc<ServingPools>> = None;
+        let p = promote_generation_over_dist(
+            &s.handle(),
+            &no_pools,
+            tmp.path(),
+            None,
+            oxide_fw_config::JsBackend::default(),
+            &oxide_fw_config::CacheHandlerConfig::default(),
+        )
+        .await
+        .expect("promote");
+        assert_eq!(
+            p,
+            Some(DistPromote {
+                new_id: id_b.clone(),
+                booted: false,
+            })
+        );
+        let handle = s.handle();
+        let g = handle.read().expect("unpoisoned");
+        let now = Instant::now();
+        assert_eq!(g.current(), id_b, "the rebuilt dist's id is current");
+        assert_eq!(
+            g.accepts(&id_b, now),
+            Some(oxide_fw_dispatch::build::Gen::Current)
+        );
+        assert_eq!(
+            g.accepts(&id_a, now),
+            Some(oxide_fw_dispatch::build::Gen::Previous),
+            "the §V2-F10 step-1 keeps-G1 arm: the previous generation stays accepted"
+        );
+        assert_eq!(g.accepts("0123456789abcdef", now), None);
+        drop(g);
+        // The idempotent re-deploy: the same dist promotes nothing.
+        let again = promote_generation_over_dist(
+            &s.handle(),
+            &no_pools,
+            tmp.path(),
+            None,
+            oxide_fw_config::JsBackend::default(),
+            &oxide_fw_config::CacheHandlerConfig::default(),
+        )
+        .await
+        .expect("promote");
+        assert_eq!(again, None);
     }
 }
