@@ -61,6 +61,10 @@ pub(crate) async fn stage_data_route(d: &DispatchDeps, cx: &mut RequestCtx) -> F
                 middleware_ms,
                 waterfall: waterfall.as_ref(),
                 live: is_live,
+                // P0-2: the envelope bound rides the boot deps (the
+                // `Limits::max_data_envelope` twin — the coded `DSP-117`
+                // refusal lives in `route_data_response`).
+                max_envelope: d.max_data_envelope,
             })
             .await,
         );
