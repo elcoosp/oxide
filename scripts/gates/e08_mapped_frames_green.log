@@ -1,0 +1,34 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+    Finished `test` profile [unoptimized] target(s) in 3.44s
+     Running unittests src/lib.rs (target/debug/build/oxide-fw-cli/8ba9346664a05539/out/oxide_fw_cli-8ba9346664a05539)
+
+running 25 tests
+test esm_dev::integration_tests::boot_entry_references_prebundle_hot_url ... ok
+test esm_dev::integration_tests::build_manifest_roundtrip ... ok
+test esm_dev::integration_tests::boot_entry_wires_the_configured_framework_adapter ... ok
+test esm_dev::integration_tests::css_import_resolves_to_at_css_url ... ok
+test esm_dev::integration_tests::css_is_404 ... ok
+test esm_dev::integration_tests::css_module_404_when_missing ... ok
+test esm_dev::integration_tests::css_module_serves_injectable_js ... ok
+test esm_dev::integration_tests::css_parent_escape_is_rejected ... ok
+test esm_dev::integration_tests::esm_error_returns_throwing_module ... ok
+test esm_dev::integration_tests::css_module_stubs_tailwind_import ... ok
+test esm_dev::integration_tests::gate_off_state_never_warns ... ok
+test esm_dev::integration_tests::mapped_hmr_error_keeps_a_mapless_frame_honest ... ok
+test esm_dev::integration_tests::mapped_hmr_error_without_a_store_is_the_no_maps_floor ... ok
+test esm_dev::integration_tests::mapped_hmr_error_maps_the_changed_module_frame ... ok
+test esm_dev::integration_tests::missing_source_is_404 ... ok
+test esm_dev::integration_tests::needs_pool_compile_matches_sfc_and_solid_tsx_only ... ok
+test esm_dev::integration_tests::non_jsx_source_never_warns ... ok
+test esm_dev::integration_tests::prebundle_empty_packages_succeeds ... ok
+test esm_dev::integration_tests::pool_compiled_client_payload_carries_the_dev_stamp ... ok
+test esm_dev::integration_tests::prebundle_missing_is_404 ... ok
+test esm_dev::integration_tests::refuses_server_module_with_403 ... ok
+test esm_dev::integration_tests::src_rel_key_is_the_frame_convention ... ok
+test esm_dev::integration_tests::pure_on_props_warn_fires_once_per_site ... ok
+test esm_dev::integration_tests::the_lowering_arm_fills_the_boot_module_map_store ... ok
+test esm_dev::integration_tests::tsx_is_transformed_and_react_rewritten ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 546 filtered out; finished in 0.01s
+
