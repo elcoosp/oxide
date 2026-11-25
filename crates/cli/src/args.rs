@@ -215,6 +215,22 @@ pub enum Command {
         /// rebuild), so the server serves the old build's bytes.
         #[arg(long, value_name = "GEN")]
         generation: Option<String>,
+        /// V2-F10 step 1 (the second trigger): poll the served `dist/`
+        /// for a rebuilt build id and promote it without a SIGHUP — the
+        /// deploy story where a build lands on disk while the serve runs.
+        /// The previous generation stays accepted for its
+        /// `deploy.skewWindow`; the promote runs through the same core
+        /// the SIGHUP handler runs.
+        #[arg(long)]
+        watch_dist: bool,
+        /// The F11 `releases/` layout boot: serve a deployed `dir:` store
+        /// (§V2-F11) — the `current` pointer's build id resolves to its
+        /// `releases/<id>/` prefix plus the immutable `assets/`/`_oxide/`
+        /// trees at the store root, materialized into a dist view and
+        /// repointed before the boot (the rollback swap, no rebuild).
+        /// Mutually exclusive with `--generation` (both repoint dist/).
+        #[arg(long, value_name = "STORE")]
+        releases: Option<String>,
     },
     /// Preview the production build locally.
     Preview {
@@ -903,8 +919,28 @@ pub async fn run_with_writer(cli: Cli, w: &mut (dyn std::io::Write + Send)) -> a
             // §V2-F10 step 4: the generation selector is resolved and
             // swapped into `dist/` inside `cmd_serve`, before the boot.
             generation,
-        } => cmd_serve(&root, port, generation.as_deref(), "oxide start", w).await,
-        Command::Preview { root } => cmd_serve(&root, None, None, "oxide preview", w).await,
+            // §V2-F10 step 1: the `--watch-dist` trigger spawns the poll
+            // task inside `cmd_serve`, after the boot.
+            watch_dist,
+            // The F11 `releases/` layout boot: the store's pointer is
+            // resolved and the release view swapped into `dist/` inside
+            // `cmd_serve`, before the boot.
+            releases,
+        } => {
+            cmd_serve(
+                &root,
+                port,
+                generation.as_deref(),
+                releases.as_deref(),
+                watch_dist,
+                "oxide start",
+                w,
+            )
+            .await
+        }
+        Command::Preview { root } => {
+            cmd_serve(&root, None, None, None, false, "oxide preview", w).await
+        }
         Command::Routes { root } => cmd_routes(&root, w).await,
         Command::Analyze { root } => cmd_analyze(&root, w).await,
         Command::Check { root } => cmd_check(&root, w).await,
