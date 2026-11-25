@@ -47,6 +47,12 @@ pub struct RouteDataArgs<'a> {
     pub session_codec: Option<&'a oxide_fw_server::SessionCodec>,
     pub middleware_ms: f64,
     pub waterfall: Option<&'a oxide_fw_dev::WaterfallRecorder>,
+    /// P0-2 (the response-envelope side): the largest encoded envelope this
+    /// route answers — the boot threads `Limits::max_data_envelope` (the
+    /// request `max_body` twin) through `DispatchDeps`. An envelope past
+    /// the bound (or one the ODF encoder refuses) answers the minted
+    /// `DSP-117` coded 500 instead of riding the wire.
+    pub max_envelope: usize,
 }
 
 /// PERF-01 / §8.4: answer a `/__data?route=<path>` request. Returns the
@@ -63,7 +69,11 @@ pub struct RouteDataArgs<'a> {
 /// + ODF encode. Success is 200 with `application/oxide+odf`; a loader
 ///
 /// short-circuit (`error()`/`redirect()`) propagates its status/location.
-pub(crate) async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_server::OxideResponse {
+///
+/// The seam is public (the F55 pattern: the bench and the walkthrough
+/// example drive the pipeline's own surface — `benches/data_envelope.rs`,
+/// `examples/data_envelope.rs`).
+pub async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_server::OxideResponse {
     let RouteDataArgs {
         live,
         req,
@@ -81,6 +91,7 @@ pub(crate) async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_ser
         session_codec,
         middleware_ms,
         waterfall,
+        max_envelope,
     } = args;
 
     let request_id = req.request_id.clone();
@@ -100,6 +111,7 @@ pub(crate) async fn route_data_response(args: RouteDataArgs<'_>) -> oxide_fw_ser
         locale,
         session_codec,
         waterfall,
+        max_envelope,
     })
     .await;
     if let Some(rec) = waterfall {
@@ -140,6 +152,9 @@ pub struct RouteDataInnerArgs<'a> {
     /// graph's `overlap-saved` staged row through it (the same mark
     /// `stage_loaders` records for SSR).
     pub waterfall: Option<&'a oxide_fw_dev::WaterfallRecorder>,
+    /// P0-2: the encoded-envelope bound the inner body refuses past
+    /// (the `DSP-117` coded 500 — see [`RouteDataArgs::max_envelope`]).
+    pub max_envelope: usize,
 }
 
 pub(crate) async fn route_data_response_inner(
@@ -161,6 +176,7 @@ pub(crate) async fn route_data_response_inner(
         locale,
         session_codec,
         waterfall,
+        max_envelope,
     } = args;
 
     // `?route=<percent-encoded path>` (default `/`).
@@ -427,8 +443,53 @@ pub(crate) async fn route_data_response_inner(
         payload["live"] = serde_json::Value::Bool(true);
     }
     // §9.5 / D11: encode as ODF, the wire format the client decodes.
-    let body = oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload))
-        .unwrap_or_default();
+    // P0-2 (the response-envelope side): the envelope is BOUNDED — the
+    // twin of the request path's `max_body`/SRV-413 bound. An envelope
+    // past `max_envelope` refuses with the minted `DSP-117` (a coded 500
+    // naming the sizes) instead of riding the wire, and an encode refusal
+    // (the §17.1 hardening: `ODF-SIZE`, `ODF-KEY`, `ODF-DEPTH`, …) is the
+    // same coded 500 with the encoder's own code named — never the silent
+    // empty-200 the `unwrap_or_default()` fall-through answered, which a
+    // client decoder could only see as a corrupted navigation.
+    let encoded = oxide_fw_odf::encode_to_bytes(&oxide_fw_odf::Value::from_json(&payload));
+    let body = match encoded {
+        Ok(bytes) if bytes.len() <= max_envelope => bytes,
+        Ok(bytes) => {
+            let actual = bytes.len();
+            tracing::error!(
+                code = "DSP-117",
+                actual,
+                limit = max_envelope,
+                route = %route_q,
+                "the route-data envelope exceeds the response bound",
+            );
+            metrics.observe("_data", started.elapsed(), 500);
+            return oxide_fw_server::OxideResponse::html(
+                500,
+                format!(
+                    "DSP-117: the route-data envelope encoded to {actual} bytes, past the \
+                     {max_envelope} byte response bound — shrink the route's loader data or \
+                     raise the server's max_data_envelope limit"
+                ),
+            );
+        }
+        Err(e) => {
+            tracing::error!(
+                code = "DSP-117",
+                error = %e,
+                route = %route_q,
+                "the route-data envelope could not be encoded",
+            );
+            metrics.observe("_data", started.elapsed(), 500);
+            return oxide_fw_server::OxideResponse::html(
+                500,
+                format!(
+                    "DSP-117: the route data could not be encoded ({e}) — the ODF §17.1 \
+                     hardening refused the payload; fix the loader's data shape"
+                ),
+            );
+        }
+    };
     metrics.observe("_data", started.elapsed(), 200);
     let mut resp = oxide_fw_server::OxideResponse::new(200, body)
         .with_header("content-type", "application/oxide+odf");
