@@ -772,6 +772,10 @@ pub(crate) async fn start_server_inner_full(
             ),
         }
     }
+    // P0-2: the boot's Limits, hoisted so BOTH consumers speak one value —
+    // the pipeline's request caps and the dispatch deps' data-envelope
+    // bound (the `max_data_envelope` twin) derive from this one literal.
+    let limits = oxide_fw_server::Limits::default();
     let pipeline = std::sync::Arc::new(oxide_fw_server::Pipeline {
         // A3: OG endpoint rate limit. The rasterization is CPU-bound and the
         // endpoint is unauthenticated; 10 renders per peer per minute bounds
@@ -803,7 +807,10 @@ pub(crate) async fn start_server_inner_full(
         og_endpoint,
         server_fns,
         actions: actions.clone(),
-        limits: oxide_fw_server::Limits::default(),
+        // Hoisted above so the dispatch deps below thread the SAME limits
+        // into the data route's envelope bound (P0-2: one Limits, one
+        // bound family — the boot never derives a second default).
+        limits: limits.clone(),
         // P1 hardening: the metrics bearer token. `OXIDE_METRICS_TOKEN` is the
         // env seam (a config field would belong in the schema — post-v0.1);
         // unset + non-dev → the endpoint answers 403 instead of leaking.
@@ -1448,6 +1455,9 @@ pub(crate) async fn start_server_inner_full(
         stream_counter: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         streams: Some(std::sync::Arc::clone(&stream_wiring)),
         brownout: brownout_wiring.as_ref().map(std::sync::Arc::clone),
+        // P0-2: the data route's envelope bound — the SAME Limits this
+        // boot handed the pipeline (the request `max_body` twin).
+        max_data_envelope: limits.max_data_envelope,
         // V2-F04: the configured experiments, converted to the engine's
         // shapes at boot (the field-by-field wiring mapping).
         experiments: crate::dispatch::stages::experiments_of_config(&cfg.experiments),
