@@ -23,6 +23,12 @@ pub(crate) use native::*;
 pub(crate) use prerender::*;
 mod seed_l0;
 pub(crate) use seed_l0::*;
+// §10.4 / P0-4: the build-time PPR shell seed (the manifest phase + the
+// one-definition-site contract the boot's read side parses). The module
+// itself is `pub` so the lib root can re-export the seed contract's public
+// surface (the bench + the walkthrough example ride it).
+pub mod ppr_seed;
+pub(crate) use ppr_seed::*;
 mod typegen;
 pub(crate) use typegen::*;
 mod emit;
