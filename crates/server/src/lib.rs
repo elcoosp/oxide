@@ -438,6 +438,14 @@ pub struct Limits {
     pub max_headers: usize,
     pub max_url_len: usize,
     pub multipart_parts: usize,
+    /// P0-2 (the response-envelope side): the largest `/__data` route-data
+    /// envelope the pipeline answers. The request side has been bounded
+    /// since `max_body` (SRV-413); the response side materialized every
+    /// resolved `defer()` value into one uncapped payload — this is its
+    /// twin bound (default: the same 32 MiB the request cap speaks). An
+    /// envelope past the bound refuses loud with the minted `DSP-117`
+    /// (a coded 500, the sizes named) instead of riding the wire.
+    pub max_data_envelope: usize,
     pub slow_request_timeout_ms: u64,
     /// P1 hardening (readiness): max concurrent accepted connections for the
     /// whole process. The accept loop previously had NO cap — unbounded memory
@@ -462,6 +470,8 @@ impl Default for Limits {
             max_headers: 200,
             max_url_len: 8 * 1024,
             multipart_parts: 1000,
+            // The P0-2 twin: the same 32 MiB default the request cap speaks.
+            max_data_envelope: 32 * 1024 * 1024,
             slow_request_timeout_ms: 30_000,
             max_connections: 1024,
             max_per_ip: 64,
