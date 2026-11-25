@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use oxide_fw_compiler::{inject_data_ox_src, inject_hmr_boundary, lower_to_js_with_refresh};
+use oxide_fw_dev::frames::ModuleMaps;
 use oxide_fw_server::{OxideRequest, OxideResponse};
 
 /// Directory (project-relative) where prebundled deps and copied framework
@@ -181,6 +182,85 @@ pub struct EsmDevState {
     /// browser re-serves on every navigation warns exactly once per dev
     /// session.
     pub warned_pure_on_props: Arc<std::sync::Mutex<BTreeSet<String>>>,
+    /// §V2-E08 item 1 (the CLI adoption): the boot's module-map store —
+    /// the lowered modules' oxc maps keyed by the compiler path spelling
+    /// the §13.4 stack frames name (`src/<rel>`). The ESM dev server's
+    /// lowering arm inserts per served module; the `cmd_dev` watcher's
+    /// three `HmrMessage::Error` publish sites map their diagnostics
+    /// through it (`mapped_hmr_error`), so the overlay's stack names the
+    /// ORIGINAL source instead of the lowered output. An empty store is
+    /// the honest floor: a frame no map speaks for keeps its generated
+    /// position (`mapped: false`), never fabricated.
+    pub module_maps: Arc<std::sync::Mutex<ModuleMaps>>,
+}
+
+/// The frame-key derivation the publish sites share: the changed file's
+/// `src/<rel>` spelling — the compiler path the lowering arm keys the
+/// store with and the §13.4 frame convention names. `None` for a path
+/// outside the project's `src/` tree (a config, a package asset, a `..`
+/// escape): those carry no store evidence, so no frame is fabricated.
+#[must_use]
+pub fn src_rel_key(rootp: &Path, changed: &Path) -> Option<String> {
+    let rel = changed.strip_prefix(rootp).unwrap_or(changed);
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    let rel = rel.trim_start_matches('/');
+    rel.strip_prefix("src/").map(|rest| format!("src/{rest}"))
+}
+
+/// The `cmd_dev` publish-site helper (§V2-E08 item 1 — the ONE mapping
+/// seam the three `HmrMessage::Error` sites run): attach the changed
+/// module's honest generated frame when the diagnostic carries no stack
+/// of its own (a frame-less diagnostic names where the dev loop saw the
+/// failure — the changed module — at its head; a diagnostic that already
+/// carries frames is the error's own history and is never appended to),
+/// then map every generated frame through the boot's module-map store.
+/// Without a store (or without a map for the module) the frames keep
+/// their generated positions with `mapped: false` — the dev crate's
+/// `NoMaps` floor, byte-identical to the pre-adoption payload.
+#[must_use]
+pub fn mapped_hmr_error(
+    module_maps: Option<&Arc<std::sync::Mutex<ModuleMaps>>>,
+    rootp: &Path,
+    changed: &Path,
+    diag: oxide_fw_diagnostics::Diagnostic,
+) -> oxide_fw_diagnostics::Diagnostic {
+    use oxide_fw_dev::frames::FrameMapper;
+    let mut diag = diag;
+    if diag.frames.is_empty() {
+        if let Some(key) = src_rel_key(rootp, changed) {
+            // The module head the map can speak for: the lowered output's
+            // first lines are the injected runtime import (no mapped
+            // token), so the honest head position is the first one the
+            // store answers — found through the store itself, never
+            // guessed. A module whose map answers nowhere (or no store)
+            // attaches at the literal head and stays `mapped: false`.
+            let mut line = 1;
+            if let Some(store) = module_maps {
+                if let Ok(maps) = store.lock() {
+                    for l in 1..=8u32 {
+                        if maps.original_of(&key, l, 1).is_some() {
+                            line = l;
+                            break;
+                        }
+                    }
+                }
+            }
+            diag.frames = vec![oxide_fw_diagnostics::StackFrame {
+                file: key,
+                line,
+                column: 1,
+                function: None,
+                mapped: false,
+            }];
+        }
+    }
+    match module_maps {
+        Some(store) => match store.lock() {
+            Ok(maps) => oxide_fw_dev::frames::map_diagnostic_frames(&diag, &*maps),
+            Err(_) => diag,
+        },
+        None => diag,
+    }
 }
 
 /// What [`handle_esm_request`] decided for a `/src/*` request.
@@ -1128,7 +1208,19 @@ fn serve_source_file(state: &EsmDevState, rel_path: &str) -> OxideResponse {
         &path_for_compiler,
         state.jsx_import_source.as_deref(),
     ) {
-        Ok((code, _srcmap)) => code,
+        Ok((code, srcmap)) => {
+            // §V2-E08 item 1 (the CLI adoption): the lowered module's map
+            // joins the boot's module-map store under the compiler path
+            // spelling the §13.4 frames use — the publish sites map their
+            // diagnostics through it. A store-less module keeps its
+            // frames honest at the generated position.
+            if let Some(map) = srcmap {
+                if let Ok(mut maps) = state.module_maps.lock() {
+                    maps.insert(path_for_compiler.clone(), map);
+                }
+            }
+            code
+        }
         Err(e) => {
             let body = format!(
                 "// oxide dev: lower_to_js failed for src/{rel_path}\n\
@@ -1554,6 +1646,7 @@ mod integration_tests {
             framework: "react".to_string(),
             islands: None,
             warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
+            module_maps: Arc::new(std::sync::Mutex::new(ModuleMaps::default())),
         }
     }
 
@@ -1955,6 +2048,7 @@ mod integration_tests {
             framework: "vue".to_string(),
             islands: None,
             warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
+            module_maps: Arc::new(std::sync::Mutex::new(ModuleMaps::default())),
         };
         let solid_state = EsmDevState {
             root: tmp.path().to_path_buf(),
@@ -1963,6 +2057,7 @@ mod integration_tests {
             framework: "solid".to_string(),
             islands: None,
             warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
+            module_maps: Arc::new(std::sync::Mutex::new(ModuleMaps::default())),
         };
         let react_state = EsmDevState {
             root: tmp.path().to_path_buf(),
@@ -1971,6 +2066,7 @@ mod integration_tests {
             framework: "react".to_string(),
             islands: None,
             warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
+            module_maps: Arc::new(std::sync::Mutex::new(ModuleMaps::default())),
         };
         assert!(needs_pool_compile(&vue_state, "routes/index/page.vue"));
         assert!(needs_pool_compile(&vue_state, "routes/index/page.svelte"));
@@ -2014,6 +2110,7 @@ mod integration_tests {
             framework: "vue".to_string(),
             islands: None,
             warned_pure_on_props: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
+            module_maps: Arc::new(std::sync::Mutex::new(ModuleMaps::default())),
         };
         let seen: Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2038,6 +2135,140 @@ mod integration_tests {
         assert!(
             source.contains(r#"data-ox-src="src/routes/index/page.vue:1""#),
             "the client compile must send the STAMPED source, got: {source}"
+        );
+    }
+
+    // -- §V2-E08 item 1's CLI adoption: the boot's module-map store --------
+    //
+    // The E-group row's recorded remaining half: "the CLI adoption (the
+    // `cmd_dev` publish sites passing the boot's module-map store, the
+    // three `HmrMessage::Error` constructors)". The store is what the
+    // lowering arm fills and the publish sites consult, so the overlay's
+    // §13.4 stack frames name the ORIGINAL source instead of the lowered
+    // output.
+
+    /// A minimal React page whose lowered output carries a real oxc map.
+    fn seed_lowered_page(tmp: &Path) {
+        let dir = tmp.join("src/routes");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join("page.tsx"),
+            "export default function Page() {\n  return <main>hi</main>;\n}\n",
+        )
+        .expect("write page");
+    }
+
+    #[test]
+    fn the_lowering_arm_fills_the_boot_module_map_store() {
+        use oxide_fw_dev::frames::FrameMapper;
+        let tmp = tempfile::tempdir().unwrap();
+        seed_lowered_page(tmp.path());
+        let s = state(tmp.path());
+        let resp = serve_source_file(&s, "routes/page.tsx");
+        assert_eq!(resp.status, 200, "the module serves");
+        let maps = s.module_maps.lock().expect("unpoisoned");
+        let pos = maps
+            .original_of("src/routes/page.tsx", 2, 1)
+            .expect("the lowered module's map joined the boot store");
+        assert_eq!(
+            pos.file, "src/routes/page.tsx",
+            "the map's source names the compiler path spelling the §13.4 frames use"
+        );
+    }
+
+    #[test]
+    fn mapped_hmr_error_maps_the_changed_module_frame() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_lowered_page(tmp.path());
+        let s = state(tmp.path());
+        // Fill the store the way the serve arm does.
+        let resp = serve_source_file(&s, "routes/page.tsx");
+        assert_eq!(resp.status, 200);
+        // The DEV-BUNDLE shape: a frame-less diagnostic for a changed
+        // module the store can speak for — the helper attaches the
+        // honest generated frame and the store maps it to the source.
+        let diag = oxide_fw_diagnostics::Diagnostic::error(
+            "DEV-BUNDLE",
+            "rebuild failed for the page module",
+        );
+        let out = mapped_hmr_error(
+            Some(&s.module_maps),
+            tmp.path(),
+            &tmp.path().join("src/routes/page.tsx"),
+            diag,
+        );
+        assert_eq!(out.frames.len(), 1, "the changed module's frame attached");
+        let f = &out.frames[0];
+        assert_eq!(f.file, "src/routes/page.tsx");
+        assert!(f.mapped, "the store spoke for the module: the frame maps");
+        assert!(
+            f.line >= 1 && f.column >= 1,
+            "the mapped position lands inside the original source: {}:{}",
+            f.line,
+            f.column
+        );
+    }
+
+    #[test]
+    fn mapped_hmr_error_keeps_a_mapless_frame_honest() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_lowered_page(tmp.path());
+        let s = state(tmp.path());
+        // A src module the store holds NO map for (never served through
+        // the lowering arm): the frame attaches at the generated position
+        // and STAYS `mapped: false` — never fabricated.
+        let diag = oxide_fw_diagnostics::Diagnostic::error("DEV-HMR-001", "no boundary");
+        let out = mapped_hmr_error(
+            Some(&s.module_maps),
+            tmp.path(),
+            &tmp.path().join("src/lib/util.ts"),
+            diag,
+        );
+        assert_eq!(out.frames.len(), 1, "the frame still names the module");
+        assert!(
+            !out.frames[0].mapped,
+            "no map speaks for it: honest generated coords"
+        );
+    }
+
+    #[test]
+    fn mapped_hmr_error_without_a_store_is_the_no_maps_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let diag = oxide_fw_diagnostics::Diagnostic::error("DEV-BUNDLE", "boom").with_frames(vec![
+            oxide_fw_diagnostics::StackFrame {
+                file: "src/routes/page.tsx".to_string(),
+                line: 4,
+                column: 17,
+                function: Some("Page".to_string()),
+                mapped: false,
+            },
+        ]);
+        let out = mapped_hmr_error(
+            None,
+            tmp.path(),
+            &tmp.path().join("src/routes/page.tsx"),
+            diag,
+        );
+        let f = &out.frames[0];
+        assert_eq!(f.line, 4, "verbatim");
+        assert_eq!(f.column, 17, "verbatim");
+        assert!(!f.mapped, "the NoMaps floor: byte-identical payload");
+    }
+
+    #[test]
+    fn src_rel_key_is_the_frame_convention() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            src_rel_key(tmp.path(), &tmp.path().join("src/routes/page.tsx")).as_deref(),
+            Some("src/routes/page.tsx"),
+        );
+        assert_eq!(
+            src_rel_key(tmp.path(), &tmp.path().join("package.json")),
+            None
+        );
+        assert_eq!(
+            src_rel_key(tmp.path(), &std::path::Path::new("/elsewhere/x.ts")),
+            None
         );
     }
 }
