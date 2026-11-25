@@ -138,6 +138,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DSP-114` | invalid `interactionReplay` spelling (a non-boolean value) | Set `interactionReplay` to the unquoted boolean `true` or `false` |
 | `DSP-115` | invalid `prefetch` section (a non-boolean `learned`, or a `minProbability` outside 0.0-1.0) | Fix the `prefetch` section |
 | `DSP-116` | the idempotency store refused `{key}`: {detail} | Check the store backend's availability — the stage degrades loud-then-run, so the request itself is unaffected |
+| `DSP-117` | the `/__data` route-data envelope is past the {limit} byte response bound ({actual} encoded), or the ODF encoder refused it: {detail} | Shrink the route's loader data (large `defer()` payloads are the usual cause), or raise the server's `max_data_envelope` limit — the request `max_body` twin |
 | `EDGE-101` | routes manifest must be an array of route rows or {"routes": [...]} (router typegen §8.3) | — |
 | `EDGE-103` | routes manifest is not valid JSON: {e} | Re-emit routes.json via `oxide build` (the router typegen §8.3) and redeploy |
 | `EDGE-104` | rules table is not valid JSON: {e} | Re-emit the native rules table via `oxide build` and redeploy |
