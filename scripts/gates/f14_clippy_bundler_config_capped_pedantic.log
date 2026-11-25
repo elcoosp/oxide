@@ -1,0 +1,3038 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+warning: `format!(..)` appended to existing `String`
+  --> crates/cache/src/http.rs:85:9
+   |
+85 |         out.push_str(&format!(", stale-while-revalidate={}", swr.as_secs()));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+   = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+   |
+85 -         out.push_str(&format!(", stale-while-revalidate={}", swr.as_secs()));
+85 +         let _ = write!(out, ", stale-while-revalidate={}", swr.as_secs());
+   |
+
+warning: `format!(..)` appended to existing `String`
+  --> crates/cache/src/http.rs:88:9
+   |
+88 |         out.push_str(&format!(", stale-if-error={}", sie.as_secs()));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+   |
+88 -         out.push_str(&format!(", stale-if-error={}", sie.as_secs()));
+88 +         let _ = write!(out, ", stale-if-error={}", sie.as_secs());
+   |
+
+warning: casting `usize` to `i64` may wrap around the value on targets with 64-bit wide pointers
+   --> crates/cache/src/http.rs:122:15
+    |
+122 |     let mon = MONTHS.iter().position(|m| p[1].eq_ignore_ascii_case(m))? as i64 + 1;
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_wrap
+    = note: `-W clippy::cast-possible-wrap` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_possible_wrap)]`
+
+warning: casting `i64` to `u32` may truncate the value
+   --> crates/cache/src/http.rs:138:38
+    |
+138 |     let days = days_from_civil(year, mon as u32, day as u32);
+    |                                      ^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+    = note: `-W clippy::cast-possible-truncation` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_possible_truncation)]`
+help: ... or use `try_from` and handle the error accordingly
+    |
+138 -     let days = days_from_civil(year, mon as u32, day as u32);
+138 +     let days = days_from_civil(year, u32::try_from(mon), day as u32);
+    |
+
+warning: casting `i64` to `u32` may lose the sign of the value
+   --> crates/cache/src/http.rs:138:38
+    |
+138 |     let days = days_from_civil(year, mon as u32, day as u32);
+    |                                      ^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+    = note: `-W clippy::cast-sign-loss` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_sign_loss)]`
+
+warning: casting `i64` to `u32` may truncate the value
+   --> crates/cache/src/http.rs:138:50
+    |
+138 |     let days = days_from_civil(year, mon as u32, day as u32);
+    |                                                  ^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+138 -     let days = days_from_civil(year, mon as u32, day as u32);
+138 +     let days = days_from_civil(year, mon as u32, u32::try_from(day));
+    |
+
+warning: casting `i64` to `u32` may lose the sign of the value
+   --> crates/cache/src/http.rs:138:50
+    |
+138 |     let days = days_from_civil(year, mon as u32, day as u32);
+    |                                                  ^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+
+warning: casting `i64` to `u64` may lose the sign of the value
+   --> crates/cache/src/http.rs:139:10
+    |
+139 |     Some((days * 86_400 + h * 3_600 + m * 60 + sec) as u64)
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_unsigned()` instead: `(days * 86_400 + h * 3_600 + m * 60 + sec).cast_unsigned()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+
+warning: casting `u64` to `i64` may wrap around the value
+   --> crates/cache/src/http.rs:145:16
+    |
+145 |     let days = (unix_secs / 86_400) as i64;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, use `cast_signed()` instead: `(unix_secs / 86_400).cast_signed()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_wrap
+
+warning: casting `i64` to `usize` may truncate the value on targets with 32-bit wide pointers
+   --> crates/cache/src/http.rs:148:23
+    |
+148 |     let wd = WEEKDAYS[((days + 4).rem_euclid(7)) as usize]; // 1970-01-01 was a Thursday
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+148 -     let wd = WEEKDAYS[((days + 4).rem_euclid(7)) as usize]; // 1970-01-01 was a Thursday
+148 +     let wd = WEEKDAYS[usize::try_from(((days + 4).rem_euclid(7)))]; // 1970-01-01 was a Thursday
+    |
+
+warning: casting `i32` to `usize` may lose the sign of the value
+   --> crates/cache/src/http.rs:151:16
+    |
+151 |         MONTHS[(m - 1) as usize],
+    |                ^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+
+warning: casting `i64` to `i32` may truncate the value
+   --> crates/cache/src/http.rs:180:38
+    |
+180 |     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
+    |                                      ^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+180 -     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
+180 +     (if m <= 2 { y + 1 } else { y }, i32::try_from(m), d as i32)
+    |
+
+warning: casting `i64` to `i32` may truncate the value
+   --> crates/cache/src/http.rs:180:48
+    |
+180 |     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
+    |                                                ^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+180 -     (if m <= 2 { y + 1 } else { y }, m as i32, d as i32)
+180 +     (if m <= 2 { y + 1 } else { y }, m as i32, i32::try_from(d))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+  --> crates/cache/src/single_flight.rs:40:5
+   |
+40 | /     pub async fn acquire(
+41 | |         &self,
+42 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+43 | |         key: &str,
+...  |
+57 | |     }
+   | |_____^
+   |
+   = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unused_async_trait_impl
+   = note: `-W clippy::unused-async-trait-impl` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::unused_async_trait_impl)]`
+help: consider removing the `async` from this function and returning `impl Future<Output = FlightSlot>` instead
+   |
+40 ~     pub fn acquire(
+41 |         &self,
+42 |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+43 |         key: &str,
+44 ~     ) -> impl Future<Output = FlightSlot> {
+45 |         // Fast path: subscribe while the shard read lock is held (see module docs).
+46 |         if let Some(tx) = map.get(key) {
+47 ~             return std::future::ready(FlightSlot::Follower(tx.subscribe()));
+48 |         }
+49 ~         std::future::ready(match map.entry(key.to_string()) {
+50 +             dashmap::mapref::entry::Entry::Occupied(e) => FlightSlot::Follower(e.get().subscribe()),
+51 +             dashmap::mapref::entry::Entry::Vacant(e) => {
+52 +                 let (tx, _rx) = broadcast::channel(1);
+53 +                 e.insert(Arc::new(tx.clone()));
+54 +                 FlightSlot::Owner(tx)
+55 +             }
+56 +         })
+   |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+  --> crates/cache/src/single_flight.rs:63:5
+   |
+63 | /     pub async fn publish_and_cleanup(
+64 | |         &self,
+65 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+66 | |         key: &str,
+...  |
+75 | |     }
+   | |_____^
+   |
+   = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = usize>` instead
+   |
+63 ~     pub fn publish_and_cleanup(
+64 |         &self,
+...
+68 |         entry: Option<Arc<Entry>>,
+69 ~     ) -> impl Future<Output = usize> {
+70 |         map.remove(key); // before publish — see module docs
+71 ~         std::future::ready(match (slot, entry) {
+72 +             (FlightSlot::Owner(tx), Some(value)) => tx.send(value).unwrap_or_default(),
+73 +             _ => 0, // failed owner or a follower slot: cleanup only
+74 +         })
+   |
+
+warning: casting `u128` to `u64` may truncate the value
+  --> crates/cache/src/tiers.rs:34:5
+   |
+34 | /     SystemTime::now()
+35 | |         .duration_since(UNIX_EPOCH)
+36 | |         .unwrap_or_default()
+37 | |         .as_millis() as u64
+   | |___________________________^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+   |
+34 ~     u64::try_from(SystemTime::now()
+35 +         .duration_since(UNIX_EPOCH)
+36 +         .unwrap_or_default()
+37 +         .as_millis())
+   |
+
+warning: casting `u64` to `u32` may truncate the value
+  --> crates/cache/src/tiers.rs:75:21
+   |
+75 |                     w as u32
+   |                     ^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+   |
+75 -                     w as u32
+75 +                     u32::try_from(w)
+   |
+
+warning: casting `u64` to `usize` may truncate the value on targets with 32-bit wide pointers
+   --> crates/cache/src/tiers.rs:118:9
+    |
+118 |         self.cache.entry_count() as usize
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+118 -         self.cache.entry_count() as usize
+118 +         usize::try_from(self.cache.entry_count())
+    |
+
+warning: this argument is passed by value, but not consumed in the function body
+   --> crates/cache/src/tiers.rs:159:15
+    |
+159 | fn jsonerr(e: serde_json::Error) -> OxideError {
+    |               ^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+    = note: `-W clippy::needless-pass-by-value` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider taking a reference instead
+    |
+159 | fn jsonerr(e: &serde_json::Error) -> OxideError {
+    |               +
+
+warning: this argument is passed by value, but not consumed in the function body
+   --> crates/cache/src/tiers.rs:163:13
+    |
+163 | fn ioerr(e: std::io::Error) -> OxideError {
+    |             ^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+    |
+163 | fn ioerr(e: &std::io::Error) -> OxideError {
+    |             +
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+   --> crates/cache/src/tiers.rs:399:39
+    |
+399 |         serialized.extend_from_slice(&(meta_json.len() as u32).to_be_bytes());
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+399 -         serialized.extend_from_slice(&(meta_json.len() as u32).to_be_bytes());
+399 +         serialized.extend_from_slice(&u32::try_from(meta_json.len()).to_be_bytes());
+    |
+
+warning: this could be rewritten as `let...else`
+   --> crates/cache/src/tiers.rs:612:9
+    |
+612 | /         let decoded = if let Ok(d) = zstd::stream::decode_all(raw.as_slice()) {
+613 | |             d
+614 | |         } else {
+615 | |             self.delete(key)?; // corrupt stream — silent miss (§17.2)
+616 | |             return Ok(None);
+617 | |         };
+    | |__________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#manual_let_else
+    = note: `-W clippy::manual-let-else` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::manual_let_else)]`
+help: consider writing
+    |
+612 ~         let Ok(decoded) = zstd::stream::decode_all(raw.as_slice()) else {
+613 ~             self.delete(key)?; // corrupt stream — silent miss (§17.2)
+614 +             return Ok(None);
+615 +         };
+    |
+
+warning: this function has too many lines (133/100)
+   --> crates/cache/src/tiers.rs:930:5
+    |
+930 |     pub async fn get(&self, key: &str) -> Result<Option<Hit>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#too_many_lines
+    = note: `-W clippy::too-many-lines` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::too_many_lines)]`
+
+warning: these match arms have identical bodies
+   --> crates/cache/src/tiers.rs:981:17
+    |
+981 |                 Ok(_) => None,
+    |                 ^^^^^^^^^^^^^
+982 |                 Err(_) => None,
+    |                 ^^^^^^^^^^^^^^
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_same_arms
+    = note: `-W clippy::match-same-arms` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::match_same_arms)]`
+help: otherwise merge the patterns into a single arm
+    |
+981 ~                 Ok(_) | Err(_) => None,
+982 ~                 };
+    |
+
+warning: casting `u128` to `u64` may truncate the value
+   --> crates/cache/src/lib.rs:160:29
+    |
+160 |             .saturating_add(self.policy.ttl.as_millis() as u64)
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+160 -             .saturating_add(self.policy.ttl.as_millis() as u64)
+160 +             .saturating_add(u64::try_from(self.policy.ttl.as_millis()))
+    |
+
+warning: casting `u128` to `u64` may truncate the value
+   --> crates/cache/src/lib.rs:167:49
+    |
+167 |         let swr = self.policy.swr.map_or(0, |d| d.as_millis() as u64);
+    |                                                 ^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+167 -         let swr = self.policy.swr.map_or(0, |d| d.as_millis() as u64);
+167 +         let swr = self.policy.swr.map_or(0, |d| u64::try_from(d.as_millis()));
+    |
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+   --> crates/cache/src/lib.rs:278:19
+    |
+278 |         h.update(&(p.len() as u32).to_le_bytes());
+    |                   ^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+278 -         h.update(&(p.len() as u32).to_le_bytes());
+278 +         h.update(&u32::try_from(p.len()).to_le_bytes());
+    |
+
+warning: unused `async` for function with no await statements
+  --> crates/cache/src/single_flight.rs:40:5
+   |
+40 | /     pub async fn acquire(
+41 | |         &self,
+42 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+43 | |         key: &str,
+...  |
+57 | |     }
+   | |_____^
+   |
+   = help: consider removing the `async` from this function
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unused_async
+   = note: `-W clippy::unused-async` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::unused_async)]`
+
+warning: unused `async` for function with no await statements
+  --> crates/cache/src/single_flight.rs:63:5
+   |
+63 | /     pub async fn publish_and_cleanup(
+64 | |         &self,
+65 | |         map: &DashMap<String, Arc<broadcast::Sender<Arc<Entry>>>>,
+66 | |         key: &str,
+...  |
+75 | |     }
+   | |_____^
+   |
+   = help: consider removing the `async` from this function
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unused_async
+
+warning: `oxide-fw-cache` (lib) generated 29 warnings
+warning: empty line after doc comment
+   --> crates/jshost/src/loader_host.rs:880:1
+    |
+880 | / /// contract is pinned by `tests/op_parity.rs`.
+881 | |
+    | |_^
+...
+892 |   pub struct MiddlewareOutcome {
+    |   ---------------------------- the comment documents this struct
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#empty_line_after_doc_comments
+    = note: `-D clippy::empty-line-after-doc-comments` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::empty_line_after_doc_comments)]`
+    = note: the `clippy::empty_line_after_doc_comments` lint ignores `-D warnings`
+    = help: if the empty line is unintentional, remove it
+help: if the documentation should include the empty line include it in the comment
+    |
+881 | ///
+    |
+
+warning: long literal lacking separators
+   --> crates/jshost/src/lib.rs:518:22
+    |
+518 |     let mut h: u64 = 0xcbf29ce484222325;
+    |                      ^^^^^^^^^^^^^^^^^^ help: consider: `0xcbf2_9ce4_8422_2325`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unreadable_literal
+    = note: `-D clippy::unreadable-literal` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unreadable_literal)]`
+    = note: the `clippy::unreadable_literal` lint ignores `-D warnings`
+
+warning: long literal lacking separators
+   --> crates/jshost/src/lib.rs:521:28
+    |
+521 |         h = h.wrapping_mul(0x100000001b3);
+    |                            ^^^^^^^^^^^^^ help: consider: `0x0100_0000_01b3`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unreadable_literal
+
+warning: unnested or-patterns
+    --> crates/jshost/src/lib.rs:4408:17
+     |
+4408 |                 Some("js") | Some("mjs") => "mjs",
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unnested_or_patterns
+     = note: `-D clippy::unnested-or-patterns` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::unnested_or_patterns)]`
+     = note: the `clippy::unnested_or_patterns` lint ignores `-D warnings`
+help: nest the patterns
+     |
+4408 -                 Some("js") | Some("mjs") => "mjs",
+4408 +                 Some("js" | "mjs") => "mjs",
+     |
+
+warning: item in documentation is missing backticks
+ --> crates/jshost/src/lib.rs:3:23
+  |
+3 | //! oxide-fw-jshost — JsHost trait, NodeHost backend, ops, pools (spec §4, D2).
+  |                       ^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+  = note: `-D clippy::doc-markdown` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(clippy::doc_markdown)]`
+  = note: the `clippy::doc_markdown` lint ignores `-D warnings`
+help: try
+  |
+3 - //! oxide-fw-jshost — JsHost trait, NodeHost backend, ops, pools (spec §4, D2).
+3 + //! oxide-fw-jshost — `JsHost` trait, NodeHost backend, ops, pools (spec §4, D2).
+  |
+
+warning: item in documentation is missing backticks
+ --> crates/jshost/src/lib.rs:3:37
+  |
+3 | //! oxide-fw-jshost — JsHost trait, NodeHost backend, ops, pools (spec §4, D2).
+  |                                     ^^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+  |
+3 - //! oxide-fw-jshost — JsHost trait, NodeHost backend, ops, pools (spec §4, D2).
+3 + //! oxide-fw-jshost — JsHost trait, `NodeHost` backend, ops, pools (spec §4, D2).
+  |
+
+warning: item in documentation is missing backticks
+ --> crates/jshost/src/lib.rs:6:76
+  |
+6 | //! trait exposes render + tooling pools. Backends: `V8Host` (default, via deno_core)
+  |                                                                            ^^^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+  |
+6 - //! trait exposes render + tooling pools. Backends: `V8Host` (default, via deno_core)
+6 + //! trait exposes render + tooling pools. Backends: `V8Host` (default, via `deno_core`)
+  |
+
+warning: this function could have a `#[must_use]` attribute
+  --> crates/jshost/src/snapshot.rs:48:8
+   |
+48 | pub fn lint_top_level_side_effects(path: &str, source: &str) -> Vec<SideEffect> {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+   = note: `-D clippy::must-use-candidate` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::must_use_candidate)]`
+   = note: the `clippy::must_use_candidate` lint ignores `-D warnings`
+help: add the attribute
+   |
+48 + #[must_use]
+49 | pub fn lint_top_level_side_effects(path: &str, source: &str) -> Vec<SideEffect> {
+   |
+
+warning: this method could have a `#[must_use]` attribute
+  --> crates/jshost/src/tooling.rs:82:12
+   |
+82 |     pub fn stats(&self) -> crate::PoolStats {
+   |            ^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+   |
+82 ~     #[must_use]
+83 ~     pub fn stats(&self) -> crate::PoolStats {
+   |
+
+warning: item in documentation is missing backticks
+ --> crates/jshost/src/perm.rs:3:27
+  |
+3 | //! Pure Rust — no V8, no deno_core, no tokio. The [`PermissionSet`] is the
+  |                           ^^^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+  |
+3 - //! Pure Rust — no V8, no deno_core, no tokio. The [`PermissionSet`] is the
+3 + //! Pure Rust — no V8, no `deno_core`, no tokio. The [`PermissionSet`] is the
+  |
+
+warning: docs for function which may panic missing `# Panics` section
+   --> crates/jshost/src/perm.rs:255:1
+    |
+255 | pub fn set_route_permissions(route: &str, grant: PermissionSet) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates/jshost/src/perm.rs:256:5
+    |
+256 | /     route_perms()
+257 | |         .write()
+258 | |         .unwrap()
+    | |_________________^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+    = note: `-D clippy::missing-panics-doc` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::missing_panics_doc)]`
+    = note: the `clippy::missing_panics_doc` lint ignores `-D warnings`
+
+warning: docs for function which may panic missing `# Panics` section
+   --> crates/jshost/src/perm.rs:266:1
+    |
+266 | pub fn route_permissions(route: &str) -> Option<PermissionSet> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates/jshost/src/perm.rs:267:5
+    |
+267 |     route_perms().read().unwrap().get(route).cloned()
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+warning: docs for function which may panic missing `# Panics` section
+   --> crates/jshost/src/perm.rs:277:1
+    |
+277 | pub fn any_route_denies_net(host: &str) -> bool {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates/jshost/src/perm.rs:278:16
+    |
+278 |     let regs = route_perms().read().unwrap();
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+warning: item in documentation is missing backticks
+  --> crates/jshost/src/framework_host.rs:32:29
+   |
+32 | /// Descriptor for a loaded FrameworkAdapter — the subset of §7 the Rust
+   |                             ^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+   |
+32 - /// Descriptor for a loaded FrameworkAdapter — the subset of §7 the Rust
+32 + /// Descriptor for a loaded `FrameworkAdapter` — the subset of §7 the Rust
+   |
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+  --> crates/jshost/src/framework_host.rs:68:22
+   |
+68 |             headers: Default::default(),
+   |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+   = note: `-D clippy::default-trait-access` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::default_trait_access)]`
+   = note: the `clippy::default_trait_access` lint ignores `-D warnings`
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/framework_host.rs:175:5
+    |
+175 | /     pub async fn render_streaming(
+176 | |         &self,
+177 | |         config_path: &str,
+178 | |         mut input: Value,
+179 | |     ) -> Result<CallStream> {
+    | |___________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+    = note: `-D clippy::missing-errors-doc` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::missing_errors_doc)]`
+    = note: the `clippy::missing_errors_doc` lint ignores `-D warnings`
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/framework_host.rs:221:5
+    |
+221 |     pub async fn invalidate(&self) -> Result<u64> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates/jshost/src/framework_host.rs:224:22
+    |
+224 |             headers: Default::default(),
+    |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: redundant closure
+   --> crates/jshost/src/framework_host.rs:245:38
+    |
+245 |         v.get("generation").and_then(|x| x.as_u64()).ok_or_else(|| {
+    |                                      ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+    = note: `-D clippy::redundant-closure-for-method-calls` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+    = note: the `clippy::redundant_closure_for_method_calls` lint ignores `-D warnings`
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/framework_host.rs:253:5
+    |
+253 |     pub async fn invalidate_all(&self) -> Result<u64> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates/jshost/src/framework_host.rs:269:26
+    |
+269 |                 headers: Default::default(),
+    |                          ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: variables can be used directly in the `format!` string
+   --> crates/jshost/src/framework_host.rs:271:29
+    |
+271 |                 request_id: format!("framework:invalidate:{}", i),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#uninlined_format_args
+    = note: `-D clippy::uninlined-format-args` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::uninlined_format_args)]`
+    = note: the `clippy::uninlined_format_args` lint ignores `-D warnings`
+help: change this to
+    |
+271 -                 request_id: format!("framework:invalidate:{}", i),
+271 +                 request_id: format!("framework:invalidate:{i}"),
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> crates/jshost/src/framework_host.rs:272:29
+    |
+272 |                 route: Some(format!("__oxide_broadcast_worker_{}", i)),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#uninlined_format_args
+help: change this to
+    |
+272 -                 route: Some(format!("__oxide_broadcast_worker_{}", i)),
+272 +                 route: Some(format!("__oxide_broadcast_worker_{i}")),
+    |
+
+warning: redundant closure
+   --> crates/jshost/src/framework_host.rs:283:71
+    |
+283 |                         && let Some(g) = v.get("generation").and_then(|x| x.as_u64())
+    |                                                                       ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: variables can be used directly in the `format!` string
+   --> crates/jshost/src/framework_host.rs:306:17
+    |
+306 |                 format!("invalidate_all: all {} workers failed", n_workers),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#uninlined_format_args
+help: change this to
+    |
+306 -                 format!("invalidate_all: all {} workers failed", n_workers),
+306 +                 format!("invalidate_all: all {n_workers} workers failed"),
+    |
+
+warning: this method could have a `#[must_use]` attribute
+  --> crates/jshost/src/framework_renderer.rs:44:12
+   |
+44 |     pub fn is_empty(&self) -> bool {
+   |            ^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+   |
+44 ~     #[must_use]
+45 ~     pub fn is_empty(&self) -> bool {
+   |
+
+warning: item in documentation is missing backticks
+  --> crates/jshost/src/framework_renderer.rs:75:69
+   |
+75 | /// The per-request shape the pipeline hands to a renderer (spec §7 RenderInput).
+   |                                                                     ^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+   |
+75 - /// The per-request shape the pipeline hands to a renderer (spec §7 RenderInput).
+75 + /// The per-request shape the pipeline hands to a renderer (spec §7 `RenderInput`).
+   |
+
+warning: calling `Map::default()` is more clear than this expression
+   --> crates/jshost/src/framework_renderer.rs:152:35
+    |
+152 |             params: Value::Object(Default::default()),
+    |                                   ^^^^^^^^^^^^^^^^^^ help: try: `Map::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: calling `Map::default()` is more clear than this expression
+   --> crates/jshost/src/framework_renderer.rs:153:33
+    |
+153 |             data: Value::Object(Default::default()),
+    |                                 ^^^^^^^^^^^^^^^^^^ help: try: `Map::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/framework_renderer.rs:270:5
+    |
+270 |     pub async fn new(pool: Arc<dyn Pool>, config_path: impl Into<String>) -> Result<Self> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: this method could have a `#[must_use]` attribute
+   --> crates/jshost/src/framework_renderer.rs:282:12
+    |
+282 |     pub fn descriptor(&self) -> &FrameworkDescriptor {
+    |            ^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+282 ~     #[must_use]
+283 ~     pub fn descriptor(&self) -> &FrameworkDescriptor {
+    |
+
+warning: this method could have a `#[must_use]` attribute
+   --> crates/jshost/src/framework_renderer.rs:287:12
+    |
+287 |     pub fn config_path(&self) -> &str {
+    |            ^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+287 ~     #[must_use]
+288 ~     pub fn config_path(&self) -> &str {
+    |
+
+warning: item in documentation is missing backticks
+   --> crates/jshost/src/framework_renderer.rs:304:38
+    |
+304 |     /// Override: use the raw worker CallStream and forward each chunk as
+    |                                      ^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+    |
+304 -     /// Override: use the raw worker CallStream and forward each chunk as
+304 +     /// Override: use the raw worker `CallStream` and forward each chunk as
+    |
+
+warning: called `map(<f>).unwrap_or(false)` on an `Option` value
+  --> crates/jshost/src/loader_host.rs:23:5
+   |
+23 |     value.map(|v| v == "1").unwrap_or(false)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+   = note: `-D clippy::map-unwrap-or` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::map_unwrap_or)]`
+   = note: the `clippy::map_unwrap_or` lint ignores `-D warnings`
+help: use `is_some_and(<f>)` instead
+   |
+23 -     value.map(|v| v == "1").unwrap_or(false)
+23 +     value.is_some_and(|v| v == "1")
+   |
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> crates/jshost/src/loader_host.rs:72:5
+   |
+72 |     pub async fn run(&self, module_path: &str, input: Value) -> Result<Value> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/loader_host.rs:123:5
+    |
+123 | /     pub async fn run_streaming(
+124 | |         &self,
+125 | |         module_path: &str,
+126 | |         input: Value,
+127 | |     ) -> Result<(Value, tokio::sync::mpsc::Receiver<Value>)> {
+    | |____________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/loader_host.rs:235:5
+    |
+235 | /     pub async fn generate_params(
+236 | |         &self,
+237 | |         module_path: &str,
+238 | |     ) -> Result<Vec<std::collections::BTreeMap<String, String>>> {
+    | |________________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates/jshost/src/loader_host.rs:241:22
+    |
+241 |             headers: Default::default(),
+    |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/loader_host.rs:503:5
+    |
+503 |     pub async fn run(&self, fn_id: &str, args_json: &[u8], entry_path: &str) -> Result<Value> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates/jshost/src/loader_host.rs:512:22
+    |
+512 |             headers: Default::default(),
+    |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/loader_host.rs:588:5
+    |
+588 |     pub async fn run(&self, args: ActionRunArgs<'_>) -> Result<ActionOutcome> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates/jshost/src/loader_host.rs:614:22
+    |
+614 |             headers: Default::default(),
+    |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/loader_host.rs:654:5
+    |
+654 | /     pub async fn run_coded(
+655 | |         &self,
+656 | |         fn_id: &str,
+657 | |         args_json: &[u8],
+658 | |         entry_path: &str,
+659 | |     ) -> std::result::Result<Value, ServerFnError> {
+    | |__________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: implicitly cloning a `String` by calling `to_string` on its dereferenced type
+   --> crates/jshost/src/loader_host.rs:663:23
+    |
+663 |                 code: e.0.code.to_string(),
+    |                       ^^^^^^^^^^^^^^^^^^^^ help: consider using: `e.0.code.clone()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#implicit_clone
+    = note: `-D clippy::implicit-clone` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::implicit_clone)]`
+    = note: the `clippy::implicit_clone` lint ignores `-D warnings`
+
+warning: implicitly cloning a `String` by calling `to_string` on its dereferenced type
+   --> crates/jshost/src/loader_host.rs:664:26
+    |
+664 |                 message: e.0.message.to_string(),
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^ help: consider using: `e.0.message.clone()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#implicit_clone
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/loader_host.rs:721:5
+    |
+721 |     pub async fn run(&self, args: LoaderRunArgs<'_>) -> Result<EndpointOutcome> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/jshost/src/loader_host.rs:733:9
+    |
+733 |         use base64::Engine as _;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+    = note: `-D clippy::items-after-statements` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::items_after_statements)]`
+    = note: the `clippy::items_after_statements` lint ignores `-D warnings`
+
+warning: casting `u64` to `u16` may truncate the value
+   --> crates/jshost/src/loader_host.rs:803:30
+    |
+803 |                 let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+    = note: `-D clippy::cast-possible-truncation` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cast_possible_truncation)]`
+    = note: the `clippy::cast_possible_truncation` lint ignores `-D warnings`
+help: ... or use `try_from` and handle the error accordingly
+    |
+803 -                 let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+803 +                 let status = u16::try_from(v.get("status").and_then(|x| x.as_u64()).unwrap_or(200));
+    |
+
+warning: redundant closure
+   --> crates/jshost/src/loader_host.rs:803:55
+    |
+803 |                 let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+    |                                                       ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: this could be rewritten as `let...else`
+   --> crates/jshost/src/loader_host.rs:807:17
+    |
+807 | /                 let rx = match std::mem::replace(
+808 | |                     &mut stream,
+809 | |                     crate::CallStream::Complete(bytes::Bytes::new()),
+810 | |                 ) {
+811 | |                     crate::CallStream::Chunked(rx) => rx,
+812 | |                     _ => unreachable!(),
+813 | |                 };
+    | |__________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#manual_let_else
+    = note: `-D clippy::manual-let-else` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::manual_let_else)]`
+    = note: the `clippy::manual_let_else` lint ignores `-D warnings`
+help: consider writing
+    |
+807 ~                 let crate::CallStream::Chunked(rx) = std::mem::replace(
+808 +                     &mut stream,
+809 +                     crate::CallStream::Complete(bytes::Bytes::new()),
+810 +                 ) else { unreachable!() };
+    |
+
+warning: wildcard matches only a single variant and will also match any future added variants
+   --> crates/jshost/src/loader_host.rs:812:21
+    |
+812 |                     _ => unreachable!(),
+    |                     ^ help: try: `crate::CallStream::Complete(_)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_wildcard_for_single_variants
+    = note: `-D clippy::match-wildcard-for-single-variants` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::match_wildcard_for_single_variants)]`
+    = note: the `clippy::match_wildcard_for_single_variants` lint ignores `-D warnings`
+
+warning: called `map(_).unwrap_or_default()` on an `Option` value
+   --> crates/jshost/src/loader_host.rs:825:9
+    |
+825 | /         v.get("headers")
+826 | |             .and_then(|x| x.as_array())
+827 | |             .map(|arr| {
+828 | |                 arr.iter()
+...   |
+836 | |             })
+837 | |             .unwrap_or_default()
+    | |________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use instead
+    |
+827 ~             .map_or_default(|arr| {
+828 |                 arr.iter()
+...
+835 |                     .collect()
+836 ~             })
+    |
+
+warning: this argument is passed by value, but not consumed in the function body
+   --> crates/jshost/src/loader_host.rs:840:30
+    |
+840 |     fn from_complete_json(v: Value) -> Result<EndpointOutcome> {
+    |                              ^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+    = note: `-D clippy::needless-pass-by-value` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_pass_by_value)]`
+    = note: the `clippy::needless_pass_by_value` lint ignores `-D warnings`
+help: consider taking a reference instead
+    |
+840 |     fn from_complete_json(v: &Value) -> Result<EndpointOutcome> {
+    |                              +
+
+warning: casting `u64` to `u16` may truncate the value
+   --> crates/jshost/src/loader_host.rs:845:22
+    |
+845 |         let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+845 -         let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+845 +         let status = u16::try_from(v.get("status").and_then(|x| x.as_u64()).unwrap_or(200));
+    |
+
+warning: redundant closure
+   --> crates/jshost/src/loader_host.rs:845:47
+    |
+845 |         let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+    |                                               ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/loader_host.rs:917:5
+    |
+917 |     pub async fn run(&self, args: EndpointRunArgs<'_>) -> Result<MiddlewareOutcome> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/jshost/src/loader_host.rs:928:9
+    |
+928 |         use base64::Engine as _;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates/jshost/src/loader_host.rs:945:22
+    |
+945 |             headers: Default::default(),
+    |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: redundant closure
+   --> crates/jshost/src/loader_host.rs:966:45
+    |
+966 |         let short = v.get("short").and_then(|x| x.as_bool()).unwrap_or(false);
+    |                                             ^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_bool`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: casting `u64` to `u16` may truncate the value
+   --> crates/jshost/src/loader_host.rs:967:22
+    |
+967 |         let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+967 -         let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+967 +         let status = u16::try_from(v.get("status").and_then(|x| x.as_u64()).unwrap_or(200));
+    |
+
+warning: redundant closure
+   --> crates/jshost/src/loader_host.rs:967:47
+    |
+967 |         let status = v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16;
+    |                                               ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: called `map(_).unwrap_or_default()` on an `Option` value
+   --> crates/jshost/src/loader_host.rs:968:50
+    |
+968 |           let headers_out: Vec<(String, String)> = v
+    |  __________________________________________________^
+969 | |             .get("headers")
+970 | |             .and_then(|x| x.as_array())
+971 | |             .map(|arr| {
+...   |
+980 | |             })
+981 | |             .unwrap_or_default();
+    | |________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use instead
+    |
+971 ~             .map_or_default(|arr| {
+972 |                 arr.iter()
+...
+979 |                     .collect()
+980 ~             });
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+    --> crates/jshost/src/loader_host.rs:1044:5
+     |
+1044 | /     pub async fn run(
+1045 | |         &self,
+1046 | |         module_path: &str,
+1047 | |         phase: &str,
+1048 | |         payload: serde_json::Value,
+1049 | |         socket_id: &str,
+1050 | |     ) -> Result<SocketOutcome> {
+     | |______________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+    --> crates/jshost/src/loader_host.rs:1058:22
+     |
+1058 |             headers: Default::default(),
+     |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: called `map(_).unwrap_or_default()` on an `Option` value
+    --> crates/jshost/src/loader_host.rs:1087:26
+     |
+1087 |           let broadcasts = v
+     |  __________________________^
+1088 | |             .get("broadcasts")
+1089 | |             .and_then(|b| b.as_array())
+1090 | |             .map(|a| {
+...    |
+1094 | |             })
+1095 | |             .unwrap_or_default();
+     | |________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use instead
+     |
+1090 ~             .map_or_default(|a| {
+1091 |                 a.iter()
+1092 |                     .filter_map(|x| x.as_str().map(str::to_string))
+1093 |                     .collect()
+1094 ~             });
+     |
+
+warning: called `map(_).unwrap_or_default()` on an `Option` value
+    --> crates/jshost/src/loader_host.rs:1096:23
+     |
+1096 |           let targets = v
+     |  _______________________^
+1097 | |             .get("targets")
+1098 | |             .and_then(|t| t.as_array())
+1099 | |             .map(|a| {
+...    |
+1109 | |             })
+1110 | |             .unwrap_or_default();
+     | |________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use instead
+     |
+1099 ~             .map_or_default(|a| {
+1100 |                 a.iter()
+ ...
+1108 |                     .collect()
+1109 ~             });
+     |
+
+warning: redundant closure
+    --> crates/jshost/src/loader_host.rs:1117:42
+     |
+1117 |                 obj.get("code").and_then(|c| c.as_u64()).map(|code| {
+     |                                          ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: casting `u64` to `u16` may truncate the value
+    --> crates/jshost/src/loader_host.rs:1123:22
+     |
+1123 |                     (code as u16, reason)
+     |                      ^^^^^^^^^^^
+     |
+     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+     |
+1123 -                     (code as u16, reason)
+1123 +                     (u16::try_from(code), reason)
+     |
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> crates/jshost/src/tooling_pool.rs:43:5
+   |
+43 |     pub async fn call_module(&self, call: ModuleCall) -> Result<Value> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+  --> crates/jshost/src/tooling_pool.rs:47:22
+   |
+47 |             headers: Default::default(),
+   |                      ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> crates/jshost/src/tooling_pool.rs:70:5
+   |
+70 |     pub async fn vue_compile_sfc(&self, source: &str, filename: &str) -> Result<Value> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> crates/jshost/src/tooling_pool.rs:80:5
+   |
+80 | /     pub async fn svelte_compile(
+81 | |         &self,
+82 | |         source: &str,
+83 | |         filename: &str,
+84 | |         generate: &str,
+85 | |     ) -> Result<Value> {
+   | |______________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> crates/jshost/src/tooling_pool.rs:98:5
+   |
+98 |     pub async fn solid_transform(&self, source: &str, filename: &str) -> Result<Value> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/tooling_pool.rs:113:5
+    |
+113 | /     pub async fn tailwind_scan(
+114 | |         &self,
+115 | |         sources: Vec<Value>,
+116 | |         files: Vec<Value>,
+117 | |     ) -> Result<Vec<String>> {
+    | |____________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/tooling_pool.rs:140:5
+    |
+140 | /     pub async fn tailwind_build(
+141 | |         &self,
+142 | |         css: &str,
+143 | |         base: &str,
+144 | |         candidates: &[String],
+145 | |     ) -> Result<String> {
+    | |_______________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/lib.rs:188:5
+    |
+188 |     pub async fn collect(&mut self) -> Result<Bytes> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: this could be rewritten as `let...else`
+   --> crates/jshost/src/lib.rs:200:21
+    |
+200 | /                     let chunk = match tokio::time::timeout(COLLECT_DEADLINE, rx.recv()).await {
+201 | |                         Ok(next) => next,
+202 | |                         Err(_) => {
+203 | |                             return Err(crate::err(
+...   |
+208 | |                     };
+    | |______________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#manual_let_else
+help: consider writing
+    |
+200 ~                     let Ok(chunk) = tokio::time::timeout(COLLECT_DEADLINE, rx.recv()).await else {
+201 +                             return Err(crate::err(
+202 +                                 "JSH-DEADLINE",
+203 +                                 "chunked stream did not finish within 30s".to_string(),
+204 +                             ));
+205 +                         };
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/lib.rs:259:5
+    |
+259 |     fn render_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/lib.rs:260:5
+    |
+260 |     fn tooling_pool(&self, cfg: PoolConfig) -> Result<Arc<dyn Pool>>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: this method could have a `#[must_use]` attribute
+   --> crates/jshost/src/lib.rs:326:12
+    |
+326 |     pub fn from_u16(v: u16) -> Option<Self> {
+    |            ^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+326 ~     #[must_use]
+327 ~     pub fn from_u16(v: u16) -> Option<Self> {
+    |
+
+warning: this function could have a `#[must_use]` attribute
+   --> crates/jshost/src/lib.rs:346:8
+    |
+346 | pub fn op_name(op: Op) -> &'static str {
+    |        ^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+346 + #[must_use]
+347 | pub fn op_name(op: Op) -> &'static str {
+    |
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/lib.rs:416:1
+    |
+416 | pub fn frame(msg: &WorkerMsg) -> Result<Bytes> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+   --> crates/jshost/src/lib.rs:436:15
+    |
+436 |     let len = (json.len() + 1) as u32;
+    |               ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+436 -     let len = (json.len() + 1) as u32;
+436 +     let len = u32::try_from(json.len() + 1);
+    |
+
+warning: docs for function which may panic missing `# Panics` section
+   --> crates/jshost/src/lib.rs:449:1
+    |
+449 | pub fn unframe(buf: &[u8]) -> Result<(Vec<WorkerMsg>, usize)> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: first possible panic found here
+   --> crates/jshost/src/lib.rs:486:45
+    |
+486 |                 let id = u64::from_le_bytes(payload[..8].try_into().unwrap());
+    |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/jshost/src/lib.rs:449:1
+    |
+449 | pub fn unframe(buf: &[u8]) -> Result<(Vec<WorkerMsg>, usize)> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: this function could have a `#[must_use]` attribute
+   --> crates/jshost/src/lib.rs:513:8
+    |
+513 | pub fn route_affinity(route: Option<&str>, n: usize) -> Option<usize> {
+    |        ^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+513 + #[must_use]
+514 | pub fn route_affinity(route: Option<&str>, n: usize) -> Option<usize> {
+    |
+
+warning: casts from `u8` to `u64` can be expressed infallibly using `From`
+   --> crates/jshost/src/lib.rs:520:14
+    |
+520 |         h ^= *b as u64;
+    |              ^^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_lossless
+    = note: `-D clippy::cast-lossless` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cast_lossless)]`
+    = note: the `clippy::cast_lossless` lint ignores `-D warnings`
+help: use `u64::from` instead
+    |
+520 -         h ^= *b as u64;
+520 +         h ^= u64::from(*b);
+    |
+
+warning: casting `u64` to `usize` may truncate the value on targets with 32-bit wide pointers
+   --> crates/jshost/src/lib.rs:523:10
+    |
+523 |     Some((h % n as u64) as usize)
+    |          ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+523 -     Some((h % n as u64) as usize)
+523 +     Some(usize::try_from(h % n as u64))
+    |
+
+warning: this function could have a `#[must_use]` attribute
+   --> crates/jshost/src/lib.rs:526:8
+    |
+526 | pub fn choose_worker(loads: &[u64], affinity: Option<usize>) -> usize {
+    |        ^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+526 + #[must_use]
+527 | pub fn choose_worker(loads: &[u64], affinity: Option<usize>) -> usize {
+    |
+
+warning: casts from `u8` to `u32` can be expressed infallibly using `From`
+   --> crates/jshost/src/lib.rs:552:33
+    |
+552 |             b'A'..=b'Z' => Some((c - b'A') as u32),
+    |                                 ^^^^^^^^^^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_lossless
+help: use `u32::from` instead
+    |
+552 -             b'A'..=b'Z' => Some((c - b'A') as u32),
+552 +             b'A'..=b'Z' => Some(u32::from(c - b'A')),
+    |
+
+warning: casts from `u8` to `u32` can be expressed infallibly using `From`
+   --> crates/jshost/src/lib.rs:553:33
+    |
+553 |             b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_lossless
+help: use `u32::from` instead
+    |
+553 -             b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+553 +             b'a'..=b'z' => Some(u32::from(c - b'a' + 26)),
+    |
+
+warning: casts from `u8` to `u32` can be expressed infallibly using `From`
+   --> crates/jshost/src/lib.rs:554:33
+    |
+554 |             b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: an `as` cast can become silently lossy if the types change in the future
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_lossless
+help: use `u32::from` instead
+    |
+554 -             b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+554 +             b'0'..=b'9' => Some(u32::from(c - b'0' + 52)),
+    |
+
+warning: an inclusive range would be more readable
+   --> crates/jshost/src/lib.rs:585:38
+    |
+585 |         out.extend_from_slice(&bytes[1..1 + keep]);
+    |                                      ^^^^^^^^^^^ help: use: `1..=keep`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#range_plus_one
+    = note: `-D clippy::range-plus-one` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::range_plus_one)]`
+    = note: the `clippy::range_plus_one` lint ignores `-D warnings`
+
+warning: casting `f64` to `usize` may truncate the value
+   --> crates/jshost/src/lib.rs:595:16
+    |
+595 |     let rank = (p * sorted.len() as f64).ceil() as usize;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+
+warning: casting `f64` to `usize` may lose the sign of the value
+   --> crates/jshost/src/lib.rs:595:16
+    |
+595 |     let rank = (p * sorted.len() as f64).ceil() as usize;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_sign_loss
+    = note: `-D clippy::cast-sign-loss` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cast_sign_loss)]`
+    = note: the `clippy::cast_sign_loss` lint ignores `-D warnings`
+
+warning: casting `usize` to `f64` may cause a loss of precision (`usize` can be up to 64 bits wide depending on the target architecture, but `f64`'s mantissa is only 52 bits wide)
+   --> crates/jshost/src/lib.rs:595:21
+    |
+595 |     let rank = (p * sorted.len() as f64).ceil() as usize;
+    |                     ^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_precision_loss
+    = note: `-D clippy::cast-precision-loss` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::cast_precision_loss)]`
+    = note: the `clippy::cast_precision_loss` lint ignores `-D warnings`
+
+warning: this method could have a `#[must_use]` attribute
+   --> crates/jshost/src/lib.rs:642:12
+    |
+642 |     pub fn without_handler(cfg: PoolConfig) -> Self {
+    |            ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+    |
+642 ~     #[must_use]
+643 ~     pub fn without_handler(cfg: PoolConfig) -> Self {
+    |
+
+warning: item in documentation is missing backticks
+    --> crates/jshost/src/lib.rs:3469:13
+     |
+3469 | /// scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME).
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+help: try
+     |
+3469 - /// scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME).
+3469 + /// scheme (`ERR_UNSUPPORTED_ESM_URL_SCHEME`).
+     |
+
+warning: this function's return value is unnecessarily wrapped by `Result`
+    --> crates/jshost/src/lib.rs:3470:1
+     |
+3470 | fn path_to_file_url(p: &Path) -> Result<String> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unnecessary_wraps
+     = note: `-D clippy::unnecessary-wraps` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::unnecessary_wraps)]`
+     = note: the `clippy::unnecessary_wraps` lint ignores `-D warnings`
+help: remove `Result` from the return type...
+     |
+3470 - fn path_to_file_url(p: &Path) -> Result<String> {
+3470 + fn path_to_file_url(p: &Path) -> std::string::String {
+     |
+help: ...and then remove the surrounding `Ok()` from returning expressions
+     |
+3474 ~         return s.to_string();
+3475 |     }
+ ...
+3481 |     if has_drive {
+3482 ~         return format!("file:///{norm}");
+3483 |     }
+3484 |     // UNC path: `//server/share/x` -> `file://server/share/x`.
+3485 |     if norm.starts_with("//") {
+3486 ~         return format!("file:{norm}");
+3487 |     }
+3488 |     // POSIX absolute: `/tmp/x` -> `file:///tmp/x`.
+3489 |     if norm.starts_with('/') {
+3490 ~         return format!("file://{norm}");
+3491 |     }
+ ...
+3502 |     if abs_has_drive {
+3503 ~         format!("file:///{abs_norm}")
+3504 |     } else {
+3505 ~         format!("file://{abs_norm}")
+     |
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+    --> crates/jshost/src/lib.rs:3494:15
+     |
+3494 |       let abs = std::env::current_dir()
+     |  _______________^
+3495 | |         .ok()
+3496 | |         .map(|d| d.join(p))
+3497 | |         .unwrap_or_else(|| p.to_path_buf());
+     | |___________________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: try
+     |
+3494 ~     let abs = std::env::current_dir()
+3495 ~         .ok().map_or_else(|| p.to_path_buf(), |d| d.join(p));
+     |
+
+warning: called `map(<f>).unwrap_or_else(<g>)` on an `Option` value
+    --> crates/jshost/src/lib.rs:3544:26
+     |
+3544 |       let register_hooks = worker_script
+     |  __________________________^
+3545 | |         .parent()
+3546 | |         .map(|p| p.join("register-hooks.mjs"))
+3547 | |         .unwrap_or_else(|| std::path::PathBuf::from("register-hooks.mjs"));
+     | |__________________________________________________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: try
+     |
+3544 ~     let register_hooks = worker_script
+3545 ~         .parent().map_or_else(|| std::path::PathBuf::from("register-hooks.mjs"), |p| p.join("register-hooks.mjs"));
+     |
+
+warning: docs for function which may panic missing `# Panics` section
+    --> crates/jshost/src/lib.rs:3607:5
+     |
+3607 |     pub fn with_cache_handler(self: &Arc<Self>, handler: Arc<dyn oxide_fw_cache::CacheHandler>) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+note: first possible panic found here
+    --> crates/jshost/src/lib.rs:3609:14
+     |
+3609 |             *w.cache.lock().unwrap() = Some(Arc::clone(&handler));
+     |              ^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+warning: this argument is passed by value, but not consumed in the function body
+    --> crates/jshost/src/lib.rs:3607:58
+     |
+3607 |     pub fn with_cache_handler(self: &Arc<Self>, handler: Arc<dyn oxide_fw_cache::CacheHandler>) {
+     |                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+3607 |     pub fn with_cache_handler(self: &Arc<Self>, handler: &Arc<dyn oxide_fw_cache::CacheHandler>) {
+     |                                                          +
+
+warning: docs for function which may panic missing `# Panics` section
+    --> crates/jshost/src/lib.rs:3618:5
+     |
+3618 |     pub fn with_fetch_handler(self: &Arc<Self>, handler: Arc<dyn FetchHandler>) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+note: first possible panic found here
+    --> crates/jshost/src/lib.rs:3620:14
+     |
+3620 |             *w.fetch.lock().unwrap() = Some(Arc::clone(&handler));
+     |              ^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+warning: this argument is passed by value, but not consumed in the function body
+    --> crates/jshost/src/lib.rs:3618:58
+     |
+3618 |     pub fn with_fetch_handler(self: &Arc<Self>, handler: Arc<dyn FetchHandler>) {
+     |                                                          ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+3618 |     pub fn with_fetch_handler(self: &Arc<Self>, handler: &Arc<dyn FetchHandler>) {
+     |                                                          +
+
+warning: docs for function which may panic missing `# Panics` section
+    --> crates/jshost/src/lib.rs:3627:5
+     |
+3627 |     pub fn with_transform_handler(self: &Arc<Self>, handler: Arc<dyn TransformHandler>) {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+note: first possible panic found here
+    --> crates/jshost/src/lib.rs:3629:14
+     |
+3629 |             *w.transform.lock().unwrap() = Some(Arc::clone(&handler));
+     |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+warning: this argument is passed by value, but not consumed in the function body
+    --> crates/jshost/src/lib.rs:3627:62
+     |
+3627 |     pub fn with_transform_handler(self: &Arc<Self>, handler: Arc<dyn TransformHandler>) {
+     |                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+3627 |     pub fn with_transform_handler(self: &Arc<Self>, handler: &Arc<dyn TransformHandler>) {
+     |                                                              +
+
+warning: docs for function returning `Result` missing `# Errors` section
+    --> crates/jshost/src/lib.rs:3647:5
+     |
+3647 | /     pub fn spawn(
+3648 | |         node_bin: &str,
+3649 | |         worker_script: impl Into<PathBuf>,
+3650 | |         cfg: PoolConfig,
+3651 | |     ) -> Result<Arc<NodePool>> {
+     | |______________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function which may panic missing `# Panics` section
+    --> crates/jshost/src/lib.rs:3734:5
+     |
+3734 |     pub fn worker_pids(&self) -> Vec<Option<u32>> {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+note: first possible panic found here
+    --> crates/jshost/src/lib.rs:3737:23
+     |
+3737 |             .map(|w| *w.pid.lock().unwrap())
+     |                       ^^^^^^^^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_panics_doc
+
+warning: missing `#[must_use]` attribute on a method returning `Self`
+    --> crates/jshost/src/lib.rs:4047:5
+     |
+4047 | /     pub fn with_fetch_handler(mut self, handler: Arc<dyn FetchHandler>) -> Self {
+4048 | |         self.fetch_handler = Some(handler);
+4049 | |         self
+4050 | |     }
+     | |_____^
+     |
+     = help: consider adding the `#[must_use]` attribute to the method or directly to the `Self` type
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#return_self_not_must_use
+     = note: `-D clippy::return-self-not-must-use` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::return_self_not_must_use)]`
+     = note: the `clippy::return_self_not_must_use` lint ignores `-D warnings`
+
+warning: missing `#[must_use]` attribute on a method returning `Self`
+    --> crates/jshost/src/lib.rs:4054:5
+     |
+4054 | /     pub fn with_cache_handler(mut self, handler: Arc<dyn oxide_fw_cache::CacheHandler>) -> Self {
+4055 | |         self.cache_handler = Some(handler);
+4056 | |         self
+4057 | |     }
+     | |_____^
+     |
+     = help: consider adding the `#[must_use]` attribute to the method or directly to the `Self` type
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#return_self_not_must_use
+
+warning: missing `#[must_use]` attribute on a method returning `Self`
+    --> crates/jshost/src/lib.rs:4061:5
+     |
+4061 | /     pub fn with_transform_handler(mut self, handler: Arc<dyn TransformHandler>) -> Self {
+4062 | |         self.transform_handler = Some(handler);
+4063 | |         self
+4064 | |     }
+     | |_____^
+     |
+     = help: consider adding the `#[must_use]` attribute to the method or directly to the `Self` type
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#return_self_not_must_use
+
+warning: this method could have a `#[must_use]` attribute
+    --> crates/jshost/src/lib.rs:4067:12
+     |
+4067 |     pub fn worker_script_default() -> std::path::PathBuf {
+     |            ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#must_use_candidate
+help: add the attribute
+     |
+4067 ~     #[must_use]
+4068 ~     pub fn worker_script_default() -> std::path::PathBuf {
+     |
+
+warning: this argument is passed by value, but not consumed in the function body
+    --> crates/jshost/src/lib.rs:4233:36
+     |
+4233 | fn fail_all(worker: &Worker, code: String, message: String) {
+     |                                    ^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider changing the type to
+     |
+4233 - fn fail_all(worker: &Worker, code: String, message: String) {
+4233 + fn fail_all(worker: &Worker, code: &str, message: String) {
+     |
+help: change `code.clone()` to
+     |
+4248 -                 code.clone(),
+4248 +                 code.to_string(),
+     |
+help: change `code.clone()` to
+     |
+4256 -             code.clone(),
+4256 +             code.to_string(),
+     |
+
+warning: this argument is passed by value, but not consumed in the function body
+    --> crates/jshost/src/lib.rs:4233:53
+     |
+4233 | fn fail_all(worker: &Worker, code: String, message: String) {
+     |                                                     ^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider changing the type to
+     |
+4233 - fn fail_all(worker: &Worker, code: String, message: String) {
+4233 + fn fail_all(worker: &Worker, code: String, message: &str) {
+     |
+help: change `message.clone()` to
+     |
+4249 -                 message.clone(),
+4249 +                 message.to_string(),
+     |
+help: change `message.clone()` to
+     |
+4257 -             message.clone(),
+4257 +             message.to_string(),
+     |
+
+warning: this function's return value is unnecessarily wrapped by `Option`
+    --> crates/jshost/src/lib.rs:4270:1
+     |
+4270 | fn stream_sender(worker: &Worker, id: u64) -> Option<mpsc::Sender<Result<Bytes>>> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#unnecessary_wraps
+help: remove `Option` from the return type...
+     |
+4270 - fn stream_sender(worker: &Worker, id: u64) -> Option<mpsc::Sender<Result<Bytes>>> {
+4270 + fn stream_sender(worker: &Worker, id: u64) -> tokio::sync::mpsc::Sender<std::result::Result<bytes::Bytes, oxide_fw_diagnostics::OxideError>> {
+     |
+help: ...and then remove the surrounding `Some()` from returning expressions
+     |
+4273 ~         return tx.clone();
+4274 |     }
+ ...
+4278 |     resolve(worker, id, Ok(CallStream::Chunked(rx)));
+4279 ~     tx
+     |
+
+warning: this function has too many lines (243/100)
+    --> crates/jshost/src/lib.rs:4291:1
+     |
+4291 | / async fn op_dispatch(
+4292 | |     cache: Option<&dyn oxide_fw_cache::CacheHandler>,
+4293 | |     fetch: Option<&dyn FetchHandler>,
+4294 | |     transform: Option<&dyn TransformHandler>,
+...    |
+4298 | |     args: &serde_json::Value,
+4299 | | ) -> Result<serde_json::Value> {
+     | |______________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#too_many_lines
+     = note: `-D clippy::too-many-lines` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
+     = note: the `clippy::too_many_lines` lint ignores `-D warnings`
+
+warning: called `map(_).unwrap_or_default()` on an `Option` value
+    --> crates/jshost/src/lib.rs:4356:37
+     |
+4356 |               let tags: Vec<String> = args
+     |  _____________________________________^
+4357 | |                 .get("tags")
+4358 | |                 .and_then(|v| v.as_array())
+4359 | |                 .map(|a| {
+...    |
+4363 | |                 })
+4364 | |                 .unwrap_or_default();
+     | |____________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use instead
+     |
+4359 ~                 .map_or_default(|a| {
+4360 |                     a.iter()
+4361 |                         .filter_map(|v| v.as_str().map(str::to_string))
+4362 |                         .collect()
+4363 ~                 });
+     |
+
+warning: redundant closure
+    --> crates/jshost/src/lib.rs:4365:53
+     |
+4365 |             let ttl_secs = args.get("ttl").and_then(|v| v.as_u64()).unwrap_or(0);
+     |                                                     ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: redundant closure
+    --> crates/jshost/src/lib.rs:4366:53
+     |
+4366 |             let swr_secs = args.get("swr").and_then(|v| v.as_u64());
+     |                                                     ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: called `map(<f>).unwrap_or(<a>)` on a `Result` value
+    --> crates/jshost/src/lib.rs:4378:28
+     |
+4378 |                   stored_at: std::time::SystemTime::now()
+     |  ____________________________^
+4379 | |                     .duration_since(std::time::UNIX_EPOCH)
+4380 | |                     .map(|d| d.as_millis() as u64)
+4381 | |                     .unwrap_or(0),
+     | |_________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use `map_or(<a>, <f>)` instead
+     |
+4380 -                     .map(|d| d.as_millis() as u64)
+4381 -                     .unwrap_or(0),
+4380 +                     .map_or(0, |d| d.as_millis() as u64),
+     |
+
+warning: casting `u128` to `u64` may truncate the value
+    --> crates/jshost/src/lib.rs:4380:30
+     |
+4380 |                     .map(|d| d.as_millis() as u64)
+     |                              ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+     |
+4380 -                     .map(|d| d.as_millis() as u64)
+4380 +                     .map(|d| u64::try_from(d.as_millis()))
+     |
+
+warning: redundant closure
+    --> crates/jshost/src/lib.rs:4394:50
+     |
+4394 |             let soft = args.get("soft").and_then(|v| v.as_bool()).unwrap_or(true);
+     |                                                  ^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_bool`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+    --> crates/jshost/src/lib.rs:4460:13
+     |
+4460 |             use base64::Engine as _;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+    --> crates/jshost/src/lib.rs:4537:13
+     |
+4537 |             use base64::Engine as _;
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+
+warning: called `map(_).unwrap_or_default()` on an `Option` value
+    --> crates/jshost/src/lib.rs:4517:50
+     |
+4517 |               let headers: Vec<(String, String)> = args
+     |  __________________________________________________^
+4518 | |                 .get("headers")
+4519 | |                 .and_then(|v| v.as_object())
+4520 | |                 .map(|m| {
+...    |
+4524 | |                 })
+4525 | |                 .unwrap_or_default();
+     | |____________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#map_unwrap_or
+help: use instead
+     |
+4520 ~                 .map_or_default(|m| {
+4521 |                     m.iter()
+4522 |                         .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+4523 |                         .collect()
+4524 ~                 });
+     |
+
+warning: redundant closure
+    --> crates/jshost/src/lib.rs:4561:27
+     |
+4561 |                 .and_then(|v| v.as_u64())
+     |                           ^^^^^^^^^^^^^^ help: replace the closure with the method itself: `serde_json::Value::as_u64`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: redundant closure
+    --> crates/jshost/src/lib.rs:4571:59
+     |
+4571 |             let mut guard = streams.lock().unwrap_or_else(|p| p.into_inner());
+     |                                                           ^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#redundant_closure_for_method_calls
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+    --> crates/jshost/src/lib.rs:4688:21
+     |
+4688 |                     use tokio::io::AsyncWriteExt as _;
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+
+warning: `oxide-fw-jshost` (lib) generated 129 warnings (run `cargo clippy --fix --lib -p oxide-fw-jshost -- --cap-lints warn -W clippy::pedantic` to apply 52 suggestions)
+warning: 5 bindings with single-character names in scope
+  --> crates/bundler/src/minify.rs:9:9
+   |
+ 9 |     let b = src.as_bytes();
+   |         ^
+10 |     let n = b.len();
+   |         ^
+...
+37 |     let mut i = 0usize;
+   |             ^
+38 |     while i < n {
+39 |         let c = b[i];
+   |             ^
+...
+53 |             M::Str(q) => {
+   |                    ^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#many_single_char_names
+   = note: `-D clippy::many-single-char-names` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::many_single_char_names)]`
+   = note: the `clippy::many_single_char_names` lint ignores `-D warnings`
+
+warning: 5 bindings with single-character names in scope
+  --> crates/bundler/src/minify.rs:9:9
+   |
+ 9 |     let b = src.as_bytes();
+   |         ^
+10 |     let n = b.len();
+   |         ^
+...
+37 |     let mut i = 0usize;
+   |             ^
+38 |     while i < n {
+39 |         let c = b[i];
+   |             ^
+...
+88 |             M::Expr(d) => {
+   |                     ^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#many_single_char_names
+
+warning: binding's name is too similar to existing binding
+  --> crates/bundler/src/prebundle.rs:79:13
+   |
+79 |     let mut resolved: Vec<(String, PathBuf)> = Vec::new();
+   |             ^^^^^^^^
+   |
+note: existing binding defined here
+  --> crates/bundler/src/prebundle.rs:69:9
+   |
+69 |     let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+   |         ^^^^^^^^
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#similar_names
+   = note: `-D clippy::similar-names` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::similar_names)]`
+   = note: the `clippy::similar_names` lint ignores `-D warnings`
+
+warning: this function has too many lines (163/100)
+ --> crates/bundler/src/minify.rs:8:1
+  |
+8 | pub fn minify(src: &str) -> String {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#too_many_lines
+  = note: `-D clippy::too-many-lines` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
+  = note: the `clippy::too_many_lines` lint ignores `-D warnings`
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+  --> crates/bundler/src/minify.rs:15:5
+   |
+15 | /     enum M {
+16 | |         Code,
+17 | |         Expr(u32),
+18 | |         Str(u8),
+19 | |         Tmpl,
+20 | |     }
+   | |_____^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+   = note: `-D clippy::items-after-statements` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::items_after_statements)]`
+   = note: the `clippy::items_after_statements` lint ignores `-D warnings`
+
+warning: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
+   --> crates/bundler/src/minify.rs:170:5
+    |
+170 | /     match String::from_utf8(out) {
+171 | |         Ok(minified) => minified,
+...   |
+180 | |     }
+    | |_____^
+    |
+    = note: you might want to preserve the comments from inside the `match`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#single_match_else
+    = note: `-D clippy::single-match-else` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::single_match_else)]`
+    = note: the `clippy::single_match_else` lint ignores `-D warnings`
+help: try
+    |
+170 ~     if let Ok(minified) = String::from_utf8(out) { minified } else {
+171 +         tracing::warn!("the JS minifier produced invalid UTF-8; serving the unminified source");
+172 +         src.to_string()
+173 +     }
+    |
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/bundler/src/rolldown_backend.rs:285:9
+    |
+285 | /         use rolldown_common::{
+286 | |             CodeSplittingMode, ManualCodeSplittingOptions, MatchGroup, MatchGroupName,
+287 | |             MatchGroupTest,
+288 | |         };
+    | |__________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/bundler/src/rolldown_backend.rs:515:9
+    |
+515 |         body.push_str(&format!("import * as route_{i} from \"../{}\";\n", c.file));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+    = note: `-D clippy::format-push-string` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::format_push_string)]`
+    = note: the `clippy::format_push_string` lint ignores `-D warnings`
+help: consider using `write!` to avoid the extra allocation
+    |
+515 -         body.push_str(&format!("import * as route_{i} from \"../{}\";\n", c.file));
+515 +         let _ = write!(body, "import * as route_{i} from \"../{}\";\n", c.file);
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/bundler/src/rolldown_backend.rs:520:9
+    |
+520 |         body.push_str(&format!("  \"{route_id}\": route_{i},\n"));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+520 -         body.push_str(&format!("  \"{route_id}\": route_{i},\n"));
+520 +         let _ = write!(body, "  \"{route_id}\": route_{i},\n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/bundler/src/rolldown_backend.rs:537:9
+    |
+537 | /         lazy_body.push_str(&format!(
+538 | |             "  \"{route_id}\": () => import(\"../{}\"),\n",
+539 | |             c.file
+540 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+537 ~         let _ = write!(lazy_body, "  \"{route_id}\": () => import(\"../{}\"),\n",
+538 ~             c.file);
+    |
+
+warning: this function has too many lines (184/100)
+   --> crates/bundler/src/rolldown_backend.rs:549:1
+    |
+549 | / fn convert(
+550 | |     ro: rolldown::BundleOutput,
+551 | |     out_dir: &Path,
+552 | |     env: BundleEnv,
+553 | |     route_entries: &BTreeMap<String, PathBuf>,
+554 | | ) -> crate::Result<BundleOutput> {
+    | |________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#too_many_lines
+
+warning: case-sensitive file extension comparison
+   --> crates/bundler/src/rolldown_backend.rs:604:20
+    |
+604 |                 if file.ends_with(".css") {
+    |                    ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+    = note: `-D clippy::case-sensitive-file-extension-comparisons` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::case_sensitive_file_extension_comparisons)]`
+    = note: the `clippy::case_sensitive_file_extension_comparisons` lint ignores `-D warnings`
+help: use std::path::Path
+    |
+604 ~                 if std::path::Path::new(&file)
+605 +                     .extension()
+606 ~                     .is_some_and(|ext| ext.eq_ignore_ascii_case("css")) {
+    |
+
+warning: `format!(..)` appended to existing `String`
+    --> crates/bundler/src/rolldown_backend.rs:1055:17
+     |
+1055 |                 js.push_str(&format!("export default {{ {} }};\n", entries.join(", ")));
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1055 -                 js.push_str(&format!("export default {{ {} }};\n", entries.join(", ")));
+1055 +                 let _ = write!(js, "export default {{ {} }};\n", entries.join(", "));
+     |
+
+warning: `format!(..)` appended to existing `String`
+    --> crates/bundler/src/rolldown_backend.rs:1057:17
+     |
+1057 | /                 js.push_str(&format!(
+1058 | |                     "export default {};\n",
+1059 | |                     Self::json_string(&file_name)
+1060 | |                 ));
+     | |__________________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1057 ~                 let _ = write!(js, "export default {};\n",
+1058 ~                     Self::json_string(&file_name));
+     |
+
+warning: this could be rewritten as `let...else`
+    --> crates/bundler/src/rolldown_backend.rs:1215:9
+     |
+1215 | /         let canon_root = match self.root.canonicalize() {
+1216 | |             Ok(p) => p,
+1217 | |             Err(_) => return false,
+1218 | |         };
+     | |__________^ help: consider writing: `let Ok(canon_root) = self.root.canonicalize() else { return false };`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#manual_let_else
+     = note: `-D clippy::manual-let-else` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::manual_let_else)]`
+     = note: the `clippy::manual_let_else` lint ignores `-D warnings`
+
+warning: this could be rewritten as `let...else`
+    --> crates/bundler/src/rolldown_backend.rs:1219:9
+     |
+1219 | /         let canon_abs = match abs.canonicalize() {
+1220 | |             Ok(p) => p,
+1221 | |             Err(_) => return false,
+1222 | |         };
+     | |__________^ help: consider writing: `let Ok(canon_abs) = abs.canonicalize() else { return false };`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#manual_let_else
+
+warning: these match arms have identical bodies
+    --> crates/bundler/src/rolldown_backend.rs:1249:13
+     |
+1249 |             Some("mjs" | "js") => "mjs",
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1250 |             _ => "mjs",
+     |             ^^^^^^^^^^ the wildcard arm
+     |
+     = help: if this is unintentional make the arms return different values
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_same_arms
+     = note: `-D clippy::match-same-arms` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::match_same_arms)]`
+     = note: the `clippy::match_same_arms` lint ignores `-D warnings`
+help: otherwise remove the non-wildcard arm
+     |
+1249 -             Some("mjs" | "js") => "mjs",
+     |
+
+warning: casting `u128` to `u64` may truncate the value
+    --> crates/bundler/src/rolldown_backend.rs:1894:38
+     |
+1894 |                         elapsed_ms = elapsed.as_millis() as u64,
+     |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+     = note: `-D clippy::cast-possible-truncation` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::cast_possible_truncation)]`
+     = note: the `clippy::cast_possible_truncation` lint ignores `-D warnings`
+help: ... or use `try_from` and handle the error accordingly
+     |
+1894 -                         elapsed_ms = elapsed.as_millis() as u64,
+1894 +                         elapsed_ms = u64::try_from(elapsed.as_millis()),
+     |
+
+warning: assigning the result of `Clone::clone()` may be inefficient
+   --> crates/bundler/src/sourcemap_compose.rs:317:5
+    |
+317 |     out.source_root = prev.source_root.clone();
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use `clone_from()`: `out.source_root.clone_from(&prev.source_root)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#assigning_clones
+    = note: `-D clippy::assigning-clones` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assigning_clones)]`
+    = note: the `clippy::assigning_clones` lint ignores `-D warnings`
+
+warning: assigning the result of `Clone::clone()` may be inefficient
+   --> crates/bundler/src/sourcemap_compose.rs:318:5
+    |
+318 |     out.sources_content = prev.sources_content.clone();
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use `clone_from()`: `out.sources_content.clone_from(&prev.sources_content)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#assigning_clones
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> crates/bundler/src/svg_react.rs:38:1
+   |
+38 | pub fn svg_to_react_component(source: &str, path_for_errors: &str) -> Result<String> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+   = note: `-D clippy::missing-errors-doc` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::missing_errors_doc)]`
+   = note: the `clippy::missing_errors_doc` lint ignores `-D warnings`
+
+warning: this argument is passed by value, but not consumed in the function body
+  --> crates/bundler/src/lib.rs:52:26
+   |
+52 | fn io_err(what: &str, e: std::io::Error) -> OxideError {
+   |                          ^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+   = note: `-D clippy::needless-pass-by-value` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::needless_pass_by_value)]`
+   = note: the `clippy::needless_pass_by_value` lint ignores `-D warnings`
+help: consider taking a reference instead
+   |
+52 | fn io_err(what: &str, e: &std::io::Error) -> OxideError {
+   |                          +
+
+warning: this argument is passed by value, but not consumed in the function body
+  --> crates/bundler/src/lib.rs:56:16
+   |
+56 | fn json_err(e: serde_json::Error) -> OxideError {
+   |                ^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+   |
+56 | fn json_err(e: &serde_json::Error) -> OxideError {
+   |                +
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:219:5
+    |
+219 | /     pub fn call(
+220 | |         &self,
+221 | |         path: &str,
+222 | |         source: &str,
+223 | |         is_module: bool,
+224 | |         minify: bool,
+225 | |     ) -> Result<(String, BTreeMap<String, String>)> {
+    | |___________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:285:5
+    |
+285 |     pub fn call(&self, id: &str, source: &str) -> Result<TransformOutput> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:323:5
+    |
+323 |     pub fn call(&self, id: &str, from: &str) -> Result<Option<PathBuf>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:346:5
+    |
+346 |     pub fn call(&self, id: &str) -> Result<Option<String>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:397:5
+    |
+397 |     pub fn call(&self, file: &str, source: &str) -> Result<Option<String>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:430:5
+    |
+430 |     pub fn call(&self, files: &[String]) -> Result<Option<Vec<String>>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:462:5
+    |
+462 |     pub fn call(&self, route_id: &str, html: &str) -> Result<Option<String>> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:674:5
+    |
+674 |     fn bundle(&self, options: &BundleOptions) -> Result<BundleOutput>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:681:5
+    |
+681 | /     fn bundle_incremental(
+682 | |         &self,
+683 | |         options: &BundleOptions,
+684 | |         changed: Option<&[std::path::PathBuf]>,
+685 | |     ) -> Result<BundleOutput> {
+    | |_____________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: this could be rewritten as `let...else`
+   --> crates/bundler/src/lib.rs:709:9
+    |
+709 | /         let src = match std::fs::read_to_string(&chunk.file) {
+710 | |             Ok(s) => s,
+711 | |             Err(_) => continue,
+712 | |         };
+    | |__________^ help: consider writing: `let Ok(src) = std::fs::read_to_string(&chunk.file) else { continue };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#manual_let_else
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:773:5
+    |
+773 | /     pub fn resolve(
+774 | |         &self,
+775 | |         specifier: &str,
+776 | |         from: &Path,
+777 | |         env: BundleEnv,
+778 | |         paths: &BTreeMap<String, Vec<String>>,
+779 | |     ) -> Result<PathBuf> {
+    | |________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: docs for function returning `Result` missing `# Errors` section
+   --> crates/bundler/src/lib.rs:786:5
+    |
+786 | /     pub fn resolve_with_virtual(
+787 | |         &self,
+788 | |         specifier: &str,
+789 | |         from: &Path,
+...   |
+792 | |         virtual_modules: &BTreeMap<String, (std::path::PathBuf, String)>,
+793 | |     ) -> Result<PathBuf> {
+    | |________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+   --> crates/bundler/src/lib.rs:808:23
+    |
+808 |             h.update(&(p.len() as u32).to_le_bytes());
+    |                       ^^^^^^^^^^^^^^^^
+    |
+    = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+    |
+808 -             h.update(&(p.len() as u32).to_le_bytes());
+808 +             h.update(&u32::try_from(p.len()).to_le_bytes());
+    |
+
+warning: this function has too many lines (640/100)
+   --> crates/bundler/src/lib.rs:823:5
+    |
+823 |     fn bundle_impl(&self, options: &BundleOptions) -> Result<BundleOutput> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#too_many_lines
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+    --> crates/bundler/src/lib.rs:1119:9
+     |
+1119 | /         struct Built {
+1120 | |             name: String,
+1121 | |             kind: ChunkKind,
+1122 | |             js_mods: Vec<PathBuf>,
+...    |
+1126 | |             css_files: Vec<(PathBuf, String)>, // (source path, output file)
+1127 | |         }
+     | |_________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+
+warning: `format!(..)` appended to existing `String`
+    --> crates/bundler/src/lib.rs:1231:21
+     |
+1231 |                     body.push_str(&format!("import \"./{dep_file}\";\n"));
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1231 -                     body.push_str(&format!("import \"./{dep_file}\";\n"));
+1231 +                     let _ = write!(body, "import \"./{dep_file}\";\n");
+     |
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+    --> crates/bundler/src/lib.rs:1241:34
+     |
+1241 |                 let start_line = body.matches('\n').count() as u32;
+     |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+     |
+1241 -                 let start_line = body.matches('\n').count() as u32;
+1241 +                 let start_line = u32::try_from(body.matches('\n').count());
+     |
+
+warning: `format!(..)` appended to existing `String`
+    --> crates/bundler/src/lib.rs:1267:21
+     |
+1267 |                     body.push_str(&format!("\nexport {{ {} }};\n", list.join(", ")));
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1267 -                     body.push_str(&format!("\nexport {{ {} }};\n", list.join(", ")));
+1267 +                     let _ = write!(body, "\nexport {{ {} }};\n", list.join(", "));
+     |
+
+warning: `format!(..)` appended to existing `String`
+    --> crates/bundler/src/lib.rs:1276:17
+     |
+1276 |                 body.push_str(&format!("//# sourceMappingURL={}.map\n", b.file));
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1276 -                 body.push_str(&format!("//# sourceMappingURL={}.map\n", b.file));
+1276 +                 let _ = write!(body, "//# sourceMappingURL={}.map\n", b.file);
+     |
+
+warning: `format!(..)` appended to existing `String`
+    --> crates/bundler/src/lib.rs:1511:17
+     |
+1511 | /                 entry.push_str(&format!(
+1512 | |                     "import * as route_{i} from \"../{}\";\n",
+1513 | |                     file_of[cname]
+1514 | |                 ));
+     | |__________________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1511 ~                 let _ = write!(entry, "import * as route_{i} from \"../{}\";\n",
+1512 ~                     file_of[cname]);
+     |
+
+warning: `format!(..)` appended to existing `String`
+    --> crates/bundler/src/lib.rs:1518:17
+     |
+1518 |                 entry.push_str(&format!("  \"{route}\": route_{i},\n"));
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1518 -                 entry.push_str(&format!("  \"{route}\": route_{i},\n"));
+1518 +                 let _ = write!(entry, "  \"{route}\": route_{i},\n");
+     |
+
+warning: these match arms have identical bodies
+    --> crates/bundler/src/lib.rs:1595:9
+     |
+1595 |         Some("mjs" | "js") => "mjs",
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1596 |         _ => "mjs",
+     |         ^^^^^^^^^^ the wildcard arm
+     |
+     = help: if this is unintentional make the arms return different values
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#match_same_arms
+help: otherwise remove the non-wildcard arm
+     |
+1595 -         Some("mjs" | "js") => "mjs",
+     |
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+    --> crates/bundler/src/lib.rs:1780:5
+     |
+1780 | /     fn visit(
+1781 | |         node: &PathBuf,
+1782 | |         edges: &BTreeMap<PathBuf, Vec<PathBuf>>,
+1783 | |         color: &mut BTreeMap<PathBuf, C>,
+...    |
+1809 | |         order.push(node.clone());
+1810 | |     }
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+
+warning: docs for function returning `Result` missing `# Errors` section
+  --> crates/bundler/src/prebundle.rs:55:1
+   |
+55 | / pub fn prebundle_cjs_to_esm(
+56 | |     root: &Path,
+57 | |     packages: &[String],
+58 | |     out_dir: &Path,
+59 | | ) -> anyhow::Result<PrebundleResult> {
+   | |____________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#missing_errors_doc
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/bundler/src/prebundle.rs:486:5
+    |
+486 |     out.push_str(&format!("var __oxide_cjs_default = {expr};\n"));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+486 -     out.push_str(&format!("var __oxide_cjs_default = {expr};\n"));
+486 +     let _ = write!(out, "var __oxide_cjs_default = {expr};\n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/bundler/src/prebundle.rs:487:5
+    |
+487 |     out.push_str(&format!("export default __oxide_cjs_default{tail}"));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+487 -     out.push_str(&format!("export default __oxide_cjs_default{tail}"));
+487 +     let _ = write!(out, "export default __oxide_cjs_default{tail}");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/bundler/src/prebundle.rs:490:9
+    |
+490 | /         out.push_str(&format!(
+491 | |             "export const {name} = __oxide_cjs_default.{name};\n"
+492 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+490 -         out.push_str(&format!(
+491 -             "export const {name} = __oxide_cjs_default.{name};\n"
+492 -         ));
+490 +         let _ = write!(out, "export const {name} = __oxide_cjs_default.{name};\n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/bundler/src/prebundle.rs:554:9
+    |
+554 |         with_imports.push_str(&format!("import {import_name} from {module_id:?};\n"));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+554 -         with_imports.push_str(&format!("import {import_name} from {module_id:?};\n"));
+554 +         let _ = write!(with_imports, "import {import_name} from {module_id:?};\n");
+    |
+
+warning: `oxide-fw-bundler` (lib) generated 51 warnings
+warning: calling `BTreeMap::default()` is more clear than this expression
+  --> crates/bundler/tests/bundler_jsx_lowering_tdd.rs:47:26
+   |
+47 |         virtual_modules: Default::default(),
+   |                          ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+   = note: `-D clippy::default-trait-access` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::default_trait_access)]`
+   = note: the `clippy::default_trait_access` lint ignores `-D warnings`
+
+warning: `oxide-fw-bundler` (test "bundler_jsx_lowering_tdd") generated 1 warning
+warning: calling `BTreeMap::default()` is more clear than this expression
+  --> crates/bundler/tests/bundler_framework_refusal_tdd.rs:46:26
+   |
+46 |         virtual_modules: Default::default(),
+   |                          ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+   = note: `-D clippy::default-trait-access` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::default_trait_access)]`
+   = note: the `clippy::default_trait_access` lint ignores `-D warnings`
+
+warning: `oxide-fw-bundler` (test "bundler_framework_refusal_tdd") generated 1 warning
+warning: `oxide-fw-bundler` (lib test) generated 51 warnings (51 duplicates)
+warning: `format!(..)` appended to existing `String`
+  --> crates/bundler/benches/cost.rs:18:9
+   |
+18 |         source.push_str(&format!("export const line{i} = 'oxide oxide oxide';\n"));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#format_push_string
+   = note: `-D clippy::format-push-string` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::format_push_string)]`
+   = note: the `clippy::format_push_string` lint ignores `-D warnings`
+help: consider using `write!` to avoid the extra allocation
+   |
+18 -         source.push_str(&format!("export const line{i} = 'oxide oxide oxide';\n"));
+18 +         let _ = write!(source, "export const line{i} = 'oxide oxide oxide';\n");
+   |
+
+warning: `oxide-fw-bundler` (bench "cost") generated 1 warning
+warning: calling `BTreeMap::default()` is more clear than this expression
+  --> crates/bundler/tests/sourcemap_compose_tdd.rs:86:26
+   |
+86 |         virtual_modules: Default::default(),
+   |                          ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+   = note: `-D clippy::default-trait-access` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::default_trait_access)]`
+   = note: the `clippy::default_trait_access` lint ignores `-D warnings`
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+  --> crates/bundler/benches/sourcemap_compose.rs:24:23
+   |
+24 |             gen_line: (i / 10) as u32,
+   |                       ^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+   = note: `-D clippy::cast-possible-truncation` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::cast_possible_truncation)]`
+   = note: the `clippy::cast_possible_truncation` lint ignores `-D warnings`
+help: ... or use `try_from` and handle the error accordingly
+   |
+24 -             gen_line: (i / 10) as u32,
+24 +             gen_line: u32::try_from(i / 10),
+   |
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+  --> crates/bundler/benches/sourcemap_compose.rs:25:22
+   |
+25 |             gen_col: ((i % 10) * 7) as u32,
+   |                      ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+   |
+25 -             gen_col: ((i % 10) * 7) as u32,
+25 +             gen_col: u32::try_from((i % 10) * 7),
+   |
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+  --> crates/bundler/benches/sourcemap_compose.rs:27:23
+   |
+27 |             src_line: (i / 10) as u32,
+   |                       ^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+   |
+27 -             src_line: (i / 10) as u32,
+27 +             src_line: u32::try_from(i / 10),
+   |
+
+warning: casting `usize` to `u32` may truncate the value on targets with 64-bit wide pointers
+  --> crates/bundler/benches/sourcemap_compose.rs:28:22
+   |
+28 |             src_col: ((i % 10) * 5) as u32,
+   |                      ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#cast_possible_truncation
+help: ... or use `try_from` and handle the error accordingly
+   |
+28 -             src_col: ((i % 10) * 5) as u32,
+28 +             src_col: u32::try_from((i % 10) * 5),
+   |
+
+warning: `oxide-fw-bundler` (test "sourcemap_compose_tdd") generated 1 warning
+warning: `oxide-fw-bundler` (bench "sourcemap_compose") generated 4 warnings
+warning: variables can be used directly in the `format!` string
+  --> crates/bundler/examples/reached_packages.rs:97:5
+   |
+97 |     println!("\nhome route's own reached set: {:?}", home_reached);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#uninlined_format_args
+   = note: `-D clippy::uninlined-format-args` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::uninlined_format_args)]`
+   = note: the `clippy::uninlined_format_args` lint ignores `-D warnings`
+help: change this to
+   |
+97 -     println!("\nhome route's own reached set: {:?}", home_reached);
+97 +     println!("\nhome route's own reached set: {home_reached:?}");
+   |
+
+warning: calling `BTreeMap::default()` is more clear than this expression
+   --> crates/bundler/tests/bundler_tdd.rs:143:26
+    |
+143 |         virtual_modules: Default::default(),
+    |                          ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+    = note: `-D clippy::default-trait-access` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::default_trait_access)]`
+    = note: the `clippy::default_trait_access` lint ignores `-D warnings`
+
+warning: case-sensitive file extension comparison
+   --> crates/bundler/tests/bundler_tdd.rs:259:13
+    |
+259 |     assert!(shared.css[0].ends_with(".css"));
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+    = note: `-D clippy::case-sensitive-file-extension-comparisons` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::case_sensitive_file_extension_comparisons)]`
+    = note: the `clippy::case_sensitive_file_extension_comparisons` lint ignores `-D warnings`
+help: use std::path::Path
+    |
+259 ~     assert!(std::path::Path::new(&shared.css[0])
+260 +         .extension()
+261 ~         .is_some_and(|ext| ext.eq_ignore_ascii_case("css")));
+    |
+
+warning: case-sensitive file extension comparison
+   --> crates/bundler/tests/bundler_tdd.rs:325:13
+    |
+325 |     assert!(entry.file.ends_with(".js"));
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#case_sensitive_file_extension_comparisons
+help: use std::path::Path
+    |
+325 ~     assert!(std::path::Path::new(&entry.file)
+326 +         .extension()
+327 ~         .is_some_and(|ext| ext.eq_ignore_ascii_case("js")));
+    |
+
+warning: `oxide-fw-bundler` (example "reached_packages") generated 1 warning (run `cargo clippy --fix --example "reached_packages" -p oxide-fw-bundler -- --cap-lints warn -W clippy::pedantic` to apply 1 suggestion)
+warning: `oxide-fw-bundler` (test "bundler_tdd") generated 3 warnings
+warning: item in documentation is missing backticks
+ --> crates/bundler/benches/reached_packages.rs:9:5
+  |
+9 | //! node_modules nesting depth? The walk is one `Path::components` pass per
+  |     ^^^^^^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#doc_markdown
+  = note: `-D clippy::doc-markdown` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(clippy::doc_markdown)]`
+  = note: the `clippy::doc_markdown` lint ignores `-D warnings`
+help: try
+  |
+9 - //! node_modules nesting depth? The walk is one `Path::components` pass per
+9 + //! `node_modules` nesting depth? The walk is one `Path::components` pass per
+  |
+
+warning: `oxide-fw-bundler` (bench "reached_packages") generated 1 warning (run `cargo clippy --fix --bench "reached_packages" -p oxide-fw-bundler -- --cap-lints warn -W clippy::pedantic` to apply 1 suggestion)
+warning: calling `BTreeMap::default()` is more clear than this expression
+  --> crates/bundler/tests/bundler_rolldown_tdd.rs:44:26
+   |
+44 |         virtual_modules: Default::default(),
+   |                          ^^^^^^^^^^^^^^^^^^ help: try: `BTreeMap::default()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#default_trait_access
+   = note: `-D clippy::default-trait-access` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::default_trait_access)]`
+   = note: the `clippy::default_trait_access` lint ignores `-D warnings`
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/bundler/tests/bundler_rolldown_tdd.rs:692:5
+    |
+692 |     use oxide_fw_bundler::Bundler as _;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+    = note: `-D clippy::items-after-statements` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::items_after_statements)]`
+    = note: the `clippy::items_after_statements` lint ignores `-D warnings`
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/bundler/tests/bundler_rolldown_tdd.rs:729:5
+    |
+729 |     use oxide_fw_bundler::Bundler as _;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#items_after_statements
+
+warning: `oxide-fw-bundler` (test "bundler_rolldown_tdd") generated 3 warnings
+    Checking oxide-fw-bundler v0.17.0 (/home/z/my-project/oxide/crates/bundler)
+warning: variables can be used directly in the `format!` string
+  --> crates/config/tests/permissions_config.rs:36:5
+   |
+36 |     format!(r#"{{ "framework": {{ "adapter": "react" }}, {} }}"#, inner)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#uninlined_format_args
+   = note: `-D clippy::uninlined-format-args` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::uninlined_format_args)]`
+   = note: the `clippy::uninlined_format_args` lint ignores `-D warnings`
+help: change this to
+   |
+36 -     format!(r#"{{ "framework": {{ "adapter": "react" }}, {} }}"#, inner)
+36 +     format!(r#"{{ "framework": {{ "adapter": "react" }}, {inner} }}"#)
+   |
+
+warning: called `.as_ref().map(Vec::as_slice)` on an `Option` value
+  --> crates/config/tests/permissions_config.rs:70:9
+   |
+70 |         p.net.as_ref().map(Vec::as_slice),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using as_deref: `p.net.as_deref()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#option_as_ref_deref
+   = note: `-D clippy::option-as-ref-deref` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::option_as_ref_deref)]`
+   = note: the `clippy::option_as_ref_deref` lint ignores `-D warnings`
+
+warning: called `.as_ref().map(Vec::as_slice)` on an `Option` value
+  --> crates/config/tests/permissions_config.rs:74:9
+   |
+74 |         p.env.as_ref().map(Vec::as_slice),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using as_deref: `p.env.as_deref()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#option_as_ref_deref
+
+warning: called `.as_ref().map(Vec::as_slice)` on an `Option` value
+  --> crates/config/tests/permissions_config.rs:78:9
+   |
+78 |         p.fs.as_ref().map(Vec::as_slice),
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using as_deref: `p.fs.as_deref()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#option_as_ref_deref
+
+warning: called `.as_ref().map(Vec::as_slice)` on an `Option` value
+   --> crates/config/tests/permissions_config.rs:100:16
+    |
+100 |     assert_eq!(p.net.as_ref().map(Vec::as_slice), Some([].as_slice()));
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider using as_deref: `p.net.as_deref()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.100.0/index.html#option_as_ref_deref
+
+warning: `oxide-fw-config` (test "permissions_config") generated 5 warnings (run `cargo clippy --fix --test "permissions_config" -p oxide-fw-config -- --cap-lints warn -W clippy::pedantic` to apply 5 suggestions)
+warning: unused dependency `oxide-fw-graph`
+  --> crates/bundler/Cargo.toml:16:1
+   |
+16 | oxide-fw-graph = { workspace = true }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `cargo::unused_dependencies` is set to `warn` by default
+help: consider removing the dependency on `oxide-fw-graph`
+warning: `oxide-fw-bundler` (manifest) generated 1 warning
+    Finished `dev` profile [unoptimized] target(s) in 0.35s
