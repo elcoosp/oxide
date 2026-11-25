@@ -103,6 +103,24 @@ name = "generation_rollback"
 harness = false
 required-features = ["bench-util"]
 
+# §V2-F10 step 1 + §V2-F11: the releases-boot slice's cost bench — the
+# `--releases` leg's pointer resolution (the every-boot cost) and the
+# dist-view materialization (the symlink farm over a 64-asset store),
+# V8-free. Behind the same `bench-util` opt-in.
+[[bench]]
+name = "releases_boot"
+harness = false
+required-features = ["bench-util"]
+
+# §V2-E08 item 1: the module-map store's cost bench — the lowered map's
+# insert and the publish-site frame mapping (hit, miss, the `NoMaps`
+# floor) over a 64-module store, V8-free. Behind the same `bench-util`
+# opt-in.
+[[bench]]
+name = "module_maps"
+harness = false
+required-features = ["bench-util"]
+
 # V2-E06: the Module API v1 bench — the config-edit path on a fixture
 # config and the manifest resolution (`resolve_one` → `to_manifest`).
 # Behind the same `bench-util` opt-in (plain `cargo test` never pays the
@@ -180,6 +198,18 @@ name = "brownout_evict"
 # `oxide rollback` performs, over synthetic dists, V8-free.
 [[example]]
 name = "generation_rollback"
+
+# §V2-F10 step 1 + §V2-F11: the releases-boot walkthrough — the deployed
+# store's pointer resolution, the dist-view materialization and the
+# `--watch-dist` tick, over a synthetic store, V8-free.
+[[example]]
+name = "releases_boot"
+
+# §V2-E08 item 1: the mapped-frames walkthrough — the boot's module-map
+# store, the publish-site helper and the §13.4 payload the overlay
+# renders, over a real lowered module, V8-free.
+[[example]]
+name = "mapped_hmr_frames"
 
 [dependencies]
 chrono = { workspace = true }
