@@ -170,6 +170,7 @@ pub(crate) async fn phase_load<'w>(
         build_id: None,
         prerendered: None,
         seed_bodies: None,
+        ppr_shell_rows: None,
         static_override: None,
         new_prerender_records: None,
     }))
