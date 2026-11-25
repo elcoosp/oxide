@@ -1,0 +1,30 @@
+      |
+      = note: available fields are: `proxy_rules`, `page_renderer`, `loader_runner`, `routes_root`, `boot_script_url` ... and 17 others
+
+error[E0609]: no field `max_data_envelope` on type `oxide_fw_server::Limits`
+     --> crates/cli/src/tests.rs:17406:16
+      |
+17406 |         limits.max_data_envelope,
+      |                ^^^^^^^^^^^^^^^^^ unknown field
+      |
+      = note: available fields are: `max_body`, `max_headers`, `max_url_len`, `multipart_parts`, `slow_request_timeout_ms` ... and 3 others
+
+error[E0609]: no field `max_data_envelope` on type `oxide_fw_server::Limits`
+     --> crates/cli/src/tests.rs:17410:16
+      |
+17410 |         limits.max_data_envelope > 0,
+      |                ^^^^^^^^^^^^^^^^^ unknown field
+      |
+      = note: available fields are: `max_body`, `max_headers`, `max_url_len`, `multipart_parts`, `slow_request_timeout_ms` ... and 3 others
+
+error[E0609]: no field `max_data_envelope` on type `oxide_fw_server::Limits`
+     --> crates/cli/src/tests.rs:17414:33
+      |
+17414 |         limits.max_body, limits.max_data_envelope,
+      |                                 ^^^^^^^^^^^^^^^^^ unknown field
+      |
+      = note: available fields are: `max_body`, `max_headers`, `max_url_len`, `multipart_parts`, `slow_request_timeout_ms` ... and 3 others
+
+Some errors have detailed explanations: E0560, E0599, E0609.
+For more information about an error, try `rustc --explain E0560`.
+error: could not compile `oxide-fw-cli` (lib test) due to 6 previous errors
