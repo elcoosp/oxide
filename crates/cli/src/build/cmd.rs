@@ -6,6 +6,8 @@
 //! entry-set/options front half of the bundle phases — split out to keep every
 //! phase file under the 700-line budget), [`phase_bundle_client`],
 //! [`phase_bundle_server`], [`phase_prerender`], [`phase_seed_l0`],
+//! [`phase_ppr_seed`] (the §10.4/P0-4 build-time shell manifest — the
+//! prerender walk's boundary-carrying pages, the l0-seed pattern),
 //! [`phase_typegen`] (the §8.3/§16-D typegen tail — same budget reason) and
 //! [`phase_emit`]. Bodies moved verbatim; the shared locals are the
 //! `BuildCtx` fields; `scripts/split_selfcheck.py --phases` proves the
@@ -38,6 +40,7 @@ pub(crate) async fn cmd_build(
     phase_bundle_server(&mut cx).await?;
     phase_prerender(&mut cx).await?;
     phase_seed_l0(&mut cx)?;
+    phase_ppr_seed(&mut cx)?;
     phase_typegen(&mut cx)?;
     phase_emit(&mut cx).await?;
     // <<< phase-wrapper
