@@ -738,6 +738,21 @@ pub(crate) struct DistPromote {
 ///
 /// Propagates the stack boot's failures (the SIGHUP arm treats a failed
 /// reload as fatal; the watch task logs and keeps polling).
+///
+/// # The §10.4 / P0-4 rebuild invalidation
+///
+/// An accepted promote means the served dist is a DIFFERENT build: the
+/// shell store's entries — the boot seed's rows and every first-request
+/// tap's — describe the OLD build's static chrome, and the promoted
+/// generation renders the new one. The store is cleared on the accepted
+/// promote (both triggers ride this one core, so `SIGHUP` and
+/// `--watch-dist` invalidate identically); the promoted dist's own
+/// `dist/server/ppr-shells.json` is NOT re-seeded here — the render
+/// stage's shell key carries the BOOT build id (`l0.build_id()`, which the
+/// in-process L0 cache keeps across promotes), so the new manifest's rows
+/// would never be hit until the next process boot. The next page render
+/// re-taps under the running process's identity; a restart seeds the new
+/// build's rows.
 pub(crate) async fn promote_generation_over_dist(
     gens: &std::sync::Arc<std::sync::RwLock<GenerationPool>>,
     serving_pools: &Option<std::sync::Arc<ServingPools>>,
@@ -745,11 +760,31 @@ pub(crate) async fn promote_generation_over_dist(
     config_path: Option<&std::path::Path>,
     backend: oxide_fw_config::JsBackend,
     cache_handler: &oxide_fw_config::CacheHandlerConfig,
+    ppr_shells: Option<&crate::PprShells>,
 ) -> anyhow::Result<Option<DistPromote>> {
     let dist = rootp.join("dist");
     let Some(new_id) = promote_handle_from_dist(gens, &dist) else {
         return Ok(None);
     };
+    // §10.4 / P0-4 (the scorecard's "no rebuild invalidation" half): the
+    // accepted promote names a different build — every stored shell
+    // describes the old build's chrome. Clear, don't churn: the next page
+    // render re-taps under the running identity, and the poison-recovery
+    // shape is the render stage's own read.
+    if let Some(shells) = ppr_shells {
+        let mut store = shells
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dropped = store.len();
+        store.clear();
+        if dropped > 0 {
+            tracing::info!(
+                build_id = %new_id,
+                dropped,
+                "skew: the promoted build invalidated the previous build's PPR shells; the next render re-taps"
+            );
+        }
+    }
     let mut booted = false;
     // V2-F10 step 1 (the second pool): freeze the NEW generation's loader
     // sources, boot its stack over the rebuilt dist (a fresh pool +
@@ -810,13 +845,14 @@ pub(crate) async fn promote_generation_over_dist(
 /// The task lives for the server's lifetime (the same posture the expiry
 /// task takes); it logs through `tracing` because the serve loop's
 /// writer is a borrowed handle the spawn cannot hold.
-pub fn spawn_dist_watch_task(
+pub(crate) fn spawn_dist_watch_task(
     gens: Arc<RwLock<GenerationPool>>,
     serving_pools: Option<Arc<ServingPools>>,
     rootp: std::path::PathBuf,
     config_path: Option<std::path::PathBuf>,
     backend: oxide_fw_config::JsBackend,
     cache_handler: oxide_fw_config::CacheHandlerConfig,
+    ppr_shells: Option<crate::PprShells>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let dist = rootp.join("dist");
@@ -834,6 +870,7 @@ pub fn spawn_dist_watch_task(
                 config_path.as_deref(),
                 backend,
                 &cache_handler,
+                ppr_shells.as_ref(),
             )
             .await
             {
@@ -995,6 +1032,7 @@ mod tests {
         std::fs::write(dist.join("client/a.js"), b"v2").expect("rewrite");
         let id_b = oxide_fw_cache::stamp_build_id(&dist).expect("restamp");
         let no_pools: Option<std::sync::Arc<ServingPools>> = None;
+        let no_shells: Option<crate::PprShells> = None;
         let p = promote_generation_over_dist(
             &s.handle(),
             &no_pools,
@@ -1002,6 +1040,7 @@ mod tests {
             None,
             oxide_fw_config::JsBackend::default(),
             &oxide_fw_config::CacheHandlerConfig::default(),
+            no_shells.as_ref(),
         )
         .await
         .expect("promote");
@@ -1035,9 +1074,101 @@ mod tests {
             None,
             oxide_fw_config::JsBackend::default(),
             &oxide_fw_config::CacheHandlerConfig::default(),
+            no_shells.as_ref(),
         )
         .await
         .expect("promote");
         assert_eq!(again, None);
+    }
+
+    // -- §10.4 / P0-4: the rebuild invalidation ----------------------------
+
+    #[tokio::test]
+    async fn the_accepted_promote_invalidates_the_stale_build_shells() {
+        // The scorecard's P0-4 second half: "no rebuild invalidation". An
+        // accepted promote names a different build — the store's entries
+        // (the boot seed's rows and the taps') describe the OLD build's
+        // static chrome, and the promoted generation renders the new one.
+        // The core clears the store; an unchanged dist (the idempotent
+        // re-deploy) keeps it byte-identical.
+        let tmp = tempfile::tempdir().expect("tmp");
+        let dist = stamp_dist(tmp.path(), b"v1");
+        let id_a = oxide_fw_cache::read_build_id(&dist).expect("read");
+        let s = SkewState::from_boot(&id_a, "15m", 3);
+        let shells: Option<crate::PprShells> = Some(std::sync::Arc::new(std::sync::Mutex::new(
+            crate::PprShellStore::default(),
+        )));
+        {
+            let mut store = shells.as_ref().expect("some").lock().expect("unpoisoned");
+            store.insert_tagged(
+                "seeded-row-a".to_string(),
+                "<html>old-chrome-a</html>".to_string(),
+                vec!["routes/a".to_string()],
+            );
+            store.insert_tagged(
+                "seeded-row-b".to_string(),
+                "<html>old-chrome-b</html>".to_string(),
+                vec!["routes/b".to_string()],
+            );
+        }
+        // A rebuilt dist names B.
+        std::fs::write(dist.join("client/a.js"), b"v2").expect("rewrite");
+        let id_b = oxide_fw_cache::stamp_build_id(&dist).expect("restamp");
+        let no_pools: Option<std::sync::Arc<ServingPools>> = None;
+        let promoted = promote_generation_over_dist(
+            &s.handle(),
+            &no_pools,
+            tmp.path(),
+            None,
+            oxide_fw_config::JsBackend::default(),
+            &oxide_fw_config::CacheHandlerConfig::default(),
+            shells.as_ref(),
+        )
+        .await
+        .expect("promote");
+        assert!(promoted.is_some(), "the rebuilt dist promotes");
+        assert_eq!(
+            shells
+                .as_ref()
+                .expect("some")
+                .lock()
+                .expect("unpoisoned")
+                .len(),
+            0,
+            "the accepted promote cleared the previous build's shells (the next render re-taps)"
+        );
+        // The idempotent re-deploy promotes nothing and leaves an empty
+        // store empty — and a re-tapped shell survives it.
+        {
+            let mut store = shells.as_ref().expect("some").lock().expect("unpoisoned");
+            store.insert_tagged(
+                "fresh-tap".to_string(),
+                "<html>new-chrome</html>".to_string(),
+                Vec::new(),
+            );
+        }
+        let again = promote_generation_over_dist(
+            &s.handle(),
+            &no_pools,
+            tmp.path(),
+            None,
+            oxide_fw_config::JsBackend::default(),
+            &oxide_fw_config::CacheHandlerConfig::default(),
+            shells.as_ref(),
+        )
+        .await
+        .expect("promote");
+        assert_eq!(again, None, "an unchanged dist promotes nothing");
+        assert_eq!(
+            shells
+                .as_ref()
+                .expect("some")
+                .lock()
+                .expect("unpoisoned")
+                .len(),
+            1,
+            "the unchanged-dist promote left the store untouched"
+        );
+        let _ = id_b;
     }
 }
