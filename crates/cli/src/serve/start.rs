@@ -1316,6 +1316,41 @@ pub(crate) async fn start_server_inner_full(
         .render
         .ppr
         .then(|| std::sync::Arc::new(std::sync::Mutex::new(PprShellStore::default())));
+    // §10.4 / P0-4: seed the shell store from the build's manifest — the
+    // build-time half of the PPR shell cache, the L0-seed's own boot
+    // pattern (`dist/server/l0-seed.json` right above). A seeded shell is a
+    // FIRST-REQUEST hit: the render stage's lookup lands before any tap,
+    // so the first visitor after a deploy skips the warm-up render. A
+    // missing manifest (dev, or a build with no boundary-carrying pages)
+    // is a silent no-op — the pre-M1 shape.
+    if let Some(shells) = ppr_shells.as_ref() {
+        let seed_path = rootp.join("dist/server/ppr-shells.json");
+        let seed_bytes = std::fs::read(&seed_path).unwrap_or_default();
+        if !seed_bytes.is_empty() {
+            match crate::build::parse_ppr_shell_seed(&seed_bytes, &build_id) {
+                crate::build::PprShellSeed::Rows(rows) => {
+                    let mut store = shells
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    for row in rows {
+                        store.insert_tagged(row.key, row.shell, row.tags);
+                    }
+                }
+                crate::build::PprShellSeed::StaleBuild => {
+                    // Another build's artifact — the same_build rule the
+                    // L0 seed boot applies; a redeploy leaves it behind
+                    // until the new build's own manifest lands.
+                }
+                crate::build::PprShellSeed::Corrupt(e) => {
+                    tracing::warn!(
+                        path = %seed_path.display(),
+                        error = %e,
+                        "CACHE-SEED: the ppr-shells.json manifest is unreadable; shell seeding skipped",
+                    );
+                }
+            }
+        }
+    }
     let swappable_tree = SwappableRouteTree::new(std::sync::Arc::clone(&tree));
     // V2-A04 + F10: the skew pool the data plane checks against — the
     // boot's build id accepted as CURRENT, the demotion window from the
@@ -1734,6 +1769,7 @@ pub(crate) async fn cmd_serve(
                     promote_config_path.clone(),
                     promote_backend,
                     promote_cache_handler.clone(),
+                    started.ppr_shells.clone(),
                 );
                 outln!(
                     w,
@@ -1762,18 +1798,15 @@ pub(crate) async fn cmd_serve(
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = hup.recv() => {
-                    if let Some(gens) = &started.generations {
-                        promote_sighup_generation(
-                            gens,
-                            &started.serving_pools,
-                            &rootp,
-                            promote_config_path.as_deref(),
-                            promote_backend,
-                            &promote_cache_handler,
-                            w,
-                        )
-                        .await?;
-                    }
+                    promote_sighup_generation(
+                        &started,
+                        &rootp,
+                        promote_config_path.as_deref(),
+                        promote_backend,
+                        &promote_cache_handler,
+                        w,
+                    )
+                    .await?;
                 }
             }
         } else {
@@ -1802,23 +1835,28 @@ pub(crate) async fn cmd_serve(
 /// pools are up — freeze the new generation's loader sources and boot its
 /// stack (a fresh pool + runner) over the rebuilt dist, so accepted
 /// old-build data-plane requests run the OLD generation's handles (its
-/// loader bytes are the frozen snapshot, not the edited sources).
+/// loader bytes are the frozen snapshot, not the edited sources). The
+/// accepted promote also invalidates the previous build's PPR shells
+/// (§10.4 / P0-4, the core's rebuild-invalidation half).
 async fn promote_sighup_generation(
-    gens: &std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>,
-    serving_pools: &Option<std::sync::Arc<crate::serve::generations::ServingPools>>,
+    started: &StartedServer,
     rootp: &std::path::Path,
     promote_config_path: Option<&std::path::Path>,
     promote_backend: oxide_fw_config::JsBackend,
     promote_cache_handler: &oxide_fw_config::CacheHandlerConfig,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
+    let Some(gens) = started.generations.as_ref() else {
+        return Ok(());
+    };
     match crate::serve::generations::promote_generation_over_dist(
         gens,
-        serving_pools,
+        &started.serving_pools,
         rootp,
         promote_config_path,
         promote_backend,
         promote_cache_handler,
+        started.ppr_shells.as_ref(),
     )
     .await?
     {
