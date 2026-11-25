@@ -1,0 +1,59 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling oxide-fw-cli v0.17.0 (/home/z/my-project/oxide/crates/cli)
+    Finished `test` profile [unoptimized] target(s) in 25.51s
+     Running unittests src/lib.rs (target/debug/build/oxide-fw-cli/8ba9346664a05539/out/oxide_fw_cli-8ba9346664a05539)
+
+running 24 tests
+test serve::brownout::tests::ceiling_parses_to_the_percent_form ... ok
+test serve::brownout::tests::disabled_config_constructs_nothing ... ok
+test serve::brownout::tests::gauge_ms_to_us_converts_exactly ... ok
+test serve::brownout::tests::governor_starts_normal_and_round_trips ... ok
+test serve::brownout::tests::route_priority_defaults_to_normal ... ok
+test serve::brownout::tests::signals_read_the_probe_and_default_to_zero_without_a_pool ... ok
+test serve::brownout::tests::thresholds_convert_the_config_ladders ... ok
+test serve::brownout::tests::thresholds_pass_custom_rungs_through ... ok
+test serve::generations::tests::boot_accepts_the_boot_id_and_sizes_the_pool_from_the_config ... ok
+test serve::generations::tests::promote_from_an_unchanged_or_missing_dist_is_a_no_op ... ok
+test serve::generations::tests::promote_from_dist_demotes_the_old_build_and_accepts_both ... ok
+test serve::generations::tests::the_expired_previous_build_is_refused_after_its_window ... ok
+test serve::generations::tests::the_watch_promote_core_demotes_and_keeps_the_previous_generation ... ok
+test serve::generations::tests::the_watch_tick_detects_a_rebuilt_dist_and_ignores_the_rest ... ok
+test serve::releases::tests::boot_sources_conflict_refuses_both_swaps ... ok
+test serve::releases::tests::a_moved_pointer_materializes_the_new_release ... FAILED
+test serve::releases::tests::corrupt_pointer_carries_the_parser_refusal ... ok
+test serve::releases::tests::materialization_is_idempotent ... FAILED
+test serve::releases::tests::missing_pointer_refuses_the_boot ... ok
+test serve::releases::tests::materializes_the_release_view ... FAILED
+test serve::releases::tests::missing_release_prefix_refuses ... ok
+test serve::streams::tests::config_defaults_build_the_spec_bounds ... ok
+test serve::streams::tests::size_literals_parse_to_the_spec_bytes ... ok
+test serve::streams::tests::total_below_each_is_raised_to_each ... ok
+
+failures:
+
+---- serve::releases::tests::a_moved_pointer_materializes_the_new_release stdout ----
+
+thread 'serve::releases::tests::a_moved_pointer_materializes_the_new_release' (32049) panicked at crates/cli/src/serve/releases.rs:135:5:
+not implemented: the M1 pins run red until the materialization lands (the view lives under .oxide/releases-boot)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- serve::releases::tests::materialization_is_idempotent stdout ----
+
+thread 'serve::releases::tests::materialization_is_idempotent' (32052) panicked at crates/cli/src/serve/releases.rs:135:5:
+not implemented: the M1 pins run red until the materialization lands (the view lives under .oxide/releases-boot)
+
+---- serve::releases::tests::materializes_the_release_view stdout ----
+
+thread 'serve::releases::tests::materializes_the_release_view' (32053) panicked at crates/cli/src/serve/releases.rs:135:5:
+not implemented: the M1 pins run red until the materialization lands (the view lives under .oxide/releases-boot)
+
+
+failures:
+    serve::releases::tests::a_moved_pointer_materializes_the_new_release
+    serve::releases::tests::materialization_is_idempotent
+    serve::releases::tests::materializes_the_release_view
+
+test result: FAILED. 21 passed; 3 failed; 0 ignored; 0 measured; 542 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p oxide-fw-cli --lib`
