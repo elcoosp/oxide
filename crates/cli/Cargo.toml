@@ -178,6 +178,14 @@ name = "data_src_wire"
 harness = false
 required-features = ["bench-util"]
 
+# §10.4 / P0-4: the build-time PPR shell seed's bench — the prerender walk's
+# split cost (one-boundary / eight-boundary / boundary-free skip) and the
+# manifest's encode + boot-parse cost, behind the same bench-util opt-in.
+[[bench]]
+name = "ppr_seed"
+harness = false
+required-features = ["bench-util"]
+
 # V2-E06: the `module_add` consumer example — a V8-free end-to-end
 # walkthrough of the config edit + manifest resolution against the
 # fixture app under `tests/fixtures/analytics-app/`.
