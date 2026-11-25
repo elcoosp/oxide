@@ -84,6 +84,14 @@ pub struct StartedServer {
     /// pin the enforcement stage and the readiness flip on the wire;
     /// `None` when `brownout.enabled` is off (the default).
     pub(crate) brownout: Option<std::sync::Arc<crate::serve::brownout::BrownoutWiring>>,
+    /// §V2-E08 item 1 (the CLI adoption): the boot's module-map store —
+    /// the ESM dev server's lowering arm fills it, the `cmd_dev`
+    /// watcher's three `HmrMessage::Error` publish sites map their
+    /// diagnostics through it (`esm_dev::mapped_hmr_error`). `None` when
+    /// the ESM dev server is off (the bundler path has no per-module
+    /// maps to speak for).
+    pub(crate) module_maps:
+        Option<std::sync::Arc<std::sync::Mutex<oxide_fw_dev::frames::ModuleMaps>>>,
 }
 
 /// §5.6: wrap a dispatch so a mid-flight file change aborts instead of
@@ -379,6 +387,11 @@ pub(crate) async fn start_server_inner_full(
             islands: crate::build::dev_island_manifest(&rootp, &cfg).map(std::sync::Arc::new),
             warned_pure_on_props: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::BTreeSet::new(),
+            )),
+            // §V2-E08 item 1: the boot's module-map store — the lowering
+            // arm fills it, the watcher's publish sites map through it.
+            module_maps: std::sync::Arc::new(std::sync::Mutex::new(
+                oxide_fw_dev::frames::ModuleMaps::default(),
             )),
         }))
     } else {
@@ -1561,6 +1574,12 @@ pub(crate) async fn start_server_inner_full(
         generations: generations.clone(),
         serving_pools,
         brownout: brownout_wiring,
+        // §V2-E08 item 1: the ESM dev server's module-map store rides the
+        // started server so `cmd_dev`'s watcher loop can map its
+        // published error frames through the boot's compile outputs.
+        module_maps: esm_state
+            .as_ref()
+            .map(|s| std::sync::Arc::clone(&s.module_maps)),
         #[cfg(feature = "search")]
         hot_search,
     })
@@ -1585,12 +1604,44 @@ pub(crate) async fn cmd_serve(
     root: &str,
     port: Option<u16>,
     generation: Option<&str>,
+    releases: Option<&str>,
+    watch_dist: bool,
     label: &str,
     w: Writer<'_>,
 ) -> anyhow::Result<i32> {
     // §7 / §9.1: build the framework stack (renderer + loader) for the
     // production server. Same wiring as `cmd_dev`.
     let rootp = std::fs::canonicalize(root).unwrap_or_else(|_| std::path::PathBuf::from(root));
+    // The two §V2-F10 boot sources both repoint `dist/` before the boot;
+    // naming both is a usage conflict the command refuses instead of
+    // guessing which swap wins.
+    if crate::serve::releases::boot_sources_conflict(generation, releases) {
+        outln!(
+            w,
+            "start: --generation and --releases both name a boot source — pick one (both repoint dist/ before the boot)"
+        );
+        return Ok(1);
+    }
+    // The F11 `releases/` layout boot (§V2-F11's store layout consumed by
+    // §V2-F10's serve boot): resolve the deployed store's `current`
+    // pointer, materialize the release's dist view and repoint `dist/` at
+    // it — the same swap the `--generation` leg performs, no rebuild — so
+    // every dist read below resolves to the deployed release's bytes. A
+    // resolution failure is fatal here: the operator asked to serve the
+    // deployed release, and silently serving a stale local dist is the
+    // drift the pointer exists to prevent.
+    if let Some(store) = releases {
+        let storep =
+            std::fs::canonicalize(store).unwrap_or_else(|_| std::path::PathBuf::from(store));
+        let boot = crate::serve::releases::resolve_release_boot(&storep)?;
+        crate::serve::generations::repoint_dist_to_generation(&rootp, &boot.dist)?;
+        outln!(
+            w,
+            "skew: serving the deployed release {} from {} — dist repointed (the F11 releases/ layout boot)",
+            boot.build_id,
+            storep.display()
+        );
+    }
     // §V2-F10 step 4: a `--generation` selector (the spec's
     // "`oxide start --generation previous`") swaps the named retained
     // generation into `dist/` BEFORE the boot — the same swap
@@ -1656,6 +1707,38 @@ pub(crate) async fn cmd_serve(
             "brownout: governor wired — the sampler drives the level, the ops endpoints report it as x-oxide-brownout"
         );
     }
+    // §V2-F10 step 1, the second trigger: `oxide start --watch-dist`
+    // polls the served dist for a rebuilt build id and promotes it
+    // through the SAME promote core the SIGHUP handler runs — the
+    // previous generation stays accepted for its skew window, the
+    // serving pools boot the new one. The task detaches here (the
+    // shutdown sender's drop is the process teardown's business, the
+    // expiry task's posture).
+    if watch_dist {
+        match &started.generations {
+            Some(gens) => {
+                let _dist_watch = crate::serve::generations::spawn_dist_watch_task(
+                    std::sync::Arc::clone(gens),
+                    started.serving_pools.clone(),
+                    rootp.clone(),
+                    promote_config_path.clone(),
+                    promote_backend,
+                    promote_cache_handler.clone(),
+                );
+                outln!(
+                    w,
+                    "skew: --watch-dist — polling dist/ every {}s, a rebuilt build-id promotes itself",
+                    crate::serve::generations::DIST_WATCH_POLL_SECS
+                );
+            }
+            None => {
+                outln!(
+                    w,
+                    "skew: --watch-dist requested but no skew pool was wired; the flag is inert"
+                );
+            }
+        }
+    }
     // §12.2 graceful shutdown on Ctrl-C; §V2-F10 step 1 on SIGHUP: a
     // rebuilt `dist/` is promoted — the new build id becomes CURRENT and
     // the previous one stays accepted for `deploy.skewWindow` (the skew
@@ -1700,13 +1783,16 @@ pub(crate) async fn cmd_serve(
     Ok(0)
 }
 
-/// The §V2-F10 step-1 promote half of the SIGHUP handler (moved out of
-/// [`cmd_serve`] verbatim): read the repointed dist's id, demote the
-/// current generation into its skew window, and — when the serving pools
-/// are up — freeze the new generation's loader sources and boot its stack
-/// (a fresh pool + runner) over the rebuilt dist, so accepted old-build
-/// data-plane requests run the OLD generation's handles (its loader bytes
-/// are the frozen snapshot, not the edited sources).
+/// The §V2-F10 step-1 promote half of the SIGHUP handler: the logging
+/// surface over [`crate::serve::generations::promote_generation_over_dist`]
+/// — the promote CORE the `--watch-dist` task shares (one definition
+/// site, so the two triggers reach the same verdicts, the same snapshots
+/// and the same second-pool boot). Read the repointed dist's id, demote
+/// the current generation into its skew window, and — when the serving
+/// pools are up — freeze the new generation's loader sources and boot its
+/// stack (a fresh pool + runner) over the rebuilt dist, so accepted
+/// old-build data-plane requests run the OLD generation's handles (its
+/// loader bytes are the frozen snapshot, not the edited sources).
 async fn promote_sighup_generation(
     gens: &std::sync::Arc<std::sync::RwLock<oxide_fw_dispatch::skew::GenerationPool>>,
     serving_pools: &Option<std::sync::Arc<crate::serve::generations::ServingPools>>,
@@ -1716,56 +1802,28 @@ async fn promote_sighup_generation(
     promote_cache_handler: &oxide_fw_config::CacheHandlerConfig,
     w: Writer<'_>,
 ) -> anyhow::Result<()> {
-    let dist = rootp.join("dist");
-    match crate::serve::generations::promote_handle_from_dist(gens, &dist) {
-        Some(new_id) => {
+    match crate::serve::generations::promote_generation_over_dist(
+        gens,
+        serving_pools,
+        rootp,
+        promote_config_path,
+        promote_backend,
+        promote_cache_handler,
+    )
+    .await?
+    {
+        Some(promoted) => {
             outln!(
                 w,
-                "skew: build-id {new_id} is current — the previous generation stays accepted for its skew window"
+                "skew: build-id {} is current — the previous generation stays accepted for its skew window",
+                promoted.new_id
             );
-            // V2-F10 step 1 (the second pool): freeze the NEW generation's
-            // loader sources, boot its stack over the rebuilt dist (a fresh
-            // pool + runner), and demote the boot handles together.
-            if let Some(sp) = serving_pools {
-                match crate::serve::generations::snapshot_generation_sources(rootp, &new_id) {
-                    Ok(snapshot_root) => {
-                        let next = crate::framework_shim::build_framework_stack(
-                            promote_config_path,
-                            promote_backend,
-                            None,
-                            Some(promote_cache_handler),
-                            // §V2-A09: the promoted generation serves live —
-                            // Source, like the boot above.
-                            oxide_fw_jshost::ModuleSource::Source,
-                        )
-                        .await;
-                        match next.pool.clone() {
-                            Some(pool) => {
-                                let next_gen =
-                                    std::sync::Arc::new(crate::serve::generations::GenServing {
-                                        pool,
-                                        runner: next.loader_runner.clone(),
-                                        routes_root: snapshot_root,
-                                    });
-                                if sp.promote_booted(&new_id, next_gen) {
-                                    outln!(
-                                        w,
-                                        "skew: generation {new_id} booted over the rebuilt dist — its pool serves; the previous pool drains at window end"
-                                    );
-                                }
-                            }
-                            None => tracing::warn!(
-                                code = "SKW-POOL",
-                                msg = "the promoted generation has no worker pool; the boot pool keeps serving every generation",
-                            ),
-                        }
-                    }
-                    Err(e) => tracing::warn!(
-                        code = "SKW-SNAPSHOT",
-                        msg = %e,
-                        "skew: the promoted generation's loader sources could not be frozen; the boot handles keep serving",
-                    ),
-                }
+            if promoted.booted {
+                outln!(
+                    w,
+                    "skew: generation {} booted over the rebuilt dist — its pool serves; the previous pool drains at window end",
+                    promoted.new_id
+                );
             }
         }
         None => outln!(w, "skew: dist unchanged — no generation promoted"),
