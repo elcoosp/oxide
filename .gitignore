@@ -95,3 +95,7 @@ upload/
 # ship session artifacts (the delivery manifest + the PR body)
 /ship.toml
 /.github/pr-body.md
+
+# ship delivery artifacts (gitignored per handoff)
+ship.toml
+.github/pr-body.md
