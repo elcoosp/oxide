@@ -10798,6 +10798,114 @@ async fn sw_emitter_all_breadth_unions_the_manifest_assets() {
         "the manifest assets join: {body}"
     );
 }
+
+// --- The offline-fallback answerability audit (the r9-K3 contract's other
+// --- half) --------------------------------------------------------------
+//
+// The bundler plan now guarantees the resolved `offline_fallback` joins
+// PRECACHE (the install fetch), but the install fetch can still 404: the
+// plan sees only the manifest and the shells, while the fallback may name
+// a URL THIS BUILD cannot answer (a typo'd `sw.offlineFallback`, or a
+// route the build neither prerendered nor copied into dist). `cache.addAll`
+// rejects on ANY failed fetch, so one unanswerable URL kills the whole
+// install — the worker never activates and the offline module is dead
+// while every surface says otherwise. The emit site is where the dist
+// exists, so the audit lives there: a fallback no build artifact answers
+// warns LOUDLY naming the config key and the two legal answers (the same
+// degrade-loudly-not-silently posture the emitter's other lines keep —
+// the URL may legitimately be answered at runtime by an SSR route or a
+// server rewrite, so the build refuses nothing; it just says so).
+
+#[tokio::test]
+async fn sw_emitter_warns_when_the_fallback_is_not_answerable_by_the_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path();
+    // A build with one prerendered shell and an override naming a URL no
+    // artifact answers: not a shell, not a dist file, not an index.
+    std::fs::create_dir_all(dist.join("prerendered")).unwrap();
+    std::fs::write(dist.join("prerendered/index.html"), "<h1>home</h1>").unwrap();
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
+        "offline": { "enabled": true },
+        "sw": { "offlineFallback": "/nowhere" },
+    }))
+    .expect("parse config");
+    let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
+    let mut buf: Vec<u8> = Vec::new();
+    emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
+
+    let out = String::from_utf8(buf).unwrap();
+    assert!(
+        out.contains("offlineFallback '/nowhere'"),
+        "the warn names the config key and the offending value: {out}"
+    );
+    assert!(
+        out.contains("not a prerendered shell or dist artifact"),
+        "the warn names the audit's verdict: {out}"
+    );
+    // The worker is still emitted — the URL may be answered at runtime
+    // (an SSR route or a server rewrite the build cannot see); the warn
+    // is the build's honesty, not a refusal.
+    let body = std::fs::read_to_string(dist.join("sw.js")).unwrap();
+    assert!(
+        body.contains(r#"  '/nowhere',"#),
+        "the fallback still rides the install fetch: {body}"
+    );
+}
+
+#[tokio::test]
+async fn sw_emitter_fallback_audit_stays_quiet_for_a_dist_artifact() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path();
+    // The override names a static artifact this build copied into dist —
+    // the install fetch answers it, so the audit stays quiet.
+    std::fs::create_dir_all(dist.join("prerendered")).unwrap();
+    std::fs::write(dist.join("prerendered/index.html"), "<h1>home</h1>").unwrap();
+    std::fs::write(dist.join("maintenance.html"), "<h1>brb</h1>").unwrap();
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
+        "offline": { "enabled": true },
+        "sw": { "offlineFallback": "/maintenance" },
+    }))
+    .expect("parse config");
+    let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
+    let mut buf: Vec<u8> = Vec::new();
+    emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
+
+    let out = String::from_utf8(buf).unwrap();
+    assert!(
+        !out.contains("offlineFallback"),
+        "a dist artifact answers the fallback — no warn: {out}"
+    );
+    let body = std::fs::read_to_string(dist.join("sw.js")).unwrap();
+    assert!(
+        body.contains(r#"  '/maintenance',"#),
+        "the fallback joins the precache set: {body}"
+    );
+}
+
+#[tokio::test]
+async fn sw_emitter_fallback_audit_accepts_the_prerendered_shell_spelling() {
+    let dir = tempfile::tempdir().unwrap();
+    let dist = dir.path();
+    // The default `/offline` resolution: the fallback IS a prerendered
+    // shell (the resolver only picks it when the walk reported it), so
+    // the audit is quiet without any dist-root artifact.
+    std::fs::create_dir_all(dist.join("prerendered")).unwrap();
+    std::fs::write(dist.join("prerendered/index.html"), "<h1>home</h1>").unwrap();
+    std::fs::write(dist.join("prerendered/offline.html"), "<h1>offline</h1>").unwrap();
+    let cfg: oxide_fw_config::OxideConfig = serde_json::from_value(serde_json::json!({
+        "offline": { "enabled": true },
+    }))
+    .expect("parse config");
+    let client_manifest = serde_json::json!({ "build_id": "x", "routes": {}, "assets": {} });
+    let mut buf: Vec<u8> = Vec::new();
+    emit_pwa_worker(&cfg, dist, &client_manifest, &mut buf).expect("emit ok");
+
+    let out = String::from_utf8(buf).unwrap();
+    assert!(
+        !out.contains("offlineFallback"),
+        "a prerendered shell answers the fallback — no warn: {out}"
+    );
+}
 // ------------------------------ §13 / r8 P1.7: dev-mode L0 divergence
 
 /// `start_server_inner_full` constructs `l0 = None` when `is_dev` (an
