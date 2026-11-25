@@ -12,7 +12,11 @@
 //!   rides both, because the navigation fallback needs it offline;
 //! - navigation falls back to the resolved `offlineFallback` route
 //!   (`sw.offlineFallback` override → `/offline` when the build produced
-//!   it → `/`, the config comment's exact order);
+//!   it → `/`, the config comment's exact order) — and the resolved
+//!   fallback ALWAYS joins the precache set (the r9-K3 contract: the
+//!   install fetch is the only thing that can answer `FALLBACK_ROUTE`
+//!   offline, so a fallback outside `PRECACHE` was a dead knob),
+//!   deduped against a shell that already carries it;
 //! - `/__data` responses serve stale-while-revalidate;
 //! - with `offline.outbox` on, the worker fans an `OXIDE_OUTBOX_FLUSH`
 //!   message out to its clients on activate — the coordination point the
@@ -255,6 +259,110 @@ fn offline_fallback_resolution_follows_the_config_comment_contract() {
         &FixedShells(shells_fixture()),
     );
     assert_eq!(plan.offline_fallback, "/about");
+}
+
+// --- The offline-fallback precache contract (the r9-K3 hazard) ------------
+//
+// §V2-F14's navigation contract — "navigation falls back to the cached
+// route shell or `/offline`" — has a PRECACHE half the plan never
+// guaranteed: the resolved fallback rides `FALLBACK_ROUTE` in the emitted
+// worker, but the install step only fetches `PRECACHE`, and the plan
+// built that list from the shells alone. A fallback the shell set does
+// not carry (the `sw.offlineFallback` override, or the SPA posture where
+// no shell was prerendered at all) answered `cache.match(FALLBACK_ROUTE)`
+// with a miss — the knob resolved, rendered and never worked offline. The
+// contract the plan now keeps: **the resolved fallback always joins the
+// precache set** — deduped against a shell that already carries it,
+// byte-sorted with the rest (the determinism contract holds).
+
+#[test]
+fn plan_guarantees_the_offline_fallback_is_precached() {
+    // The override names a route the shell walk did NOT report — the
+    // documented override case. The plan must carry it anyway: the
+    // install step fetches PRECACHE, and only PRECACHE can answer the
+    // navigation fallback offline.
+    let sw_cfg = SwConfig {
+        offline_fallback: Some("/help-offline".to_string()),
+        ..SwConfig::default()
+    };
+    let plan = plan_precache(
+        &manifest_fixture(),
+        &sw_cfg,
+        &offline(OfflinePrecache::Routes),
+        &FixedShells(shells_fixture()),
+    );
+    assert_eq!(plan.offline_fallback, "/help-offline");
+    assert!(
+        plan.precache.contains(&"/help-offline".to_string()),
+        "the resolved fallback joins the precache set: {:?}",
+        plan.precache
+    );
+}
+
+#[test]
+fn plan_precaches_the_fallback_even_without_shells() {
+    // The SPA posture: `offline.enabled` with NO prerendered shell at all
+    // (a fully dynamic app — the deployment offline mode exists for).
+    // The resolved fallback `/` must still ride PRECACHE: the install
+    // fetch answers it from the live server, and offline navigations
+    // fall back to the cached copy.
+    let no_shells: BTreeSet<String> = BTreeSet::new();
+    let plan = plan_precache(
+        &manifest_fixture(),
+        &sw(),
+        &offline(OfflinePrecache::Routes),
+        &FixedShells(no_shells),
+    );
+    assert_eq!(plan.offline_fallback, "/");
+    assert_eq!(
+        plan.precache,
+        vec!["/".to_string()],
+        "the fallback is the one precached URL the build can answer"
+    );
+}
+
+#[test]
+fn plan_fallback_dedupes_against_a_shell() {
+    // The `/offline`-produced case: the fallback IS a shell — exactly one
+    // row (the byte-sorted determinism contract, not a duplicate fetch).
+    let plan = plan_precache(
+        &manifest_fixture(),
+        &sw(),
+        &offline(OfflinePrecache::Routes),
+        &FixedShells(shells_fixture()),
+    );
+    assert_eq!(plan.offline_fallback, "/offline");
+    assert_eq!(
+        plan.precache.iter().filter(|u| *u == "/offline").count(),
+        1,
+        "a fallback that is also a shell precaches once"
+    );
+}
+
+#[test]
+fn sw_source_precache_carries_the_fallback_route() {
+    // The emitted worker's contract end to end: the FALLBACK_ROUTE the
+    // navigate arm reads is a URL the install step actually fetched —
+    // the PRECACHE array carries the resolved fallback verbatim.
+    let sw_cfg = SwConfig {
+        offline_fallback: Some("/help-offline".to_string()),
+        ..SwConfig::default()
+    };
+    let plan = plan_precache(
+        &manifest_fixture(),
+        &sw_cfg,
+        &offline(OfflinePrecache::Routes),
+        &FixedShells(shells_fixture()),
+    );
+    let src = sw_source(&plan);
+    assert!(
+        src.contains("const FALLBACK_ROUTE = '/help-offline';"),
+        "the navigate arm reads the override: {src}"
+    );
+    assert!(
+        src.contains("  '/help-offline',"),
+        "the PRECACHE array carries the fallback the arm reads: {src}"
+    );
 }
 
 #[test]
