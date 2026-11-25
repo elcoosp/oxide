@@ -17231,3 +17231,185 @@ async fn cmd_rollback_honours_an_explicit_generation_selector() {
         "the explicit selector wins over the newest"
     );
 }
+
+// ---- P0-2: the /__data response envelope learns its bound -----------------
+//
+// The scorecard's P0-2 ("Worker defer path buffers") closed the request-body
+// side with `limits.max_body` (SRV-413) and left the RESPONSE-envelope side
+// open: the route-data envelope materializes every resolved `defer()` value
+// into one uncapped payload, and the encode arm's `unwrap_or_default()`
+// answers a silent empty-200 when the encoder refuses. These pins bind the
+// envelope: a payload past the cap refuses loud with the minted `DSP-117`,
+// an unencodable payload refuses the same way (never the empty-200), and the
+// under-cap default shape stays byte-identical.
+
+/// A loader whose page data is one big string — the envelope grows past any
+/// tight cap the pins set.
+struct BigPayloadLoader {
+    bytes: usize,
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_server::LoaderRunner for BigPayloadLoader {
+    fn name(&self) -> &str {
+        "big-payload"
+    }
+    async fn run(
+        &self,
+        _input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
+        let big = "x".repeat(self.bytes);
+        Ok(oxide_fw_server::LoaderOutput::ok(serde_json::json!({
+            "blob": big,
+        })))
+    }
+}
+
+/// A loader whose data carries a reserved object key — the ODF encoder
+/// refuses `ODF-KEY` (§17.1), the arm the `unwrap_or_default()` fall-through
+/// used to answer as an empty 200.
+struct ProtoKeyLoader;
+
+#[async_trait::async_trait]
+impl oxide_fw_server::LoaderRunner for ProtoKeyLoader {
+    fn name(&self) -> &str {
+        "proto-key"
+    }
+    async fn run(
+        &self,
+        _input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
+        Ok(oxide_fw_server::LoaderOutput::ok(serde_json::json!({
+            "__proto__": { "polluted": true },
+        })))
+    }
+}
+
+#[tokio::test]
+async fn data_route_envelope_past_the_cap_refuses_loud() {
+    let (_dir, root, tree) = scan_two_layout_project(
+        "export async function load() { return {}; }\n",
+        "export async function load() { return {}; }\n",
+    );
+    let loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> =
+        Some(std::sync::Arc::new(BigPayloadLoader { bytes: 4 * 1024 }));
+    let dispatch = build_dispatch(
+        tree,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            // The pin's own bound: a 256-byte envelope cannot carry the
+            // 4 KiB payload — the refusal must be the coded 500, never a
+            // 200 that ships a body the client cannot decode.
+            max_data_envelope: 256,
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/__data?route=%2Fblog")).await;
+    assert_eq!(resp.status, 500, "an over-cap envelope refuses, not 200");
+    let body = String::from_utf8(resp.body.to_vec()).expect("the refusal body is text");
+    assert!(
+        body.contains("DSP-117"),
+        "the refusal names the minted code: {body}"
+    );
+    assert!(body.contains("256"), "the refusal names the cap: {body}");
+    assert!(
+        !resp
+            .headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("content-type")
+                && v.contains("application/oxide+odf")),
+        "the refusal never rides the ODF content type"
+    );
+}
+
+#[tokio::test]
+async fn data_route_envelope_under_the_cap_stays_byte_identical() {
+    let (_dir, root, tree) = scan_two_layout_project(
+        "export async function load() { return {}; }\n",
+        "export async function load() { return {}; }\n",
+    );
+    let loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> =
+        Some(std::sync::Arc::new(BigPayloadLoader { bytes: 1024 }));
+    let dispatch = build_dispatch(
+        tree,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/__data?route=%2Fblog")).await;
+    assert_eq!(resp.status, 200, "a 1 KiB envelope rides the default cap");
+    assert!(
+        resp.headers
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("content-type")
+                && v.contains("application/oxide+odf")),
+        "the envelope keeps its ODF content type"
+    );
+    let json = oxide_fw_odf::decode(&resp.body)
+        .expect("the envelope decodes")
+        .to_json();
+    let data = json.get("data").expect("the envelope carries data");
+    assert_eq!(
+        data.get("blob").and_then(|v| v.as_str()).map(str::len),
+        Some(1024),
+        "the loader's data survives the bound check untouched"
+    );
+}
+
+#[tokio::test]
+async fn data_route_unencodable_data_refuses_loud_not_empty_200() {
+    let (_dir, root, tree) = scan_two_layout_project(
+        "export async function load() { return {}; }\n",
+        "export async function load() { return {}; }\n",
+    );
+    let loader: Option<std::sync::Arc<dyn oxide_fw_server::LoaderRunner>> =
+        Some(std::sync::Arc::new(ProtoKeyLoader));
+    let dispatch = build_dispatch(
+        tree,
+        std::sync::Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            loader_runner: loader,
+            routes_root: root,
+            ..Default::default()
+        },
+    );
+    let resp = dispatch(test_request("GET", "/__data?route=%2Fblog")).await;
+    assert_eq!(
+        resp.status, 500,
+        "an unencodable envelope refuses loud — the empty-200 fall-through is the defect"
+    );
+    let body = String::from_utf8(resp.body.to_vec()).expect("the refusal body is text");
+    assert!(
+        body.contains("DSP-117"),
+        "the refusal names the minted code: {body}"
+    );
+    assert!(
+        body.contains("ODF-KEY"),
+        "the refusal names the encoder's own refusal: {body}"
+    );
+}
+
+#[tokio::test]
+async fn data_route_envelope_default_cap_is_the_limits_twin() {
+    // The bound the test helper boots with is the server Limits' own
+    // response-envelope default — the request max_body twin — never 0.
+    let limits = oxide_fw_server::Limits::default();
+    assert_eq!(
+        DispatchOpts::default().max_data_envelope,
+        limits.max_data_envelope,
+        "the helper boots with the Limits twin"
+    );
+    assert!(
+        limits.max_data_envelope > 0,
+        "the default bound is a real bound"
+    );
+    assert_eq!(
+        limits.max_body, limits.max_data_envelope,
+        "the response-envelope default is the request max_body twin"
+    );
+}
