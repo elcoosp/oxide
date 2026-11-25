@@ -110,6 +110,7 @@ Every stable diagnostic code the tool can emit (Appendix V2.K). Generated from `
 | `DEP-IO` | deploy store operation failed on `{}`: {e} | — |
 | `DEP-MANIFEST` | the remote deploy manifest (manifest.json) is corrupt or from a future engine version: {e} | Re-run the deploy - a fresh deploy rewrites the ledger; inspect the store's manifest.json if this repeats |
 | `DEP-POINTER` | the deploy pointer (current) is corrupt: {detail} | — |
+| `DEP-RELEASE` | the release prefix `releases/{}` is missing from the deploy store | Re-deploy: the store names a build id whose release tree is pruned or corrupt, and the boot refuses an empty release |
 | `DEP-ROLLBACK` | cannot roll back: no previous build id is recorded | Deploy first: every deploy records the pointer's previous value |
 | `DEP-ROOT` | dist root {} is not a directory | Pass the build's dist directory (the `oxide build` output) |
 | `DEP-URL` | `{}` is not a deploy target URL: {} | Use s3://bucket/prefix, r2://bucket/prefix?endpoint=... (the endpoint query parameter is required for r2), file:///path or mem://label |
