@@ -358,6 +358,10 @@ fix = "Re-run the deploy - a fresh deploy rewrites the ledger; inspect the store
 [DEP-POINTER]
 message = "the deploy pointer (current) is corrupt: {detail}"
 
+[DEP-RELEASE]
+message = "the release prefix `releases/{}` is missing from the deploy store"
+fix = "Re-deploy: the store names a build id whose release tree is pruned or corrupt, and the boot refuses an empty release"
+
 [DEP-ROLLBACK]
 message = "cannot roll back: no previous build id is recorded"
 fix = "Deploy first: every deploy records the pointer's previous value"
