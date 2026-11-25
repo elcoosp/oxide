@@ -1,0 +1,126 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling oxide-fw-cli v0.17.0 (/home/z/my-project/oxide/crates/cli)
+error[E0433]: cannot find `PprShellSeed` in `build`
+     --> crates/cli/src/tests.rs:17544:23
+      |
+17544 |         crate::build::PprShellSeed::Rows(parsed) => assert_eq!(parsed, rows, "byte-faithful"),
+      |                       ^^^^^^^^^^^^ could not find `PprShellSeed` in `build`
+
+error[E0433]: cannot find `PprShellSeed` in `build`
+     --> crates/cli/src/tests.rs:17549:23
+      |
+17549 |         crate::build::PprShellSeed::StaleBuild,
+      |                       ^^^^^^^^^^^^ could not find `PprShellSeed` in `build`
+
+error[E0433]: cannot find `PprShellSeed` in `build`
+     --> crates/cli/src/tests.rs:17555:27
+      |
+17555 |             crate::build::PprShellSeed::Corrupt(_)
+      |                           ^^^^^^^^^^^^ could not find `PprShellSeed` in `build`
+
+error[E0433]: cannot find `PprShellSeed` in `build`
+     --> crates/cli/src/tests.rs:17609:23
+      |
+17609 |         crate::build::PprShellSeed::Rows(parsed) => {
+      |                       ^^^^^^^^^^^^ could not find `PprShellSeed` in `build`
+
+error[E0422]: cannot find struct, variant or union type `PprSeedSource` in module `crate::build`
+     --> crates/cli/src/tests.rs:17447:38
+      |
+17447 |     let sources = vec![crate::build::PprSeedSource {
+      |                                      ^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `ppr_shell_seed_rows` in module `crate::build`
+     --> crates/cli/src/tests.rs:17454:30
+      |
+17454 |     let rows = crate::build::ppr_shell_seed_rows(&sources, "b1", "lang=", "en");
+      |                              ^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0422]: cannot find struct, variant or union type `PprSeedSource` in module `crate::build`
+     --> crates/cli/src/tests.rs:17497:23
+      |
+17497 |         crate::build::PprSeedSource {
+      |                       ^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0422]: cannot find struct, variant or union type `PprSeedSource` in module `crate::build`
+     --> crates/cli/src/tests.rs:17504:23
+      |
+17504 |         crate::build::PprSeedSource {
+      |                       ^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0422]: cannot find struct, variant or union type `PprSeedSource` in module `crate::build`
+     --> crates/cli/src/tests.rs:17511:23
+      |
+17511 |         crate::build::PprSeedSource {
+      |                       ^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `ppr_shell_seed_rows` in module `crate::build`
+     --> crates/cli/src/tests.rs:17519:30
+      |
+17519 |     let rows = crate::build::ppr_shell_seed_rows(&sources, "b1", "lang=", "en");
+      |                              ^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0422]: cannot find struct, variant or union type `PprSeedSource` in module `crate::build`
+     --> crates/cli/src/tests.rs:17534:38
+      |
+17534 |     let sources = vec![crate::build::PprSeedSource {
+      |                                      ^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `ppr_shell_seed_rows` in module `crate::build`
+     --> crates/cli/src/tests.rs:17541:30
+      |
+17541 |     let rows = crate::build::ppr_shell_seed_rows(&sources, "b1", "lang=", "en");
+      |                              ^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `ppr_shell_seed_manifest` in module `crate::build`
+     --> crates/cli/src/tests.rs:17542:31
+      |
+17542 |     let bytes = crate::build::ppr_shell_seed_manifest(&rows, "b1");
+      |                               ^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `parse_ppr_shell_seed` in module `crate::build`
+     --> crates/cli/src/tests.rs:17543:25
+      |
+17543 |     match crate::build::parse_ppr_shell_seed(&bytes, "b1") {
+      |                         ^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `parse_ppr_shell_seed` in module `crate::build`
+     --> crates/cli/src/tests.rs:17548:23
+      |
+17548 |         crate::build::parse_ppr_shell_seed(&bytes, "b2"),
+      |                       ^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `parse_ppr_shell_seed` in module `crate::build`
+     --> crates/cli/src/tests.rs:17554:27
+      |
+17554 |             crate::build::parse_ppr_shell_seed(b"{not json", "b1"),
+      |                           ^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0422]: cannot find struct, variant or union type `PprSeedSource` in module `crate::build`
+     --> crates/cli/src/tests.rs:17598:38
+      |
+17598 |     let sources = vec![crate::build::PprSeedSource {
+      |                                      ^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `ppr_shell_seed_rows` in module `crate::build`
+     --> crates/cli/src/tests.rs:17605:30
+      |
+17605 |     let rows = crate::build::ppr_shell_seed_rows(&sources, "dev", "lang=", "en");
+      |                              ^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `ppr_shell_seed_manifest` in module `crate::build`
+     --> crates/cli/src/tests.rs:17606:31
+      |
+17606 |     let bytes = crate::build::ppr_shell_seed_manifest(&rows, "dev");
+      |                               ^^^^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+error[E0425]: cannot find function `parse_ppr_shell_seed` in module `crate::build`
+     --> crates/cli/src/tests.rs:17608:25
+      |
+17608 |     match crate::build::parse_ppr_shell_seed(&bytes, "dev") {
+      |                         ^^^^^^^^^^^^^^^^^^^^ not found in `crate::build`
+
+Some errors have detailed explanations: E0422, E0425, E0433.
+For more information about an error, try `rustc --explain E0422`.
+error: could not compile `oxide-fw-cli` (lib test) due to 20 previous errors
