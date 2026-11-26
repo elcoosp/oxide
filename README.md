@@ -7,7 +7,7 @@
     <a href="https://github.com/elcoosp/oxide/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%7C%20Apache--2.0-blue?style=flat-square" alt="License"/></a>
     <a href="https://crates.io/crates/oxide-fw-cli"><img src="https://img.shields.io/badge/Rust-stable%20%7C%20edition%202024-000000?style=flat-square&logo=rust" alt="Rust"/></a>
     <a href="#framework-adapters"><img src="https://img.shields.io/badge/Adapters-React%20%7C%20Vue%20%7C%20Svelte%20%7C%20Solid-007ACC?style=flat-square" alt="Adapters"/></a>
-    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-3640%20Rust%20%7C%20760%2F760%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
+    <a href="https://github.com/elcoosp/oxide/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-3645%20Rust%20%7C%20760%2F760%20TS-brightgreen?style=flat-square" alt="Tests"/></a>
   </p>
   <p>
     <a href="#install">Install</a> ·
@@ -200,7 +200,7 @@ counts and the current clearance status.
 |                 |                                                                                                                                       |
 | Spec compliance | **~93 / 100** (r9; r10 re-verifies the P0 table and CI posture at HEAD — [scorecard-r10](packages/oxide-website/content/docs/scorecard-r10.md)) — [every finding public](docs/deviations.md) |
 | CI              | 24 jobs on Linux, macOS, Windows — 21 per pull request; nightly Miri, the release-profile check and smoke-deploy run on schedule/main |
-| Rust            | 3640 test functions; clippy-clean at `-D warnings` (workspace, no excludes) with **zero** `#[allow(clippy::*)]`                       |
+| Rust            | 3645 test functions; clippy-clean at `-D warnings` (workspace, no excludes) with **zero** `#[allow(clippy::*)]`                       |
 | Security        | cargo-deny exits 0 (licenses + advisories); unfixable upstream advisories suppressed by exact id with reachability analyses in [deny.toml](deny.toml) |
 
 `v0.2.0` through `v0.13.0` are tagged; the crates.io / npm publication step is still pending. Releases follow a **48-hour / 5-consecutive-green-CI** soak rule — see [PUBLISHING.md](PUBLISHING.md).
