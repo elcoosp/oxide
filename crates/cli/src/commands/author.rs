@@ -341,7 +341,9 @@ pub(crate) async fn cmd_generate(
 /// `oxide migrate [source] [--apply]` (V2-E03): the plan-is-data engine
 /// in `oxide-fw-compiler` detects the source framework, prints the plan
 /// (renames, import rewrites, config keys, manual notes), and with
-/// `--apply` performs the mechanical halves. `--apply` requires a clean
+/// `--apply` performs the mechanical halves — the renames, the import
+/// rewrites and the config keys (the engine writes `tsconfig.json` /
+/// `oxide.config.ts`). `--apply` requires a clean
 /// git tree unless `--force` — a half-migration must be revertible.
 /// Exit codes: 0 plan/apply ok, 1 apply failure, 2 refusal (unknown
 /// framework, source mismatch, dirty tree).
@@ -427,7 +429,7 @@ pub(crate) async fn cmd_migrate(
     if !apply {
         outln!(
             w,
-            "  no files written — pass --apply to perform the renames and rewrites (a dry run never modifies disk)"
+            "  no files written — pass --apply to perform the renames, rewrites and config keys (a dry run never modifies disk)"
         );
         return Ok(0);
     }
@@ -445,12 +447,18 @@ pub(crate) async fn cmd_migrate(
         Ok(report) => {
             outln!(
                 w,
-                "  applied {} rename(s), {} import rewrite(s); {} config key(s) and {} manual note(s) left pending",
+                "  applied {} rename(s), {} import rewrite(s), {} config key(s); {} manual note(s) left pending",
                 report.renamed,
                 report.rewrote,
-                report.config_pending.len(),
+                report.config_applied.len(),
                 report.manual,
             );
+            for key in &report.config_applied {
+                outln!(w, "  config applied: {key}");
+            }
+            for key in &report.config_pending {
+                outln!(w, "  config pending: {key}");
+            }
             Ok(0)
         }
         Err(e) => {
@@ -514,7 +522,10 @@ pub(crate) async fn cmd_config(root: &str, json: bool, w: Writer<'_>) -> anyhow:
         outln!(w, "config:       {path_str}");
         outln!(w, "framework:    {}", desc.name);
         outln!(w, "extensions:   {}", desc.extensions.join(", "));
-        let caps = serde_json::to_string(&desc.capabilities).unwrap_or_default();
+        // The loud convention: a serialization failure renders the
+        // reason, never a silently empty capabilities line.
+        let caps = serde_json::to_string(&desc.capabilities)
+            .unwrap_or_else(|e| format!("<unavailable: {e}>"));
         outln!(w, "capabilities: {caps}");
     }
     Ok(0)
