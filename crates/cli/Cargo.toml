@@ -61,6 +61,17 @@ name = "inspect"
 harness = false
 required-features = ["bench-util"]
 
+# V2-B09/A01-phase-3: the L0-hit allocation budget — the committed dhat
+# harness the report's G2 row records as the remaining R03 gap ("the L0-hit
+# budget lives in the V8-linked `oxide-fw-cli` and has no committed dhat
+# harness yet"). `harness = false`: the budget check IS the bench — one
+# dhat profiler per process measures the per-request block count and fails
+# over the budget. Behind the same `bench-util` opt-in.
+[[bench]]
+name = "l0_alloc"
+harness = false
+required-features = ["bench-util"]
+
 # V2-F20: the attestation substrate benches behind the same `bench-util`
 # opt-in — plain `cargo test` never pays the criterion build.
 [[bench]]
@@ -301,6 +312,10 @@ tempfile = { workspace = true }
 tokio = { workspace = true }
 # V2-F18: the perf-bisect engine benches (behind `bench-util`).
 criterion = { workspace = true }
+# V2-B09/A01-phase-3: the L0-hit allocation budget (`bench l0_alloc`) —
+# one dhat profiler per process, the committed harness the report's G2
+# row names.
+dhat = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
