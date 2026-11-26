@@ -3,7 +3,7 @@
 //! config keys, manual notes), printed in the order the `oxide migrate`
 //! command will print it, then applied to a TEMPDIR COPY of the fixture
 //! so the tree here stays read-only and the apply report (the mechanical
-//! halves done, the config keys and notes left pending) is shown.
+//! halves and the config keys applied, the notes left pending) is shown.
 //!
 //! The real command runs this over the user's project root behind the
 //! CLI's clean-git-tree gate for `--apply`; the engine piece this
@@ -75,8 +75,10 @@ fn main() {
         }
     }
 
-    // The apply half, on a copy: the mechanical work runs, the config
-    // keys and the notes stay pending for the human reviewing the plan.
+    // The apply half, on a copy: the mechanical work runs AND the
+    // config keys land in their target files (the E03 apply-in-engine
+    // half); only the manual notes stay pending for the human
+    // reviewing the plan.
     let tmp = tempfile::tempdir().expect("the walkthrough tempdir");
     let sandbox = tmp.path().join("app");
     copy_tree(&fixture, &sandbox);
@@ -85,8 +87,14 @@ fn main() {
         "=== apply (on a tempdir copy): {} renamed, {} rewritten",
         report.renamed, report.rewrote
     );
+    println!("  applied config keys: {:?}", report.config_applied);
     println!("  pending config keys: {:?}", report.config_pending);
     println!("  pending manual notes: {}", report.manual);
+    let tsconfig = sandbox.join("tsconfig.json");
+    if tsconfig.is_file() {
+        println!("=== tsconfig.json now carries the alias:");
+        println!("{}", fs::read_to_string(&tsconfig).unwrap_or_default());
+    }
     println!(
         "=== result: {} exists, the source is gone",
         sandbox.join("src/routes/page.svelte").display()
