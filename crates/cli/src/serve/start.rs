@@ -1504,6 +1504,11 @@ pub(crate) async fn start_server_inner_full(
         search_flag: search_configured.then_some("server" as &'static str),
         #[cfg(not(feature = "search"))]
         search_flag: None,
+        // V2-F17: the dev-token page wire — the SEC-09 token minted above
+        // (the inspector attached) rides the render stage's injection so the
+        // cost overlay can speak the guarded `/__oxide/cost` endpoint.
+        // `None` (production) emits no tag.
+        dev_token: dev_token.clone(),
     });
     // §5.6: dev-mode stale guard. When a HMR hub is wired, wrap the
     // dispatch so a mid-flight file change aborts the render (no serving
