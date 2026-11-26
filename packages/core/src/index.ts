@@ -19,6 +19,10 @@ export { resumableFetch, type ResumableFetchOptions } from './client/resume.ts'
 export { toBase64, fromBase64 } from './bytes.ts'
 export { boot } from './client/boot.ts'
 export { scheduleScript, loadScripts, type ScriptStrategy, type ScriptOptions } from './client/scripts.ts'
+// §V2-F17: the component-cost dev overlay (the client half the server's
+// `/__oxide/cost` wire feeds). Exported for hosts that mount it themselves —
+// the boot mounts it on the ESM dev path automatically.
+export { mountCostOverlay, type CostOverlayOptions } from './client/cost-overlay.ts'
 export { reportWebVitals, type VitalSample, type VitalsOptions } from './client/vitals.ts'
 export { __oxide_call_fn } from './fn.ts'
 // §V2-E06 Module API v1 — `defineModule` + `ModuleContext` (the authoring
