@@ -272,6 +272,26 @@ pub(crate) async fn stage_prelude(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow
         });
     }
     // >>> stage-wrapper (not part of the moved body; split_selfcheck --stages strips this block)
+    // V2-A05 step 4: the ONE pipeline-owned locals composition is built
+    // here — session from the §16.6 codec (this moves the decode out of
+    // the middleware stage's pre-chain and its standing-in
+    // `middleware_locals["session"]` seeding), the locale from the i18n
+    // resolver (stage_match writes the slot), the experiments from the
+    // assignment stage (`set_experiments`). Every consumer reads the
+    // `to_value()` snapshot the stages refresh; the middleware stage only
+    // FOLDS the chain's answer into the slot.
+    if let Some(codec) = d.session_codec.as_deref() {
+        let token = cx
+            .req
+            .header("cookie")
+            .and_then(|h| oxide_fw_server::cookie_value(h, "oxide_session"));
+        if let Some(token) = token
+            && let Ok(sess) = oxide_fw_server::Session::decode(codec, token)
+        {
+            cx.locals.session = Some(sess.to_value());
+        }
+    }
+    cx.middleware_locals = cx.locals.to_value();
     cx.tree = tree;
     cx.ctx_table = Some(ctx_table);
     cx.boot_build_id = boot_build_id;
