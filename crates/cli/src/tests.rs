@@ -17819,3 +17819,578 @@ async fn ppr_seed_boot_store_serves_the_first_request_without_a_tap() {
         "the seeded row is the only entry — the first request HIT it (no tap row was added; a miss would tap a second row) (§10.4: the shell is cached, only the holes render)"
     );
 }
+
+// ---- §V2-A05 step 4: the unified `RequestLocals` in the pipeline -----------
+//
+// The plan's acceptance (docs/spec-v0.2-draft.md §V2-A05, step 4 + the
+// reserved-key contract): "Build one `RequestLocals` in `stage_prelude`
+// (session from the codec, locale from the i18n resolver) and pass
+// `cx.locals.to_value()` to **every** consumer: `LoaderRunInput.locals`,
+// the layout loop, `ActionDispatcher`, `EndpointDispatcher`, and the
+// render input. Audit with `rg "locals" crates/cli/src/dispatch` and
+// delete any `json!({})` literal standing in for locals." And: "Reserved
+// keys `session`, `locale`, `experiments` win over user-set keys with the
+// same name (documented; a middleware that sets them gets a dev-mode
+// warning `DSP-101`)." The recording-fake table below is the spec's own
+// test contract; the B-05 session write-back pins stay the guard the fold
+// must not break.
+
+/// A `LoaderRunner` that records the `(url, locals)` pair of EVERY call —
+/// the page GET and the `/__data` data-plane call both land here, so the
+/// acceptance table can compare the two surfaces' locals.
+struct LocalsRecordingLoader {
+    seen: std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+}
+
+impl LocalsRecordingLoader {
+    fn new() -> (
+        Self,
+        std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+    ) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        (
+            Self {
+                seen: std::sync::Arc::clone(&seen),
+            },
+            seen,
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_server::LoaderRunner for LocalsRecordingLoader {
+    fn name(&self) -> &str {
+        "locals-recording"
+    }
+    async fn run(
+        &self,
+        input: oxide_fw_server::LoaderRunInput,
+    ) -> oxide_fw_server::Result<oxide_fw_server::LoaderOutput> {
+        self.seen
+            .lock()
+            .expect("recording lock")
+            .push((input.url.clone(), input.locals.clone()));
+        let mut deferred = std::collections::BTreeMap::new();
+        deferred.insert("0".to_string(), serde_json::json!({ "slow": "v" }));
+        Ok(oxide_fw_server::LoaderOutput {
+            status: 200,
+            location: None,
+            data: serde_json::json!({ "v": 1 }),
+            set_cookies: Vec::new(),
+            headers: Vec::new(),
+            deferred,
+            meta: None,
+            session: None,
+        })
+    }
+}
+
+/// An `ActionDispatcher` that records the `locals` argument it received.
+struct LocalsRecordingAction {
+    seen: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_server::ActionDispatcher for LocalsRecordingAction {
+    async fn dispatch(
+        &self,
+        args: ActionDispatchArgs<'_>,
+    ) -> std::result::Result<oxide_fw_server::ActionRunResult, oxide_fw_server::DispatchError> {
+        self.seen
+            .lock()
+            .expect("recording lock")
+            .push(args.locals.clone());
+        Ok(oxide_fw_server::ActionRunResult {
+            status: 200,
+            location: None,
+            data: serde_json::json!({ "ok": true }),
+            set_cookies: Vec::new(),
+            headers: Vec::new(),
+            revalidate: Vec::new(),
+        })
+    }
+}
+
+/// An `EndpointDispatcher` that records the `locals` argument it received.
+struct LocalsRecordingEndpoint {
+    seen: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+}
+
+#[async_trait::async_trait]
+impl oxide_fw_server::EndpointDispatcher for LocalsRecordingEndpoint {
+    async fn dispatch(
+        &self,
+        args: oxide_fw_server::EndpointDispatchArgs<'_>,
+    ) -> Result<oxide_fw_server::EndpointRunResult, oxide_fw_server::EndpointRunError> {
+        self.seen
+            .lock()
+            .expect("recording lock")
+            .push(args.locals.clone());
+        Ok(oxide_fw_server::EndpointRunResult {
+            status: 200,
+            headers: Vec::new(),
+            body: b"endpoint".to_vec(),
+            stream: None,
+        })
+    }
+}
+
+/// The §V2-A05 acceptance fixture: ONE tree carrying a page route with a
+/// server module (the action + `/__data` surfaces), an endpoint
+/// (`route.ts`), and a middleware entry — no disk scans, the scripted
+/// dispatcher answers every layer.
+fn tree_with_page_endpoint_and_middleware() -> std::sync::Arc<oxide_fw_router::RouteTree> {
+    let mut tree = oxide_fw_router::RouteTree::new();
+    tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
+        priority: None,
+        id: oxide_fw_router::RouteId("routes/comment".into()),
+        kind: oxide_fw_router::RouteKind::Page,
+        segments: vec!["comment".into()],
+        file: std::path::PathBuf::from("comment/page.tsx"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: true,
+        slot: None,
+        needs_parent: false,
+    });
+    tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
+        priority: None,
+        id: oxide_fw_router::RouteId("routes/api".into()),
+        kind: oxide_fw_router::RouteKind::Endpoint,
+        segments: vec!["api".into()],
+        file: std::path::PathBuf::from("api/route.ts"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    tree.insert(oxide_fw_router::RouteEntry {
+        live: None,
+        priority: None,
+        id: oxide_fw_router::RouteId("routes/middleware".into()),
+        kind: oxide_fw_router::RouteKind::Middleware,
+        segments: vec![],
+        file: std::path::PathBuf::from("middleware.ts"),
+        render_mode: None,
+        tags: Vec::new(),
+        has_server_module: false,
+        slot: None,
+        needs_parent: false,
+    });
+    std::sync::Arc::new(tree)
+}
+
+/// The §V2-A05 acceptance table, verbatim: `{page GET, /__data, action
+/// POST, route.ts}` — every surface's recording fake must receive
+/// IDENTICAL locals (one `RequestLocals` composition, `to_value()` once).
+#[tokio::test]
+async fn a05_unified_locals_reach_every_consumer_identically() {
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("routes/comment")).unwrap();
+    std::fs::write(
+        root.join("routes/comment/page.server.ts"),
+        "export const actions = {}\n",
+    )
+    .unwrap();
+
+    // The codec seals a session the prelude must decode into the slot.
+    let key = vec![0x42u8; 32];
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[key]).expect("codec"));
+    let mut sess = oxide_fw_server::Session::new();
+    sess.insert("user", serde_json::json!("ada"));
+    let cookie = sess.encode(&codec).expect("encode");
+
+    // i18n: the matcher's resolver must land the locale in the slot.
+    let i18n = oxide_fw_assets::i18n::I18nConfig {
+        locales: vec!["en".into(), "fr".into()],
+        default: "en".into(),
+        strategy: "prefix-except-default".into(),
+    };
+
+    // A user key the scripted middleware stages — it must reach every
+    // consumer through the same composition.
+    let mw_locals = serde_json::json!({ "section": "blog" });
+
+    let (loader, loader_seen) = LocalsRecordingLoader::new();
+    let action_seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let endpoint_seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mw = ScriptedMiddleware {
+        headers: Vec::new(),
+        locals: Some(mw_locals.clone()),
+        short_status: None,
+        location: None,
+    };
+
+    let dispatch = build_dispatch(
+        tree_with_page_endpoint_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            routes_root: root.join("routes"),
+            loader_runner: Some(Arc::new(loader) as Arc<dyn oxide_fw_server::LoaderRunner>),
+            actions: Some(Arc::new(LocalsRecordingAction {
+                seen: std::sync::Arc::clone(&action_seen),
+            })),
+            endpoint_dispatcher: Some(Arc::new(LocalsRecordingEndpoint {
+                seen: std::sync::Arc::clone(&endpoint_seen),
+            })),
+            middleware_dispatcher: Some(Arc::new(mw)),
+            session_codec: Some(codec),
+            i18n_cfg: Some(i18n),
+            ..Default::default()
+        },
+    );
+
+    // 1. page GET
+    let mut page_req = test_request("GET", "/comment");
+    page_req.headers = std::sync::Arc::new(vec![(
+        "cookie".to_string(),
+        format!("oxide_session={cookie}"),
+    )]);
+    let page_resp = dispatch(page_req).await;
+    assert_eq!(page_resp.status, 200, "page GET renders");
+
+    // 2. /__data
+    let mut data_req = test_request("GET", "/__data?route=%2Fcomment");
+    data_req.headers = std::sync::Arc::new(vec![(
+        "cookie".to_string(),
+        format!("oxide_session={cookie}"),
+    )]);
+    let data_resp = dispatch(data_req).await;
+    assert_eq!(data_resp.status, 200, "data plane answers");
+
+    // 3. action POST
+    let mut action_req = test_request("POST", "/comment?/save");
+    action_req.headers = std::sync::Arc::new(vec![
+        ("cookie".to_string(), format!("oxide_session={cookie}")),
+        (
+            "content-type".to_string(),
+            "application/x-www-form-urlencoded".to_string(),
+        ),
+    ]);
+    action_req.body = bytes::Bytes::from_static(b"foo=bar");
+    let action_resp = dispatch(action_req).await;
+    assert_eq!(action_resp.status, 200, "action runs and re-renders");
+
+    // 4. route.ts
+    let mut endpoint_req = test_request("GET", "/api");
+    endpoint_req.headers = std::sync::Arc::new(vec![(
+        "cookie".to_string(),
+        format!("oxide_session={cookie}"),
+    )]);
+    let endpoint_resp = dispatch(endpoint_req).await;
+    assert_eq!(endpoint_resp.status, 200, "endpoint answers");
+
+    // The recording fake received identical locals on every surface. The
+    // loader ran twice (the page GET dispatch and the /__data dispatch —
+    // both loader inputs carry the route's own URL, so the calls are
+    // ordered, not url-distinguished); the action and the endpoint each
+    // ran once.
+    let seen = loader_seen.lock().expect("recording lock").clone();
+    assert!(
+        seen.len() >= 2,
+        "the loader ran for the page AND the data plane: {seen:?}"
+    );
+    let page_locals = &seen.first().expect("a page-surface loader call").1;
+    let data_locals = &seen.last().expect("a data-plane loader call").1;
+    let action_locals = action_seen
+        .lock()
+        .expect("recording lock")
+        .first()
+        .expect("the action ran")
+        .clone();
+    let endpoint_locals = endpoint_seen
+        .lock()
+        .expect("recording lock")
+        .first()
+        .expect("the endpoint ran")
+        .clone();
+
+    let expected = serde_json::json!({
+        "section": "blog",
+        "session": { "user": "ada" },
+        "locale": "en",
+    });
+    assert_eq!(page_locals, &expected, "page GET locals");
+    assert_eq!(data_locals, &expected, "/__data locals");
+    assert_eq!(&action_locals, &expected, "action POST locals");
+    assert_eq!(&endpoint_locals, &expected, "route.ts locals");
+}
+
+/// The slot exists without middleware: the prelude seeds the decoded
+/// session and the matcher seeds the resolved locale — the loader sees
+/// both with NO dispatcher attached (the test-pipeline default).
+#[tokio::test]
+async fn a05_prelude_seeds_session_and_locale_without_middleware() {
+    use std::sync::Arc;
+
+    let key = vec![0x42u8; 32];
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[key]).expect("codec"));
+    let mut sess = oxide_fw_server::Session::new();
+    sess.insert("user", serde_json::json!("ada"));
+    let cookie = sess.encode(&codec).expect("encode");
+
+    let i18n = oxide_fw_assets::i18n::I18nConfig {
+        locales: vec!["en".into(), "fr".into()],
+        default: "en".into(),
+        strategy: "prefix-except-default".into(),
+    };
+
+    let (loader, loader_seen) = LocalsRecordingLoader::new();
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            routes_root: routes_root(),
+            loader_runner: Some(Arc::new(loader) as Arc<dyn oxide_fw_server::LoaderRunner>),
+            session_codec: Some(codec),
+            i18n_cfg: Some(i18n),
+            ..Default::default()
+        },
+    );
+
+    let mut req = test_request("GET", "/");
+    req.headers = std::sync::Arc::new(vec![(
+        "cookie".to_string(),
+        format!("oxide_session={cookie}"),
+    )]);
+    let resp = dispatch(req).await;
+    assert_eq!(resp.status, 200, "page renders");
+
+    let seen = loader_seen.lock().expect("recording lock").clone();
+    let locals = &seen.first().expect("the loader ran").1;
+    assert_eq!(
+        locals.get("session"),
+        Some(&serde_json::json!({ "user": "ada" })),
+        "the prelude decoded the §16.6 session into the slot: {locals}"
+    );
+    assert_eq!(
+        locals.get("locale"),
+        Some(&serde_json::Value::String("en".into())),
+        "the matcher's i18n resolver landed the locale in the slot: {locals}"
+    );
+}
+
+/// The reserved-keys contract: a middleware staging `locale` or
+/// `experiments` loses to the pipeline-owned slots; user keys still merge.
+#[tokio::test]
+async fn a05_reserved_keys_staged_by_middleware_lose_to_the_pipeline() {
+    use std::sync::Arc;
+
+    let i18n = oxide_fw_assets::i18n::I18nConfig {
+        locales: vec!["en".into(), "fr".into()],
+        default: "en".into(),
+        strategy: "prefix-except-default".into(),
+    };
+    let exp = header_experiment();
+    let bucket = "a";
+    let assigned = variant_of(&exp, bucket);
+
+    let mw = ScriptedMiddleware {
+        headers: Vec::new(),
+        locals: Some(serde_json::json!({
+            "locale": "xx-YY",
+            "experiments": { "hero": "staged" },
+            "section": "blog",
+        })),
+        short_status: None,
+        location: None,
+    };
+
+    let (loader, loader_seen) = LocalsRecordingLoader::new();
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            routes_root: routes_root(),
+            loader_runner: Some(Arc::new(loader) as Arc<dyn oxide_fw_server::LoaderRunner>),
+            middleware_dispatcher: Some(Arc::new(mw)),
+            i18n_cfg: Some(i18n),
+            experiments: vec![exp],
+            ..Default::default()
+        },
+    );
+
+    let resp = dispatch(test_request_with_header("GET", "/", "x-bucket", bucket)).await;
+    assert_eq!(resp.status, 200, "page renders");
+
+    let seen = loader_seen.lock().expect("recording lock").clone();
+    let locals = &seen.first().expect("the loader ran").1;
+    assert_eq!(
+        locals.get("locale"),
+        Some(&serde_json::Value::String("en".into())),
+        "the pipeline-owned locale slot wins over the staged key: {locals}"
+    );
+    assert_eq!(
+        locals.get("experiments"),
+        Some(&serde_json::json!({ "hero": assigned })),
+        "the resolved assignments win over the staged key: {locals}"
+    );
+    assert_eq!(
+        locals.get("section"),
+        Some(&serde_json::Value::String("blog".into())),
+        "user keys still merge later-wins: {locals}"
+    );
+}
+
+/// The DSP-101 drift guard: a middleware staging a reserved key is
+/// reported by name (the substrate's sorted collision list), the warn
+/// under the dispatch locals target.
+#[tokio::test]
+async fn a05_dsp101_names_the_collided_reserved_keys() {
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::util::SubscriberInitExt as _;
+
+    /// The console sink the pin reads (the `feed_tdd` `ConsoleWriter` shape).
+    #[derive(Clone)]
+    struct ConsoleWriter(Arc<Mutex<Vec<u8>>>);
+    impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for ConsoleWriter {
+        type Writer = ConsoleSink;
+        fn make_writer(&'a self) -> Self::Writer {
+            ConsoleSink(Arc::clone(&self.0))
+        }
+    }
+    struct ConsoleSink(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for ConsoleSink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("console buffer")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mw = ScriptedMiddleware {
+        headers: Vec::new(),
+        locals: Some(serde_json::json!({ "locale": "xx-YY", "experiments": { "hero": "staged" } })),
+        short_status: None,
+        location: None,
+    };
+
+    let (loader, _seen) = LocalsRecordingLoader::new();
+    let console = ConsoleWriter(Arc::new(Mutex::new(Vec::new())));
+    let _guard = tracing_subscriber::fmt()
+        .with_writer(console.clone())
+        .with_target(false)
+        .without_time()
+        .with_max_level(tracing::Level::WARN)
+        .set_default();
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            routes_root: routes_root(),
+            loader_runner: Some(Arc::new(loader) as Arc<dyn oxide_fw_server::LoaderRunner>),
+            middleware_dispatcher: Some(Arc::new(mw)),
+            i18n_cfg: Some(oxide_fw_assets::i18n::I18nConfig {
+                locales: vec!["en".into(), "fr".into()],
+                default: "en".into(),
+                strategy: "prefix-except-default".into(),
+            }),
+            ..Default::default()
+        },
+    );
+
+    let resp = dispatch(test_request("GET", "/")).await;
+    assert_eq!(resp.status, 200, "page renders");
+
+    let out = console.0.lock().expect("console buffer").clone();
+    let text = String::from_utf8_lossy(&out).to_string();
+    assert!(
+        text.contains("DSP-101"),
+        "the drift guard names the code: {text}"
+    );
+    assert!(
+        text.contains("locale") && text.contains("experiments"),
+        "the drifted keys are named, sorted: {text}"
+    );
+}
+
+/// The B-05 guard the reserved-key fold must not break: a middleware
+/// staging `session` refines the pipeline-owned slot (the write-back
+/// persists it) — the loader sees the refined session AND the response
+/// carries the sealed cookie.
+#[tokio::test]
+async fn a05_middleware_session_mutation_still_persists() {
+    use std::sync::Arc;
+
+    let key = vec![0x42u8; 32];
+    let codec = Arc::new(oxide_fw_server::SessionCodec::new(&[key]).expect("codec"));
+    let mut sess = oxide_fw_server::Session::new();
+    sess.insert("user", serde_json::json!("ada"));
+    let cookie = sess.encode(&codec).expect("encode");
+
+    let mw = ScriptedMiddleware {
+        headers: Vec::new(),
+        locals: Some(serde_json::json!({ "session": { "role": "editor" } })),
+        short_status: None,
+        location: None,
+    };
+
+    let (loader, loader_seen) = LocalsRecordingLoader::new();
+    let dispatch = build_dispatch(
+        tree_with_page_and_middleware(),
+        Arc::new(oxide_fw_server::Metrics::new()),
+        DispatchOpts {
+            routes_root: routes_root(),
+            loader_runner: Some(Arc::new(loader) as Arc<dyn oxide_fw_server::LoaderRunner>),
+            middleware_dispatcher: Some(Arc::new(mw)),
+            session_codec: Some(codec),
+            ..Default::default()
+        },
+    );
+
+    let mut req = test_request("GET", "/");
+    req.headers = std::sync::Arc::new(vec![(
+        "cookie".to_string(),
+        format!("oxide_session={cookie}"),
+    )]);
+    let resp = dispatch(req).await;
+    assert_eq!(resp.status, 200, "page renders");
+
+    let seen = loader_seen.lock().expect("recording lock").clone();
+    let locals = &seen.first().expect("the loader ran").1;
+    assert_eq!(
+        locals.get("session"),
+        Some(&serde_json::json!({ "role": "editor" })),
+        "the middleware's session refinement reaches the loader: {locals}"
+    );
+    let cookies: Vec<&str> = resp
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert!(
+        cookies.iter().any(|v| v.starts_with("oxide_session=")),
+        "the refined session is persisted on the response: {cookies:?}"
+    );
+    // The persisted token decodes back to the refined session.
+    let token = cookies
+        .iter()
+        .find(|v| v.starts_with("oxide_session="))
+        .expect("the cookie")
+        .trim_start_matches("oxide_session=")
+        .split(';')
+        .next()
+        .expect("token");
+    let decoded = oxide_fw_server::Session::decode(
+        &oxide_fw_server::SessionCodec::new(&[vec![0x42u8; 32]]).expect("codec"),
+        token,
+    )
+    .expect("the sealed token decodes");
+    assert_eq!(
+        decoded.to_value().get("role"),
+        Some(&serde_json::Value::String("editor".into())),
+        "the persisted cookie carries the refinement"
+    );
+}
