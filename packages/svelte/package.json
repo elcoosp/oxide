@@ -1,6 +1,6 @@
 {
   "name": "@oxide-fw/svelte",
-  "version": "0.6.1",
+  "version": "0.18.0",
   "description": "Svelte adapter for Oxide: SSR renderer and hydration.",
   "type": "module",
   "exports": {
@@ -67,6 +67,7 @@
     "dist",
     "src/Defer.svelte",
     "src/Image.svelte",
+    "src/Link.svelte",
     "README.md"
   ],
   "dependencies": {

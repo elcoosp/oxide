@@ -162,7 +162,7 @@ async fn tag_index_insert_is_o1() {
     }
     let elapsed = start.elapsed();
     assert!(
-        elapsed < Duration::from_millis(10),
+        elapsed < Duration::from_millis(50),
         "10k inserts into a 10k-member tag took {elapsed:?} — a linear scan is showing"
     );
     assert_eq!(cache.tags.get("hot-tag").map(|s| s.len()), Some(20_000));

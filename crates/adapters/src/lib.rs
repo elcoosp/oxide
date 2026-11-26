@@ -833,6 +833,9 @@ pub fn emit(target: Target, artifact: &BuildArtifact, out_dir: &Path) -> Result<
             written.extend(copy_server_bundle(artifact, out_dir)?);
             match target {
                 Target::Vercel | Target::VercelFunctions => {
+                    // Copy client assets (JS/CSS chunks, images, fonts) so Vercel
+                    // serves them directly from the deployment bundle.
+                    written.extend(copy_client_assets(artifact, out_dir)?);
                     let api_dir = out_dir.join("api");
                     std::fs::create_dir_all(&api_dir).map_err(|e| {
                         err(
@@ -1190,6 +1193,30 @@ fn copy_dir_recursive(src: &Path, dst: &Path, written: &mut Vec<PathBuf>) -> Res
         // Symlinks and other types: skip. The bundler doesn't emit them.
     }
     Ok(())
+}
+
+/// Copy the CLI's client asset directory (`dist/client/` — JS/CSS chunks,
+/// images, fonts, etc.) into `<deploy>/client/`. This is required for
+/// Vercel deployments so the platform serves static assets directly from the
+/// deployment bundle instead of falling back to the origin.
+///
+/// Returns an empty vec if the client directory doesn't exist (e.g. a
+/// server-only build).
+fn copy_client_assets(artifact: &BuildArtifact, out_dir: &Path) -> Result<Vec<PathBuf>> {
+    let client_src = artifact.out_dir.join("client");
+    if !client_src.is_dir() {
+        return Ok(Vec::new());
+    }
+    let dst_root = out_dir.join("client");
+    std::fs::create_dir_all(&dst_root).map_err(|e| {
+        err(
+            "ADP-IO",
+            format!("cannot create {}: {e}", dst_root.display()),
+        )
+    })?;
+    let mut written = Vec::new();
+    copy_dir_recursive(&client_src, &dst_root, &mut written)?;
+    Ok(written)
 }
 
 /// Deno / Bun thin wrapper (same handler contract, runtime-specific serve call).

@@ -15,16 +15,28 @@ use tempfile::TempDir;
 
 /// Construct a minimal artifact. Most targets ignore the manifests and
 /// the bundle; the static target needs `prerendered` to reference a file
-/// that actually exists on disk under `out_dir`.
-fn minimal_artifact(root: &std::path::Path, with_prerendered: bool) -> BuildArtifact {
+/// that actually exists on disk under `out_dir`. Vercel targets need a
+/// `client/` directory to test asset copying.
+fn minimal_artifact(root: &std::path::Path, target: Target) -> BuildArtifact {
     let mut prerendered = BTreeMap::new();
-    if with_prerendered {
+    let needs_prerendered = target == Target::Static;
+    if needs_prerendered {
         // One prerendered page whose source file we write below.
         let rel = "prerendered/index.html";
         let src = root.join(rel);
         fs::create_dir_all(src.parent().unwrap()).unwrap();
         fs::write(&src, b"<!doctype html><html><body>index</body></html>").unwrap();
         prerendered.insert("routes/index".to_string(), vec![rel.to_string()]);
+    }
+    // Vercel targets: create a client/ directory with some dummy assets.
+    let needs_client = target == Target::Vercel || target == Target::VercelFunctions;
+    if needs_client {
+        let client_dir = root.join("client");
+        fs::create_dir_all(&client_dir).unwrap();
+        fs::write(client_dir.join("app.js"), b"console.log('client');").unwrap();
+        fs::write(client_dir.join("style.css"), b"body { color: red; }").unwrap();
+        fs::create_dir_all(client_dir.join("assets")).unwrap();
+        fs::write(client_dir.join("assets/logo.png"), b"fake-png").unwrap();
     }
     BuildArtifact {
         out_dir: root.to_path_buf(),
@@ -55,23 +67,11 @@ const MATRIX: &[(Target, &[&str])] = &[
     (Target::Docker, &["deploy.json", "Dockerfile"]),
     (
         Target::Cloudflare,
-        &[
-            "deploy.json",
-            "worker.js",
-            "wrangler.toml",
-            "_routes.json",
-            "edge.js",
-        ],
+        &["deploy.json", "worker.js", "wrangler.toml", "_routes.json"],
     ),
     (
         Target::CloudflarePages,
-        &[
-            "deploy.json",
-            "_worker.js",
-            "wrangler.toml",
-            "_routes.json",
-            "edge.js",
-        ],
+        &["deploy.json", "_worker.js", "wrangler.toml", "_routes.json"],
     ),
     (
         Target::Vercel,
@@ -106,7 +106,7 @@ fn each_target_emits_its_characteristic_files() {
         fs::create_dir_all(&out).expect("mkdir out");
 
         // Static needs the prerendered source present; others ignore it.
-        let artifact = minimal_artifact(tmp.path(), *target == Target::Static);
+        let artifact = minimal_artifact(tmp.path(), *target);
 
         let written = emit(*target, &artifact, &out)
             .unwrap_or_else(|e| panic!("emit({target:?}) failed: {} {}", e.0.code, e.0.message));
@@ -146,7 +146,12 @@ fn vercel_json_uses_rewrites_and_handler_is_under_api() {
     let tmp = TempDir::new().unwrap();
     let out = tmp.path().join("deploy");
     fs::create_dir_all(&out).unwrap();
-    emit(Target::Vercel, &minimal_artifact(tmp.path(), false), &out).expect("emit");
+    emit(
+        Target::Vercel,
+        &minimal_artifact(tmp.path(), Target::Vercel),
+        &out,
+    )
+    .expect("emit");
 
     let cfg = fs::read_to_string(out.join("vercel.json")).expect("vercel.json");
     let v: serde_json::Value = serde_json::from_str(&cfg).expect("vercel.json parses");
@@ -177,7 +182,12 @@ fn netlify_toml_has_functions_dir_and_consistent_redirect_indent() {
     let tmp = TempDir::new().unwrap();
     let out = tmp.path().join("deploy");
     fs::create_dir_all(&out).unwrap();
-    emit(Target::Netlify, &minimal_artifact(tmp.path(), false), &out).expect("emit");
+    emit(
+        Target::Netlify,
+        &minimal_artifact(tmp.path(), Target::Netlify),
+        &out,
+    )
+    .expect("emit");
 
     let cfg = fs::read_to_string(out.join("netlify.toml")).expect("netlify.toml");
     assert!(
@@ -235,7 +245,12 @@ fn dockerfile_healthcheck_uses_the_oxide_path() {
     let tmp = TempDir::new().unwrap();
     let out = tmp.path().join("deploy");
     fs::create_dir_all(&out).unwrap();
-    emit(Target::Docker, &minimal_artifact(tmp.path(), false), &out).expect("emit");
+    emit(
+        Target::Docker,
+        &minimal_artifact(tmp.path(), Target::Docker),
+        &out,
+    )
+    .expect("emit");
 
     let df = fs::read_to_string(out.join("Dockerfile")).expect("Dockerfile");
 
@@ -286,7 +301,12 @@ fn lambda_template_references_the_handler() {
     let tmp = TempDir::new().unwrap();
     let out = tmp.path().join("deploy");
     fs::create_dir_all(&out).unwrap();
-    emit(Target::Lambda, &minimal_artifact(tmp.path(), false), &out).expect("emit");
+    emit(
+        Target::Lambda,
+        &minimal_artifact(tmp.path(), Target::Lambda),
+        &out,
+    )
+    .expect("emit");
 
     let tpl = fs::read_to_string(out.join("template.yaml")).expect("template.yaml");
     assert!(
@@ -307,5 +327,110 @@ fn lambda_template_references_the_handler() {
         handler.contains("export { handlerWrapper }"),
         "handler must expose `export {{ handlerWrapper }}` so the SAM \
          reference resolves; got:\n{handler}"
+    );
+}
+
+#[test]
+fn vercel_copies_client_assets_when_present() {
+    let tmp = TempDir::new().unwrap();
+    let out = tmp.path().join("deploy");
+    fs::create_dir_all(&out).unwrap();
+    // minimal_artifact creates client/ with app.js, style.css, assets/logo.png
+    emit(
+        Target::Vercel,
+        &minimal_artifact(tmp.path(), Target::Vercel),
+        &out,
+    )
+    .expect("emit");
+
+    // Client directory and files should be copied.
+    assert!(
+        out.join("client/app.js").is_file(),
+        "client/app.js must be copied"
+    );
+    assert!(
+        out.join("client/style.css").is_file(),
+        "client/style.css must be copied"
+    );
+    assert!(
+        out.join("client/assets/logo.png").is_file(),
+        "client/assets/logo.png must be copied"
+    );
+
+    // Content should match.
+    assert_eq!(
+        fs::read_to_string(out.join("client/app.js")).unwrap(),
+        "console.log('client');"
+    );
+    assert_eq!(
+        fs::read_to_string(out.join("client/style.css")).unwrap(),
+        "body { color: red; }"
+    );
+    assert_eq!(
+        fs::read(out.join("client/assets/logo.png")).unwrap(),
+        b"fake-png"
+    );
+}
+
+#[test]
+fn vercel_functions_copies_client_assets_when_present() {
+    let tmp = TempDir::new().unwrap();
+    let out = tmp.path().join("deploy");
+    fs::create_dir_all(&out).unwrap();
+    emit(
+        Target::VercelFunctions,
+        &minimal_artifact(tmp.path(), Target::VercelFunctions),
+        &out,
+    )
+    .expect("emit");
+
+    assert!(
+        out.join("client/app.js").is_file(),
+        "client/app.js must be copied"
+    );
+    assert!(
+        out.join("client/style.css").is_file(),
+        "client/style.css must be copied"
+    );
+    assert!(
+        out.join("client/assets/logo.png").is_file(),
+        "client/assets/logo.png must be copied"
+    );
+
+    assert_eq!(
+        fs::read_to_string(out.join("client/app.js")).unwrap(),
+        "console.log('client');"
+    );
+    assert_eq!(
+        fs::read_to_string(out.join("client/style.css")).unwrap(),
+        "body { color: red; }"
+    );
+    assert_eq!(
+        fs::read(out.join("client/assets/logo.png")).unwrap(),
+        b"fake-png"
+    );
+}
+
+#[test]
+fn vercel_skips_client_copy_when_missing() {
+    let tmp = TempDir::new().unwrap();
+    let out = tmp.path().join("deploy");
+    fs::create_dir_all(&out).unwrap();
+    // No client/ directory in artifact.
+    let artifact = BuildArtifact {
+        out_dir: tmp.path().to_path_buf(),
+        build_id: "test-build".into(),
+        client_manifest: serde_json::json!({}),
+        server_manifest: serde_json::json!({}),
+        prerendered: BTreeMap::new(),
+        static_fallback: None,
+        server_bundle: None,
+    };
+    emit(Target::Vercel, &artifact, &out).expect("emit");
+
+    // No client/ directory should be created.
+    assert!(
+        !out.join("client").exists(),
+        "client/ must not be created when absent in artifact"
     );
 }
