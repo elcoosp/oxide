@@ -7,13 +7,19 @@
 //! the wire half that feeds it. The record is the spec's
 //! `{ bytes, gzip, chunk, renderMsP50, cache }`; the data rides the
 //! injected [`CostSource`] seam — the production adapter reads the
-//! bundler's module map and the render profiler, and the compiler's
-//! `data-ox-src` attribute injection plus the overlay UI are the recorded
-//! remaining halves.
+//! bundler's module map and the render profiler. The DOM→source half (the
+//! compiler's `data-ox-src` stamp, `crates/compiler/src/data_src.rs`) and
+//! the overlay UI (`packages/core/src/client/cost-overlay.ts`, mounted by
+//! the boot on the ESM dev path) are landed; the endpoint stays the wire
+//! contract this example walks.
 //!
 //! This example walks the shapes against a two-record fixture source (no
 //! build data needed): the hit, the bytes-only record, the 404 miss, the
-//! 400/405 contracts and the pipeline's token guard.
+//! 400/405 contracts and the pipeline's token guard — the exact fetch the
+//! overlay speaks, its token riding `window.__oxide.devToken` (the render
+//! stage's `application/oxide-dev-token` tag; the CLI-side builder is
+//! `crates/cli/src/prerender.rs::dev_token_tag`, pinned by the cli lib's
+//! `dev_token_tag_*` pins).
 //!
 //! Run: `cargo run -p oxide-fw-server --example cost_endpoint`
 
