@@ -37,7 +37,8 @@ pub(crate) async fn stage_render(
         .expect("the stage order sets loader_headers");
     let deferred_values = &cx.deferred_values;
     let error_route_id = &cx.error_route_id;
-    let resolved_locale = &cx.resolved_locale;
+    // V2-A05 step 4: the locale rides the pipeline-owned slot.
+    let resolved_locale = &cx.locals.locale;
     let request_nonce = &cx.request_nonce;
     let middleware_headers = cx.middleware_headers.clone();
     let waterfall = cx.waterfall.clone();
