@@ -8,6 +8,2686 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Oxide is pre-1.0: the API is not yet frozen, and releases before v1.0 may
 include breaking changes announced in the relevant section below.
 
+## [0.18.0] — 2026-11-26
+
+### Added
+
+- **adapters**: The search surface and the AST-SRC-001 arm
+- **config**: The typed search key over the V2.L shape
+- **config**: Accept the search key in the typo validator
+- **config**: Map search_configured over the typed config
+- **adapters**: The capability-markdown-table docs emitter
+- **cli**: The reference-doc generator seam
+- **cli**: The oxide docs generate command wire-up
+- **cli**: The Appendix V2.K error-code registry
+- **bundler**: The sri digest seam
+- **bundler**: The manifest integrity field
+- **bundler**: The rolldown integrity walk
+- **config**: The security sri and trusted types keys
+- **config**: The csp report-only schema spelling
+- **config**: The cfg-sec knob validator
+- **render**: The injector integrity seam
+- **server**: The csp report-only matrix and the report sink
+- **cli**: The e04 security wiring
+- **bundler**: The head-producer seam
+- **bundler**: The manifest integrity verifier
+- **bundler**: Register the head module
+- **cli**: The prerender head-link wire-up and the verify integrity walk
+- **config**: The typed prefetch key with the inert defaults
+- **config**: The DSP-115 prefetch knob validator
+- **config**: The prefetch schema fragment
+- **render**: The prefetch bootstrap advertisement
+- **server**: The nav-graph substrate
+- **server**: The nav endpoint and observation arms
+- **cli**: The learned-prefetch wire-up
+- **core**: The client prefetch policy and loop
+- **core**: The navigation nav-header stamping
+- **core**: Start the prefetcher behind the advertised flag
+- **search**: The engine crate root with the wire constants
+- **search**: The spec's six-field tantivy schema
+- **search**: The document, query and SearchIndex seam contracts
+- **search**: The static export shape and the degraded matcher
+- **search**: The tantivy engine build, open and query path
+- **search**: The L1 query cache with the injected clock
+- **server**: The search endpoint state and its pure renderer
+- **server**: The pipeline seam and the /_oxide/search arm
+- **cli**: The collection entry to search document mapping
+- **cli**: The build emission and the serve wire-up
+- **search**: The SearchIndex generation seam for the L1 keys
+- **search**: The SwappableSearchIndex hot-reload seam
+- **search**: The hot-reload module wiring and re-exports
+- **server**: The generation-partitioned L1 keys, loud 500 fallback
+- **search**: The hot-reload walkthrough example
+- **cli**: The dev-loop search refresh and the hot handle
+- **adapters**: The V2-F11 delta-deploy engine
+- **adapters**: The delta wiring, the re-exports, OxideError surfaced
+- **adapters**: The delta-deploy walkthrough example
+- **dispatch**: The skew module registration
+- **dispatch**: The AcceptedGenerations seam and the skew pool
+- **dispatch**: The skew-pool walkthrough example
+- **adapters**: The object-store DeployStore target
+- **adapters**: Wire the s3 feature and re-exports
+- **adapters**: The object-store walkthrough example
+- **render**: The b08 streaming NonceSplicer seam
+- **render**: Register the splice module
+- **render**: The nonce-splice walkthrough example
+- **dispatch**: The V2-F10 GenerationPools serving seam
+- **dispatch**: Register the pools module
+- **dispatch**: The serving-pools walkthrough example
+- **diagnostics**: The Clone derive for shared job outcomes
+- **config**: The compilerBackend key and the avifSpeed knob
+- **config**: The CFG-BACKEND and CFG-AVIF load-time validators
+- **config**: The compilerBackend and avifSpeed schema leaves
+- **compiler**: The V2-C01 NativeCompiler seam
+- **compiler**: Register the native module and re-exports
+- **compiler**: The native-registry walkthrough example
+- **assets**: The V2-C09 image job model
+- **assets**: Register the image-jobs module and re-exports
+- **assets**: The avifSpeed knob threaded into ravif
+- **assets**: The image-jobs walkthrough example
+- **assets**: The V2-C07 svg optimizer seam
+- **assets**: Register the svg module and re-exports
+- **config**: The svg.optimize section and typed key
+- **config**: The svg schema fragment
+- **config**: Allow the svg top-level key
+- **cli**: The svg.optimize knob at the ?react import hook
+- **router**: The V2-E02 typed search delegation
+- **router**: Export declares_search_schema
+- **assets**: The svg_optimizer walkthrough example
+- **router**: The typed_search walkthrough example
+- **assets**: The V2-C08 FontSubsetter seam + the harvest
+- **assets**: Register font_subset and the used_chars field
+- **assets**: The glyph-usage walkthrough example
+- **cli**: The used-strategy glyph harvest at the emit_fonts site
+- **compiler**: The V2-B07 precompile engine module
+- **compiler**: The bounded-concurrency precompile engine
+- **config**: The typed llms key with the CFG-LLMS load validation
+- **config**: The llms schema fragment
+- **config**: The llms validator in the load pass
+- **bundler**: The sourcemap_compose seam module
+- **bundler**: The TransformOutput hook result and stitched chunk maps
+- **bundler**: The rolldown backend attaches the composed plugin map
+- **cli**: The McpTool registry with the manual rmcp handler
+- **cli**: The llms.txt and llms-full.txt emission module
+- **cli**: The --allow-write flag, hook map fold and llms call site
+- **dispatch**: The V2-F15 record capture seam and store
+- **dispatch**: The V2-F15 replay matcher, sequences and diff verdict
+- **dispatch**: The record and replay modules in the crate surface
+- **dispatch**: The record-source read side with the RPL-005 gate
+- **dispatch**: The replay-executor seam and the replay runner
+- **config**: The record and deploy keys with the duration grammar
+- **config**: The record/deploy load validators and the llms null fix
+- **config**: The record and deploy schema sections
+- **dev**: The V2-E12 WorkspaceLinks seam with the DEV-WS-001 refusal
+- **dev**: Extend the watcher roots with the resolved workspace links
+- **compiler**: V2-E03 migrate planner substrate
+- **compiler**: Register migrate module and exports
+- **dispatch**: V2-F14 offline idempotency stage
+- **dispatch**: Register idem module and crate docs
+- **config**: Typed offline key on OxideConfig
+- **config**: CFG-OFFLINE validator and key
+- **config**: Offline schema fragment
+- **core**: V2-F14 client outbox
+- **macros**: #[server_fn] shim, TsType derive, export_table!
+- **rustfn**: Crate facade — modules, ServerError, prelude, TsType
+- **rustfn**: Spec-verbatim C ABI — RawBuf, FnEntry, FnTable
+- **rustfn**: ODF bridge — serde payloads over the wire (D33)
+- **rustfn**: Panic-safe run_shim — catch_unwind, RFN-PANIC record
+- **rustfn**: Types — TsType trait, FnTypeEntry, .d.ts renderer
+- **rustfn**: Loader + id-mapped registry — RFN-001 gate, hot-swap
+- **server**: V2-F08 dispatcher consult — NativeFnSource seam
+- **compiler**: .server.rs import stub generator (same shapes as .ts)
+- **config**: Islands union (IslandSpec) and island_framework inference
+- **compiler**: Island boot planner — legacy, mixed, islands.json
+- **cli**: Wire rustfn dispatcher and island planner boot
+- **core**: Mixed client registry — hydrateMixedIsland(s), refusal
+- **core**: InstallBootRuntime takes the mixed registry
+- **core**: ResolveForeign transform — split-safe, carry flush
+- **bundler**: The pwa worker emitter — plan, source, emit seam
+- **bundler**: Register the pwa module beside the manifest it reads
+- **bundler**: The pwa_worker walkthrough example — plan, emit, print
+- **core**: The outbox speaks the worker fan-out and types the queue
+- **core**: The offline enhance wire — probe and net failure enqueue
+- **compiler**: The auto-islands inference — scan, manifest, fixpoint
+- **compiler**: Wire the interactivity seam into the public API
+- **compiler**: The auto-islands walkthrough example
+- **config**: The autoIslands gate — typed, schema'd, default false
+- **config**: The autoIslands schema entry beside the islands registry
+- **config**: Add CheckConfig and TypecheckBackend types
+- **config**: Validate check.typecheck with CFG-CHECK diagnostic
+- **config**: Add check.typecheck to JSON config schema
+- **compiler**: Implement VueNative backend via verter_core
+- **compiler**: Implement SvelteNative backend via svelte-compiler
+- **compiler**: Implement ReactCompilerNative via oxc_react_compiler
+- **compiler**: Register enabled native backends in NativeRegistry
+- **compiler**: Re-export feature-gated native compiler modules
+- **cli**: Fold compilerBackend hint into build fingerprint
+- **cli**: Integrate NativeRegistry into precompile pass
+- **cli**: Wire native compilers, oxide fmt, and check backends
+- **compiler**: Add the native-solid feature gate
+- **compiler**: Implement the Solid native JSX compiler
+- **compiler**: Register SolidNative, drop the unused_mut allow
+- **compiler**: Re-export the solid native backend
+- **compiler**: Carry the upstream source map on CompileOutput
+- **rustfn**: Add the swap-state primitives to the fn host
+- **rustfn**: Register the swap module and re-exports
+- **rustfn**: Add the swappable dev-loop host state
+- **dev**: Register the server_lib module
+- **dev**: Add the F08 watch-build-load-swap server-lib loop
+- **core**: Add the F09 static/server client search matcher
+- **core**: Carry the search mode on the __oxide boot flag
+- **core**: Export the search engine matcher from the client
+- **bundler**: Add pwa_register_source and emit both dist files
+- **cli**: Drive the bundler pwa seam from the build emission
+- **core**: Answer the worker flush fan-out from the boot module
+- **dispatch**: Add sample_roll_for and the shared finish
+- **dispatch**: Skip server-timing as re-derived state in replay_diff
+- **server**: Add the ResponseObserver seam on the funnel
+- **jshost-worker**: Install replay and the record captures
+- **cli**: Add the record_wire capture module
+- **cli**: Wire the recorder into the pipeline, add replay
+- **mcp**: Register replay.run, fix lint findings
+- **compiler**: Add Framework::from_source_name
+- **dispatch**: Add the replay_wire walkthrough example
+- **smoke-app**: Add the ox-replay config keys
+- **smoke-app**: Add the ox-replay loader fixture
+- **smoke-app**: Add the ox-replay page component
+- **cache**: Stamp and read the canonical A04 build id
+- **cli**: Declare the serve module for the skew state
+- **cli**: Boot the F10 skew pool with promote and expiry
+- **cli**: Install the A04 stage and the skew promote wiring
+- **server**: Expose the live endpoint wiring API and the stale body
+- **server**: Publish the request-id helper for the synthesized reruns
+- **cli**: Add the live hub state and rerun closure
+- **cli**: Wire the live endpoint arm, the hooks and the envelope flag
+- **cli**: Declare the live module in the serve module list
+- **smoke-app**: Add the ox-live fixture route
+- **smoke-app**: Add the ox-live server module with the revalidate
+- **types**: Carry the live flag on the client input
+- **core**: Sync the live connection from the applied input
+- **core**: Open and close the live stream with the boot lifecycle
+- **render**: Bake the stamped build id into the prerendered shells
+- **cli**: Route the serving pools by build id and boot the promoted
+- **server**: Add the stream sweep task and the resumable header seam
+- **cli**: Build the resumable-stream wiring from the typed config
+- **cli**: Build the brownout governor wiring and the sampler
+- **cli**: Register the streams and brownout serve modules
+- **cli**: Wire the reattach route, tee and enforcement
+- **cli**: Add the brownout L0 lookup with the staleCeiling bound
+- **server**: Report the brownout level on the health and ready
+- **router**: Scan the route's brownout priority into the tree
+- **router**: Carry the priority field on the route entry
+- **router**: Round-trip the priority through the route archive
+- **core**: Ride the router's data fetch through resumableFetch
+- **core**: Export the resumable fetch lifecycle from the client entry
+- **core**: Export the resumable fetch lifecycle from the package root
+- **core**: Add the server-side resumable response helper
+- **a01**: Phase 2 - cmd_build into phases
+- **a01**: Phase 2 - build ctx with shared fields
+- **a01**: Phase 2 - phase_load and early cutoff
+- **a01**: Phase 2 - phase_plan entry sets and options
+- **a01**: Phase 2 - client bundle and gates
+- **a01**: Phase 2 - server bundle + manifests
+- **a01**: Phase 2 - phase_prerender over the ctx
+- **a01**: Phase 2 - seed_l0 search + manifest
+- **a01**: Phase 2 - typegen routes + i18n
+- **a01**: Phase 2 - phase_emit stamps and summary
+- **a01**: Phase 2 - cmd_build orchestrator
+- **a01**: Phase 2 - build module wiring
+- **a01**: Phase 2 - selfcheck phases proof
+- **a01**: Phase 3 - DispatchDeps struct
+- **a01**: Phase 3 - RequestCtx per-request fields
+- **a01**: Phase 3 - stage_prelude short-circuits
+- **a01**: Phase 3 - stage_match and locale
+- **a01**: Phase 3 - stage_route hoists
+- **a01**: Phase 3 - stage_middleware chain
+- **a01**: Phase 3 - stage_data_route endpoint
+- **a01**: Phase 3 - stage_action arm
+- **a01**: Phase 3 - stage_l0_lookup hits
+- **a01**: Phase 3 - stage_loaders join
+- **a01**: Phase 3 - stage_endpoint tees
+- **a01**: Phase 3 - stage_render and finish
+- **a01**: Phase 3 - run_stages table
+- **a01**: Phase 3 - entry.rs stage runner
+- **a01**: Phase 3 - dispatch module wiring
+- **a01**: Phase 3 - serve boot runtime handles
+- **a01**: Phase 3 - selfcheck stages proof
+- **b08**: Nonce splices via NonceSplicer
+- **b05**: L0 keys adopt the KeyStr hash
+- **dispatch**: Outcome streaming and per-node elapsed in the load graph
+- **router**: The unified MatchedView over both match shapes
+- **router**: Export the MatchedView seam from the crate root
+- **cli**: LayoutLoadSpec carries the per-layout parent verdict
+- **cli**: RequestCtx threads the context table and route context
+- **cli**: SwappableRouteTree builds and rebuilds the context table
+- **cli**: Prelude loads the tree/table pair; live gate via the view
+- **cli**: Stage_match matches through MatchedView; label from the table
+- **cli**: Stage_route reads every chain answer from one table hit
+- **cli**: Stage_middleware walks the chain through run_chain
+- **cli**: Stage_loaders runs the parallel load graph
+- **cli**: The /__data path consumes the layout load specs
+- **cli**: Dev boot watches the real workspace link trees
+- **f04**: The experiment-exposure counters and exposition
+- **f04**: DispatchDeps carries the configured experiments
+- **f04**: RequestCtx carries the resolved outcome
+- **f04**: Stage_experiments over the landed engine
+- **f04**: Register the stage between middleware and data
+- **f04**: DispatchOpts.experiments for the pipeline pins
+- **f04**: Make_entry strips set-cookie from stored entries
+- **f04**: The boot converts the config experiments
+- **f04**: Why --route prints the experiment dimension
+- **f02**: The auto-islands build scan and registry merge
+- **f02**: The boot entry consumes the merged registry
+- **f02**: Register the auto-islands build module
+- **f04**: The experiments walkthrough example
+- **assets**: The disk-backed image CAS for the serve path
+- **assets**: Export the image CAS and job-error seam
+- **server**: The image job runner seam and the local deferral
+- **adapters**: The Arc delegation impl for DeployStore
+- **cli**: The deploy command over the delta engines
+- **cli**: Wire the deploy module into the commands surface
+- **cli**: The oxide deploy subcommand and its flags
+- **cli**: The boot conversion carries the search flag mode
+- **cli**: The search flag rides the render stage injections
+- **cli**: The dispatch deps carry the search flag
+- **cli**: The dispatch opts plumb the search flag to pins
+- **cli**: The image endpoint boots the ImageJobs engine
+- **render**: The search boot-flag script and the tt swapper
+- **render**: The ppr resolver routes through the policy handle
+- **core**: The parseSearch runtime for typed search params
+- **core**: The runtime of the generated href overloads
+- **core**: The Trusted Types policy defined once per realm
+- **core**: Export the typed-search and TT client surfaces
+- **core**: The boot defines the realm TT policy at import
+- **core**: The dev overlay sink routes through the policy
+- **core**: The deferred swapper routes through the tt handle
+- **core**: The search package export entry
+- **react**: The typed Link component and the goto re-exports
+- **react**: Export the Link component surface
+- **react**: The swapper mirror routes through the tt handle
+- **vue**: The swapper mirror routes through the tt handle
+- **svelte**: The swapper mirror routes through the tt handle
+- **solid**: The swapper mirror routes through the tt handle
+- **compiler**: The vendor_groups planner API over the island plan
+- **bundler**: The BundleOptions.vendor_groups field and the VendorGroup
+- **bundler**: The advancedChunks mapping and the options-hash coverage
+- **cli**: The mixed-registry vendor group derivation over the client bu
+- **cli**: The dev hmr flag on the pool payload
+- **worker**: The island:render op and the Vue/Solid refresh emission
+- **core**: The boot replay gate for in-place refreshed URLs
+- **core**: The solid refresh shim and the in-place registry
+- **core**: The quote-agnostic resolveForeign transform
+- **react**: The framework prop and the foreign pending placeholder
+- **solid**: The Island twin and the foreign pending placeholder
+- **svelte**: The Island twin and the foreign pending placeholder
+- **vue**: The Island twin and the foreign pending placeholder
+- **compiler**: Planner keeps the legacy boot bytes byte-identical
+- **cli**: The boot entry delegates to the planner; legacy body deleted
+- **cli**: The build writes .oxide/islands.json beside the boot entry
+- **cli**: Start_server registers the frozen route labels
+- **stream**: Bind resumable streams to the session cookie hash
+- **stream**: Export the binding seam; share the CT compare
+- **stream**: Walk through the session binding in an example
+- **cli**: Name the session cookie once (SESSION_COOKIE_NAME)
+- **cli**: Carry the boot's binding source on the stream wiring
+- **cli**: Mint stream buffers bound to the request session
+- **cli**: Demand the session identity back at stream reattach
+- **search**: Cap the query at 200 bytes before the engine
+- **compiler**: Register the props-surface seam and re-export its API
+- **compiler**: The props-surface engine for the f02 dev warn
+- **server**: Register the endpoint-map module and re-export its fold
+- **server**: The v2.j endpoint map as data with plane-rule tests
+- **cli**: The endpoints reference page generator
+- **cli**: The dev-boot island manifest over the build scan set
+- **cli**: Carry the manifest and log the pure-onprops warn
+- **cli**: Populate the serve-path esm state with the manifest
+- **plugin**: The machine-checked kind-by-hook compat matrix
+- **plugin**: The wasm load/resolve-id option ABI on the host
+- **plugin**: The object-safe HookHost seam and compat re-exports
+- **plugin**: The compat matrix walkthrough example
+- **server**: The open-in-editor endpoint seam
+- **server**: The component-cost endpoint seam
+- **server**: Wire the open and cost dev-plane arms
+- **server**: The open-editor walkthrough example
+- **server**: The cost-endpoint walkthrough example
+- **compiler**: The data-ox-src DOM-to-source stamp seam
+- **compiler**: Wire the stamp into the dev lowering entry
+- **compiler**: Register the data_src module and re-export
+- **compiler**: The data-ox-src walkthrough example
+- **bundler**: The source-cost engine seam
+- **bundler**: Register the cost module and re-export
+- **bundler**: The cost walkthrough example
+- **server**: The live hub's tag snapshot seam
+- **dispatch**: The generation snapshot rows and pin
+- **dev**: The inspector's live and generation rows
+- **server**: Export the live-tag and snapshot-cost seams
+- **server**: The snapshot-backed cost source adapter
+- **dev**: The inspector walkthrough example
+- **server**: The cost adapter's walkthrough section
+- **cost**: Add the ProfiledCostSource layered adapter
+- **cost**: Export ProfiledCostSource from the server crate
+- **inspector**: Add the module-graph search and loud persist_to
+- **cli**: Answer the inspector ?q= search through the dev renderer
+- **cli**: Wire the boot harvest into the inspector search
+- **bundler**: The cost-records file seam
+- **server**: The file-backed dev cost feed
+- **server**: Export the file-backed cost source
+- **cli**: Persist the cost records in the build phase
+- **cli**: Persist the cost records on dev rebuilds
+- **cli**: Attach the dev-plane endpoints at the serve boot
+- **server**: The trace-sink seam and the bounded ring feed
+- **server**: The traceresponse response half
+- **server**: The pipeline record points and the response half
+- **server**: The traces dev-plane row in the endpoint map
+- **server**: The trace feed walkthrough example
+- **cli**: Attach the trace feed at the serve boot
+- **server**: The trace-rows tracing export seam
+- **server**: Re-export the export seam and pass the query
+- **server**: The trace feed's filtered window
+- **server**: The traces row records the filtered window
+- **cli**: Attach the tracing export at the dev boot
+- **cli**: The OXIDE_TRACE_LOG export gate and module docs
+- **server**: The log-feed seam, ring and capture layer
+- **server**: The trace rows' JSONL file export sink
+- **server**: Wire the log feed into the pipeline and exports
+- **server**: The logs row in the endpoint map
+- **server**: The log-feed walkthrough example
+- **cli**: The dev-boot log capture and the file-export gate
+- **cli**: Attach the log feed and the export file child
+- **server**: The LogGate admission seam on the capture layer
+- **server**: Re-export the log-feed gate from the crate root
+- **server**: The FileTraceSink injectable writer seam
+- **cli**: The OXIDE_LOG_FEED_LEVEL gate and per-layer composition
+- **jshost**: The trace-parent extraction, guard and append rule
+- **jshost**: The worker loop seeds the fetch op's trace slot
+- **jshost**: The loader hosts stamp the validated traceparent
+- **jshost**: Framework renders stamp the validated traceparent
+- **jshost**: The trace_propagation example walks the seams
+- **cli**: The --log-feed-level boot flag beside the env var
+- **cli**: The feed-level override the boot flag installs
+- **graph**: The pipeline consumer example walks the engine
+- **cache**: The cache-event observer seam (records + tracing impl)
+- **cache**: The tiered store emits the observer's rows
+- **cache**: Re-export the observer seam from the crate root
+- **cache**: The observer seam walkthrough example
+- **cache**: The cache-event metrics exporter
+- **cache**: The bounded lossy cache-event feed
+- **cache**: Re-export the observability arms from the root
+- **cache**: The metrics exporter walkthrough example
+- **cache**: The event feed walkthrough example
+- **cache**: The handler_kind introspection seam and the health module
+- **cache**: The posture pull CacheHealth and its gauge render (F32)
+- **cache**: The posture health() and the honest coalesce emitter
+- **cache**: The http driver names itself in handler_kind
+- **cache**: The redis driver names itself in handler_kind
+- **cache**: The s3 driver kind and the dead meta_len binding gone
+- **cache**: The CacheOp::Coalesce parity row (F33)
+- **cache**: The coalesce counter families on the exporter
+- **cache**: The posture pull walkthrough example
+- **cache**: The coalesce parity walkthrough example
+- **diagnostics**: The diagnostic builder walkthrough example
+- **cache**: The observer fanout seam (F34)
+- **cache**: Re-export the fanout arm from the root
+- **cache**: The observer fanout walkthrough example
+- **cache**: The event feed's admission gate (F35)
+- **cache**: The feed walkthrough's gated section
+- **server**: The §20 cache-plane exposition slot on Metrics
+- **cache**: The boot posture walkthrough example
+- **cli**: The typed cache half and exporter handle on the stack
+- **cli**: The typed cache half rides the dispatch deps
+- **cli**: The opts wire the typed half into the test dispatch
+- **cli**: The flight owner records the publish count
+- **cli**: The boot records coalesces and exposes the cache plane
+- **cache**: The hot-key attribution ledger (F38)
+- **cache**: Re-export the attribution arm from the root
+- **cache**: The hot-key attribution walkthrough example
+- **cli**: The observability slot names the trace-log override
+- **cli**: The dev boot takes the trace-log flag
+- **cache**: The hot-key ledger's admission gate (F39)
+- **cache**: Re-export the admission gate from the root
+- **cache**: The walkthrough's gated deploy-watch section
+- **cache**: The boot posture walks the ledger half
+- **cli**: The boot attaches the ledger beside the exporter (F40)
+- **cli**: The §20 scrape composes the hot-key family
+- **cli**: The cache-plane scrape takes the boot window
+- **cli**: The boot resolves the hot-key top spelling
+- **cli**: The serve wire passes the resolved window
+- **cache**: The walkthrough's operator-window section
+- **cli**: The hot-key window's override slot and public resolver
+- **cli**: The observability module rides the crate root as public API
+- **config**: The cache.hotKeyTop project baseline knob
+- **config**: The hotKeyTop schema fragment with the zero floor
+- **cli**: The --cache-hot-key-top flag on the dev and serve boots
+- **cli**: The boot wire takes the config baseline
+- **cache**: The hot-key ledger's snapshot, coverage arm and take
+- **cache**: The hot-key snapshot rides the crate root re-export
+- **config**: The cache.coverageMetrics project baseline knob
+- **config**: The coverageMetrics schema fragment with default false
+- **cli**: The coverage resolver family and poison-recovery setters
+- **cli**: The --cache-plane-coverage flag on the dev and serve boots
+- **cli**: The cache_plane_scrape coverage arm rides the caller
+- **cli**: The serve boot resolves the coverage opt-in at the wire
+- **config**: The cache.healthMetrics project baseline knob
+- **config**: The healthMetrics schema fragment with default false
+- **cli**: The health parse core, env gate and layered resolver
+- **cli**: The cache-plane scrape composes the health posture arm
+- **cli**: The serve boot resolves the health opt-in at the wire
+- **cli**: The --cache-plane-health flag on the dev and serve boots
+- **server**: The CachePosture trait and the /-/health probe arm
+- **server**: The endpoint map gains the posture probe row
+- **config**: The cache.postureProbePath project baseline knob
+- **config**: The postureProbePath schema fragment
+- **cli**: The TierCachePosture adapter and the probe render
+- **cli**: The posture probe's public seam re-exports
+- **cli**: The cache_posture_path layered resolver family
+- **cli**: The --cache-posture-path flag on the dev and serve boots
+- **cli**: The boot wires the probe behind the resolved path
+- **cli**: The posture_probe consumer example
+- **cache**: The Evict op joins the event contract
+- **cache**: The exporter counts and renders the evictions
+- **cache**: The disk tier counts and emits its S-08 prune victims
+- **cache**: The posture carries the disk eviction total
+- **cache**: The eviction consumer example
+- **cache**: The health example names the disk eviction total
+- **cache**: The cache plane's HTTP service
+- **cache**: The service and serving half join the public API
+- **cache**: The §11.3 serving half composes serve_entry
+- **cache**: The cache_plane two-node walkthrough example
+- **cache**: The conditional serving walkthrough example
+- **cache**: The serve_entry doc names its F55/F56 consumers
+- **cli**: The L0 store and hit envelope join the canonical seam
+- **cli**: The L0 304 arm answers through the canonical seam
+- **cli**: Publish the L0 conditional seam's public face
+- **server**: The asset 304 rides the canonical comparison
+- **cache**: The plane health provider trait and its tiered impl
+- **cache**: The plane health re-export joins the public API
+- **cache**: The plane health walkthrough example
+- **server**: The pipeline mounts the shared cache plane
+- **server**: The plane mount walkthrough example
+- **server**: The governor walkthrough example
+- **server**: The live hub walkthrough example
+- **cache**: The service names its provider posture
+- **cache**: The http client bounds its exchange with a deadline
+- **config**: The cache.planeMount baseline joins the config
+- **config**: The schema declares the planeMount knob
+- **cli**: The layered mount resolver joins the family
+- **cli**: The boot gate composes the mounted plane
+- **cli**: The cache-plane-mount flag rides both boots
+- **cli**: The boot wire mounts the plane over its own tier
+- **server**: The mounted plane's /health answers on the mount
+- **cache**: The client deadline walkthrough example
+- **server**: The mounted health walkthrough example
+- **schema**: The print_schema consumer walkthrough example
+- **cache**: The §20 exposition renders from the pulled snapshot (F61)
+- **cache**: The plane's metrics arm answers GET /metrics (F61)
+- **cache**: The metrics seam rides the crate's public surface
+- **server**: Route the mount's metrics arm; recover poisoned locks
+- **cli**: The mount gate composes the §20 metrics source (F62)
+- **cli**: The boot wire passes the exporter to the mount (F62)
+- **cache**: The peer-posture probes join the client half (F63)
+- **cache**: The shell's body drain learns its bound (F64)
+- **cache**: The peer and bounds seams ride the crate's public surface
+- **cache**: The peer-posture walkthrough example
+- **cache**: The bounded-exchange walkthrough example
+- **cache**: The client's read bound and request-line name guard
+- **cache**: The client read bound's red-first pins
+- **cache**: The request-line guard's red-first pins
+- **cache**: The read cap's consumer walkthrough example
+- **cache**: The name guard's consumer walkthrough example
+- **cache**: The shell's concurrency bound gates the accept loop (F67)
+- **cache**: The client's inflight bound rides the request core (F68)
+- **cache**: The bounded connections walkthrough example
+- **cache**: The client inflight cap walkthrough example
+- **cache**: The entry seal's consumer walkthrough example
+- **cache**: The sharded multi-plane client (F69)
+- **cache**: Wire the shard module into the crate surface
+- **cache**: The shard's consumer walkthrough example
+- **cache**: The client's keep-alive pool rides the exchange
+- **cache**: The shell honors the request's keep-alive
+- **cache**: The keep-alive's consumer walkthrough example
+- **search**: Re-export wipe_dir_for_rebuild from crate root
+- **schema**: Add cache planeMount configuration option
+- **jshost**: Add ModuleSource seam to framework renderer (V2-A09 M1)
+- **cli**: Thread ModuleSource through framework stack config (V2-A09)
+- **cli**: The build prerender imports the server bundle (V2-A09)
+- **cli**: Serving keeps Source module imports (V2-A09)
+- **cli**: Dev keeps Source module imports (V2-A09)
+- **cli**: Replay keeps Source module imports (V2-A09)
+- **cache**: Expose the reverse tag index read seam (D25)
+- **dispatch**: Add the route-context resolution substrate
+- **dispatch**: Add the route-context consumer example
+- **dispatch**: Add the load-graph walkthrough example
+- **workspace**: Add the edge-primitives member + workspace dep
+- **edge-primitives**: New V8-free pure primitives crate manifest
+- **edge-primitives**: The pure primitives module root (sse/key/splice)
+- **edge-primitives**: Extract sse_frame to its V8-free home
+- **edge-primitives**: Extract KeyHash/KeyStr to their V8-free home
+- **edge-primitives**: Extract NonceSplicer to its V8-free home
+- **router**: Gate scan/regex behind default-on features
+- **router**: Gate the scan module + scan fns behind the scan feature
+- **router**: Gate the regex constraint path behind the regex feature
+- **core-wasm**: Add edge-primitives dep, bench target, workspace lints
+- **core-wasm**: Add the V2-E09 edge pure exports + bindings
+- **core-wasm**: End-to-end edge ops consumer example
+- **cli**: Embed the edge glue for the Cloudflare emit
+- **cli**: Emit the edge glue next to edge.wasm in dist
+- **adapters**: Spec-shaped worker + glue loader + Live Unsupported
+- **plugin**: Extend ModuleManifest with v1 module contributions
+- **config**: Add modules_config field + schema entry
+- **config**: Declare modulesConfig in the JSON schema
+- **core**: Add defineModule + ModuleContext (V2-E06)
+- **core**: Export the module API from index.ts
+- **cli**: Extend the loader with v1 wiring + adapters enforcement
+- **cli**: Add the oxide add config-edit + PM detection
+- **cli**: Real oxide add — PM detect, install, AST edit, report
+- **cli**: Wire v1 contributions at the loader seam
+- **cli**: Pub modules_loader + module_config_edit modules
+- **analytics**: The @oxide/analytics first-party module
+- **analytics**: The module index wiring vitals + webhook
+- **analytics**: The module middleware contribution
+- **analytics**: The module server-fn contribution
+- **analytics**: The module fixture route
+- **fixtures**: The analytics-app fixture + symlinked module
+- **fixtures**: The analytics-app home route
+- **cli**: The module_add consumer example (V2-E06)
+- **conformance**: The V2-R01 assertion descriptor shape
+- **adapters**: Dump_matrix example — matrix JSON generator
+- **conformance**: The generated capability matrix JSON
+- **conformance**: The R02 matrix TS bridge
+- **conformance**: The capability-skip engine
+- **conformance**: Migrate the v0.1 set into the registry
+- **conformance**: The ci-bound skip-result helper
+- **conformance**: The assertion registry index
+- **conformance**: --adapter/--target runner + skip table
+- **jshost**: Per-route permission policy substrate
+- **config**: Permissions typed config field + default posture
+- **config**: Permissions JSON schema fragment
+- **config**: CFG-PERM validator + modulesConfig known-key fix
+- **router**: Declares_permissions export scan
+- **router**: Re-export declares_permissions
+- **jshost**: PermGuard + per-op enforcement + env/fs ops
+- **jshost**: Wire PermGuard into dispatch + Node advisory
+- **jshost**: Per-route permissions consumer example
+- **conformance**: The V2-E05 case schema + loader
+- **conformance**: The plugin-compat assert evaluator
+- **conformance**: The report parser + matrix renderer
+- **scripts**: The plugin-compat runner + --dry-run mode
+- **plugin**: The load-time unsupported-hook report model
+- **plugin**: Wire the load-time report into PluginRegistry
+- **plugin**: WasmPlugin::load_time_report
+- **cli**: The PluginCompatPage docs generator + base() override
+- **cli**: Cmd_docs writes under the docs root + joins base
+- **rustfn**: Share the resolved-call trio and add RegistryReport
+- **rustfn**: Impl RustFnRegistry for SwappableHost and report
+- **rustfn**: Re-export SwappableHost and RegistryReport
+- **rustfn**: Add the registry consult walkthrough example
+- **rustfn**: Add RustFnRegistry::ids, route call via resolve_call
+- **rustfn**: Impl RustFnRegistry::ids for SwappableHost
+- **rustfn**: The ChainedRegistry multi-host consult adapter
+- **rustfn**: Re-export ChainedRegistry and its report
+- **rustfn**: The chained registry walkthrough example
+- **rustfn**: Add the StatsRegistry call-outcome decorator
+- **rustfn**: Re-export StatsRegistry and CallStats from the prelude
+- **rustfn**: The StatsRegistry walkthrough example
+- **rustfn**: Wire the tracing and hot_keys modules + prelude
+- **rustfn**: The TracingRegistry per-call tracing decorator
+- **rustfn**: The HotKeyRegistry per-id attribution decorator
+- **rustfn**: The TracingRegistry walkthrough example
+- **rustfn**: The HotKeyRegistry walkthrough example
+- **bundler**: The module-to-package map for reached packages
+- **cli**: Filter the SBOM to packages that reached the bundle
+- **bundler**: The reached-packages walkthrough example
+- **compiler**: Add Vue/Svelte data-ox-src template stamp to data_src
+- **compiler**: Re-export inject_template_data_ox_src from lib
+- **compiler**: Register data_src_template criterion bench
+- **cache**: Include dist/native in build identity inputs
+- **cli**: Implement native server-fn discovery, consult, and hooks
+- **cli**: Expose native_fns module
+- **cli**: Add phase_native production build step
+- **cli**: Declare and re-export build::native module
+- **cli**: Invoke phase_native before client and server bundling
+- **cli**: Chain .server.rs resolve and load hooks into bundler
+- **cli**: Thread optional live NativeFnSource into server startup
+- **cli**: Wire live dev native-fn rebuild loop into cmd_dev
+- **server**: Implement opt-in brownout request hedger
+- **config**: Add the sharded cache.handler variant
+- **config**: Describe the sharded handler in the editor schema
+- **cli**: Add the boot posture line and sharded compose seams
+- **cli**: Emit the remote plane's posture boot line
+- **cli**: Map the sharded kind in the cacheHandler plugin hook
+- **cli**: Export the posture line and sharded resolver seams
+- **jshost**: Add web globals polyfill for Headers, Request, Response
+- **jshost**: Port endpoint and middleware dispatch to the V8 bootstrap
+- **jshost**: Surface early stream-call errors via the finish path
+- **jshost**: Add the endpoint and middleware parity walkthrough
+- **dispatch**: Add the brownout early-drop to the generation pool
+- **plugin**: Mark the wasm load and resolveId hooks wired
+- **cli**: Feed wasm component load/resolve hooks to the bundler
+- **cli**: Compose the wasm arm into the build hook chains
+- **cli**: Compose the wasm arm into the dev client hook chain
+- **cli**: Export the wasm load/resolve wire as the public seam
+- **serve**: Expose the early-drop on both serving pool levels
+- **serve**: Wire the Emergency rung to the pool early-drop
+- **serve**: Attach the boot's early-drop seam to both pools
+- **cli**: Add the wasm hook wire walkthrough example
+- **cli**: Add the brownout evict walkthrough example
+- **cli**: Stamp the dev precompile source before the compile
+- **cli**: Stamp the dev client pool-compile source
+- **cli**: Pass the src root to the dev SSR precompile
+- **cli**: Add the table-driven doctor check table
+- **cli**: Wire the e08 check table into cmd_doctor
+- **cli**: Export the doctor checks module
+- **cli**: Add the retained-generation rollback seam
+- **cli**: Retain the finished dist as a rollback generation
+- **cli**: Add the --generation flag and the rollback command arg
+- **cli**: Swap the generation in before the serve boot
+- **cli**: Add the oxide rollback command
+- **vue**: Add the typed Link twin and nav re-exports
+- **vue**: Export the typed navigation surface
+- **solid**: Add the typed Link twin and nav re-exports
+- **solid**: Export the typed navigation surface
+- **svelte**: Add the typed Link component
+- **svelte**: Add the typed navigation re-export module
+- **svelte**: Export the typed navigation surface
+- **diagnostics**: The overlay stack rides the diagnostic
+- **dev**: The frame-mapping seam over the compile outputs' maps
+- **dev**: Wire the frames module and the mapped payload entry
+- **cache**: The edge KV cache handler over the KvStore seam
+- **cache**: Export the KV handler and its store seam
+- **cli**: Mount the releases boot seam in serve
+- **cli**: F11 releases layout boot seam over the store
+- **cli**: Shared promote core and the watch dist task
+- **cli**: Releases pre boot swap and the watch spawn
+- **cli**: Start command watch dist and releases flags
+- **cli**: Boot module map store and mapped error helper
+- **cli**: Export the mapped frame helper for walkthrough
+- **cli**: Map the hmr error frames through the store
+- **server**: The data-envelope limit rides the Limits family
+- **cli**: The route-data envelope refuses past its bound
+- **cli**: Dispatch deps thread the envelope bound
+- **cli**: Dispatch opts default to the limits twin
+- **cli**: The data-route stage passes the envelope bound
+- **cli**: The serve boot threads the data-envelope limit
+- **cli**: The §10.4 ppr shell-seed contract module
+- **cli**: The build ctx carries the ppr shell rows
+- **cli**: The build ctx boots with the ppr shell rows unset
+- **cli**: Register the ppr seed module in the build tree
+- **cli**: The prerender walk collects ppr shell sources
+- **cli**: The build orchestrator writes the ppr shell manifest
+- **cli**: The serve boot seeds the shell store from the manifest
+- **cli**: The promote core clears the stale build shells
+- **cli**: Export the ppr shell seed contract
+- **cli**: The shell store keys accessor serves the seed pins
+- **pwa**: The resolved offline fallback always joins the precache
+- **pwa**: The emit site audits the offline fallback answerability
+- **core**: The f17 cost overlay module
+- **core**: The boot mounts the cost overlay on the esm dev path
+- **core**: Export mountCostOverlay for self-mounting hosts
+- **cli**: The dev_token_tag page-wire builder
+- **cli**: Dispatch deps carry the dev session token
+- **cli**: The render stage injects the dev-token page wire
+- **cli**: The serve boot passes the minted dev token through
+- **cli**: The request ctx carries the unified locals slot
+- **cli**: The prelude builds the session slot and the locals snapshot
+- **cli**: The matcher lands the i18n locale in the locals slot
+- **cli**: The middleware stage folds the chain answer into the slot
+- **cli**: The experiments stage rides the pipeline-owned slot
+- **migrate**: The apply writes the plan's config keys
+- **cli**: The migrate report names the applied config keys
+
+### CI
+
+- The docs-check job over docs generate --check
+- **workflows**: Remove benchmark workflow
+- **workflows**: Remove main CI workflow
+- **workflows**: Remove npm publish workflow
+- **workflows**: Remove release binaries workflow
+- **workflows**: Remove release changelog workflow
+- **workflows**: Remove scaffold-install workflow
+- Restore workflows and templates removed in a919cda..a4a8b6f
+- Fix the red gates from runs 43711433216/43711433156
+- Run the worker, replay, A04 and skew pins
+- Run the live SSE e2e pin
+- Run the resume and brownout e2e pins
+- **a01**: Add the dist-digest and search-feature gate jobs
+- The deploy-s3 feature job and the two acceptance steps
+- **bench-gate**: Wire the criterion microbench gate (R03)
+- The docs-check command rides the parent command's --root
+- Add the missing Install nasm step to the node job
+- **edge**: Add the 400KB gzip wasm budget gate script
+- **edge**: Enforce the 400KB gzip wasm budget in the wasm32-edge job
+- **scripts**: The lint-uniformity shell guard for the rust/lint job
+- **scripts**: The launch gate excludes the live r10 scorecard
+
+### Chores
+
+- **release**: V0.14.0
+- **release**: V0.15.0
+- **release**: V0.16.0
+- **release**: V0.17.0
+- **gitignore**: The ship manifest and PR body stay untracked
+- **adapters**: Drop the homepage inheritance redundant with repository
+- **assets**: Drop the homepage inheritance redundant with repository
+- **bundler**: Drop the homepage inheritance redundant with repository
+- **cache**: Drop the homepage inheritance redundant with repository
+- **cli**: Drop the homepage inheritance redundant with repository
+- **compiler**: Drop the homepage inheritance redundant with repository
+- **config**: Drop the homepage inheritance redundant with repository
+- **core-wasm**: Drop redundant homepage inheritance
+- **diagnostics**: Drop redundant homepage inheritance
+- **dispatch**: Drop the homepage inheritance redundant with repository
+- **graph**: Drop the homepage inheritance redundant with repository
+- **jshost**: Drop the homepage inheritance redundant with repository
+- **plugin**: Drop the homepage inheritance redundant with repository
+- **render**: Drop the homepage inheritance redundant with repository
+- **router**: Drop the homepage inheritance redundant with repository
+- **schema**: Drop the homepage inheritance redundant with repository
+- **search**: Drop the homepage inheritance redundant with repository
+- **server**: Drop the homepage inheritance redundant with repository
+- **repo**: Gitignore the ship manifest and the PR body
+- Docs brainstorm
+- **cargo**: Remove cargo-audit suppression config
+- **cargo**: Remove host linker warning suppression config
+- **test**: Remove nextest configuration
+- **github**: Remove funding configuration
+- **github**: Remove bug report issue template
+- **github**: Remove issue template config
+- **github**: Remove feature request issue template
+- **github**: Remove pull request template
+- **pnpm**: Remove empty .npmrc file
+- **pnpm**: Regenerate lockfile for examples/why-dynamic-app
+- **router**: Initialize the priority field in the entry literals
+- **router**: Initialize the priority field in the matcher and testing
+- **router**: Initialize the priority field in the typegen literal
+- **router**: Initialize the priority field in the example literal
+- **router**: Initialize the priority field in the test literals
+- **router**: Initialize the priority field in the typegen test literal
+- **example**: Add the ox-stream resumable fixture route
+- **example**: Declare the slow route's brownout priority
+- **example**: Enable the brownout mode in the smoke fixture
+- Ignore local sandbox artifacts
+- **cli**: Delete the superseded parallel_load_savings_ms helper
+- **scripts**: The recorded PHASE_SUBS and STAGE_RULES substitutions
+- **scripts**: The sandbox bootstrap script (rustc, nasm, ship)
+- **scripts**: The phases divergence diagnostic
+- **scripts**: The PHASE_SUBS recording script
+- **scripts**: The prerender sub recording script
+- **scripts**: The legacy boot fixture transcriber
+- **scripts**: The M0 tier-1 battery runner
+- **scripts**: The V8-free touched-crate battery runner
+- **scripts**: The recorded 472 sub carries the re-point
+- **release**: Align tailwind version and fix bump script precondition
+- **scripts**: Record the stream-binding stage substitutions
+- **compiler**: Drop the redundant allow over the dead-use guard
+- **config**: Regenerate the committed schema json
+- **lock**: Sync the lockfile after the plugin dependency drop
+- **gitignore**: Ignore the ship delivery files
+- **lock**: Sync the lockfile after the dead dep drop
+- **lock**: Sync the lockfile after the bundler flate2 dependency
+- **lock**: Sync the lockfile after the dead dep drops
+- **schema**: Regenerate the config schema with the hotKeyTop knob
+- **schema**: Regenerate the schema with coverageMetrics
+- **schema**: Regenerate the schema with healthMetrics
+- **schema**: Regenerate the schema with postureProbePath
+- **lock**: The server crate's cache-crate dependency edge
+- **cli**: The boot pipeline literal gains the cache_plane slot
+- **scripts**: Add zero-API local git bisect harness for smoke app
+- **scripts**: Add local validator for ship.toml delivery manifest
+- Gitignore the ship ceremony artifacts
+- **scripts**: The deliverable zip-build helper
+- **config**: Regenerate the checked-in config schema JSON
+- **lock**: Record the oxide-fw-jshost config dependency
+- **gitignore**: Un-ignore the recorded plugin-compat dist trees
+- **scripts**: The plugin-compat cases/fixtures/logs generator
+- **scripts**: The faithful plugin-compat.md regenerator
+- **scripts**: The faithful errors.md regenerator
+- **scripts**: The ship.toml generator
+- **plugin**: Inherit the workspace lint policy
+- **graph**: Inherit the workspace lint policy
+- Gitignore ship.toml + .github/pr-body.md
+- **bundler**: Inherit the workspace lint policy
+- **cli**: Inherit the workspace lint policy
+- **dev**: Inherit the workspace lint policy
+- **jshost**: Inherit the workspace lint policy
+- **scripts**: The mechanical-fix applicator
+- **scripts**: The clippy findings extractor
+- **rustfn**: Drop the dead Duration binding in the registry example
+- **git**: Deduplicate ship artifact ignore rules
+- **cli**: Use std hint black_box in the module_api bench
+- **gates**: Record the jshost clippy debt count
+- **repo**: Ignore the ship delivery artifacts
+- **repo**: Ignore the ship delivery artifacts
+- **release**: Bump to v0.18.0
+
+### Dependencies
+
+- **deps**: The lockfile refresh the sourcemap dep edge carries
+- **deps**: Remove npm-check-updates configuration
+- **deps**: Lock the solidjs-compiler git dependency
+- **deps**: Lock the dev crate's rustfn and compiler deps
+- **deps**: The rolldown_utils lockfile entry
+- **deps**: The lockfile tracks the bench criterion dev-dep
+- **deps**: The lockfile tracks the observer dev-dep
+- **deps**: Update lockfile for edge-primitives + criterion dev-dep
+
+### Documentation
+
+- **adapters**: The refusal example walks the search verdicts
+- **adapters**: The matrix example prints the E11 table
+- **config**: The feature_report consumer example
+- **adapters**: Embed the generated capability table
+- **config**: Document the search key and the example
+- **deviations**: The search-key and doc-table record
+- **spec**: The V2.O rows for the F09 and E11 halves
+- **architecture**: The search arm and the doc-table seam
+- Re-measure the README test badge for the new pins
+- **handoff**: Record the search-key and doc-table session
+- **config**: Describe the 46 bare schema keys (the DOC-001 gate)
+- **cli**: The docs-generate consumer walkthrough
+- **cli**: The generated capability-matrix page
+- **cli**: The generated config reference page
+- **cli**: The generated cli reference page
+- **cli**: The generated error-registry page
+- **cli**: The docs-generate command bullet
+- **architecture**: The cli row and the E11 what-changed bullet
+- **spec**: The V2.O E11 row for the generator half
+- **deviations**: The E11 generator and registry record
+- Re-measure the test badge for the E11 pins
+- **handoff**: Record the docs-generate and registry session
+- **bundler**: The sri consumer example
+- **errors**: The cfg-sec registry row
+- The regenerated config reference
+- The regenerated errors reference
+- **architecture**: The e04 rows and the what-changed bullet
+- **spec**: The v2.o e04 row
+- **deviations**: The e04 record
+- **handoff**: Record the e04 security session
+- **bundler**: The head-producer consumer example
+- **bundler**: The integrity verifier consumer example
+- **errors**: The VRF-INTEGRITY registry row
+- The regenerated errors reference
+- **architecture**: The bundler row and the what-changed bullet
+- **deviations**: The e04-tail record and the closed deltas
+- **spec**: The v2.o e04 row
+- The plan-esm-hmr tier-1 status sync
+- The docs command row and the re-measured badge
+- **cli**: The verify walk and the check strictness fix
+- **bundler**: The sri and head module bullets
+- **handoff**: Record the e04-tail session
+- **server**: The navgraph consumer example
+- **errors**: The DSP-115 registry row
+- The regenerated errors reference
+- The regenerated config reference
+- **architecture**: The navgraph row and the what-changed bullet
+- **deviations**: The F13 record
+- **spec**: The V2.O F13 row
+- **server**: The NavGraph bullet
+- The re-measured test badge
+- **handoff**: Record the F13 session
+- **search**: The engine walkthrough consumer example
+- **errors**: The SRC-101 to SRC-106 registry rows
+- Regenerate the errors reference page
+- Regenerate the config reference page
+- **architecture**: The search crate row and what-changed
+- **deviations**: The V2-F09 record with the five deltas
+- **spec**: The V2.O F09 row records the landed halves
+- **readme**: Re-measure the badge and name the crate
+- **handoff**: Record the F09 engine session
+- **architecture**: The search row and the hot-reload bullet
+- **deviations**: The F09-tail record with the four deltas
+- **readme**: The re-measured badge and status row
+- **handoff**: Record the hot-reload session
+- **adapters**: The delta-deploy README section and provider bullet
+- **errors**: The six DEP registry rows
+- Regenerate the errors reference page with the DEP rows
+- **spec**: The V2.O F11 and F10 rows record the substrates
+- **deviations**: The V2-F11 and V2-F10 records
+- **architecture**: The delta row and the skew-pool bullet
+- **handoff**: Record the delta-deploy session
+- **adapters**: The object-store target README section
+- **errors**: The DEP-URL registry row
+- **errors**: Mirror the DEP-URL row on the reference page
+- **spec**: The F11 and B08 rows record the landed halves
+- **deviations**: The F11 tail and B08 phase-2 records
+- **architecture**: The objstore and splice rows and bullets
+- **handoff**: Record the object-store and splicer session
+- **readme**: Re-measure the test-count badge to 2,034
+- **publishing**: The 20-crate count
+- **conventions**: The repo-relative spec path
+- **deviations**: The F10 serving-pools record
+- **spec**: The F10 row records the pools half
+- **architecture**: The dispatch pools row and bullet
+- **errors**: The three new rows and the CMP-NAT-001 flip
+- **errors**: The reference page rows for the three new codes
+- **config**: The compilerBackend and avifSpeed reference leaves
+- **spec**: The C01, C09 and A08-A10 status-table rows
+- **deviations**: The C01 and C09 records
+- **handoff**: The native-compiler + image-jobs session record
+- **errors**: The three AST-SVG registry rows
+- **spec**: The C07, C08 and E02 status-table rows
+- **deviations**: The C07 and E02 records
+- **errors**: The AST-FNT-002 registry row
+- **errors**: The reference page row for AST-FNT-002
+- **spec**: The C08 and B07 status-table rows
+- **deviations**: The C08 and B07 records
+- **handoff**: The font-subsetting + precompile-engine session record
+- **bundler**: The sourcemap_compose walkthrough example
+- **cli**: The mcp_registry walkthrough example
+- **errors**: The BLD-SMAP registry row
+- **reference**: The regenerated errors page with BLD-SMAP
+- **spec**: The C06 and E07 status-table rows
+- **deviations**: The E07 replay.run and llms-full source deltas
+- **readme**: The test count and the release-tag drift
+- **dispatch**: The record-capture walkthrough example
+- **dispatch**: The replay-replay walkthrough example
+- **errors**: The RPL-001 and RPL-004 rows, RPL-002 and RPL-003 landed
+- **reference**: The regenerated errors page with the RPL rows
+- **deviations**: The V2-F15 record and the E07 replay.run delta
+- **spec**: The F15 partial status-table row
+- **dispatch**: The runner seam in the crate surface
+- **dispatch**: The replay-runner walkthrough example
+- **errors**: The RPL-005, CFG-REC, CFG-DEPLOY and CFG-LLMS rows
+- **reference**: The errors page rows for the new registry codes
+- **reference**: The llms, record and deploy config sections
+- **spec**: The F15 and F10 status-table rows
+- **deviations**: The replay-runner and deploy-key records
+- **handoff**: The session handoff header
+- **dev**: The workspace-links walkthrough example
+- **dev**: The workspace seam in the crate surface
+- **errors**: The DEV-WS-001 registry row
+- **reference**: The DEV-WS-001 page row
+- **odf**: The # Errors sections and the self-free push_anon
+- **cache**: The tag-invalidation walkthrough example
+- **deviations**: The E12 substrate and the A02-tail records
+- **spec**: The E12 substrate status-table row
+- **errors**: New MIG/CFG/DSP registry rows
+- **reference**: New error page rows
+- **reference**: Offline config section
+- **spec**: F14 split and E03 substrate rows
+- **deviations**: E03 and F14 records
+- **architecture**: Crate rows and changes
+- **schema**: Regenerated config schema
+- **readme**: Badge re-measured
+- **handoff**: Session handoff header
+- **rustfn**: Host walkthrough — mount, register, call, hot-swap
+- **errors**: RFN-001 lands; RFN-003/004/PANIC/TYPES and FN-TIMEOUT
+- **errors**: Render the six new rows in the reference page
+- **schema**: The islands entry describes the string|object union
+- **schema**: Regenerate the config schema (islands union)
+- **compiler**: Mixed-islands walkthrough — one island per framework
+- **deviations**: F08 and F01 substrate records
+- **spec**: F01 and F08 status rows record the landed substrates
+- **architecture**: The bundler emitter bullet, the missing crate rows
+- **deviations**: The F14 tail record — the emitter and wire deltas
+- **spec**: The F14 status row records the landed tail
+- **readme**: Badge re-measured — 2334 rust, 490 ts
+- **handoff**: The session handoff header
+- **schema**: Regenerate the config schema (autoIslands)
+- **errors**: The AST-ISL-001 corrupt-side-car refusal row
+- **errors**: Render the AST-ISL-001 row in the reference page
+- **config**: The framework.autoIslands line in the generator's order
+- **spec**: The F02 status row records the landed substrate
+- **deviations**: The F02 record — spelling, template scan, supersets
+- **architecture**: The compiler row gains the F02 bullet
+- **readme**: Badge re-measured — 2366 rust, 490 ts
+- **compiler**: The migrate walkthrough's doc backtick
+- **dispatch**: The idem walkthrough hoists the flaky handler
+- **schema**: Regenerate config JSON schema with check section
+- **cli**: Add check_backends walkthrough example
+- **decisions**: Record V2-C02 Solid native compiler kill
+- **decisions**: Record V2-C03 Vue native compiler decision
+- **decisions**: Record V2-C04 Svelte native compiler decision
+- **decisions**: Record V2-C05 React Compiler native decision
+- **decisions**: Record V2-C10 MDX native evaluation kill
+- **architecture**: Document native framework compilers
+- **deviations**: Record Wave C spec deltas and baseline repairs
+- **compiler**: Add the solid_native walkthrough example
+- **compiler**: Point the stand-in comment at the landed backend
+- **errors**: Add CMP-SOL-001 and the missing backend rows
+- **errors**: Mirror the backend CMP rows on the reference page
+- **decisions**: Record the C02 re-open (the in-repo Solid transform)
+- **deviations**: Record the C02 re-open deltas
+- **spec**: Update the C01 and C02-C11 status rows
+- **compiler**: Demo the upstream use: refusal in solid_native
+- **decisions**: Record the C02 dependency arm landing
+- **deviations**: Add the C02 dependency-arm addendum
+- **spec**: Mark the C02 dependency arm landed
+- **dev**: Add the server_lib_loop walkthrough example
+- **errors**: Add the DEV-RFN and RPL-006 registry rows
+- **errors**: Mirror the DEV-RFN and RPL-006 rows on the page
+- **spec**: Record the F08 dev-loop and F09 client tails
+- **architecture**: Record the swap state and the dev loop
+- **deviations**: Record the F08 and F09 milestone deltas
+- **readme**: Re-measure the test badge for the milestones
+- **bundler**: Walk the register emission in the pwa example
+- **config**: State the V2-F14 gate on SwConfig.enabled
+- **spec**: Record the F14 wire-through on the status row
+- **deviations**: Record the F14 wire-through and its deltas
+- **architecture**: Record the wire-through and the register emission
+- **readme**: Re-measure the test badge and drop the dup
+- **readme**: Re-measure the rust test badge
+- **spec**: Record the A04, F10, F15 and E03 wiring state
+- **deviations**: Record the A04 and F10 wiring deltas
+- **architecture**: Describe the cli record and skew wiring
+- **spec**: Record the F05, F06, A04 and F10 wiring state
+- **deviations**: Close the F05, F06, A04 and F10 wiring deltas
+- **readme**: Re-measure the rust test badge
+- **spec**: Record the F07 and F12 wiring state in the status table
+- **deviations**: Record the F07 and F12 wiring deltas
+- **architecture**: Note the streams and brownout serve modules
+- **readme**: Re-measure the rust test badge
+- **readme**: Re-measure the tests badge (2487)
+- **a01**: A01 complete + B05/B08 records
+- **b05**: Key migration + B08 notes
+- **deviations**: Record the stage adoptions and the gate drift fixes
+- **spec**: Update the A05/A06/B01/B02/E12 rows to the adoption
+- The F04 wiring and F02 adoption records
+- **spec**: The F04 and F02 rows to the wiring reality
+- The session handoff header
+- Re-measure the tests badge to the measured count
+- **spec**: The C09/F11/E02/E04/F09 rows to the wiring reality
+- **deviations**: The five wiring records and the pending stage rule
+- **architecture**: The deploy command row
+- **architecture**: The vendor split and refresh wiring bullets
+- **deviations**: The F01 client halves and E01 refresh wiring records
+- **spec**: The F01 and E01 rows to the wiring reality
+- **spec**: The F01 row is merged; the B02/B03/B04 rows match reality
+- **deviations**: The build-path and perf-tails entries
+- **spec**: C09/F11 flip to merged and R01 is drafted
+- **deviations**: The re-point and the acceptance records
+- **architecture**: The F11 deferral closed, the C09 row
+- **readme**: The test badge re-measured (2531 rust, 754/757 ts)
+- **benchmarks**: The G2 target table and the post-Wave-B recordings
+- **security**: The v0.2 endpoint security review draft (R05)
+- **release**: The v0.2 tag prep — triggers, changelog, bumps (R06)
+- **architecture**: The release-wave record and the 29-assertion count
+- **deviations**: The release-wave records
+- **readme**: The badge re-measured from a clean install (760/760 TS)
+- **spec**: R01/R03/R04/R05/R06 flip to merged
+- **security**: Flip the stream binding and query cap to landed
+- **spec**: Note the landed R05 gaps in the status row
+- **deviations**: Record the R05 closure session
+- **readme**: Re-measure the tests badge (2542 Rust)
+- **config**: Flip the stale record and autoIslands wiring claims
+- **config**: Flip the stale deploy and offline schema claims
+- **errors**: Move the page rows with the re-sorted registry
+- **config**: Refresh the deploy and offline reference rows
+- **endpoints**: The generated v2.j endpoint-map page
+- **spec**: Flip the f02 dev-warn tail to landed
+- **deviations**: Record the f02 + e10 session and its deltas
+- **architecture**: Close the stale f11 sentence and add bullets
+- **readme**: The crate count, CLI list and the 2571 badge
+- **handoff**: Prepend the f02 + e10 session entry
+- **plugin-compat**: The generated table embed and honest legend
+- **spec**: Note the landed E05 V8-free substrate
+- **deviations**: Record the compat-matrix session and deltas
+- **readme**: Re-measure the tests badge (2587 Rust)
+- **errors**: The DEV-OPEN-001 and DEV-OPEN-002 registry rows
+- **errors**: Render the DEV-OPEN rows on the generated page
+- **spec**: The endpoint records and the E04 row flip
+- **architecture**: The server row and the what-changed bullet
+- **deviations**: Record the endpoint session and deltas
+- **readme**: Re-measure the tests badge (2621 Rust)
+- **handoff**: Prepend the endpoint session entry
+- **readme**: Re-measure the tests badge (2652 Rust)
+- **architecture**: The F17 rows and the what-changed bullet
+- **deviations**: Record the f17 mapping and measurement session
+- **spec**: The f17 mapping and measurement halves land
+- **deviations**: Record the inspector and adapter session
+- **architecture**: The inspector and adapter bullets
+- **spec**: The E08 and F17 row tails record the halves
+- **readme**: Re-measure the tests badge (2662 Rust)
+- **handoff**: Prepend the inspector session entry
+- **inspector**: Add the module_search walkthrough example
+- **cost**: Add the profiled adapter section to the cost example
+- **spec**: Record the e08 search and f17 adapter row tails
+- **architecture**: The inspector search and cost adapter rows
+- **deviations**: The module-search and profiler-adapter session
+- **handoff**: Prepend the module-search session entry
+- **readme**: Re-measure the tests badge (2689 rust)
+- **cost**: Walk the file-backed feed in the cost example
+- **architecture**: The dev feed and attach rows
+- **deviations**: The dev cost feed session record
+- **readme**: Re-measure the tests badge (2701 rust)
+- **handoff**: Prepend the dev-cost-feed session
+- **cli**: Correct the stale dispatch dependency note
+- **cli**: The rewrite map comment is post-rolldown
+- **ci**: The PR template gate names cargo-deny
+- **contributing**: The audit gate is cargo-deny
+- **bench**: The live criterion gate is after-wave-b
+- **reference**: Regenerate the endpoint map page
+- **deviations**: The trace feed session record
+- **architecture**: The trace feed rows and bullet
+- **readme**: Re-measure the tests badge (2730 rust)
+- **handoff**: Prepend the trace feed session
+- **server**: The trace context doc records the wired fetch op
+- **server**: The trace-export walkthrough example
+- **server**: Walk the filtered window in the feed example
+- **cli**: Move the buffered-stdout doc home to run
+- **cli**: Regenerate the CLI reference page
+- **reference**: Regenerate the endpoint map page
+- **reference**: Regenerate the config page
+- **reference**: Regenerate the errors page
+- **spec**: The F21-F23 rows and the traces row in V2.J
+- **deviations**: The trace-export and window-query session
+- **readme**: Re-measure the badge and the status rows
+- **bench**: The live gate is after-wave-b; the sweep is local
+- **handoff**: Prepend the trace-export session
+- **server**: The file walk in the export example
+- **readme**: Re-measure the tests badge (2824 rust)
+- **reference**: Regenerate the endpoint map page
+- **spec**: The F24-F25 rows and the logs row in V2.J
+- **deviations**: The log-feed and file-export session record
+- **handoff**: Prepend the log-feed session record
+- **server**: The gate shapes walk in the log-feed example
+- **server**: The sticky-writer walk in the export example
+- **spec**: The F26 and F27 landed rows in the WP table
+- **deviations**: The F26 and F27 session record
+- **readme**: Re-measure the tests badge through count-tests
+- **handoff**: Prepend the filter-surface session record
+- **readme**: Re-measure the test counts, name cargo-deny
+- **errors**: The SRV-GEN-DEPTH and SRV-GEN-IO registry rows
+- **spec**: The F28 and F29 landed rows in the WP table
+- **deviations**: The F28 and F29 session record
+- **handoff**: The set_trace_parent drift note rewritten
+- **readme**: Re-measure the tests badge to 2883
+- **cache**: The observer doc names its in-crate consumers
+- **cache**: The crate README lists the observability seams
+- **spec**: The F30 and F31 landed rows in the WP table
+- **deviations**: The F30 and F31 session record
+- **readme**: Re-measure the tests badge to 2904
+- **handoff**: Prepend the observability-arms session record
+- **cache**: The crate README lists the posture pull bullet
+- **readme**: Re-measure the tests badge to 2928
+- **architecture**: The cache row names the observability plane
+- **spec**: The F32 and F33 landed rows in the WP table
+- **deviations**: The F32 and F33 session record
+- **spec**: The F34 and F35 landed rows in the WP table
+- **deviations**: The F34 and F35 session record
+- **architecture**: The cache row names the fanout and the gate
+- **cache**: The crate README lists the composition arm and the gate
+- **readme**: Re-measure the tests badge to 2949
+- **handoff**: Prepend the composition-and-gate session record
+- **readme**: Re-measure the tests badge to 2960
+- **spec**: The F36 and F37 landed rows in the WP table
+- **architecture**: The cache, server and cli rows name the wire
+- **deviations**: The F36 and F37 session record
+- **cache**: The observability bullet names the production wire
+- **cache**: The crate README names the attribution arm
+- **spec**: The F38 landed row in the WP table
+- **architecture**: The cache row names the attribution arm
+- **cache**: The seam's consumer list names the attribution arm
+- **cache**: The README names the gate and drops the http feature
+- **cache**: The bench comment names the real opt-in gate
+- **spec**: The F39 and F40 landed rows in the WP table
+- **architecture**: The cache and cli rows name the gate and wire
+- **readme**: Re-measure the tests badge to 2988
+- **handoff**: Prepend the gate-and-wire session record
+- **cache**: The hot-key bullet names the wire and the knob
+- **architecture**: The cache and cli rows name wire and window
+- **spec**: The F41 landed row in the WP table
+- **deviations**: The F41 record and the F38-F40 catch-up
+- **handoff**: Prepend the operator-window session record
+- **readme**: Re-measure the tests badge to 2996
+- **reference**: Regenerate the cli page with the three boot flags
+- **reference**: The config page renders the cache.hotKeyTop row
+- **reference**: Regenerate the errors page with the SRV-GEN codes
+- **spec**: The F42 and F43 landed rows in the WP table
+- **architecture**: The cache and cli rows name the flag and baseline
+- **cache**: The hot-key bullet names the F42/F43 precedence
+- **readme**: Re-measure the tests badge to 3021
+- **deviations**: The F42 and F43 session record
+- **handoff**: Prepend the flag-and-baseline session record
+- **cache**: The hot-key bullet names the snapshot and the take
+- **architecture**: The cache row names the F44/F45 read shapes
+- **spec**: The F44 and F45 landed rows in the WP table
+- **deviations**: The F44 and F45 session record
+- **readme**: Re-measure the tests badge and status row to 3031
+- **reference**: Regenerate the cli page with the coverage flag rows
+- **reference**: Regenerate the config page with the coverageMetrics row
+- **cli**: The crate README gains the observability section
+- **cache**: The coverage bullet names the F46 production consumer
+- **spec**: The F46 landed row in the WP table
+- **architecture**: The cache and cli rows name the coverage wire
+- **deviations**: The F46 session record
+- **handoff**: Prepend the F46 record and the F44/F45 reconstruction
+- **readme**: Re-measure the tests badge to 3059
+- **cache**: The posture bullet names the F47 production consumer
+- **cli**: The observability section names the health wire
+- **spec**: The F47 and F48 landed rows in the WP table
+- **architecture**: The cache and cli rows name the health wire
+- **reference**: Regenerate the cli page with the health flag rows
+- **reference**: Regenerate the config page with the healthMetrics row
+- **deviations**: The F47 and F48 session record
+- **handoff**: Prepend the F47/F48 record and the sandbox notes
+- **readme**: Re-measure the tests badge to 3088
+- **cli**: The endpoints page names the probe family carve-out
+- **architecture**: The cache, server and cli rows name the probe
+- **readme**: Re-measure the tests badge to 3095
+- **cli**: The Observability section names the probe surface
+- **cache**: The posture bullet names the F49 probe surface
+- **spec**: The F49-F52 landed rows in the WP table
+- **deviations**: The F49/F50 record and the F51/F52 session record
+- **handoff**: Prepend the F51/F52 record and the chain repair
+- **architecture**: The cache row names the eviction wire
+- **cache**: The observability bullets name the eviction story
+- **readme**: Re-measure the tests badge to 3125
+- **cache**: The client names the service it talks to
+- **cache**: The README names the service and serving half
+- **config**: The Http handler doc speaks the real protocol
+- **architecture**: The cache row names both new seams
+- **spec**: The F53/F54 landed rows in the WP table
+- **deviations**: The F53/F54 session record
+- **handoff**: Prepend the F53/F54 record and the sandbox notes
+- **readme**: Re-measure the tests badge to 3145
+- **cache**: The serving-half README names its consumers
+- **cli**: The serve section names the conditional wire
+- **architecture**: The cache and server rows name the consumers
+- **spec**: The F55/F56 landed rows in the WP table
+- **deviations**: The F55/F56 session record
+- **spec**: The F57/F58 landed rows in the WP table
+- **architecture**: The cache and server rows name the mount
+- **cache**: The README names the plane's host and health arm
+- **server**: The README names the cache plane's mount
+- **deviations**: The F57/F58 session record
+- **handoff**: Prepend the F57/F58 record and the chain note
+- **readme**: Re-measure the tests badge to 3170
+- **reference**: The config page carries posture + mount rows
+- **reference**: The cli page renders the mount flag rows
+- **reference**: The endpoints page regains the probe row
+- **spec**: The F59/F60 landed rows in the WP table
+- **architecture**: The rows name the wire and the deadline
+- **readme**: Re-measure the tests badge to 3201
+- **cache**: The README names the wire and the deadline arm
+- **server**: The mount bullet names its health reachability
+- **deviations**: The F59/F60 session record
+- **handoff**: Prepend the F59/F60 record and the chain note
+- **cache**: The metrics arm's consumer walkthrough (F61)
+- **spec**: The F61/F62 rows land in the V2.4 index and V2.O
+- **readme**: Re-measure the tests badge to 3220
+- **contributing**: The docs-check gate joins the local list
+- **architecture**: The rows name the plane's metrics arm
+- **cache**: The metrics arm bullet rides the crate README
+- **deviations**: The F61/F62 session record
+- **handoff**: Prepend the F61/F62 record and the chain note
+- **cache**: The F63/F64 bullet rides the crate README
+- **spec**: The F63/F64 rows land in the V2.4 index and V2.O
+- **architecture**: The cache row names the probes and bounds
+- **deviations**: The F63/F64 session record
+- **handoff**: Prepend the F63/F64 record and the chain note
+- **readme**: Re-measure the tests badge to 3231
+- **cache**: The F65/F66 bullet rides the crate README
+- **readme**: Re-measure the tests badge to 3244
+- **spec**: The F65/F66 rows land in the V2.4 index and V2.O
+- **architecture**: The cache row names the client's two seams
+- **deviations**: The F65/F66 session record
+- **handoff**: Prepend the F65/F66 record and the chain note
+- **spec**: The F67/F68 rows land in the V2.4 index and V2.O
+- **architecture**: The cache row names the count bounds
+- **cache**: The F67/F68 bullet rides the crate README
+- **readme**: Re-measure the tests badge to 3256
+- **deviations**: The F67/F68 session record
+- **handoff**: Prepend the F67/F68 record and the chain note
+- **errors**: Register the CAC-SHARD code
+- **errors**: Render the CAC-SHARD row into errors.md
+- **spec**: The F69/F70 rows land in V2.4 and V2.O
+- **architecture**: The cache row names the new seams
+- **cache**: The F69/F70 bullet rides the crate README
+- **readme**: Re-measure the tests badge to 3275
+- **deviations**: The F69/F70 session record
+- **handoff**: Prepend the F69/F70 record and chain note
+- **readme**: Cite scorecard-r10; drop "21-section" phrasing
+- Author scorecard-r10 (P0 table re-verified at HEAD)
+- **handoff**: Prepend the post-r10 CURRENT STATE block
+- **bench**: Note the canonical key bench derives the KeyHash
+- **dispatch**: List the route-context leg in the crate root
+- **dispatch**: Record the url helper adoption as landed
+- **deviations**: Record the route-context adoption session
+- **readme**: Re-measure the Rust test badge
+- **readme**: Re-measure the Rust test badge
+- **handoff**: Record the B01-tail session
+- **deviations**: Record the prerender table adoption session
+- **spec**: Mark perf #1 and #10 resolved
+- **search**: Backtick the OnCommit doc term
+- **cli**: Re-measure the LayoutLoadSpec leg list
+- **dispatch**: Record both dispatch legs in the graph doc
+- **dispatch**: Reword the chain_8 bench contrast
+- **deviations**: Record the /__data load-graph adoption session
+- **spec**: Mark the /__data leg of A06 resolved
+- **dispatch**: Carry the Arc<str> label in the route-context example
+- **dispatch**: Add the hot-path hoists walkthrough example
+- **errors**: Register the EDGE-103/104/105 codes
+- **errors**: Document the EDGE-103/104/105 rows
+- **deviations**: Close P0-1c + record the scan/regex gating
+- **analytics**: The module README
+- **errors**: Register the MOD-ADAPTER/MOD-CONFIG codes
+- **deviations**: Record the V2-E06 milestone
+- **conformance**: The V2-R01 registry README
+- **deviations**: Record the V2-R01 milestone
+- **spec**: Update V2-R01 row for landed registry
+- **architecture**: Fix conformance count drift
+- **f19**: Spike decision record with kill criteria
+- **adapters**: Resolve the F19 permissions matrix caveat
+- **errors**: Land PRM-001 + add CFG-PERM to the registry
+- **errors**: Regenerate the errors reference page
+- **spec**: Record the F19 implementation + Model 2 adoption
+- **deviations**: F19 spike outcome + Model 2 adoption
+- **plugin-compat**: Regenerate + add the verified-plugins matrix
+- **errors**: Regenerate the error-code registry page
+- **deviations**: Record the V2-E05 landing
+- **spec**: Mark the V2-E05 row + section landed
+- **deviations**: The V2-A02 closing leg + the remaining 6 crates
+- **spec**: The A03 hygiene row reflects the lint-uniformity drift guard
+- **readme**: The lint policy + drift guard section
+- **cache**: Pedantic-clean doctest
+- **dev**: Pedantic-clean doctest
+- **deviations**: The V2-A02 finish (partial) record
+- **rustfn**: Fix the RegistryReport default doc drift
+- **compiler**: Add data_src_template walkthrough example
+- **adapters**: Mark live capability unsupported on cloudflare
+- **cli**: Add live native server-fn hot-swap walkthrough example
+- **server**: Add brownout hedger usage walkthrough example
+- **errors**: Add RFN-005 diagnostic code definition
+- **reference**: Regenerate adapter capability matrix
+- **reference**: Document modulesConfig and permissions keys
+- **reference**: Regenerate error code reference for RFN-005
+- **schema**: Regenerate the config schema for the sharded handler
+- **cli**: Add the boot posture line walkthrough example
+- **cli**: Add the sharded cache.handler walkthrough example
+- **reference**: Document the sharded cache.handler shape
+- **readme**: Re-measure the rust test badge to 3546
+- **jshost**: Record the endpoint and middleware parity contract
+- **cli**: Record the wasm load/resolveId wire as landed
+- **plugin**: Re-embed the compat table with the wired rows
+- **deviations**: Record the wire and evict-trigger session
+- **cli**: Add the data_src_wire walkthrough example
+- **spec**: Record the landed status-table rows
+- **architecture**: Name the stamp wire and doctor checks
+- **deviations**: Record the wire and doctor session
+- **readme**: Re-measure the rust test badge to 3577
+- **cli**: Add the generation_rollback walkthrough example
+- **errors**: Add the SKW-GEN and SKW-RETAIN registry rows
+- **cli**: Regenerate the cli reference page
+- **errors**: Regenerate the errors reference page
+- **reference**: Regenerate the stale config page
+- **architecture**: Record the rollback and link-twin slices
+- **dev**: Add the overlay_frames walkthrough example
+- **diagnostics**: Name StackFrame and the stack builders
+- **cache**: Add the kv_handler walkthrough example
+- **cache**: Name the edge KV handler in the crate README
+- **errors**: Add the CACHE-KV registry row
+- **errors**: Render the CACHE-KV row on the errors page
+- **spec**: Record the overlay-frames and kv-handler rows
+- **deviations**: Record the frames and kv-handler sessions
+- **readme**: Re-measure the rust test badge to 3607
+- **cli**: The releases-boot walkthrough example
+- **cli**: The mapped-frames walkthrough example
+- **errors**: Add the DEP-RELEASE registry row
+- **errors**: Render the DEP-RELEASE row on the errors page
+- **deviations**: Record the f10/e08 session and gates
+- **cli**: The data_envelope walkthrough example
+- **errors**: Add the DSP-117 registry row
+- **errors**: Render the DSP-117 row on the errors page
+- **decisions**: Record the E13 svelte-streaming kill
+- **deviations**: Record the p02 envelope and e13 session
+- **cli**: The ppr seed walkthrough example
+- **config**: The offline-fallback precache guarantee on SwConfig
+- **bundler**: The pwa_worker example walks the fallback guarantee
+- **readme**: Re-measure the rust test badge to 3640
+- **server**: The cost_endpoint walkthrough names the page wire
+- **dispatch**: The locals substrate records the landed CLI adoption
+- **dispatch**: The chain runner's CLI-wiring note lands
+- **dispatch**: The crate index drops the locals adoption-deferred note
+- **dispatch**: Add the unified-locals walkthrough example
+- **readme**: Re-measure the rust test badge to 3645
+- **migrate**: The walkthrough shows the applied config keys
+- **cli**: The migrate --apply docs speak the config keys
+- **reference**: The cli page speaks the migrate config keys
+- **readme**: Re-measure the rust test badge to 3653
+- **deviations**: Record the e03 config-apply session
+
+### Fixed
+
+- **cli**: Skip the duplicate build-id subject in the walk
+- **cli**: The pem helper wraps a real SPKI DER
+- **server**: The status-sidecar bench fixture self-truncation
+- **ci**: The oha step points at the real smoke fixture
+- **cache**: Warn on the corrupt L2 tag-key blob
+- **adapters**: The map_unwrap_or clippy debt in deploy_dir
+- **search**: The map_unwrap_or clippy debt
+- **compiler**: The precompile engine generic over the pass success type
+- **cli**: The dev transform handler keeps the code half
+- **bundler**: The minifier degrades loudly instead of silently empty
+- **cache**: Loud CACHE-HTTP parse warns
+- **bundler**: The synthetic tsconfig serializes first, failures loud
+- **cache**: The s3 tag-key store reads warn instead of silent empties
+- **rustfn**: Drop the duplicated extern qualifier rustfmt cannot parse
+- **core**: The resolveForeign splice collapses the pending seam once
+- **compiler**: Islands bench compiles — arms typed as slices
+- **macros**: The server_fn macro splits shapes from emission
+- **compiler**: Annotate empty Vec type in generate_params test
+- **rustfn**: Make the types-payload serialize failure loud
+- **compiler**: Keep the all-off registry build lint-green
+- **dispatch**: Surface the corrupt-record payload as RPL-006
+- **core**: Flush resolves empty when the outbox store is missing
+- **dispatch**: Fold the worker drain payload into the record
+- **dispatch**: Un-deadlock the replay wire walkthrough example
+- **compiler**: Give the C02 example its native-solid required-features
+- **compiler**: Count the registry expectation without a bare mut
+- **dispatch**: Restructure the replay walkthrough into named phases
+- **cli**: Dechunk as while let; drop the unused StreamExt import
+- **cli**: Build BrownoutConfig with struct-update syntax
+- **security**: Redact the is_secret_key class in both Debug impls
+- **scripts**: Pin the pre-split refs; record the stage adoptions
+- **server**: Drop the needless borrow in the stale arm
+- **m0**: The not-found fallback unwraps to default
+- **m0**: The two needless returns in the middleware arms
+- **m0**: The loaders doc header loses the lazy list
+- **dispatch**: The load probe uses map_or
+- **scripts**: The two recorded split substitutions
+- **selfcheck**: The recorded V2-F09 stage and V2-F01 phase substitutions
+- **cli**: Prerender wrap checks use the raw id the context table uses
+- **bundler**: The README doctest carries the vendor_groups field
+- **cli**: Resolve the vendor groups through the one islands site
+- **server**: Let an empty image signing secret disable signing
+- **core**: The tsdown config's search entry regains its comma
+- **core**: Boot imports MixedIslandRegistry from islands
+- **scripts**: Accept the node 24 reporter shape in count-tests
+- **docs**: Re-sort the registry and add the AST-ISL-002 row
+- **cache**: The corrupt v1 tag-row fallback warns CACHE-CODEC
+- **server**: The navgraph snapshot serialization failure is loud
+- **bundler**: The silent renderChunk write failures warn
+- **assets**: The closed-lane refusal replaces the panic
+- **cli**: The generations snapshot's coded SRV refusals
+- **cache**: The remote delete and publish gaps render loudly
+- **assets**: The CAS put's swallowed IO failures render loudly
+- **cache**: The invalidate body's silent fallback warns loudly
+- **cache**: The feed example's kind table matches coalesce
+- **cache**: The owner guard's publish returns the follower count
+- **cli**: The render owner site names its dropped join count
+- **server**: The F37 exposition slot's field spells its type
+- **cli**: The boot's cache-tier block closes and yields its halves
+- **cache**: The http transport's errors carry the CACHE-HTTP code
+- **cache**: The boot posture example's double-Arc and bare map
+- **cli**: The exporter scrape calls the observer's render
+- **cache**: The stale pin's SWR window carries a margin
+- **cli**: The tee's metadata read recovers the poisoned lock
+- **cli**: The shell-cache read recovers the poisoned lock
+- **graph**: The CAS fsync-before-rename refuses loudly
+- **cache**: The event_feed example's kind table names evict
+- **cache**: The health bench's populated posture gains the field
+- **cli**: The posture_probe example rides the F50 gate shape
+- **router**: The index caches recover their poisoned locks
+- **router**: The regex cache recovers its poisoned locks
+- **server**: The endpoint map pin counts the real 15 rows
+- **server**: The coexistence pin polls the raced route
+- **server**: The IMS pin rides the canonical content-type
+- **server**: The metrics bench doc names its paragraphs
+- **render**: The streaming sink recovers its poisoned locks
+- **cache**: The malformed Content-Length gap speaks loudly
+- **cache**: The disk tier's silent arms speak loudly
+- **search**: Add atomic rename wipe for index rebuilds
+- **cli**: Use wipe_dir_for_rebuild when emitting search index
+- **jshost**: Move the pure trace-context extraction V8-free (V2-A09 M0)
+- **jshost**: Re-export V8-free trace helpers from v8_ops (V2-A09 M0)
+- **jshost**: Re-export requires_node_backend from v8_loader (V2-A09 M0)
+- **jshost**: Move the Node-backend classifier V8-free (V2-A09 M0)
+- **jshost**: Stamp trace headers on V8-free host paths (V2-A09 M0)
+- **jshost**: Stamp render envelope trace headers V8-free (V2-A09 M0)
+- **jshost**: Gate the v8-only snapshot imports (V2-A09 M0)
+- **jshost**: Gate V8 dispatch fns, register V8-free modules (V2-A09 M0)
+- **jshost**: Make v8-only deps optional behind v8 feature (V2-A09 M0)
+- **cli**: Consult the V8-free node_compat classifier (V2-A09)
+- **scripts**: Ship_validate accepts dirty working-tree files
+- **cli**: Build the L0 test storage keys via the KeyHash hex display
+- **router**: Drop the read guard before the lazy index write
+- **router**: Scope the regex cache read guard before the write
+- **dispatch**: Warn on a loader-data envelope encode failure
+- **redaction**: Match the separator-free secret key spellings
+- **regen**: Keep the glue, fix the stale crate name, run wasm-opt -Oz
+- **cli**: Drop unused mut + runner in data_route
+- **adapters**: The V2-E09 Cloudflare-Live refusal pin
+- **errors**: Register CFG-CHECK/RFN-LOAD/SKW-POOL/SKW-SNAPSHOT/DOC-004
+- **graph**: Artifacts seal/open # Errors + the unwrap-free len parse
+- **graph**: Cas pedantic — must_use, # Errors, casts, map_or, generics
+- **graph**: Demand pedantic — get &NodeKey, collect_seeds, panics doc
+- **graph**: Lib pedantic — Ord restructure, doc errors, must_use
+- **graph**: Trackers FsTrackerImpl::new must_use
+- **graph**: Pipeline example get &NodeKey + BTreeSet::new
+- **bundler**: Clear pedantic findings in sourcemap_compose.rs
+- **bundler**: Clear pedantic findings in lib.rs
+- **bundler**: Clear pedantic findings in minify.rs
+- **bundler**: Clear pedantic findings in prebundle.rs
+- **bundler**: Clear pedantic findings in resolve.rs
+- **bundler**: Clear pedantic findings in rolldown_backend.rs
+- **bundler**: Clear pedantic findings in sourcemap_compose.rs
+- **bundler**: Clear pedantic findings in svg_react.rs
+- **cache**: Clear pedantic findings in health.rs
+- **cache**: Clear pedantic findings in metrics.rs
+- **cache**: Clear pedantic findings in codec.rs
+- **cache**: Clear pedantic findings in http.rs
+- **cache**: Clear pedantic findings in http_handler.rs
+- **cache**: Clear pedantic findings in lib.rs
+- **cache**: Clear pedantic findings in single_flight.rs
+- **cache**: Clear pedantic findings in tiers.rs
+- **dev**: Clear pedantic findings in hmr_boundary.rs
+- **dev**: Clear pedantic findings in hmr_state.rs
+- **dev**: Clear pedantic findings in workspace_links.rs
+- **dev**: Clear pedantic findings in boundary.rs
+- **dev**: Clear pedantic findings in dev_server.rs
+- **dev**: Clear pedantic findings in lib.rs
+- **dev**: Clear pedantic findings in tests.rs
+- **dev**: Clear pedantic findings in workspace.rs
+- **cache**: Acknowledge the MemoryTier::remove must_use discard
+- **cli**: Borrow the dev loop's HmrMessage and NodeKey args
+- **cli**: Borrow the NodeKey the build graph seeds
+- **cache**: Warn when the disk tier's blob unlink fails
+- **jshost**: Bump the op-decls count pin for the F19 env and fs ops
+- **react**: Export the landed link nav re-exports from the index
+- **cli**: Repair the committed-broken module_maps bench
+
+### Performance
+
+- **precompile**: The two-phase walk over the bounded engine
+- **bundler**: The compose and wire round-trip criterion group
+- **rustfn**: Bridge/shim/host-registry criterion groups
+- **compiler**: Island planner groups (single 8 / mixed 32)
+- **bundler**: The pwa criterion groups — plan fold and source render
+- **core**: The offline wire micro-bench — enqueue path vs error path
+- **compiler**: The interactivity criterion groups — scan and manifest
+- **rustfn**: The bench's clippy-1.100 findings
+- **dispatch**: The idem bench's clippy-1.100 findings
+- **compiler**: Add criterion benchmarks for native compilers
+- **cli**: Add criterion benchmark for resolve_tool lookups
+- **compiler**: Add the native_compile/solid criterion group
+- **dev**: Add the server_lib criterion group
+- **core**: Add the static-matcher micro-bench
+- **dispatch**: Action_params builds only for eligible POST actions
+- **dispatch**: The render stage reuses the carried per-request nonce
+- **server**: The frozen metrics map observes without the fallback lock
+- **inspector**: Bench the module search and the filtered render
+- **cost**: Bench the profiled adapter lookup
+- **server**: Bench the export record and the fanout
+- **server**: Bench the filtered query walk
+- **server**: The capture-gate criterion group
+- **cache**: Add the 128-bit KeyHash key identity (D24)
+- **cache**: Derive key_of from the one KeyHash digest
+- **cache**: Replace hex string key with 128-bit blake3 hash
+- **prerender**: Resolve the walk's trio from the context table
+- **dispatch**: Add the baseline_scan bench group and repair the doc
+- **cli**: Resolve the /__data layout chain through the load graph
+- **cli**: Pass the page verdict to the data route
+- **dispatch**: Hoist the matched label to a shared Arc<str>
+- **dispatch**: Carry the per-request label as an Arc<str>
+- **dispatch**: Borrow the label as &str in the render stage
+- **dispatch**: Borrow the label as &str in the L0 stage
+- **dispatch**: Borrow the label as &str in the action stage
+- **dispatch**: Borrow the label as &str in the endpoint stage
+- **dispatch**: Deref the Arc<str> label in the loader tracing
+- **dispatch**: Deref the Arc<str> label in the middleware tracing
+- **server**: Freeze the dynamic labels so their observe takes no lock
+- **dispatch**: Add the matched-label zero-alloc criterion bench
+- **jshost**: Host_allowed and fetch-path permission bench
+- **bench**: Add brownout overload verification script
+- **cli**: Add criterion benchmarks for native server functions
+- **server**: Add criterion benchmarks for hedger window and race
+- **cli**: Add the boot posture line criterion bench
+- **cli**: Add the sharded resolver criterion bench
+- **dispatch**: Add the early-drop drain to the pools bench
+- **cli**: Add the wasm hook round-trip bench
+- **cli**: Bench the stamped dev pass cost
+- **cli**: Bench the retention copy and the rollback swap
+- **dev**: Bench the frame-mapping seam's per-frame cost
+- **cache**: Bench the edge KV handler's per-op cost
+- **cli**: Releases boot resolve and materialize costs
+- **cli**: Module map store frame mapping costs
+- **cli**: Bench the data envelope's bound cost
+- **cli**: The ppr seed's split and manifest costs
+- **pwa**: Bench the fallback-gap plan fold
+- **cli**: The l0 hit iterates the stored headers directly
+- **cli**: The l0-hit dhat budget harness
+- **report**: The l0-alloc budget row measures at HEAD
+
+### Refactored
+
+- **render**: The streaming finish takes the rewriter up front
+- **cache**: The disk handle clones at each use site
+- **diagnostics**: Remove the dead Location::unknown helper
+- **graph**: The demand factory locks name their invariant
+- **graph**: The artifact locks use the poison policy
+- **graph**: The tracker locks use the poison policy
+- **dispatch**: Stage_build_check delegates to stage_check
+- **adapters**: Share the manifest and pointer parsers
+- **assets**: Drop the dead og_cache_key helper
+- **compiler**: The pedantic pass in framework.rs
+- **compiler**: The 236-line lex split into scanner helpers
+- **compiler**: The pedantic pass and the unwrapped AST fns
+- **router**: The stale allow and the duplicated import-path fill
+- **odf**: The checked write_len prefix and the bitexact guard arm
+- **odf**: Split write_leaf, length prefixes, exact bridge
+- **odf**: Split read_record from the frame driver and fix the casts
+- **odf**: The to_json arm merges and the integral-number bridge
+- **odf**: The fixture tables as byte-identical section builders
+- **server**: Wire rustfn_bridge and re-export the seam
+- **config**: Wire islands module, registry over IslandSpec
+- **cli**: The esm_dev twin reads the IslandSpec union
+- **compiler**: The boot entry writes through fmt::Write
+- **compiler**: The migrate planner's recorded pedantic findings
+- **compiler**: The mixed-islands example names the BTreeMap default
+- **rustfn**: The host library's Debug covers every field
+- **rustfn**: The TsType set and map impls generalize hashers
+- **rustfn**: The abi borrow and bench clippy-1.100 findings
+- **server**: The rustfn bridge's nested if let collapses
+- **cli**: Update dev_component_sources for precompile signature
+- **compiler**: Swap the in-repo solid transform for upstream
+- **compiler**: Initialize source_map in the vue backend
+- **compiler**: Initialize source_map in the svelte backend
+- **compiler**: Initialize source_map in the react backend
+- **compiler**: Initialize source_map in the native bench fake
+- **compiler**: Initialize source_map in the registry example
+- **cli**: Initialize source_map in the precompile test fake
+- **config**: Extract the check/static schema fragments
+- **cli**: Delete the superseded migrate engine
+- **cli**: Build the precompile plan struct at the shim site
+- **cli**: Group precompile entries inputs into a plan struct
+- **a01**: Add the lossless top-level item indexer
+- **a01**: Add the MAP re-derivation for the grown tree
+- **a01**: Add the mechanical verbatim item mover
+- **a01**: Selfcheck proof + the M2 EXEMPT entries
+- **a01**: Add the deterministic dist digest script
+- **a01**: Add the build module root
+- **a01**: Add the commands module root
+- **a01**: Add the dev module root
+- **a01**: Add the dispatch module root
+- **a01**: Add the emit module root
+- **a01**: Add the endpoints module root
+- **a01**: Split build/cmd.rs out of lib.rs
+- **a01**: Split build/secret.rs out of lib.rs
+- **a01**: Split commands/attest.rs out of lib.rs
+- **a01**: Split commands/author.rs out of lib.rs
+- **a01**: Split commands/docs.rs out of lib.rs
+- **a01**: Split commands/fmt.rs out of lib.rs
+- **a01**: Split commands/inspect.rs out of lib.rs
+- **a01**: Split commands/ops.rs out of lib.rs
+- **a01**: Split commands/perf.rs out of lib.rs
+- **a01**: Split commands/replay.rs out of lib.rs
+- **a01**: Split commands/render.rs out of lib.rs
+- **a01**: Split dev/client_bundle.rs out of lib.rs
+- **a01**: Split dev/cmd.rs out of lib.rs
+- **a01**: Split dev/hmr.rs out of lib.rs
+- **a01**: Split dispatch/entry.rs out of lib.rs; type alias
+- **a01**: Split emit/assets.rs out of lib.rs
+- **a01**: Split emit/config_bundle.rs out of lib.rs
+- **a01**: Split emit/edge_wasm.rs out of lib.rs
+- **a01**: Split emit/fonts.rs out of lib.rs
+- **a01**: Split emit/i18n.rs out of lib.rs
+- **a01**: Split emit/pwa.rs out of lib.rs
+- **a01**: Split emit/search.rs out of lib.rs
+- **a01**: Split emit/sitemap.rs out of lib.rs
+- **a01**: Split emit/snapshot.rs out of lib.rs
+- **a01**: Split endpoints/dispatchers.rs out of lib.rs
+- **a01**: Split endpoints/image_og.rs out of lib.rs
+- **a01**: Split serve/session.rs out of lib.rs
+- **a01**: Split serve/start.rs out of lib.rs; drift fixes
+- **a01**: Split serve/stream.rs out of lib.rs
+- **a01**: Split args.rs out of lib.rs
+- **a01**: Split boot_entry.rs out of lib.rs
+- **a01**: Split bundle_env.rs out of lib.rs
+- **a01**: Split config_load.rs out of lib.rs
+- **a01**: Split data_route.rs out of lib.rs
+- **a01**: Split hooks.rs out of lib.rs
+- **a01**: Split observability.rs out of lib.rs
+- **a01**: Split prerender.rs out of lib.rs
+- **a01**: Add the serve module root
+- **a01**: Rewrite lib.rs as the module tree root
+- **a01**: Split .md out of lib.rs
+- **a01**: Split draft.md out of lib.rs
+- **cli**: The vendor_groups field in the bundle options
+- **cli**: The vendor_groups field in the config bundle options
+- **cli**: Dev bundle uses the one islands_json_source definition
+- **dispatch**: The action stage parses via oxide_fw_dispatch::url
+- **cli**: The duplicate url helpers are deleted (one definition)
+- **compiler,bundler**: Extract helpers from the longest fns
+- **compiler**: Extract the shared specifier resolution rule
+- **server**: Share the row rendering with the export arms
+- **cli**: Render the coded snapshot refusals at the sites
+- **cli**: Drop the needless return in the s3 store branch
+- **cli**: The inspect bench uses std hint black_box
+- **cache**: The auth helpers carry the pedantic cleanups
+- **cache**: The coalesce walkthrough rides the shipped fanout
+- **cli**: The generation pool's lock reads recover the poison
+- **assets**: AVIF without the feature refuses and falls back
+- **jshost**: Cfg-gate the v8 backend and snapshot builders
+- **jshost**: The v8 snapshot builders ride the feature
+- **cli**: Backend=v8 without the feature warns and serves Node
+- **cli**: The snapshot write skips with SNP-V8OFF sans v8
+- **cli**: Resolve stage_match through the route_ctx substrate
+- **cli**: Resolve stage_route answers through route_ctx
+- **cli**: Re-export the substrate metrics pattern_of
+- **cli**: Re-export the substrate LayoutLoadSpec
+- **cache**: Depend on edge-primitives for the key types
+- **cache**: Re-export KeyHash from edge-primitives
+- **cache**: Re-export KeyStr from edge-primitives; keep key_of
+- **render**: Depend on edge-primitives for the nonce splicer
+- **render**: Re-export NonceSplicer from edge-primitives
+- **server**: Depend on edge-primitives for sse_frame
+- **server**: Re-export sse_frame from edge-primitives
+- **cli**: Scan_routes takes &mut OxideConfig for the merge
+- **cli**: Pass &mut cfg to scan_routes_with_plugins
+- **cli**: Pass &mut cfg to scan_routes in dev HMR
+- **cli**: Pass &mut cfg to scan_routes_with_plugins in build
+- **cli**: Pass &mut cfg to scan_routes in mcp tools
+- **conformance**: Expose V01_CHECKS + buildCheckCtx
+- **cli**: Remove legacy static native mount from dispatchers
+- **cli**: Expose endpoints::dispatchers to crate
+- **cli**: Pass None native_fns override in production stream start
+- **cli**: Pass None native_fns override in replay command
+- **cli**: Bridge load-flag locks recover the poisoned guard
+- **cli**: The loader stage reads the locale off the locals slot
+- **cli**: The render stage reads the locale off the locals slot
+- **cli**: The data-route stage reads the locale off the locals slot
+
+### Style
+
+- **compiler**: The pedantic pass in cjs_exports.rs
+- **compiler**: The pedantic pass in generate_params.rs
+- **config**: The stray double blank line before the S-09 doc
+- **compiler**: End the stubs assertion with a semicolon
+- **compiler**: Use ToString in the react compiler diagnostics
+- **compiler**: Rename sscript, give the assert a message
+- **compiler**: Inline the react spike format args
+- **compiler**: Drop the unneeded raw-string hashes
+- **assets**: Order the cfg-gated imports for rustfmt
+- **cli**: Fix the length comparison finding in llms
+- **cli**: Collapse the record write decision into one if
+- **assets**: Use std hint black box in the svg bench
+- **dispatch**: Copy instead of clone the roll scalars in the pin
+- **server**: Apply machine-applicable clippy pedantic fixes
+- **plugin**: Backtick the variant list in the crate readme
+- **compiler**: The rustfmt reflow of the props-surface pins
+- **compiler**: The props-surface bench's writeln reflow
+- **assets**: The integration pins ride the rustfmt shape
+- **server**: The cache-plane pins ride the rustfmt shape
+- **cli**: The session's touched pin files ride rustfmt
+- **server**: Digit separators in the SHA-1 and PRNG literals
+- **cli**: The F50 flag rows ride the repo fmt
+- **cli**: The posture resolver rides the repo fmt
+- **cli**: The posture boot wire rides the repo fmt
+- **cli**: The F49/F50 pin sections ride the repo fmt
+- **config**: The posture path pins ride the repo fmt
+- **cache**: The deadline example's prints lint clean
+- **schema**: The schema example's println wraps clean
+- **search**: Rustfmt the pre-existing drift in rebuild_wipe_tdd
+- **assets**: Apply the clippy fix to content.rs
+- **assets**: Apply the clippy fix to content_collection.rs
+- **assets**: Apply the clippy fix to content_typegen.rs
+- **assets**: Apply the clippy fix to css.rs
+- **assets**: Apply the clippy fix to font_metrics.rs
+- **assets**: Apply the clippy fix to i18n.rs
+- **assets**: Apply the clippy fix to image_jobs.rs
+- **assets**: Apply the clippy fix to images.rs
+- **assets**: Apply the clippy fix to lib.rs
+- **assets**: Apply the clippy fix to og_backend.rs
+- **assets**: Apply the clippy fix to route_search.rs
+- **assets**: Apply the clippy fix to svg.rs
+- **assets**: Apply the clippy fix to tests.rs
+- **assets**: Apply the clippy fix to content_collection_tdd.rs
+- **assets**: Apply the clippy fix to image_jobs_tdd.rs
+- **assets**: Apply the clippy fix to mdx_native_spike.rs
+- **assets**: Apply the clippy fix to svg_optimizer_tdd.rs
+- **dispatch**: Backtick the base_commit doc term
+- **core-wasm**: Apply the clippy/fmt hygiene pass to the tests
+- **bundler**: Apply rustfmt to the prebundle test pins
+- **bundler**: Apply rustfmt to the rolldown backend
+- **bundler**: Apply rustfmt to the sourcemap compose module
+- **bundler**: Apply rustfmt to the bundler TDD suite
+- **bundler**: Apply rustfmt to the sourcemap compose TDD suite
+- **cache**: Apply rustfmt to the cache http module
+- **cache**: Apply rustfmt to the http handler
+- **cache**: Apply rustfmt to the cache lib
+- **cache**: Apply rustfmt to the single-flight module
+- **cache**: Apply rustfmt to the cache TDD suite
+- **dev**: Apply the clippy fix to boundary.rs
+- **dev**: Apply the clippy fix to server_lib.rs
+- **dev**: Apply the clippy fix to workspace.rs
+- **diagnostics**: Apply the clippy fixes to the drift guard
+
+### Testing
+
+- **adapters**: The search refusal pins on the seam
+- **adapters**: The doc-table pins over the E11 emitter
+- **config**: The search mapping pins on the report
+- **config**: The schema pins declare the search keys
+- **cli**: The search-key pin rides the build wire
+- **adapters**: The search_configured bench split
+- **adapters**: The doc_table criterion bench
+- **cli**: The E11 red-first pins over the reference pages
+- **cli**: The V2.K registry coverage pins
+- **cli**: The docs_generate criterion bench
+- **config**: The e04 security surface pins
+- **render**: The sri injector pins
+- **render**: The sri injector snapshot harness
+- **render**: The sri injector snapshot
+- **bundler**: The sri criterion bench
+- **server**: The csp tdd pins
+- **cli**: The boot tag integrity pins
+- **bundler**: The head-producer pins
+- **bundler**: The integrity verifier pins
+- **bundler**: The head_for criterion bench
+- **bundler**: The integrity_verify criterion bench
+- **cli**: The head-filter and integrity-verdict pins
+- **server**: The nav-graph contract pins
+- **server**: The navgraph criterion bench
+- **config**: The prefetch config pins
+- **render**: The bootstrap advertisement pins
+- **cli**: The prerender prefetch advertisement pin
+- **core**: The learned-prefetch pins
+- **core**: The navigation header pins
+- **search**: The 27 engine pins incl. the top-3 parity
+- **search**: The criterion bench over build, query, export
+- **server**: The 8 endpoint contract pins
+- **cli**: The emission, CAS skip, SRC-106 and wire-up pins
+- **search**: The hot-reload seam pins
+- **server**: The swapped-index L1 partition pin
+- **search**: The hot-reload criterion groups
+- **cli**: The dev-search refresh and wire-up pins
+- **adapters**: The 15 delta-deploy TDD pins
+- **adapters**: The delta criterion bench group
+- **dispatch**: The 9 skew-pool TDD pins
+- **dispatch**: The skew criterion bench group
+- **adapters**: The 10 object-store target TDD pins
+- **adapters**: The object_store criterion group
+- **render**: The splice versus replace criterion group
+- **dispatch**: The 9 serving-pools TDD pins
+- **dispatch**: The pools routing criterion group
+- **compiler**: The 10 native-registry TDD pins
+- **compiler**: The pedantic pass on the compiler pins
+- **compiler**: The pedantic pass on the why-dynamic pins
+- **compiler**: The native selection criterion group
+- **assets**: The 7 image-jobs TDD pins
+- **assets**: The image-jobs criterion group
+- **config**: The 7 compilerBackend pins
+- **config**: The 4 avifSpeed pins
+- **config**: The 4 svg.optimize pins
+- **assets**: The 16 svg optimizer pins
+- **assets**: The svg_optimizer criterion group
+- **router**: The 8 typed-search typegen pins
+- **router**: The typegen_search criterion group
+- **assets**: The 16 glyph-usage pins over the committed subset fixture
+- **assets**: The committed subset fixture font for the cmap pin
+- **assets**: The used_chars default in the font fixtures
+- **assets**: The font_subsetter criterion group
+- **compiler**: The three named engine pins plus the width sizing pin
+- **compiler**: The precompile_engine criterion group
+- **bundler**: The seventeen sourcemap-composition pins
+- **bundler**: The rolldown banner-map acceptance pin
+- **cli**: The registry, llms, fold pins and legacy dispatch migration
+- **dispatch**: The ten capture pins over the record substrate
+- **dispatch**: The eight playback pins over the replay substrate
+- **dispatch**: The capture criterion group over the record substrate
+- **dispatch**: The playback criterion group over the replay substrate
+- **dispatch**: The replay-runner pins over the runner seam
+- **dispatch**: The replay-runner criterion group
+- **config**: The record key pins over the CFG-REC surface
+- **config**: The deploy section pins over the CFG-DEPLOY surface
+- **dev**: The eleven workspace-links TDD pins (red-first)
+- **dev**: The workspace_links criterion group over the discovery pass
+- **odf**: The try_from conversions and the roundtrip-suite split
+- **odf**: The cast, doc and assertion pins over the patch suite
+- **odf**: The bench cast and semicolon pins
+- **compiler**: 24 migrate TDD pins
+- **compiler**: Next fixture app/blog/[slug]/page.tsx
+- **compiler**: Next fixture app/layout.tsx
+- **compiler**: Next fixture app/page.tsx
+- **compiler**: Next fixture middleware.ts
+- **compiler**: Next fixture next.config.js
+- **compiler**: Next fixture package.json
+- **compiler**: Next fixture pages/legacy.js
+- **compiler**: Next fixture golden plan.json
+- **compiler**: Nuxt fixture error.vue
+- **compiler**: Nuxt fixture layouts/default.vue
+- **compiler**: Nuxt fixture middleware/auth.ts
+- **compiler**: Nuxt fixture nuxt.config.ts
+- **compiler**: Nuxt fixture package.json
+- **compiler**: Nuxt fixture pages/about.vue
+- **compiler**: Nuxt fixture pages/index.vue
+- **compiler**: Nuxt fixture pages/users.vue
+- **compiler**: Nuxt fixture pages/users/[id].vue
+- **compiler**: Nuxt fixture golden plan.json
+- **compiler**: Sveltekit fixture package.json
+- **compiler**: Sveltekit fixture golden plan.json
+- **compiler**: Sveltekit fixture src/hooks.server.ts
+- **compiler**: Sveltekit fixture src/lib/api.ts
+- **compiler**: Sveltekit fixture src/routes/+layout.svelte
+- **compiler**: Sveltekit fixture src/routes/+page.svelte
+- **compiler**: Sveltekit fixture src/routes/about/+page.server.ts
+- **compiler**: Sveltekit fixture src/routes/about/+page.svelte
+- **compiler**: Sveltekit fixture src/routes/api/+server.ts
+- **compiler**: Sveltekit fixture src/routes/blog/[slug]/+page.svelte
+- **compiler**: Sveltekit fixture svelte.config.js
+- **compiler**: Vite fixture index.html
+- **compiler**: Vite fixture package.json
+- **compiler**: Vite fixture golden plan.json
+- **compiler**: Vite fixture src/main.tsx
+- **compiler**: Vite fixture vite.config.ts
+- **compiler**: Migrate criterion bench
+- **compiler**: Migrate walkthrough example
+- **dispatch**: 12 idempotency TDD pins
+- **dispatch**: Idem criterion bench
+- **dispatch**: Idempotency walkthrough example
+- **config**: 8 offline config pins
+- **core**: 5 outbox pins
+- **rustfn**: 28 TDD pins over ABI, bridge, shim, host, types
+- **rustfn**: Fixture cdylib built with cargo, loaded via libloading
+- **rustfn**: Fixture body — thumbnail/boom over generated shims
+- **server**: Consult-order pins — native, JS fallback, FN-NOT-FOUND
+- **compiler**: Stub pins — self-contained stubs, id parity, manifests
+- **config**: 8-case inference table, union parse/serialize pins
+- **compiler**: Planner pins — legacy bytes, mixed registry, tooling
+- **core**: Mixed-registry pins — two adapters, unknown, shorthand
+- **core**: ResolveForeign pins — splice, split-safe, trailing carry
+- **bundler**: 14 pwa pins — breadths, fallback, source, emit
+- **core**: 10 offline enhance pins — probe, enqueue, headers, flush
+- **compiler**: 27 auto-islands pins — detection, fixpoint, decision
+- **config**: AutoIslands pins — defaults, parse, schema sync
+- **compiler**: The migrate pins' doc backticks and ignore reason
+- **compiler**: The rust-fn stub pins' clippy 1.100 findings
+- **compiler**: The migrate bench's doc backticks and inline format vars
+- **rustfn**: The macro pins consume input and carry a real Err
+- **dispatch**: The idem handler doubles are synchronous
+- **assets**: Add V2-C10 MDX native evaluation spike probe
+- **compiler**: Add V2-C03 Vue native compiler spike tests
+- **compiler**: Add V2-C04 Svelte native compiler spike tests
+- **compiler**: Add V2-C05 React Compiler native spike tests
+- **compiler**: Add ignored equivalence harness integration tests
+- **cli**: Update bundle_edge_entry test for precompile signature
+- **scripts**: Add native vs node compiler equivalence harness
+- **compiler**: Add the C02 spike Counter fixture
+- **compiler**: Add the smoke-component spike fixture
+- **compiler**: Add the smoke-route spike fixture
+- **compiler**: Pin the Solid backend shapes, refusals, determinism
+- **compiler**: Base the registry pins on empty registries
+- **scripts**: Add the solid equivalence arm to compiler-equiv
+- **compiler**: Add the ignored solid equivalence pin
+- **compiler**: Pin the upstream solid emission shapes
+- **compiler**: Initialize source_map in the registry fakes
+- **compiler**: Point the equiv header at the upstream backend
+- **rustfn**: Pin the swappable host swap and retire contracts
+- **dev**: Pin the server-lib loop contracts and the cargo e2e
+- **core**: Pin the client matcher parity contracts
+- **bundler**: Pin the register source and its dist write
+- **cli**: Pin the emission gate, shells walk and breadth
+- **core**: Pin the boot flush listener against the worker fan-out
+- **core**: Pin the store-less flush no-op
+- **dispatch**: Pin the roll, shared finish, timing skip
+- **dispatch**: Pin the server-timing re-derived skip
+- **server**: Carry the observer field through the pipeline literals
+- **jshost-worker**: Pin replay install and the drain protocol
+- **cli**: Pin the two-phase record-replay e2e over the smoke app
+- **cache**: Pin the build-id stamp and read round trips
+- **cli**: Pin the A04 build identity e2e over the wire
+- **e2e**: Add the F10 skew acceptance script
+- **server**: Pin the live endpoint wiring API
+- **cli**: Pin the live SSE e2e over the smoke app
+- **core**: Pin the boot live lifecycle and the envelope flag
+- **core**: Pin the normalizeInput live copy
+- **render**: Pin the prerendered-shell build-id bake
+- **skew**: Assert the old bytes inside the skew window
+- **router**: Pin the scanner's brownout priority read
+- **server**: Pin the sweep task's cadence and live-buffer safety
+- **cli**: Pin the reattach route, the per-IP limit and the tee
+- **core**: Pin the router's stream-marked reattach reassembly
+- Oracle router
+- **security**: Pin the SPEC-24 redaction on both Debug surfaces
+- **dispatch**: Pin the outcome seam, streaming and failed index
+- **cli**: Pin graph parent-data threading and three-way overlap
+- **server**: The fake's has() uses contains
+- **f04**: The three pipeline pins and the doc fix
+- **assets**: The DirImageCas pins and the CAS-first pin
+- **server**: The endpoint fixture gains the jobs field
+- **cli**: The deploy and search-flag pipeline pins
+- **render**: The flag-script pins and the swapper TT pins
+- **render**: Re-pin the swapper snapshots for the TT route
+- **render**: Re-pin the error-recovery snapshot for the TT route
+- **render**: Re-pin the swapper snapshot for the TT route
+- **core**: The search-params and href pins
+- **core**: The TT policy, swapper and lint pins
+- **react**: The Link pins
+- **compiler**: The vendor group pins
+- **bundler**: The vendor_groups field in the fixture options
+- **bundler**: The vendor_groups field in the fixture options
+- **bundler**: The vendor_groups field in the fixture options
+- **bundler**: The vendor_groups field in the fixture options
+- **bundler**: The vendor_groups field in the fixture options
+- **worker**: The Vue/Solid refresh emission pins
+- **worker**: The island:render framed-protocol pins
+- **core**: The double-quote placeholder pins
+- **core**: The solid shim and registry pins
+- **react**: The foreign placeholder pins
+- **solid**: The island twin pins
+- **svelte**: The island twin pins
+- **vue**: The island twin pins
+- **compiler**: The legacy byte-identity pins for the boot planner
+- **compiler**: The mixed_islands example walks the build-path plan
+- **cli**: The boot-entry seam pins and the nonce-stability pin
+- **cli**: Pin the OXIDE_IMAGE_UNSIGNED disable mapping
+- **cli**: The image single-flight wire acceptance fixture
+- **cli**: The delta-deploy wire acceptance fixture
+- **conformance**: The v0.2 drafts for the wired features
+- **stream**: Pin the session binding refusals red-first
+- **stream**: Criterion group for the binding reattach path
+- **search**: Pin the query-length cap and its boundary
+- **search**: Criterion bench for the cap gate and the L1 hit
+- **compiler**: 17 red-first pins for the props-surface seam
+- **compiler**: Criterion group for the props surface
+- **compiler**: The f02 dev-warn walkthrough example
+- **cli**: Pins for the endpoints page rows and determinism
+- **plugin**: 16 red-first pins for the compat matrix and the wasm ABI
+- **plugin**: Flip the resolve-id pin to the kebab export name
+- **plugin**: Message the empty-chain pin and drop the map closure
+- **plugin**: The compat criterion group behind bench-util
+- **server**: 22 pins for the open-in-editor endpoint
+- **server**: 9 pins for the cost endpoint seam
+- **server**: The open-editor criterion group behind bench-util
+- **server**: The cost-endpoint criterion group behind bench-util
+- **compiler**: 19 pins for the data-ox-src stamp
+- **compiler**: The data_src criterion group
+- **bundler**: 12 pins for the source-cost engine
+- **bundler**: The cost criterion group
+- **server**: 3 pins for the live hub tag snapshot
+- **server**: 3 pins for the snapshot cost source adapter
+- **server**: The tag_snapshot criterion group
+- **dispatch**: The generation_snapshot criterion group
+- **server**: The cost_source_snapshot criterion group
+- **dev**: 4 pins for the inspector live and generation rows
+- **dev**: The inspector criterion groups
+- **inspector**: Pin the module-graph search contract
+- **inspector**: Pin the ?q= arm pass-through
+- **cost**: Pin the profiled adapter layering rules
+- **bundler**: Pin the cost-records file seam
+- **server**: Pin the file-backed cost feed
+- **server**: The cost_source_file bench group
+- **server**: Pin the dev-plane trace feed
+- **server**: Pin the traceresponse response half
+- **server**: The trace feed bench groups
+- **server**: Pin the tracing export seam
+- **server**: Pin the filtered window
+- **cli**: The registry pin covers the endpoints page
+- **server**: Pin the log feed end to end
+- **server**: Pin the trace rows' file export
+- **server**: The cross-module integration pins
+- **server**: The log-feed criterion groups
+- **server**: The file-export criterion group
+- **server**: The log-feed gate's eleven TDD pins
+- **server**: The trace file writer seam's sticky-rule pins
+- **cache**: The placeholder integration suite holds real pins
+- **jshost**: The trace-parent TDD pins over the new seam
+- **jshost**: The trace-parent criterion bench target
+- **cli**: The feed boot flag's parse and precedence pins
+- **cache**: The observer seam's six red-first pins
+- **cache**: The observer hot-path criterion bench
+- **cache**: The metrics exporter's eight TDD pins
+- **cache**: The event feed's nine TDD pins
+- **cache**: The exporter's two criterion groups
+- **cache**: The event feed's criterion group
+- **cache**: The posture pull's snapshot and scrape benches
+- **cache**: The coalesce arms join the exporter bench
+- **cache**: The posture pull's thirteen TDD pins
+- **cache**: The coalesce parity row's seven TDD pins
+- **cache**: The feed pins match the coalesce row kind
+- **cache**: The snapshot value pin counts the new families
+- **cache**: The fanout seam's eight red-first pins
+- **cache**: The fanout's criterion fan-delta bench
+- **cache**: The feed gate's nine red-first pins
+- **cache**: The gate's admit and reject bench arms
+- **cache**: The flight pin holds the follower count
+- **server**: The cache-plane exposition's five red-first pins
+- **server**: The exposition render's criterion bench
+- **assets**: The placeholder integration stub's three pins
+- **cli**: The coalesce wire's red-first pipeline pins
+- **cache**: The attribution seam's fourteen red-first pins
+- **cache**: The attribution ledger's criterion delta
+- **cache**: The freshness pin decays on a backdated stamp
+- **cache**: The admission gate's ten red-first pins
+- **cache**: The capture drives register one at a time
+- **cache**: The sticky pins' capture drives serialize
+- **cache**: The gate's admit and reject bench arms
+- **cache**: The composed scrape's criterion arms
+- **cli**: The hot-key wire's red-first pipeline pins
+- **cli**: The hot-key top window's red-first pins
+- **cache**: The operator-window criterion group
+- **cli**: The F42 flag pins and the F43 layered-resolver pins
+- **config**: The cache.hotKeyTop parse and schema pins
+- **cli**: The hot-key window resolver's criterion bench
+- **cli**: The hot_key_top walkthrough example
+- **cache**: The snapshot, coverage and take pins
+- **cache**: The snapshot and hand-over criterion groups
+- **cache**: The walkthrough's snapshot and hand-over sections
+- **config**: The cache.coverageMetrics parse and schema pins
+- **cli**: The V2-F46 coverage-wire pins, red-first
+- **cli**: The cache_plane_coverage_scrape criterion group
+- **cli**: The hot_key_top example gains the parse walk and coverage arm
+- **cli**: The V2-F47/F48 health-wire pins, red-first
+- **config**: The cache.healthMetrics parse and schema pins
+- **cli**: The cache_plane_health_scrape criterion group
+- **cli**: The hot_key_top example gains the health-arm walk
+- **server**: The posture probe pins, red-first
+- **config**: The cache.postureProbePath parse and schema pins
+- **cli**: The posture probe and posture path knob pins, red-first
+- **cli**: The cache_posture_probe criterion group
+- **cache**: The eviction story pins, red-first
+- **cache**: The posture JSON pin gains the eviction row
+- **cache**: The snapshot value pin completes the eviction fields
+- **cache**: The feed's kind table names the evict row
+- **cache**: The cache_evict criterion groups
+- **cache**: The service's pins, red-first
+- **cache**: The serving half's pins, red-first
+- **cache**: The service's per-exchange criterion group
+- **cache**: The serving half's per-serve criterion group
+- **cli**: The V2-F55 pins over the L0 conditional wire
+- **cli**: The l0_conditional decision-cost bench
+- **cli**: The l0_conditional seam walkthrough example
+- **server**: The V2-F56 pins over the static plane's seam
+- **server**: The asset_conditional seam walkthrough example
+- **cache**: The plane health arm's pins, red-first
+- **cache**: The plane health pull criterion group
+- **server**: The plane mount's pins, red-first
+- **server**: The plane mount criterion group
+- **config**: The planeMount parse pins, red-first
+- **cli**: The mount resolver family pins, red-first
+- **server**: The mounted health arm pins, red-first
+- **cache**: The provider-posture accessor pin
+- **cache**: The deadline arm's pins, red-first
+- **cache**: The handler deadline criterion group
+- **server**: The mounted health criterion group
+- **cache**: The metrics arm's red-first pins (F61)
+- **cache**: The metrics arm's criterion bench (F61)
+- **server**: The metrics mount's red-first pins (F62)
+- **cli**: The mount gate's metrics pins (F62)
+- **cache**: The peer-posture probes' red-first pins (F63)
+- **cache**: The exchange bounds' red-first pins (F64)
+- **cache**: The peer-probe criterion group (F63)
+- **cache**: The exchange-bounds criterion group (F64)
+- **cache**: The client read limit's criterion group
+- **cache**: The client name guard's criterion group
+- **cache**: The shell's conn cap's red-first pins (F67)
+- **cache**: The client's inflight cap's red-first pins (F68)
+- **cache**: The conn cap's criterion group (F67)
+- **cache**: The client inflight's criterion group (F68)
+- **cache**: The sharded client's red-first pins (F69)
+- **cache**: The sharded client's criterion group (F69)
+- **cache**: The keep-alive's red-first pins (F70)
+- **cache**: The keep-alive's criterion group (F70)
+- **assets**: Avif pins - encoder rides the feature; refusal pin
+- **jshost**: The V8 integration tests ride the v8 feature
+- **assets**: Repair the 5-session rkyv-skew pins via as_deref
+- **assets**: Font_subsetter_tdd rides the subset feature
+- **search**: The exact-float pins compare with a tolerance
+- **dispatch**: The zero-elapsed pin compares with a tolerance
+- **dispatch**: The sample-roll pin compares with a tolerance
+- **dispatch**: The scripted-random pins compare with a tolerance
+- **search**: Update hot reload test helper to use wipe_dir_for_rebuild
+- **search**: Add TDD pins for wipe_dir_for_rebuild
+- **assets**: Gate AVIF encoder pin behind avif cargo feature
+- **assets**: Look up index route by id and use .md links in ref check
+- **cli**: Add ignored smoke_app binary deploy bundle test
+- **jshost**: Pin the ModuleSource seam on worker payload (V2-A09 M1)
+- **cli**: Thread ModuleSource::Source through the stack pins (V2-A09)
+- **cache**: Add failing tests for key hash and tag index
+- **cache**: Assert the 128-bit KeyHash identity in cache_tdd
+- **cache**: Carry the storage key as the KeyHash hex display
+- **gates**: Record the WP B05 red state
+- **gates**: Record the WP B05 green state
+- **dispatch**: Pin the route-context decisions without V8
+- **gates**: Record the dispatch red state
+- **gates**: Record the dispatch green state
+- **gates**: Record the pedantic sweep outcome
+- **brownout**: Opt the ceiling pin into the enabled config
+- **cli**: Pin the prerender table answers and repair 16 stale pins
+- **redaction**: Pin the camelCase secret key class
+- **gates**: Record the prerender-table red state
+- **gates**: Record the M1 green state
+- **gates**: Record the 16-pin repair green state
+- **gates**: Record the final gate and test verification
+- **cli**: Pin the /__data load-graph overlap and threading
+- **gates**: Record the adopted stages and the page-verdict substitution
+- **gates**: Record the /__data adoption red state
+- **gates**: Record the /__data adoption green state
+- **dispatch**: Pin the zero-alloc matched label and Arc<str> asserts
+- **gates**: Record the B03 hot-path red state
+- **gates**: Record the B03 hot-path green state
+- **core-wasm**: Criterion bench over the new pure exports
+- **adapters**: Pin worker shape, glue copy, capability rows
+- **gates**: Record the V2-E09 red transcript
+- **gates**: Record the V2-E09 green transcript
+- **cli**: Update the add report pin to the merged wording
+- **core**: Pin the module API contract (7 pins)
+- **analytics**: The recording-context pins (3 pins)
+- **cli**: The module_api criterion bench (V2-E06)
+- **gates**: Record the E06 fmt + clippy transcripts
+- **adapters**: The matrix JSON drift guard
+- **conformance**: C25 build-bootstrap + x-oxide-build
+- **conformance**: C26 stale-build 409 + stale marker
+- **conformance**: C27 parallel layout loads overlap
+- **conformance**: C28 middleware chain + locals merge
+- **conformance**: C29 gated route /__data is gated
+- **conformance**: C30 prerendered error status served
+- **conformance**: C31 four-framework mixed islands
+- **conformance**: C32 pre-hydration click replayed once
+- **conformance**: C33 experiment variant L0 split
+- **conformance**: C34 why-dynamic + --fix flips mode
+- **conformance**: C35 live revalidate under 200ms update
+- **conformance**: C36 ODF PATCH apply + mismatch fallback
+- **conformance**: C37 resumable stream byte-identical
+- **conformance**: C38 brownout sheds low keeps critical
+- **conformance**: C39 skew-window old server-fn succeeds
+- **conformance**: C40 rust server fn callable (binary)
+- **conformance**: C41 search ranked hits + static JSON
+- **conformance**: C42 learned prefetch dominant edge
+- **conformance**: C43 offline submit one server insert
+- **conformance**: C44 record then replay byte-identical
+- **conformance**: C45 chunk integrity matches manifest
+- **conformance**: C46 typed-route href runtime pin
+- **conformance**: C47 HMR keeps input state
+- **conformance**: The registry node --test gate
+- **conformance**: Registry dispatch + skip bench
+- **conformance**: The C46 typed-route compile fixture
+- **playwright**: C25 build-bootstrap spec
+- **playwright**: C26 stale-build 409 spec
+- **playwright**: C27 parallel-loads spec
+- **playwright**: C28 middleware-chain spec
+- **playwright**: C29 gated-route /__data spec
+- **playwright**: C30 prerendered-error spec
+- **playwright**: C33 experiment-variants spec
+- **playwright**: C35 live-revalidate spec
+- **playwright**: C38 brownout spec
+- **playwright**: C40 rust-server-fn spec
+- **playwright**: C44 record-replay spec
+- **playwright**: C47 HMR input-state spec
+- **jshost**: C34 why-dynamic shell acceptance
+- **gates**: Record the V2-R01 red transcript
+- **gates**: Record the V2-R01 green transcript
+- **config**: Pin the permissions section in the schema gate
+- **config**: Permissions config TDD pins
+- **router**: Declares_permissions token-boundary TDD pins
+- **adapters**: Permissions matrix truthfulness pins
+- **jshost**: PermGuard cycle + the hostile fixture pin
+- **conformance**: C48 permission-denial assertion
+- **conformance**: Register C48 in the assertion index
+- **gates**: Jshost V8-free lib test transcript
+- **gates**: Config router adapters test transcript
+- **gates**: Errors-registry gate transcript
+- **gates**: Perm_tdd V8-gated test transcript
+- **gates**: M1 red-to-green cycle transcript
+- **conformance**: The icons plugin-compat case
+- **conformance**: The mdx plugin-compat case
+- **conformance**: The pwa plugin-compat case
+- **conformance**: The react plugin-compat case
+- **conformance**: The solid plugin-compat case
+- **conformance**: The svelte plugin-compat case
+- **conformance**: The svgr plugin-compat case
+- **conformance**: The tailwind plugin-compat case
+- **conformance**: The tsconfig-paths plugin-compat case
+- **conformance**: The vue plugin-compat case
+- **conformance**: The icons-app fixture oxide.config.ts
+- **conformance**: The icons-app fixture package.json
+- **conformance**: The icons-app fixture src/routes/index/page.tsx
+- **conformance**: The mdx-app fixture oxide.config.ts
+- **conformance**: The mdx-app fixture package.json
+- **conformance**: The mdx-app fixture src/routes/index/page.tsx
+- **conformance**: The pwa-app fixture oxide.config.ts
+- **conformance**: The pwa-app fixture package.json
+- **conformance**: The pwa-app fixture src/routes/index/page.tsx
+- **conformance**: The react-app fixture oxide.config.ts
+- **conformance**: The react-app fixture package.json
+- **conformance**: The react-app fixture src/routes/index/page.tsx
+- **conformance**: The solid-app fixture oxide.config.ts
+- **conformance**: The solid-app fixture package.json
+- **conformance**: The solid-app fixture src/routes/index/page.tsx
+- **conformance**: The svelte-app fixture oxide.config.ts
+- **conformance**: The svelte-app fixture package.json
+- **conformance**: The svelte-app fixture src/routes/index/page.svelte
+- **conformance**: The svgr-app fixture oxide.config.ts
+- **conformance**: The svgr-app fixture package.json
+- **conformance**: The svgr-app fixture src/routes/index/page.tsx
+- **conformance**: The tailwind-app fixture oxide.config.ts
+- **conformance**: The tailwind-app fixture package.json
+- **conformance**: The tailwind-app fixture src/routes/index/page.tsx
+- **conformance**: The tsconfig-app fixture oxide.config.ts
+- **conformance**: The tsconfig-app fixture package.json
+- **conformance**: The tsconfig-app fixture src/routes/index/page.tsx
+- **conformance**: The vue-app fixture oxide.config.ts
+- **conformance**: The vue-app fixture package.json
+- **conformance**: The vue-app fixture src/routes/index/page.vue
+- **conformance**: The icons build log
+- **conformance**: The mdx build log
+- **conformance**: The pwa build log
+- **conformance**: The react build log
+- **conformance**: The solid build log
+- **conformance**: The svelte build log
+- **conformance**: The svgr build log
+- **conformance**: The tailwind build log
+- **conformance**: The tsconfig-paths build log
+- **conformance**: The vue build log
+- **cli**: The plugin-compat docs-check pins
+- **plugin**: The V2-E05 load-time report + LoadTimeReport pins
+- **conformance**: The plugin-compat node bench
+- **conformance**: The evaluator.test node --test gate
+- **conformance**: The report.test node --test gate
+- **conformance**: The schema.test node --test gate
+- **conformance**: The recorded plugin-compat results
+- **gates**: The V2-E05 red transcript
+- **gates**: The V2-E05 green transcript
+- **gates**: The errors-registry red transcript
+- **gates**: The errors-registry green transcript
+- **gates**: The config-refusal Live-degradation red transcript
+- **gates**: The config-refusal Live-degradation green transcript
+- **diagnostics**: The workspace lint-uniformity drift guard
+- **plugin**: Fix the compat_tdd assert_is_empty findings
+- **graph**: Clear graph_tdd pedantic findings (write/items/default)
+- **gates**: The per-crate clippy RED capture harness
+- **gates**: The clippy RED rollup generator
+- **gates**: The clippy RED baseline rollup (8 crates + assets)
+- **gates**: The oxide-fw-assets clippy RED transcript
+- **gates**: The oxide-fw-bundler clippy RED transcript
+- **gates**: The oxide-fw-cache clippy RED transcript
+- **gates**: Oxide-fw-cli clippy RED transcript (--no-default-features)
+- **gates**: The oxide-fw-dev clippy RED transcript
+- **gates**: The oxide-fw-graph clippy RED transcript
+- **gates**: Oxide-fw-jshost clippy RED (--no-default-features)
+- **gates**: The oxide-fw-plugin clippy RED transcript
+- **gates**: The oxide-fw-server clippy RED transcript
+- **gates**: The oxide-fw-plugin clippy GREEN transcript (2 -> 0)
+- **gates**: The oxide-fw-graph clippy GREEN transcript (52 -> 0)
+- **gates**: Lint-uniformity drift guard RED transcript (8 offenders)
+- **bundler**: Clear pedantic findings in bundler_rolldown_tdd.rs
+- **bundler**: Clear pedantic findings in bundler_tdd.rs
+- **bundler**: Clear pedantic findings in sourcemap_compose_tdd.rs
+- **cache**: Clear pedantic findings in cache_tdd.rs
+- **cache**: Clear pedantic findings in eviction_tdd.rs
+- **cache**: Clear pedantic findings in feed_tdd.rs
+- **cache**: Clear pedantic findings in health_tdd.rs
+- **cache**: Clear pedantic findings in hot_keys_tdd.rs
+- **cache**: Clear pedantic findings in metrics_tdd.rs
+- **cache**: Clear pedantic findings in observer_tdd.rs
+- **cache**: Clear pedantic findings in plane_health_tdd.rs
+- **cache**: Clear pedantic findings in plane_metrics_tdd.rs
+- **dev**: Clear pedantic findings in inspector_modules_tdd.rs
+- **dev**: Clear pedantic findings in server_lib_tdd.rs
+- **dev**: Clear pedantic findings in state_tdd.rs
+- **gates**: Bundler clippy RED transcript
+- **gates**: Cli clippy RED transcript
+- **gates**: Dev clippy RED transcript
+- **gates**: Jshost clippy RED transcript
+- **gates**: Bundler clippy GREEN transcript
+- **gates**: Cli clippy GREEN transcript
+- **gates**: Dev clippy GREEN transcript
+- **gates**: Jshost clippy GREEN transcript
+- **rustfn**: Pin RustFnRegistry for SwappableHost
+- **rustfn**: Pin the RegistryReport introspection surface
+- **rustfn**: Bench the swappable registry consult
+- **rustfn**: Pin the ChainedRegistry consult surface
+- **rustfn**: Bench the chained registry consult
+- **rustfn**: Pin the StatsRegistry consult surface
+- **rustfn**: Bench the StatsRegistry consult overhead
+- **rustfn**: Clock-pin the SwappableHost consult timeout
+- **rustfn**: Pin the TracingRegistry consult surface (M1)
+- **rustfn**: Pin the HotKeyRegistry attribution surface (M2)
+- **rustfn**: Bench the tracing and hot-key decorator overhead
+- **bundler**: Bench the reached-packages map and the manifest fold
+- **bundler**: Pin the packages_reached classification and fold
+- **cli**: Pin the reached-packages SBOM filter and wiring
+- **compiler**: Add data_src_template TDD pins for Vue/Svelte stamp
+- **compiler**: Add data_src_template criterion bench group
+- **cache**: Verify dist/native participation in build identity
+- **cli**: Align module config edit tests with E06/E11 contracts
+- **cli**: Update start_dev_server_full calls and node ref in tests
+- **cli**: Add TDD suite for native server-fn CLI adoption
+- **server**: Add TDD suite for brownout hedger semantics
+- **config**: Pin the sharded cache.handler shape
+- **cli**: Pin the boot posture line and sharded resolver
+- **jshost**: Pin the Node and V8 op parity table per spec V2-A08
+- **jshost**: Add the endpoint-get op-parity fixture module
+- **jshost**: Add the endpoint-post op-parity fixture module
+- **jshost**: Add the middleware-locals op-parity fixture module
+- **jshost**: Add the middleware-redirect op-parity fixture module
+- **jshost**: Add the loader-defer op-parity fixture module
+- **jshost**: Add the action-basic op-parity fixture module
+- **jshost**: Add the endpoint-get op-parity input fixture
+- **jshost**: Add the endpoint-post op-parity input fixture
+- **jshost**: Add the middleware-locals op-parity input fixture
+- **jshost**: Add the middleware-redirect op-parity input fixture
+- **jshost**: Add the loader-defer op-parity input fixture
+- **jshost**: Add the action-basic op-parity input fixture
+- **cli**: Pin endpoint, middleware and streaming in the V8 gate
+- **dispatch**: Pin the generation pool's early-drop contract
+- **plugin**: Flip the wasm load/resolveId compat pins to wired
+- **cli**: Pin the wasm hook wire and the early-drop wiring
+- **cli**: Record the wire's red transcript
+- **dispatch**: Record the evict trigger's red transcript
+- **cli**: Pin the stamp wire and the doctor rows
+- **cli**: Record the stamp wire's red transcript
+- **cli**: Record the doctor wire's red transcript
+- **cli**: Pin the retained-generation rollback seam
+- **cli**: Pin the rollback command swap and refusals
+- **vue**: Pin the typed Link twin
+- **solid**: Pin the typed Link twin
+- **svelte**: Pin the typed Link component
+- **dev**: Pin the mapped overlay payload contract
+- **cache**: Pin the edge KV handler contract
+- **gates**: Record the frames pins' red transcript
+- **gates**: Record the frames pins' green state
+- **gates**: Record the kv pins' red transcript
+- **gates**: Record the kv pins' green state
+- **gates**: Record the releases boots red transcript
+- **gates**: Record the releases boots green state
+- **gates**: Record the mapped frames red transcript
+- **gates**: Record the mapped frames green state
+- **gates**: Record the final cli lib suite run
+- **cli**: Pin the data envelope's bound and refusals
+- **gates**: Record the p02 envelope red transcript
+- **gates**: Record the p02 envelope green state
+- **cli**: Pin the §10.4 build-time shell seed end to end
+- **gates**: Record the p04 seed red transcript
+- **gates**: Record the p04 seed green state
+- **gates**: Record the p04 invalidation red transcript
+- **gates**: Record the p04 invalidation green state
+- **gates**: Record the final cli lib suite state
+- **pwa**: Pin the offline-fallback precache contract
+- **cli**: Pin the fallback answerability warn and quiet arms
+- **gates**: Record the offline-fallback bundler red state
+- **gates**: Record the fallback audit cli red transcript
+- **gates**: Record the fallback audit cli green state
+- **gates**: Record the capped pedantic cli sweep
+- **gates**: Record the capped pedantic bundler config sweep
+- **gates**: Record the final cli lib suite state
+- **core**: Pin the f17 cost overlay contract
+- **cli**: The pins pipeline carries no dev token
+- **cli**: Pin the dev_token_tag wire and the e2e page marker
+- **gates**: Record the f17 dev-token red transcript
+- **gates**: Record the f17 dev-token green transcript
+- **gates**: Record the f17 cli lib suite green state
+- **gates**: Record the l0_alloc budget bench transcript
+- **cli**: Pin the unified locals contract across the four surfaces
+- **dispatch**: Bench the locals fold against the ad-hoc shape
+- **gates**: Record the a05 locals red transcript
+- **gates**: Record the a05 cli lib suite green state
+- **gates**: Record the a05 cli benches green state
+- **gates**: Record the a05 dispatch suite green state
+- **migrate**: Pin the config-key apply halves
+- **migrate**: Bench the config-key apply cost
+- **cli**: Pin the migrate apply's config-key wire
+- **gates**: Record the e03 config-apply red transcript
+- **gates**: Record the e03 config-apply green transcript
+- **gates**: Record the workspace clippy jshost-debt log
+
+### Build
+
+- **config**: The search schema fragment
+- **config**: Regenerate the checked-in config schema
+- **adapters**: Register the doc_table criterion bench
+- **config**: Regenerate the checked-in schema with key descriptions
+- **cli**: Register the docs criterion bench
+- **bundler**: The sri deps and the bench registration
+- Lock the sri digest deps
+- **config**: Regenerate the checked-in schema
+- **bundler**: Register the head and integrity benches
+- **config**: Regenerate the checked-in schema
+- **server**: Register the navgraph bench
+- **workspace**: Add the search member and pin tantivy 0.27
+- **workspace**: Resolve the tantivy dependency tree
+- **search**: The engine crate manifest with the lints opt-in
+- **server**: The optional search dep and the search feature
+- **cli**: The optional search dep and the search feature
+- **ci**: The release binaries carry the search feature
+- **workspace**: Resolve the tracing dependency for the delta engine
+- **adapters**: The tracing dep, the lints opt-in and the delta bench
+- **dispatch**: The skew bench target
+- **workspace**: Pin memchr 2.8.3 for the b08 splicer
+- **adapters**: The s3 feature, object_store and tokio deps
+- **render**: The memchr dep and the splice bench target
+- **workspace**: The lockfile for memchr and the s3 feature
+- **diagnostics**: Drop the dead miette dependency
+- **workspace**: Prune the unused miette from the lockfile
+- **dispatch**: The pools bench target
+- **compiler**: The workspace-lints adoption and the bench wiring
+- **assets**: The job-model deps and the bench wiring
+- **config**: The regenerated schema with the two new leaves
+- **workspace**: The lockfile for the new deps and the prunes
+- **workspace**: The nine dead workspace dependencies pruned
+- **workspace**: The oxvg pair and roxmltree pinned
+- **workspace**: The lockfile for the new deps
+- **assets**: The svg-oxvg feature and the bench wiring
+- **config**: The regenerated schema with the svg section
+- **cli**: The svg-oxvg forwarding feature
+- **router**: The typegen_search bench target
+- **workspace**: The lockfile for the two new deps
+- **assets**: The lol_html dep and the bench/example wiring
+- **compiler**: The futures dep and the precompile_engine bench wiring
+- **bundler**: Oxc_sourcemap dep and sourcemap_compose bench target
+- **dispatch**: The serde, base64, sha2 and tracing deps
+- **workspace**: The lockfile for the dispatch dep edges
+- **dispatch**: The replay-runner bench registration
+- **config**: The regenerated schema with llms, record and deploy
+- **workspace**: Drop unused package description and homepage
+- **workspace**: The lockfile rides the dev resolver edge
+- **dev**: Resolve linked packages through the pinned oxc_resolver
+- **odf**: Adopt the workspace lints (the V2-A02 pedantic policy)
+- **workspace**: Drop dead rustls dependency
+- **workspace**: Lockfile rides rustls removal
+- **compiler**: Migrate bench and tempfile dev-dep
+- **dispatch**: Idem bench registration
+- **workspace**: Add macros + rustfn members and the proc-macro stack
+- **workspace**: The lockfile rides the new members and deps
+- **macros**: Scaffold the oxide-macros proc-macro crate
+- **rustfn**: Scaffold the host crate with the bench-util feature
+- **rustfn**: The fixture cdylib lockfile
+- **cli**: Declare the oxide-rustfn dependency
+- **compiler**: Register the islands bench in the manifest
+- **bundler**: The pwa emitter plans over the typed sw/offline keys
+- **workspace**: The lockfile rides the bundler's config dep edge
+- **workspace**: Declare the oxc_ast_visit dep the scanner rides
+- **compiler**: Register oxc_ast_visit and the interactivity bench
+- **workspace**: The lockfile rides the oxc_ast_visit edge
+- **deps**: Add native compiler workspace dependencies
+- **deps**: Update Cargo.lock for native compiler crates
+- **assets**: Add snapfire_fsr_mdx dev-dependency for C10 spike
+- **compiler**: Add feature-gated native framework compilers
+- **cli**: Forward native compiler features and add inspect bench
+- **justfile**: Add release-build recipe with native compilers
+- **cli**: Forward the native-solid feature
+- **justfile**: Compile native-solid into the release recipe
+- **workspace**: Pin the solidjs-compiler git dep at upstream rev
+- **compiler**: Gate solidjs-compiler behind native-solid
+- **dev**: Depend on rustfn and compiler for the server-lib loop
+- **cli**: The deploy-s3 feature gate for object-store targets
+- **core**: The search tsdown entry
+- **workspace**: The rolldown_utils workspace dependency
+- **bundler**: The rolldown_utils dependency
+- **server**: Gate the search bench on search + bench-util
+- **compiler**: Gate the props-surface bench behind bench-util
+- **plugin**: Drop the dead deps and wire the compat bench
+- **deps**: Drop the dead plugin workspace dependency entries
+- **server**: Register the endpoint benches and drop the dead dep
+- **cache**: Drop the dead odf dependency
+- **compiler**: Register the data_src bench behind bench-util
+- **bundler**: The flate2 dependency and the cost bench registration
+- **dev**: Register the inspector bench behind bench-util
+- **render**: Drop the dead deps, move tokio to dev
+- **cache**: Drop the dead dep, gate futures under s3
+- **graph**: Drop the dead thiserror dependency
+- **odf**: Drop the dead thiserror dependency
+- **server**: Register the trace_feed bench target
+- **server**: The trace-export bench target and dev-dep
+- **deps**: Lock the trace-export dev-dep
+- **scripts**: Count the flavoured tokio tests
+- **scripts**: The launch gate counts the flavoured tests
+- **server**: The tracing-subscriber dep and the log-feed bench
+- **jshost**: The bench-util feature and the trace bench target
+- **cache**: The observer bench target and the subscriber dev-dep
+- **cache**: The metrics and feed bench targets
+- **cache**: The health bench target behind bench-util
+- **cache**: The fanout bench target behind bench-util
+- **server**: The metrics bench target behind bench-util
+- **cache**: The hot_keys bench target behind bench-util
+- **cli**: The hot_key_top bench target behind bench-util
+- **cache**: The bare lints table, not inheriting yet
+- **graph**: The bare lints table, not inheriting yet
+- **dev**: The bare lints table, not inheriting yet
+- **server**: The bare lints table, not inheriting yet
+- **jshost**: The bare lints table, not inheriting yet
+- **bundler**: The bare lints table, not inheriting yet
+- **plugin**: The bare lints table, not inheriting yet
+- **core-wasm**: The bare lints table, not inheriting yet
+- **assets**: The bare lints table, not inheriting yet
+- **cli**: Declare the hot_key_top bench target behind bench-util
+- **cache**: The eviction bench target declaration
+- **cache**: The two bench targets behind bench-util
+- **server**: Name the cache-crate dep edge the F56 wire composes
+- **cli**: Declare the gated l0_conditional criterion bench target
+- **cache**: Declare the plane_health criterion bench target
+- **server**: Declare the plane_mount criterion bench target
+- **cache**: Declare the handler_deadline criterion bench target
+- **server**: Declare the plane_mount_health criterion bench target
+- **cache**: The plane_metrics bench rides the manifest
+- **cache**: The peer_probe and exchange_bounds bench targets
+- **cache**: The client_read_limit and client_name_guard targets
+- **cache**: The conn_cap and client_inflight bench targets
+- **cache**: The sharded and keepalive bench targets
+- Jshost dep inherits default-features = false
+- Bump wasmtime to the RUSTSEC-2026-05xx patched range
+- **deny**: Drop PR #611-removed keys; name unmaintained advisories
+- **assets**: Gate the avif path behind a non-default feature
+- **jshost**: Gate the V8 isolate behind the v8 feature
+- **cli**: Default = ["v8"]; --no-default-features links V8-free
+- **dispatch**: Register the hot_path bench harness
+- **core-wasm**: Regenerate the edge wasm with the new exports
+- **core-wasm**: Ship the wasm-bindgen glue alongside the wasm
+- **cli**: Register module_api bench + module_add example
+- **config**: Depend on oxide-fw-jshost for the permission types
+- **jshost**: Register the perm test, bench and example targets
+- **rustfn**: Add the tracing-subscriber dev-dependency
+- **rustfn**: Record the dev-dependency in the lockfile
+- **bundler**: Gate the reached_packages criterion bench
+- **cli**: Register native_fns bench and tokio dev-dependency
+- **cli**: Register the plane_boot_line and sharded_resolver benches
+- **jshost**: Register the op-parity test and parity example targets
+- **cli**: Register the wasm_hooks and brownout_evict targets
+- **cli**: Keep the production build pass unstamped
+- **cli**: Register the data_src_wire bench and example
+- **cli**: Register the rollback command module
+- **cli**: Register the generation_rollback bench and example
+- **svelte**: Ship the link component as the ./link subpath
+- **dev**: Pin oxc_sourcemap and register the frames bench
+- **cache**: Register the kv criterion bench
+- **deps**: Record the dev crate's oxc_sourcemap pin
+- **cli**: Register the releases-boot and module-map benches
+- **cli**: Register the data_envelope criterion bench
+- **cli**: Register the ppr seed criterion bench
+- **cli**: The l0_alloc bench target and the dhat dev-dep
+- **cli**: The lockfile keeps the workspace dhat pin
+- **dispatch**: Register the locals-fold criterion bench
+
 ## [0.13.0] — 2026-11-10
 
 ### Added
