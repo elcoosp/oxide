@@ -72,6 +72,31 @@ pub(crate) fn boot_script_tag(boot_url: &str, nonce: &str, integrity: Option<&st
     }
 }
 
+/// V2-F17: the dev-token page wire — `window.__oxide.devToken` — so the
+/// cost overlay (`packages/core/src/client/cost-overlay.ts`) can speak the
+/// dev-token-guarded `GET /__oxide/cost` endpoint. The token is the SEC-09
+/// dev session token the serve boot mints when the inspector is attached;
+/// the tag carries the PAGE nonce (a nonce'd CSP executes only nonce'd
+/// inline scripts), and the payload is JSON-encoded with the deferred-tag
+/// builder's `<` escape — a value that could break out of the script
+/// element cannot, whatever the minting path does someday.
+///
+/// `None` — production, or a dev boot with the inspector off — emits
+/// nothing: the tag only exists on the dev wire, and every page stays
+/// byte-identical without it.
+pub(crate) fn dev_token_tag(token: Option<&str>, nonce: &str) -> String {
+    let Some(token) = token else {
+        return String::new();
+    };
+    // serde_json for the payload (no untrusted string concatenation), then
+    // the `<` escape that keeps a JSON string from terminating the tag.
+    let json = serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".into());
+    let safe = json.replace('<', "\\u003c");
+    format!(
+        r#"<script type="application/oxide-dev-token" nonce="{nonce}">window.__oxide=window.__oxide||{{}};window.__oxide.devToken={safe}</script>"#
+    )
+}
+
 /// V2-E04: the manifest `integrity` digest for a boot URL of the form
 /// `client/<file>` (or `/client/<file>`). `integrity_node` is the
 /// manifest's top-level `integrity` object; a pre-E04 manifest (no key), a
