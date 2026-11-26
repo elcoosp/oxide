@@ -12,8 +12,12 @@
 //! they win over user-set keys with the same name in [`to_value`], and a
 //! middleware that stages one via [`RequestLocals::apply_middleware_locals`]
 //! gets it reported back — the caller's dev-mode warning (`DSP-101`,
-//! documented drift guard). The CLI wiring is deferred to the A01
-//! phase-3 move (see `docs/deviations.md`).
+//! documented drift guard). The CLI adoption landed (`stage_prelude` seeds
+//! the §16.6 session, the matcher writes the i18n locale, the middleware
+//! stage folds the chain's answer through [`RequestLocals::
+//! apply_middleware_locals`] and the experiments stage rides
+//! [`RequestLocals::set_experiments`]; every consumer reads the
+//! `to_value()` snapshot — pinned by the CLI's `a05_*` suite).
 
 use std::collections::BTreeMap;
 
