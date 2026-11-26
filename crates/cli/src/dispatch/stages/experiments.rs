@@ -115,20 +115,15 @@ pub(crate) async fn stage_experiments(d: &DispatchDeps, cx: &mut RequestCtx) -> 
     }
     // (2) The assigned map into the pipeline-owned locals slot — the
     // loaders (`LoaderRunInput.locals`) and the render input read it, a
-    // middleware-staged `experiments` key loses at to-value time.
-    if !resolved.assigned.is_empty()
-        && let Some(obj) = cx.middleware_locals.as_object_mut()
-    {
-        obj.insert(
-            "experiments".to_string(),
-            serde_json::Value::Object(
-                resolved
-                    .assigned
-                    .iter()
-                    .map(|(id, v)| (id.clone(), serde_json::Value::String(v.clone())))
-                    .collect(),
-            ),
-        );
+    // middleware-staged `experiments` key loses at to-value time. V2-A05
+    // step 4: the slot is the typed `RequestLocals.experiments`
+    // (`set_experiments`) now — the JSON-map overwrite is gone; a staged
+    // key was already reported (DSP-101) at the middleware fold, and the
+    // resolved assignments win at `to_value` time (the same JSON shape:
+    // `{ id: variant }` strings, byte-identical).
+    if !resolved.assigned.is_empty() {
+        cx.locals.set_experiments(resolved.assigned.clone());
+        cx.middleware_locals = cx.locals.to_value();
     }
     // (3) The minted identities ride the per-request middleware-header
     // list: applied on the L0-hit and coalesced paths AND every render
