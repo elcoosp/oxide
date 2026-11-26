@@ -1,0 +1,8 @@
+
+running 3 tests
+test tests::dev_token_tag_is_empty_without_a_token ... ok
+test tests::dev_token_tag_mints_the_page_wire_with_the_page_nonce ... ok
+test tests::dev_token_tag_escapes_script_breaking_bytes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 583 filtered out; finished in 0.00s
+
