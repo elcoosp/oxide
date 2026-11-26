@@ -2404,6 +2404,43 @@ async fn migrate_vite_and_unknown_source() {
     );
 }
 
+/// The §V2-E03 apply-in-engine half through the CLI: `--apply` on a
+/// Next tree writes the plan's `routes.compat` key into the created
+/// `oxide.config.ts` and the report names the applied key (the
+/// clean-tree gate is advisory here — the tmpdir carries no VCS).
+#[tokio::test]
+async fn migrate_apply_writes_the_config_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::fs::write(root.join("next.config.js"), "module.exports = {};\n").unwrap();
+    std::fs::create_dir_all(root.join("app/blog")).unwrap();
+    std::fs::write(
+        root.join("app/blog/page.tsx"),
+        "export default () => null;\n",
+    )
+    .unwrap();
+    let (code, out) = run_ok(&[
+        "oxide",
+        "migrate",
+        "--root",
+        root.to_str().unwrap(),
+        "next",
+        "--apply",
+    ])
+    .await;
+    assert_eq!(code, 0, "apply output: {out}");
+    assert!(
+        out.contains("1 config key(s); 0 manual note(s) left pending"),
+        "{out}"
+    );
+    assert!(out.contains("config applied: routes.compat"), "{out}");
+    let config = std::fs::read_to_string(root.join("oxide.config.ts")).expect("the created config");
+    assert!(
+        config.contains("routes: { compat: \"next\" },"),
+        "the compat key lands in the created oxide.config.ts: {config}"
+    );
+}
+
 // --------------------------------------------------------------------- build
 
 #[tokio::test]
