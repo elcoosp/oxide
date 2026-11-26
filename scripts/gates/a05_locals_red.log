@@ -1,0 +1,40 @@
+
+failures:
+
+---- tests::a05_dsp101_names_the_collided_reserved_keys stdout ----
+
+thread 'tests::a05_dsp101_names_the_collided_reserved_keys' (12242) panicked at crates/cli/src/tests.rs:18293:5:
+the drift guard names the code: 
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::a05_prelude_seeds_session_and_locale_without_middleware stdout ----
+
+thread 'tests::a05_prelude_seeds_session_and_locale_without_middleware' (12244) panicked at crates/cli/src/tests.rs:18160:5:
+assertion `left == right` failed: the matcher's i18n resolver landed the locale in the slot: {"session":{"user":"ada"}}
+  left: None
+ right: Some(String("en"))
+
+---- tests::a05_reserved_keys_staged_by_middleware_lose_to_the_pipeline stdout ----
+
+thread 'tests::a05_reserved_keys_staged_by_middleware_lose_to_the_pipeline' (12245) panicked at crates/cli/src/tests.rs:18212:5:
+assertion `left == right` failed: the pipeline-owned locale slot wins over the staged key: {"locale":"xx-YY","experiments":{"hero":"treatment"},"section":"blog"}
+  left: Some(String("xx-YY"))
+ right: Some(String("en"))
+
+---- tests::a05_unified_locals_reach_every_consumer_identically stdout ----
+
+thread 'tests::a05_unified_locals_reach_every_consumer_identically' (12246) panicked at crates/cli/src/tests.rs:18107:5:
+assertion `left == right` failed: page GET locals
+  left: Object {"session": Object {"user": String("ada")}, "section": String("blog")}
+ right: Object {"section": String("blog"), "session": Object {"user": String("ada")}, "locale": String("en")}
+
+
+failures:
+    tests::a05_dsp101_names_the_collided_reserved_keys
+    tests::a05_prelude_seeds_session_and_locale_without_middleware
+    tests::a05_reserved_keys_staged_by_middleware_lose_to_the_pipeline
+    tests::a05_unified_locals_reach_every_consumer_identically
+
+test result: FAILED. 1 passed; 4 failed; 0 ignored; 0 measured; 586 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p oxide-fw-cli --lib`
