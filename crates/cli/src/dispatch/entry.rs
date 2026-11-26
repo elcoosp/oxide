@@ -150,7 +150,6 @@ impl Default for DispatchOpts {
         }
     }
 }
-
 #[cfg(test)]
 pub(crate) fn build_dispatch(
     tree: std::sync::Arc<oxide_fw_router::RouteTree>,
@@ -202,6 +201,10 @@ pub(crate) fn build_dispatch(
         // short-circuits, keys stay the pre-F04 baseline).
         experiments: opts.experiments,
         search_flag: opts.search_flag,
+        // V2-F17: the pins' pipeline carries no dev token — the
+        // `dev_token_tag` pins drive the tag builder directly, and the
+        // dev-boot e2e asserts the wire on the real server.
+        dev_token: None,
     })
 }
 
