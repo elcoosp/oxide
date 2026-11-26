@@ -1,8 +1,6 @@
 //! The `oxide migrate` codemod planner (§V2-E03) — the plan-is-data
-//! substrate the `oxide migrate [--apply]` command drives once the CLI
-//! wiring lands (the V8-free half of E03; the command is the thin CLI
-//! wrapper, deferred with the A01 phase-3 wiring — see
-//! `docs/deviations.md`).
+//! substrate the `oxide migrate [--apply]` command drives (the command
+//! is the thin CLI wrapper; the engine here is the one definition site).
 //!
 //! The spec's shape is kept verbatim: a [`MigrationPlan`] carries
 //! exactly the four data fields (`renames`, `rewrites`, `config`,
@@ -43,6 +41,16 @@
 //! `routes.compat: 'next'` (the compat layer accepts the Next spelling,
 //! so the plan stays pure path/import data instead of a per-file
 //! identifier rewrite).
+//!
+//! The apply writes the plan's `config` keys (the E03 apply-in-engine
+//! half): a `tsconfig.`-prefixed key merges into `tsconfig.json`
+//! (`tsconfig.paths.X` lands under `compilerOptions.paths.X`), a bare
+//! dotted key merges into `oxide.config.ts` (the `defineConfig` /
+//! `export default` object the scaffold spells — created minimal when
+//! absent, existing rows never rewritten, an already-present equal
+//! value re-applies as a no-op, a diverging value or an
+//! unrecognizable shape stays pending loud in the report). The manual
+//! notes stay pending by definition — a note is a human decision.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -126,7 +134,9 @@ pub struct Note {
 
 /// The apply report: the mechanical work performed and the work left
 /// for the `--apply` CLI pass (or the human) — the plan's config keys
-/// and notes are never applied silently.
+/// are applied (the E03 apply-in-engine half: a key the engine cannot
+/// spell into its target file stays pending loud, never silent), and
+/// the notes are never applied silently.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyReport {
@@ -135,7 +145,15 @@ pub struct ApplyReport {
     /// Import-rewrite entries applied (a file whose scanned spans
     /// carried the `from` specifier).
     pub rewrote: usize,
-    /// The planned config keys, pending (the apply never writes config).
+    /// The planned config keys the apply wrote into their target file
+    /// (`oxide.config.ts` / `tsconfig.json`), in plan order.
+    #[serde(default)]
+    pub config_applied: Vec<String>,
+    /// The planned config keys that stayed pending: a target file the
+    /// engine cannot parse, an object shape it cannot recognize, or an
+    /// already-present key carrying a DIFFERENT value (never
+    /// overwritten).
+    #[serde(default)]
     pub config_pending: Vec<String>,
     /// The planned manual notes, pending by definition.
     pub manual: usize,
@@ -296,8 +314,10 @@ pub fn plan_for(root: &Path) -> Result<MigrationPlan, OxideError> {
 /// the renames (after a whole-set collision pre-check — a colliding
 /// migration refuses [`MIG_TARGET`] before anything moves) and the
 /// import rewrites (span surgery over [`crate::scan_import_spans`]).
-/// The config keys and the manual notes are never applied silently —
-/// the report carries them pending.
+/// The config keys are applied by the engine (the E03 apply-in-engine
+/// half: `tsconfig.`-prefixed keys merge into `tsconfig.json`, bare
+/// dotted keys merge into `oxide.config.ts`); the manual notes are
+/// never applied — the report carries them pending.
 ///
 /// # Errors
 ///
@@ -327,7 +347,8 @@ pub fn apply_plan(root: &Path, plan: &MigrationPlan) -> Result<ApplyReport, Oxid
     let mut report = ApplyReport {
         renamed: 0,
         rewrote: 0,
-        config_pending: plan.config.iter().map(|c| c.key.clone()).collect(),
+        config_applied: Vec::new(),
+        config_pending: Vec::new(),
         manual: plan.manual.len(),
     };
     for (from, to) in &plan.renames {
@@ -346,7 +367,421 @@ pub fn apply_plan(root: &Path, plan: &MigrationPlan) -> Result<ApplyReport, Oxid
             report.rewrote += 1;
         }
     }
+    for key in apply_config_keys(root, &plan.config)? {
+        match key {
+            Ok(name) => report.config_applied.push(name),
+            Err(name) => report.config_pending.push(name),
+        }
+    }
     Ok(report)
+}
+
+// ------------------------------------------------------------- config apply
+
+/// The outcome of one config-key apply: `Ok` the key was written (or
+/// already rode the file with the planned value — an idempotent no-op),
+/// `Err` the key stays pending loud (an unparseable or unrecognizable
+/// target, or an already-present DIFFERENT value — never overwritten).
+type ConfigKeyOutcome = Result<String, String>;
+
+/// Apply the plan's config keys (§V2-E03): every `tsconfig.`-prefixed
+/// key merges into `tsconfig.json`, every bare dotted key merges into
+/// `oxide.config.ts`. Plan order, one outcome per key.
+///
+/// # Errors
+///
+/// [`MIG_IO`] when a target file cannot be read or written — an
+/// unparseable or unrecognizable TARGET is not an error: the key stays
+/// pending (the report names it) rather than the whole apply failing
+/// after the renames ran.
+fn apply_config_keys(root: &Path, keys: &[ConfigKey]) -> Result<Vec<ConfigKeyOutcome>, OxideError> {
+    let mut outcomes = Vec::with_capacity(keys.len());
+    for key in keys {
+        if let Some(rest) = key.key.strip_prefix("tsconfig.") {
+            outcomes.push(apply_tsconfig_key(root, &key.key, rest, &key.value)?);
+        } else {
+            outcomes.push(apply_oxide_config_key(root, &key.key, &key.value)?);
+        }
+    }
+    Ok(outcomes)
+}
+
+/// Merge one `tsconfig.` key into `tsconfig.json`. `key` is the full
+/// spelling the report carries (`tsconfig.paths.$lib`); `remainder` is
+/// what follows the `tsconfig.` prefix (`paths.$lib`). The `paths.X`
+/// spelling lands under `compilerOptions.paths.X` — the one place
+/// tsconfig path mappings live. A missing file is created minimal; an
+/// unparseable file stays pending; a present equal value re-applies as
+/// a no-op; a present different value is never overwritten.
+///
+/// # Errors
+///
+/// [`MIG_IO`] when the file cannot be read or written.
+fn apply_tsconfig_key(
+    root: &Path,
+    key: &str,
+    remainder: &str,
+    value: &str,
+) -> Result<ConfigKeyOutcome, OxideError> {
+    let path = root.join("tsconfig.json");
+    let mut value_json = match fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    code = "MIG-CONFIG",
+                    file = %path.display(),
+                    error = %e,
+                    "tsconfig.json does not parse; the config key stays pending"
+                );
+                return Ok(Err(key.to_string()));
+            }
+        },
+        Err(_) => serde_json::json!({"compilerOptions": {}}),
+    };
+    // `tsconfig.paths.X` → `compilerOptions.paths.X`; any other
+    // remainder spelling is a planner/engine contract mismatch — the
+    // key stays pending loud instead of guessing a location.
+    let Some(location) = remainder.strip_prefix("paths.") else {
+        tracing::warn!(
+            code = "MIG-CONFIG",
+            key = %key,
+            "unrecognized tsconfig key spelling (only `tsconfig.paths.X` is mapped); \
+             the config key stays pending"
+        );
+        return Ok(Err(key.to_string()));
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(value) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                code = "MIG-CONFIG",
+                key = %key,
+                value = %value,
+                error = %e,
+                "the planned value is not valid JSON; the config key stays pending"
+            );
+            return Ok(Err(key.to_string()));
+        }
+    };
+    let Some(existing) = value_json
+        .get("compilerOptions")
+        .and_then(|c| c.get("paths"))
+        .and_then(|p| p.get(location))
+    else {
+        if !set_json_path(&mut value_json, location, parsed.clone()) {
+            tracing::warn!(
+                code = "MIG-CONFIG",
+                file = %path.display(),
+                "tsconfig.json is not a JSON object; the config key stays pending"
+            );
+            return Ok(Err(key.to_string()));
+        }
+        write_json(&path, &value_json)?;
+        return Ok(Ok(key.to_string()));
+    };
+    if existing == &parsed {
+        return Ok(Ok(key.to_string()));
+    }
+    tracing::warn!(
+        code = "MIG-CONFIG",
+        key = %key,
+        "tsconfig.json already carries a different value for this key; \
+         it is never overwritten — the config key stays pending"
+    );
+    Ok(Err(key.to_string()))
+}
+
+/// Set `compilerOptions.paths.<location> = value` on the JSON document,
+/// creating the intermediate objects. `false` when the document is not
+/// a JSON object (the caller keeps the key pending — nothing written).
+/// Runs only after the existing-value checks, so it never overwrites
+/// user data.
+fn set_json_path(doc: &mut serde_json::Value, location: &str, value: serde_json::Value) -> bool {
+    let Some(doc) = doc.as_object_mut() else {
+        return false;
+    };
+    let options = doc
+        .entry("compilerOptions")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(options) = options.as_object_mut() else {
+        return false;
+    };
+    let paths = options
+        .entry("paths")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(paths) = paths.as_object_mut() else {
+        return false;
+    };
+    paths.insert(location.to_string(), value);
+    true
+}
+
+/// Serialize `tsconfig.json` the way the file convention spells it
+/// (two-space indent, trailing newline).
+///
+/// # Errors
+///
+/// [`MIG_IO`] when the file cannot be written.
+fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), OxideError> {
+    let mut text = serde_json::to_string_pretty(value)
+        .map_err(|e| refuse_io(&format!("cannot serialize {}", path.display()), &e))?;
+    text.push('\n');
+    fs::write(path, text).map_err(|e| refuse_io(&format!("cannot write {}", path.display()), &e))
+}
+
+/// Merge one bare dotted key (`routes.compat` = `"next"`) into
+/// `oxide.config.ts`. The file is the scaffold's own shape —
+/// `export default defineConfig({ ... })` or `export default { ... }` —
+/// and the merge is text surgery: existing rows are never rewritten, a
+/// missing top-level object is created minimal, a leaf joins an
+/// existing top-level object, a present equal value re-applies as a
+/// no-op, a present different value or an unrecognizable shape stays
+/// pending loud.
+///
+/// # Errors
+///
+/// [`MIG_IO`] when the file cannot be read or written.
+fn apply_oxide_config_key(
+    root: &Path,
+    key: &str,
+    value: &str,
+) -> Result<ConfigKeyOutcome, OxideError> {
+    let path = root.join("oxide.config.ts");
+    let (text, created) = match fs::read_to_string(&path) {
+        Ok(text) => (text, false),
+        Err(_) => (
+            "import { defineConfig } from '@oxide-fw/core'\n\n\
+             export default defineConfig({\n})\n"
+                .to_string(),
+            true,
+        ),
+    };
+    let Some(span) = config_object_span(&text) else {
+        if created {
+            tracing::warn!(
+                code = "MIG-CONFIG",
+                file = %path.display(),
+                "the freshly created oxide.config.ts does not spell the scaffold \
+                 object; the config key stays pending"
+            );
+        } else {
+            tracing::warn!(
+                code = "MIG-CONFIG",
+                file = %path.display(),
+                "oxide.config.ts spells neither a defineConfig object nor a \
+                 plain export-default object the engine recognizes; \
+                 the config key stays pending"
+            );
+        }
+        return Ok(Err(key.to_string()));
+    };
+    let segments: Vec<&str> = key.split('.').collect();
+    // Already present? The leaf spelling inside the object span decides:
+    // the same literal is the idempotent no-op, a different literal is
+    // never overwritten.
+    if let Some((row_start, row_end)) = existing_leaf_row(&text, span, &segments) {
+        let existing = text[row_start..row_end].trim_end_matches(',');
+        let wanted = format!("{}: {}", segments.last().unwrap_or(&key), value);
+        if existing.trim() == wanted {
+            return Ok(Ok(key.to_string()));
+        }
+        tracing::warn!(
+            code = "MIG-CONFIG",
+            key = %key,
+            "oxide.config.ts already carries a different value for this key; \
+             it is never overwritten — the config key stays pending"
+        );
+        return Ok(Err(key.to_string()));
+    }
+    let Some(merged) = insert_row(&text, span, &segments, value) else {
+        tracing::warn!(
+            code = "MIG-CONFIG",
+            key = %key,
+            "the config key's path runs deeper than the engine merges into an \
+             existing object; the config key stays pending"
+        );
+        return Ok(Err(key.to_string()));
+    };
+    fs::write(&path, &merged)
+        .map_err(|e| refuse_io(&format!("cannot write {}", path.display()), &e))?;
+    Ok(Ok(key.to_string()))
+}
+
+/// The `(start, end)` byte span of the scaffold's exported config
+/// object — the `{` after `defineConfig(` (or after `export default`)
+/// through its matching `}`, found by counting braces. `None` when the
+/// file spells neither shape (the pending posture).
+fn config_object_span(text: &str) -> Option<(usize, usize)> {
+    let open = define_config_open(text).or_else(|| export_default_open(text))?;
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    for (i, byte) in bytes.iter().enumerate().skip(open) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some((open, i));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The `{` opening the `defineConfig({...})` object literal, if the
+/// file spells it.
+fn define_config_open(text: &str) -> Option<usize> {
+    let marker = text.find("defineConfig(")?;
+    text[marker..].find('{').map(|i| marker + i)
+}
+
+/// The `{` opening a plain `export default { ... }` object literal, if
+/// the file spells it.
+fn export_default_open(text: &str) -> Option<usize> {
+    let marker = text.find("export default")?;
+    text[marker..].find('{').map(|i| marker + i)
+}
+
+/// The row a dotted key spells when its whole path is absent:
+/// `routes: { compat: "next" }` for `routes.compat` — nested objects
+/// for deeper paths, the value pasted verbatim.
+fn nested_row(segments: &[&str], value: &str) -> String {
+    let mut row = format!("{}: {value}", segments[segments.len() - 1]);
+    for segment in segments[..segments.len() - 1].iter().rev() {
+        row = format!("{segment}: {{ {row} }}");
+    }
+    row
+}
+
+/// Find the leaf row an already-applied key would occupy inside the
+/// object span — the leaf segment spelled as `leaf:` at ANY depth the
+/// engine merges at (the top object or one nested object down, the
+/// shapes the planners emit). The row's `(start, end)` byte span
+/// covers `leaf: <literal>` without the trailing comma. `None` when
+/// the leaf is absent (or the path runs deeper than the engine
+/// merges — which reads as absent, and the insert path stays pending
+/// through [`insert_row`]).
+fn existing_leaf_row(
+    text: &str,
+    span: (usize, usize),
+    segments: &[&str],
+) -> Option<(usize, usize)> {
+    let leaf = *segments.last()?;
+    let needle = format!("{leaf}:");
+    let object = text.get(span.0..span.1)?;
+    let at = span.0 + object.find(&needle)?;
+    let after = at + needle.len();
+    let rest = text.get(after..)?;
+    let end = after + rest.find([',', '\n', '}']).unwrap_or(rest.len());
+    Some((at, end))
+}
+
+/// Insert the absent key's row into the object span. The top-level
+/// segment already present means the leaf joins THAT object (inline or
+/// block form); otherwise the whole nested row inserts before the
+/// object's closing brace. `None` when the shape cannot be merged (a
+/// path deeper than one nested object, or a non-object top-level
+/// segment) — the caller keeps the key pending instead of a corrupted
+/// insert.
+fn insert_row(text: &str, span: (usize, usize), segments: &[&str], value: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let open = span.0;
+    let close = span.1;
+    // The leaf-only spelling (`compat: "next"`) — the shape inserted
+    // when the top-level segment already exists (the full nested row
+    // would spell the segment twice).
+    let leaf_only = format!("{}: {value}", segments[segments.len() - 1]);
+    // The full nested row (`routes: { compat: "next" }`) — the shape
+    // inserted when the whole path is absent.
+    let leaf_row = nested_row(segments, value);
+    // The top-level segment present: find `segment: {` and insert the
+    // leaf inside that object (the `routes` shape both planners emit).
+    let head = format!("{}:", segments[0]);
+    let object_text = text.get(open..=close).unwrap_or_default();
+    if let Some(at) = object_text.find(&head) {
+        if segments.len() > 2 {
+            return None;
+        }
+        let brace = open + at + head.len();
+        let Some(inner) = text[brace..].find('{').map(|i| brace + i) else {
+            // `segment:` bound to something that is not an object
+            // literal — the engine does not rewrite user expressions.
+            return None;
+        };
+        let mut depth = 0usize;
+        let mut inner_close = inner;
+        for (i, byte) in bytes.iter().enumerate().skip(inner) {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        inner_close = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Inline shape `routes: { dir: 'x' }` — the leaf joins the
+        // one line; the original trailing whitespace between the last
+        // value and the brace is consumed, the row carries its own
+        // single-space padding, and the tail resumes AT the brace.
+        let inline = !text[inner..=inner_close].contains('\n');
+        let (insert_at, tail_from, row) = if inline {
+            let content_end = inner + 1 + text[inner + 1..inner_close].trim_end().len();
+            let trimmed = text[inner + 1..content_end].trim();
+            let row = if trimmed.is_empty() || trimmed.ends_with(',') {
+                format!(" {leaf_only} ")
+            } else {
+                format!(", {leaf_only} ")
+            };
+            (content_end, inner_close, row)
+        } else {
+            // The last content line before the closing brace: the
+            // insertion point — a missing trailing comma is supplied
+            // on THAT line, then the leaf joins as its own row.
+            let before = &text[..inner_close];
+            let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+            let last_line = text[line_start..inner_close].trim_end();
+            let row_indent = last_line.len().saturating_sub(last_line.trim_start().len());
+            let mut row = String::new();
+            if !last_line.is_empty() && !last_line.ends_with(',') {
+                row.push(',');
+            }
+            row.push('\n');
+            row.push_str(&" ".repeat(row_indent));
+            row.push_str(&leaf_only);
+            row.push(',');
+            let at = line_start + last_line.len();
+            (at, at, row)
+        };
+        let mut merged = String::with_capacity(text.len() + row.len());
+        merged.push_str(&text[..insert_at]);
+        merged.push_str(&row);
+        merged.push_str(&text[tail_from..]);
+        return Some(merged);
+    }
+    // The top-level segment absent: the whole nested row inserts before
+    // the object's closing brace, two-space indented.
+    let before = &text[..close];
+    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+    let last_line = text[line_start..close].trim_end();
+    let needs_comma = !last_line.is_empty() && !last_line.ends_with(',');
+    let mut merged = String::with_capacity(text.len() + leaf_row.len() + 8);
+    merged.push_str(&text[..close]);
+    if needs_comma {
+        merged.push(',');
+    }
+    merged.push('\n');
+    merged.push_str("  ");
+    merged.push_str(&leaf_row);
+    merged.push(',');
+    merged.push_str(&text[close..]);
+    Some(merged)
 }
 
 // --------------------------------------------------------------- SvelteKit
