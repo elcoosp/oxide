@@ -208,13 +208,13 @@ Plugin and dependency advisories (§17.2)
 
 ### `oxide migrate`
 
-Migrate to oxide from a detected source framework (V2-E03): a dry run prints the plan; `--apply` performs the mechanical halves (renames + import rewrites) and requires a clean git tree unless `--force`. The framework is detected from the project's manifest and config signatures; an explicit `source` must match it
+Migrate to oxide from a detected source framework (V2-E03): a dry run prints the plan; `--apply` performs the mechanical halves (renames + import rewrites + the plan's config keys) and requires a clean git tree unless `--force`. The framework is detected from the project's manifest and config signatures; an explicit `source` must match it
 
 | argument | description |
 | --- | --- |
 | `--root <ROOT>` |  |
 | `<source>` | The expected source framework (`sveltekit\|next\|nuxt\|vite`) — optional; given, it must match the detection |
-| `--apply <APPLY>` | Apply the plan's mechanical halves (renames + import rewrites). A dry run never writes |
+| `--apply <APPLY>` | Apply the plan's mechanical halves (renames + import rewrites + the config keys). A dry run never writes |
 | `apply = true` |  |
 | `apply = false` |  |
 | `--force <FORCE>` | Apply even when the git tree is dirty (the clean-tree gate exists so a half-migration can be reverted) |
