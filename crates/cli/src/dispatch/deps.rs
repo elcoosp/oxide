@@ -122,4 +122,13 @@ pub(crate) struct DispatchDeps {
     /// render stage emits no flag script and `window.__oxide.search`
     /// stays unset.
     pub search_flag: Option<&'static str>,
+    /// V2-F17 / SEC-09: the dev session token the `/__oxide` dev plane is
+    /// guarded with, minted at the serve boot when the inspector is
+    /// attached (`crates/cli/src/serve/start.rs`). The render stage presents
+    /// it to the page through `window.__oxide.devToken` (the
+    /// `application/oxide-dev-token` tag) so the cost overlay can speak the
+    /// dev-token-guarded `/__oxide/cost` endpoint. `None` — production, or
+    /// a dev boot with the inspector off — emits no tag and every page
+    /// stays byte-identical.
+    pub dev_token: Option<String>,
 }
