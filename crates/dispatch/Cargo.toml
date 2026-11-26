@@ -66,6 +66,15 @@ name = "middleware"
 harness = false
 required-features = ["bench-util"]
 
+# V2-A05 step 4 (the CLI adoption's seam): the per-request locals fold —
+# the adopted `RequestLocals` shape (session extraction + the
+# `apply_middleware_locals` fold + one `to_value()` snapshot) against the
+# pre-A05 ad-hoc raw-Value merge, at 1/4/8 middleware layers.
+[[bench]]
+name = "locals_fold"
+harness = false
+required-features = ["bench-util"]
+
 # V2-F04: criterion bench for the experiments assignment engine.
 [[bench]]
 name = "experiments"
