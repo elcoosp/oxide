@@ -22,6 +22,7 @@ import { setRouteComponentSource, isParamSegment, type ClientManifestLike } from
 import './tt.ts'
 import { attachDeferGlue, type DeferGlue } from './defer-glue.ts'
 import { connectHmr, scheduleStashRestore } from './hmr.ts'
+import { mountCostOverlay } from './cost-overlay.ts'
 import { startReplay } from './replay.ts'
 import type { FrameworkAdapter } from '../types.ts'
 import { loadMessages, setMessageLocales } from './messages.ts'
@@ -496,6 +497,14 @@ export function bootWithRouter(
           connectHmr()
         } catch (e) {
           console.warn?.('oxide: HMR websocket failed to open', e)
+        }
+        // V2-F17: the component-cost dev overlay (`?ox-cost` or Alt+Shift+O)
+        // rides the same ESM-dev-only gate as HMR — production never mounts
+        // it, and a failed mount is a degraded dev tool, not a broken boot.
+        try {
+          mountCostOverlay()
+        } catch (e) {
+          console.warn?.('oxide: cost overlay failed to mount', e)
         }
       }
     }
