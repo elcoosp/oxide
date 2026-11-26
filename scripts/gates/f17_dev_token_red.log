@@ -1,0 +1,15 @@
+
+error[E0425]: cannot find function `dev_token_tag` in this scope
+     --> crates/cli/src/tests.rs:13274:16
+      |
+13274 |     assert_eq!(dev_token_tag(None, "nonce-1"), "");
+      |                ^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `dev_token_tag` in this scope
+     --> crates/cli/src/tests.rs:13283:15
+      |
+13283 |     let tag = dev_token_tag(Some("a<b"), "nonce-1");
+      |               ^^^^^^^^^^^^^ not found in this scope
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `oxide-fw-cli` (lib test) due to 3 previous errors
