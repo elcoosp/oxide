@@ -1,0 +1,7 @@
+  lookup (get): 2 blocks/hit
+  splice (get + materialize): 7 blocks/hit
+  full-response (get + materialize + headers into OxideResponse): 16 blocks/hit
+  headers-vec-clone (the removed intermediate): 11 blocks/hit
+  block_on control: 0 blocks/hit
+l0_alloc budget: the hit's own work = 7 blocks/hit (budget 12)
+bench-done
