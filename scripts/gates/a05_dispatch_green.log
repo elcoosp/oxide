@@ -1,0 +1,431 @@
+warning: Cargo.toml: unused manifest key: workspace.dependencies.solidjs-compiler.dir
+warning: workspace (manifest) generated 1 warning
+   Compiling smallvec v1.16.4
+   Compiling yoke v0.8.4
+   Compiling hashbrown v0.17.1
+   Compiling zerovec v0.11.9
+   Compiling writeable v0.6.4
+   Compiling litemap v0.8.3
+   Compiling tinystr v0.8.5
+   Compiling potential_utf v0.1.6
+   Compiling icu_locale_core v2.4.0
+   Compiling zerotrie v0.2.5
+   Compiling icu_collections v2.4.0
+   Compiling icu_provider v2.4.0
+   Compiling ropey v1.6.1
+   Compiling bitflags v2.13.2
+   Compiling compact_str v0.10.0
+   Compiling oxc_data_structures v0.155.0
+   Compiling tracing-core v0.1.36
+   Compiling oxc_allocator v0.155.0
+   Compiling oxc_estree v0.155.0
+   Compiling oxc_str v0.155.0
+   Compiling parking_lot_core v0.9.12
+   Compiling icu_locale_fallback v2.4.0
+   Compiling oxc_span v0.155.0
+   Compiling serde_json v1.0.154
+   Compiling tracing v0.1.44
+   Compiling icu_segmenter v2.4.0
+   Compiling parking_lot v0.12.5
+   Compiling socket2 v0.6.5
+   Compiling errno v0.3.14
+   Compiling oxc_index v5.0.0
+   Compiling textwrap v0.16.4
+   Compiling signal-hook-registry v1.4.8
+   Compiling mio v1.2.4
+   Compiling oxc_diagnostics v0.155.0
+   Compiling tokio v1.54.1
+   Compiling oxc_syntax v0.155.0
+   Compiling oxc_regular_expression v0.155.0
+   Compiling getrandom v0.2.17
+   Compiling ring v0.17.14
+   Compiling oxc_ast v0.155.0
+   Compiling getrandom v0.4.3
+   Compiling oxide-fw-diagnostics v0.17.0 (/home/z/my-project/work/oxide/crates/diagnostics)
+   Compiling typenum v1.20.1
+   Compiling simd-adler32 v0.3.10
+   Compiling arrayvec v0.7.8
+   Compiling blake3 v1.8.7
+   Compiling miniz_oxide v0.9.1
+   Compiling generic-array v0.14.7
+   Compiling indexmap v2.14.2
+   Compiling rustls v0.23.46
+   Compiling oxc_ecmascript v0.155.0
+   Compiling oxc_ast_visit v0.155.0
+   Compiling simdutf8 v0.1.5
+   Compiling postcard v1.1.3
+   Compiling oxc_semantic v0.155.0
+   Compiling rustls-webpki v0.103.16
+   Compiling futures-executor v0.3.34
+   Compiling regex-automata v0.4.18
+   Compiling futures v0.3.34
+   Compiling oxc-browserslist v5.0.1
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling oxc_compat v0.155.0
+   Compiling oxc_sourcemap v9.0.0
+   Compiling oxc_traverse v0.155.0
+   Compiling oxide-fw-edge-primitives v0.17.0 (/home/z/my-project/work/oxide/crates/edge-primitives)
+   Compiling uuid v1.29.0
+   Compiling tokio-util v0.7.20
+   Compiling derive_more-impl v2.1.1
+   Compiling oxc_parser v0.155.0
+   Compiling derive_more v2.1.1
+   Compiling oxc_transformer v0.155.0
+   Compiling moka v0.12.16
+   Compiling dashmap v6.2.1
+   Compiling sha2 v0.10.9
+   Compiling bytecheck v0.8.3
+   Compiling cssparser v0.36.0
+   Compiling rand v0.10.3
+   Compiling icu_normalizer v2.4.0
+   Compiling oxc_codegen v0.155.0
+   Compiling icu_properties v2.4.0
+   Compiling redb v4.4.0
+   Compiling rustls-platform-verifier v0.7.1
+   Compiling crc32fast v1.5.3
+   Compiling encoding_rs v0.8.42
+   Compiling selectors v0.37.0
+   Compiling h2 v0.4.20
+   Compiling oxide-fw-cache v0.17.0 (/home/z/my-project/work/oxide/crates/cache)
+   Compiling quinn-proto v0.11.19
+   Compiling idna_adapter v1.2.2
+   Compiling oxide-fw-compiler v0.17.0 (/home/z/my-project/work/oxide/crates/compiler)
+   Compiling quinn-udp v0.5.16
+   Compiling oxide-fw-odf v0.17.0 (/home/z/my-project/work/oxide/crates/odf)
+   Compiling rend v0.5.4
+   Compiling regex v1.13.1
+   Compiling lol_html v3.0.3
+   Compiling rkyv v0.8.18
+   Compiling hyper v1.12.0
+   Compiling oxide-fw-jshost v0.17.0 (/home/z/my-project/work/oxide/crates/jshost)
+   Compiling quinn v0.11.12
+   Compiling idna v1.1.0
+   Compiling h3 v0.0.8
+   Compiling matchers v0.2.0
+   Compiling oxide-fw-adapters v0.17.0 (/home/z/my-project/work/oxide/crates/adapters)
+   Compiling form_urlencoded v1.2.2
+   Compiling tracing-log v0.2.0
+   Compiling tracing-serde v0.2.0
+   Compiling memmap2 v0.9.12
+   Compiling rustix v1.1.6
+   Compiling getrandom v0.3.4
+   Compiling hyper-util v0.1.21
+   Compiling clap_builder v4.6.7
+   Compiling tracing-subscriber v0.3.23
+   Compiling oxide-fw-router v0.17.0 (/home/z/my-project/work/oxide/crates/router)
+   Compiling h3-quinn v0.0.10
+   Compiling url v2.5.8
+   Compiling oxide-fw-config v0.17.0 (/home/z/my-project/work/oxide/crates/config)
+   Compiling flate2 v1.1.10
+   Compiling oxide-fw-render v0.17.0 (/home/z/my-project/work/oxide/crates/render)
+   Compiling tokio-rustls v0.26.6
+   Compiling tokio-stream v0.1.19
+   Compiling oxide-fw-server v0.17.0 (/home/z/my-project/work/oxide/crates/server)
+   Compiling ciborium v0.2.2
+   Compiling clap v4.6.7
+   Compiling tinytemplate v1.2.1
+   Compiling page_size v0.6.0
+   Compiling criterion v0.8.2
+   Compiling tempfile v3.27.0
+   Compiling oxide-fw-dispatch v0.17.0 (/home/z/my-project/work/oxide/crates/dispatch)
+    Finished `test` profile [unoptimized] target(s) in 1m 22s
+     Running unittests src/lib.rs (target/debug/build/oxide-fw-dispatch/5def6b169482b0e4/out/oxide_fw_dispatch-5def6b169482b0e4)
+
+running 32 tests
+test build::tests::generation_set_snapshot_lists_current_and_windowed_previous ... ok
+test build::tests::generation_set_accepts_its_current_id ... ok
+test build::tests::header_value_matches_names_case_insensitively ... ok
+test flow::tests::continue_falls_through_to_the_next_stage ... ok
+test flow::tests::respond_carries_the_final_response ... ok
+test flow::tests::stages_compose_in_sequence_until_one_responds ... ok
+test record::tests::store_keys_reject_the_traversal_shapes ... ok
+test record::tests::the_sha256_prefix_matches_the_d30_cross_implementation_shape ... ok
+test replay::tests::normalize_nonce_handles_a_split_or_unterminated_value ... ok
+test url::tests::action_from_query_reads_the_sveltekit_convention ... ok
+test url::tests::action_from_query_rejects_non_action_queries ... ok
+test url::tests::action_from_query_strips_fragments_and_decodes ... ok
+test url::tests::data_route_decodes ... ok
+test url::tests::data_route_defaults_to_root ... ok
+test url::tests::data_route_empty_value_falls_back_to_root ... ok
+test url::tests::data_route_first_param_wins ... ok
+test loads::tests::head_needs_parent_is_a_no_op ... ok
+test url::tests::data_route_only_get ... ok
+test url::tests::data_route_prefix_must_be_exact ... ok
+test url::tests::data_route_requires_the_data_path ... ok
+test url::tests::normalize_folds_one_trailing_slash_and_is_idempotent ... ok
+test url::tests::normalize_keeps_root ... ok
+test url::tests::normalize_leaves_plain_paths_untouched ... ok
+test url::tests::normalize_pins_the_empty_result_of_a_double_slash_root ... ok
+test url::tests::parse_form_urlencoded_decodes_plus_as_space_and_escapes ... ok
+test url::tests::parse_form_urlencoded_empty_body_yields_no_pairs ... ok
+test url::tests::parse_form_urlencoded_parses_pairs_in_order ... ok
+test url::tests::parse_form_urlencoded_skips_empty_and_bare_segments ... ok
+test url::tests::path_of_keeps_paths_without_separators ... ok
+test url::tests::path_of_pins_the_empty_input_result ... ok
+test url::tests::path_of_strips_query_and_fragment ... ok
+test url::tests::rewrite_hop_budget_is_pinned ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/build_tdd.rs (target/debug/build/oxide-fw-dispatch/fcd1064772a54f6c/out/build_tdd-fcd1064772a54f6c)
+
+running 22 tests
+test advertise_build_leaves_existing_header_alone ... ok
+test advertise_build_is_idempotent ... ok
+test advertise_build_sets_the_current_id ... ok
+test current_accepted ... ok
+test data_plane_paths ... ok
+test header_wins_over_the_live_query_param ... ok
+test live_query_rejects_expired_previous_build ... ok
+test live_route_accepts_the_current_build_in_the_query ... ok
+test live_route_read_build_from_the_query_parameter ... ok
+test live_route_without_build_param_allows_through ... ok
+test previous_accepted_inside_window_only ... ok
+test promote_demotes_current_to_previous ... ok
+test query_build_fallback_applies_to_the_live_route_only ... ok
+test stage_allows_current_build_header ... ok
+test stage_allows_missing_header ... ok
+test stage_header_lookup_is_case_insensitive ... ok
+test stage_ignores_non_data_plane_paths ... ok
+test stage_rejection_only_short_circuits_data_plane ... ok
+test stage_rejects_expired_previous_build ... ok
+test stage_rejects_stale_build_with_409_and_stale_header ... ok
+test two_generations_never_share_a_window ... ok
+test unknown_rejected ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/chain_tdd.rs (target/debug/build/oxide-fw-dispatch/8b089d14940887d4/out/chain_tdd-8b089d14940887d4)
+
+running 13 tests
+test error_propagates_verbatim ... ok
+test empty_chain_continues_with_initial_locals ... ok
+test initial_locals_seed_the_chain ... ok
+test headers_accumulate_last_writer_wins ... ok
+test inner_sees_outer_locals_and_empty_stays_none ... ok
+test locals_merge_later_wins ... ok
+test non_object_initial_locals_normalizes_to_empty ... ok
+test redirect_stops_chain ... ok
+test resume_marker_absent_from_chain_runs_everything ... ok
+test resume_after_skips_run_layers_and_the_rewriting_layer ... ok
+test runs_outer_to_inner ... ok
+test rewrite_returns_target_with_locals_and_resume_marker ... ok
+test short_circuit_stops_chain ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/experiments_tdd.rs (target/debug/build/oxide-fw-dispatch/0d73846c93a7ccc8/out/experiments_tdd-0d73846c93a7ccc8)
+
+running 14 tests
+test assignment_is_deterministic ... ok
+test cookie_minted_when_absent_and_stable_when_present ... ok
+test empty_sticky_value_assigns_nobody ... ok
+test header_sticky_reads_the_named_header ... ok
+test ip_hash_sticky_uses_the_client_ip ... ok
+test reserved_experiments_slot_wins_over_middleware ... ok
+test resolved_assignments_reach_request_locals ... ok
+test routes_prefix_filters_experiments ... ok
+test traffic_100_assigns_everyone ... ok
+test traffic_zero_assigns_nobody ... ok
+test two_cookie_experiments_each_get_their_own_minted_cookie ... ok
+test vary_suffix_empty_without_experiments ... ok
+test vary_suffix_lists_assignments_id_sorted ... ok
+test distribution_within_5_percent_over_10000_ids ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/flow_tdd.rs (target/debug/build/oxide-fw-dispatch/0cea3b330459daa2/out/flow_tdd-0cea3b330459daa2)
+
+running 3 tests
+test an_all_continue_pipeline_yields_no_response ... ok
+test a_streaming_response_flows_through_the_protocol_unchanged ... ok
+test the_runner_takes_the_first_response_and_skips_the_rest ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/idem_tdd.rs (target/debug/build/oxide-fw-dispatch/70fbcee8e3dc4abb/out/idem_tdd-70fbcee8e3dc4abb)
+
+running 12 tests
+test a_missing_header_runs_the_handler ... ok
+test a_handler_error_is_not_stored ... ok
+test a_store_failure_degrades_and_runs_the_handler ... ok
+test different_keys_run_separately ... ok
+test five_hundreds_are_never_stored ... ok
+test four_hundreds_are_stored ... ok
+test the_l1_key_is_the_idem_prefix ... ok
+test replay_of_the_same_key_returns_identical_bytes_and_runs_once ... ok
+test the_stored_response_converts_to_the_executed_shape ... ok
+test the_put_carries_the_day_ttl ... ok
+test the_stored_response_strips_set_cookie ... ok
+test the_stored_shape_roundtrips_through_json ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/loads_tdd.rs (target/debug/build/oxide-fw-dispatch/4b1c32038bf52fb9/out/loads_tdd-4b1c32038bf52fb9)
+
+running 17 tests
+test a_runner_failure_maps_to_failed ... ok
+test a_parent_needing_load_starts_after_and_reads_its_predecessors_data ... ok
+test an_empty_graph_yields_no_data ... ok
+test a_runner_failure_poisons_only_its_dependents ... ok
+test an_independent_load_does_not_wait_behind_a_parent_needing_head ... ok
+test failed_result_carries_the_failing_node_index ... ok
+test independent_loads_overlap_on_the_clock ... ok
+test independent_loads_still_run_when_an_outer_load_short_circuits ... ok
+test outcomes_are_complete_when_the_graph_short_circuits ... ok
+test outcomes_elapsed_reports_each_node_in_input_order ... ok
+test outputs_keep_input_order_regardless_of_completion ... ok
+test parent_data_chains_through_three_levels ... ok
+test run_load_graph_delegates_to_the_outcomes_seam ... ok
+test short_circuit_by_a_head_load_is_returned_without_parent_data ... ok
+test streaming_node_returns_its_settle_receiver_by_index ... ok
+test streaming_page_still_reads_its_parent_data ... ok
+test the_first_short_circuit_in_input_order_wins ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/locals_tdd.rs (target/debug/build/oxide-fw-dispatch/72ec53dc33ada649/out/locals_tdd-72ec53dc33ada649)
+
+running 9 tests
+test apply_middleware_locals_ignores_non_object ... ok
+test apply_middleware_locals_merges_later_wins ... ok
+test empty_reserved_keys_are_omitted ... ok
+test apply_middleware_locals_reports_reserved_collisions_dsp101 ... ok
+test reserved_keys_are_the_documented_three ... ok
+test empty_user_composes_reserved_only ... ok
+test session_only_composes_when_present ... ok
+test reserved_keys_win_over_user ... ok
+test to_value_merges_user_and_reserved ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pools_tdd.rs (target/debug/build/oxide-fw-dispatch/c569ddf8762912f9/out/pools_tdd-c569ddf8762912f9)
+
+running 9 tests
+test a_bounded_structure_evicts_the_oldest_pool_first ... ok
+test an_old_build_header_routes_to_its_own_pool ... ok
+test an_expired_or_unknown_id_routes_nowhere ... ok
+test expiry_drops_the_old_pool_and_keeps_the_current_one ... ok
+test html_and_headerless_requests_always_route_current ... ok
+test promoting_the_current_id_is_a_no_op_and_keeps_the_live_handle ... ok
+test re_promoting_a_demoted_id_is_the_rollback_path ... ok
+test the_stage_drives_set_and_pools_with_identical_verdicts ... ok
+test the_brownout_eviction_returns_the_handle_for_shutdown ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/record_tdd.rs (target/debug/build/oxide-fw-dispatch/66440de4f049e841/out/record_tdd-66440de4f049e841)
+
+running 12 tests
+test a_recording_finishes_into_a_versioned_record ... ok
+test include_secrets_keeps_the_original_values ... ok
+test secret_headers_redact_to_the_sha256_prefix ... ok
+test the_dev_all_policy_records_every_status ... ok
+test the_dir_store_writes_reads_and_refuses_traversal ... ok
+test the_errors_policy_records_only_failures ... ok
+test the_record_serializes_camel_case_keys ... ok
+test the_recording_runner_captures_the_load_graph ... ok
+test the_sample_roll_is_deterministic_per_request ... ok
+test the_sampled_policy_rolls_and_always_captures_errors ... ok
+test the_shared_handle_finish_matches_the_owned_finish ... ok
+test fetch_bodies_are_base64_and_capped_at_one_mib ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/replay_runner_tdd.rs (target/debug/build/oxide-fw-dispatch/a5a182b3c74d40e5/out/replay_runner_tdd-a5a182b3c74d40e5)
+
+running 10 tests
+test load_names_a_missing_record_with_rpl_001 ... ok
+test load_rejects_a_traversal_shaped_record_id ... ok
+test load_refuses_an_unsupported_record_version_with_rpl_005 ... ok
+test outcome_serializes_camel_case_for_the_json_surface ... ok
+test load_round_trips_the_finished_record ... ok
+test runner_replays_a_byte_identical_response_ok ... ok
+test runner_surfaces_the_executor_refusal ... ok
+test runner_surfaces_the_store_refusal ... ok
+test runner_reports_a_status_divergence ... ok
+test runner_warns_but_runs_a_stale_build_record ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/replay_tdd.rs (target/debug/build/oxide-fw-dispatch/2a14811d488e1c00/out/replay_tdd-2a14811d488e1c00)
+
+running 9 tests
+test an_older_build_id_warns_but_the_replay_runs ... ok
+test an_unexpected_call_refuses_with_rpl_002 ... ok
+test normalize_nonce_blanks_only_the_hashed_nonce_values ... ok
+test server_timing_is_re_derived_state_too ... ok
+test replay_diff_reports_only_real_divergences ... ok
+test the_diff_serializes_for_the_json_surface ... ok
+test the_matcher_plays_the_recorded_ops_in_order ... ok
+test the_per_request_header_trio_is_not_a_divergence ... ok
+test the_sequences_play_back_in_observation_order ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/route_ctx_tdd.rs (target/debug/build/oxide-fw-dispatch/500875905b23fc31/out/route_ctx_tdd-500875905b23fc31)
+
+running 13 tests
+test answers_unmatched_compose_the_not_found_pair ... ok
+test answers_matched_route_compose_chain_layout_error ... ok
+test answers_without_table_fall_back_to_the_tree ... ok
+test match_data_route_decodes_and_folds_target ... ok
+test match_data_route_defaults_to_root ... ok
+test match_data_route_requires_get ... ok
+test match_data_route_targets_the_query_route ... ok
+test match_param_route_labels_pattern_of_without_table ... ok
+test match_root_candidates_hit_index ... ok
+test match_trailing_slash_folds_and_labels_from_table ... ok
+test match_unmatched_404s_with_not_found_context ... ok
+test pattern_of_shapes ... ok
+test matched_label_borrows_precomputed_pattern_arc ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/skew_tdd.rs (target/debug/build/oxide-fw-dispatch/8767da14cf1e11ee/out/skew_tdd-8767da14cf1e11ee)
+
+running 11 tests
+test an_expired_demotion_is_unknown_and_evicted ... ok
+test a_bounded_pool_evicts_the_oldest_demotion_first ... ok
+test capacity_zero_keeps_only_the_current_build ... ok
+test expire_reports_how_many_demotions_went ... ok
+test pool_accepts_current_and_demoted_within_their_windows ... ok
+test pool_evict_oldest_drops_the_oldest_demotion_and_refuses_it_after ... ok
+test pool_evict_oldest_is_a_no_op_when_nothing_is_demoted ... ok
+test promoting_a_demoted_id_moves_it_back_to_current ... ok
+test promoting_the_current_id_is_a_no_op ... ok
+test the_pool_answers_the_four_data_plane_paths ... ok
+test the_stage_drives_set_and_pool_with_identical_verdicts ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/stream_tdd.rs (target/debug/build/oxide-fw-dispatch/729224289c89f063/out/stream_tdd-729224289c89f063)
+
+running 5 tests
+test build_check_applies_to_the_resume_route ... ok
+test absent_build_header_allows_the_resume_route ... ok
+test current_build_header_continues_on_the_resume_route ... ok
+test stream_resume_id_parses_the_id_segment ... ok
+test stream_resume_path_joins_the_data_plane ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/url_tdd.rs (target/debug/build/oxide-fw-dispatch/3ab2b432437cd5a6/out/url_tdd-3ab2b432437cd5a6)
+
+running 5 tests
+test a_data_request_resolves_to_a_matchable_route_path ... ok
+test a_form_post_resolves_its_action_and_body_together ... ok
+test a_page_request_never_resolves_to_a_data_route ... ok
+test invalid_percent_escapes_pass_through_unchanged ... ok
+test unicode_routes_round_trip_through_the_data_endpoint ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests oxide_fw_dispatch
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
