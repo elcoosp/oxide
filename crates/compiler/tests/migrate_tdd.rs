@@ -38,9 +38,12 @@
 //!   note plus the explicit routes dir, nothing renamed.
 //! - [`apply_plan`] performs the plan's mechanical halves — renames
 //!   (create-dir + rename, refusing an existing target with
-//!   `MIG-TARGET`) and import rewrites (span surgery over the scanned
-//!   spans) — and reports the config keys and notes as the work the
-//!   `--apply` CLI pass (or a human) finishes.
+//!   `MIG-TARGET`), import rewrites (span surgery over the scanned
+//!   spans), and the config keys (the E03 apply-in-engine half: a
+//!   `tsconfig.` key merges into `tsconfig.json`, a bare dotted key
+//!   merges into `oxide.config.ts`; a diverging value or an
+//!   unrecognizable shape stays pending loud) — and reports the manual
+//!   notes as the work a human finishes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -466,17 +469,27 @@ fn apply_sveltekit_moves_the_files_and_reports() {
     let ApplyReport {
         renamed,
         rewrote,
+        config_applied,
         config_pending,
         manual,
     } = report;
     assert_eq!(renamed, plan.renames.len(), "every rename applied");
     assert_eq!(rewrote, plan.rewrites.len());
     assert_eq!(
-        config_pending.len(),
-        plan.config.len(),
-        "config keys stay pending"
+        config_applied,
+        vec!["tsconfig.paths.$lib".to_string()],
+        "the $lib tsconfig entry is applied, not pending"
     );
+    assert!(config_pending.is_empty(), "nothing stays pending silently");
     assert_eq!(manual, plan.manual.len());
+    let tsconfig: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("tsconfig.json")).expect("the created tsconfig.json"),
+    )
+    .expect("the created tsconfig parses");
+    assert_eq!(
+        tsconfig["compilerOptions"]["paths"]["$lib"][0], "./src/lib",
+        "the $lib alias lands under compilerOptions.paths"
+    );
     assert!(
         !root.join("src/routes/+page.svelte").exists(),
         "the source is gone"
@@ -553,17 +566,239 @@ fn apply_refuses_an_existing_target() {
     drop(tmp);
 }
 
-/// Apply is a no-op for a plan with no mechanical halves (the Vite
-/// wrap): the report carries the pending config keys and notes only.
+/// Apply is a no-op for the mechanical halves on a plan with no
+/// renames or rewrites (the Vite wrap) — but the plan's config key is
+/// no longer pending: the `routes.dir` key lands in the created
+/// `oxide.config.ts` (the §V2-E03 apply-in-engine half).
 #[test]
-fn apply_vite_wrap_reports_pending_only() {
+fn apply_vite_writes_the_routes_dir_key_into_a_created_config() {
     let (tmp, root) = copy_fixture("vite");
     let plan = plan_for(&root).expect("the vite plan");
     let report = apply_plan(&root, &plan).expect("the apply");
     assert_eq!(report.renamed, 0);
     assert_eq!(report.rewrote, 0);
-    assert_eq!(report.config_pending.len(), plan.config.len());
+    assert_eq!(
+        report.config_applied,
+        vec!["routes.dir".to_string()],
+        "the explicit routes dir is applied"
+    );
+    assert!(
+        report.config_pending.is_empty(),
+        "nothing stays pending silently: {:?}",
+        report.config_pending
+    );
     assert_eq!(report.manual, plan.manual.len());
+    let config =
+        fs::read_to_string(root.join("oxide.config.ts")).expect("the created oxide.config.ts");
+    assert!(
+        config.contains("export default defineConfig({"),
+        "the skeleton rides the codebase's own defineConfig shape: {config}"
+    );
+    assert!(
+        config.contains("routes: { dir: \"src/routes\" },"),
+        "the dotted key lands as the nested row: {config}"
+    );
+    drop(tmp);
+}
+
+// ------------------------------------------------- apply: config keys (§V2-E03)
+
+/// §V2-E03: "next.config.js keys mapped by table (images.remotePatterns,
+/// redirects, rewrites, headers, i18n) into `oxide.config.ts`" — the
+/// apply-in-engine half: the Next plan's `routes.compat` key lands in
+/// the config file the apply creates, and the report says applied.
+#[test]
+fn apply_writes_the_next_compat_key_into_a_created_config() {
+    let (tmp, root) = copy_fixture("next");
+    let plan = plan_for(&root).expect("the next plan");
+    let report = apply_plan(&root, &plan).expect("the apply");
+    assert_eq!(
+        report.config_applied,
+        vec!["routes.compat".to_string()],
+        "the compat key is applied, not pending"
+    );
+    assert!(
+        report.config_pending.is_empty(),
+        "nothing stays pending silently: {:?}",
+        report.config_pending
+    );
+    let config =
+        fs::read_to_string(root.join("oxide.config.ts")).expect("the created oxide.config.ts");
+    assert!(
+        config.contains("routes: { compat: \"next\" },"),
+        "the dotted key lands as the nested row: {config}"
+    );
+    drop(tmp);
+}
+
+/// A config file that already exists gains the key as a new row — the
+/// existing rows survive byte-identically (the apply never rewrites
+/// user code beyond the insertion).
+#[test]
+fn apply_merges_a_config_key_into_an_existing_config_object() {
+    let (tmp, root) = copy_fixture("vite");
+    fs::write(
+        root.join("oxide.config.ts"),
+        "import { defineConfig } from '@oxide-fw/core'\n\n\
+         export default defineConfig({\n  siteUrl: 'https://vite.example.com',\n})\n",
+    )
+    .expect("the seeded config writes");
+    let seeded = fs::read_to_string(root.join("oxide.config.ts")).expect("the seeded config");
+    let plan = plan_for(&root).expect("the vite plan");
+    let report = apply_plan(&root, &plan).expect("the apply");
+    assert_eq!(report.config_applied, vec!["routes.dir".to_string()]);
+    let config = fs::read_to_string(root.join("oxide.config.ts")).expect("the merged config");
+    assert!(
+        config.contains("siteUrl: 'https://vite.example.com',"),
+        "the existing row survives: {config}"
+    );
+    assert!(
+        config.contains("routes: { dir: \"src/routes\" },"),
+        "the dotted key lands as the nested row: {config}"
+    );
+    for line in seeded.lines().filter(|l| l.contains("siteUrl")) {
+        assert!(config.contains(line), "the untouched line survives: {line}");
+    }
+    drop(tmp);
+}
+
+/// A dotted key whose top-level segment already exists merges INTO the
+/// existing object (`routes: { dir }` gains `compat`) — never a second
+/// `routes` row.
+#[test]
+fn apply_merges_a_leaf_into_an_existing_top_level_object() {
+    let (tmp, root) = copy_fixture("next");
+    fs::write(
+        root.join("oxide.config.ts"),
+        "import { defineConfig } from '@oxide-fw/core'\n\n\
+         export default defineConfig({\n  routes: { dir: 'src/routes' },\n})\n",
+    )
+    .expect("the seeded config writes");
+    let plan = plan_for(&root).expect("the next plan");
+    let report = apply_plan(&root, &plan).expect("the apply");
+    assert_eq!(report.config_applied, vec!["routes.compat".to_string()]);
+    let config = fs::read_to_string(root.join("oxide.config.ts")).expect("the merged config");
+    assert!(
+        config.contains("routes: { dir: 'src/routes', compat: \"next\" }"),
+        "the leaf joins the existing object: {config}"
+    );
+    assert_eq!(
+        config.matches("routes:").count(),
+        1,
+        "exactly one routes row: {config}"
+    );
+    drop(tmp);
+}
+
+/// A key already present with a DIFFERENT value is never overwritten —
+/// the row stays pending (loud) and the file is byte-identical.
+#[test]
+fn apply_never_overwrites_a_diverging_config_value() {
+    let (tmp, root) = copy_fixture("next");
+    fs::write(
+        root.join("oxide.config.ts"),
+        "import { defineConfig } from '@oxide-fw/core'\n\n\
+         export default defineConfig({\n  routes: { compat: 'remix' },\n})\n",
+    )
+    .expect("the seeded config writes");
+    let seeded = fs::read_to_string(root.join("oxide.config.ts")).expect("the seeded config");
+    let plan = plan_for(&root).expect("the next plan");
+    let report = apply_plan(&root, &plan).expect("the apply");
+    assert!(
+        report.config_applied.is_empty(),
+        "a diverging value never applies: {:?}",
+        report.config_applied
+    );
+    assert_eq!(
+        report.config_pending,
+        vec!["routes.compat".to_string()],
+        "the diverging key stays pending, loud"
+    );
+    let config = fs::read_to_string(root.join("oxide.config.ts")).expect("the untouched config");
+    assert_eq!(config, seeded, "the file is byte-identical");
+    drop(tmp);
+}
+
+/// Re-applying a plan whose key already landed (same value) reports the
+/// key applied again and the file still carries exactly one row.
+#[test]
+fn apply_is_idempotent_for_an_already_applied_key() {
+    let (tmp, root) = copy_fixture("next");
+    let plan = plan_for(&root).expect("the next plan");
+    let first = apply_plan(&root, &plan).expect("the first apply");
+    assert_eq!(first.config_applied, vec!["routes.compat".to_string()]);
+    let once = fs::read_to_string(root.join("oxide.config.ts")).expect("the applied config");
+    let second = apply_plan(&root, &plan).expect("the second apply");
+    assert_eq!(
+        second.config_applied,
+        vec!["routes.compat".to_string()],
+        "the same value re-applies as a no-op write"
+    );
+    let twice = fs::read_to_string(root.join("oxide.config.ts")).expect("the re-applied config");
+    assert_eq!(once, twice, "the second apply does not duplicate the row");
+    drop(tmp);
+}
+
+/// The `tsconfig.` prefixed keys ride `tsconfig.json`, merging into the
+/// existing `compilerOptions.paths` — the seeded entries survive.
+#[test]
+fn apply_merges_the_tsconfig_paths_entry_preserving_siblings() {
+    let (tmp, root) = copy_fixture("sveltekit");
+    fs::write(
+        root.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "esnext",
+    "paths": {
+      "$components": ["./src/components"]
+    }
+  }
+}"#,
+    )
+    .expect("the seeded tsconfig writes");
+    let plan = plan_for(&root).expect("the sveltekit plan");
+    let report = apply_plan(&root, &plan).expect("the apply");
+    assert_eq!(
+        report.config_applied,
+        vec!["tsconfig.paths.$lib".to_string()]
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("tsconfig.json")).expect("read"))
+            .expect("the merged tsconfig parses");
+    assert_eq!(value["compilerOptions"]["paths"]["$lib"][0], "./src/lib");
+    assert_eq!(
+        value["compilerOptions"]["paths"]["$components"][0], "./src/components",
+        "the seeded path survives the merge"
+    );
+    assert_eq!(
+        value["compilerOptions"]["target"], "esnext",
+        "the unrelated compilerOptions survive"
+    );
+    drop(tmp);
+}
+
+/// A config file the engine cannot recognize (no `defineConfig` / no
+/// `export default` object) is never touched: the key stays pending,
+/// loud, and the file is byte-identical.
+#[test]
+fn apply_refuses_an_unrecognizable_config_shape_as_pending() {
+    let (tmp, root) = copy_fixture("next");
+    fs::write(
+        root.join("oxide.config.ts"),
+        "// a config the engine cannot recognize\nexport const weird = 1\n",
+    )
+    .expect("the unrecognizable config writes");
+    let seeded = fs::read_to_string(root.join("oxide.config.ts")).expect("the seeded config");
+    let plan = plan_for(&root).expect("the next plan");
+    let report = apply_plan(&root, &plan).expect("the apply");
+    assert!(
+        report.config_applied.is_empty(),
+        "an unrecognizable shape never applies: {:?}",
+        report.config_applied
+    );
+    assert_eq!(report.config_pending, vec!["routes.compat".to_string()]);
+    let config = fs::read_to_string(root.join("oxide.config.ts")).expect("the untouched config");
+    assert_eq!(config, seeded, "the file is byte-identical");
     drop(tmp);
 }
 
