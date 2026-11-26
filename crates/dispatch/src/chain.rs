@@ -29,8 +29,9 @@
 //!   from the top (the re-dispatch may have matched a shallower route).
 //! - **Errors**: a dispatcher failure propagates verbatim; the walk stops.
 //!
-//! Pinned by `crates/dispatch/tests/chain_tdd.rs`. The CLI wiring is
-//! deferred to the A01 phase-3 move (see `docs/deviations.md`).
+//! Pinned by `crates/dispatch/tests/chain_tdd.rs`; the CLI adoption
+//! landed (`stage_middleware` drives the chain through [`run_chain`], the
+//! caller-side prelude/postlude kept — V2-A05).
 
 use oxide_fw_server::page_renderer::MiddlewareDispatchArgs;
 use oxide_fw_server::{MiddlewareDispatcher, MiddlewareRunError, MiddlewareRunResult};
