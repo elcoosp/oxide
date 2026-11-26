@@ -12447,6 +12447,13 @@ async fn dev_server_serves_esm_urls_over_http() {
         home.contains("src=\"/@boot/boot.mjs\""),
         "home HTML should reference /@boot/boot.mjs with a single leading slash: {home}"
     );
+    // V2-F17: the dev boot presents the SEC-09 token to the page
+    // (`window.__oxide.devToken`) — the cost overlay's wire to the guarded
+    // `/__oxide/cost` endpoint.
+    assert!(
+        home.contains("application/oxide-dev-token"),
+        "dev home HTML should carry the dev-token page wire: {home}"
+    );
     assert!(
         !home.contains("//@boot/boot.mjs"),
         "boot script URL must not have a doubled leading slash (ERR_NAME_NOT_RESOLVED): {home}"
@@ -13249,6 +13256,40 @@ fn boot_script_tag_without_a_digest_is_byte_identical_to_the_pre_e04_shape() {
         tag,
         r#"<script type="module" src="/@boot/boot.mjs" nonce="nonce-1"></script>"#
     );
+}
+
+// ------------------------------------------------------------------ V2-F17 (cost overlay wire)
+
+#[test]
+fn dev_token_tag_mints_the_page_wire_with_the_page_nonce() {
+    // V2-F17: the dev boot mints the SEC-09 token the `/__oxide` plane is
+    // guarded with; the render stage presents it to the page through
+    // `window.__oxide.devToken` so the cost overlay can speak the
+    // dev-token-guarded endpoint. The tag carries the PAGE nonce — a
+    // nonce'd CSP executes only nonce'd inline scripts.
+    let tag = dev_token_tag(Some("abc123"), "nonce-1");
+    assert_eq!(
+        tag,
+        r#"<script type="application/oxide-dev-token" nonce="nonce-1">window.__oxide=window.__oxide||{};window.__oxide.devToken="abc123"</script>"#
+    );
+}
+
+#[test]
+fn dev_token_tag_is_empty_without_a_token() {
+    // `None` (production, or a dev boot with the inspector off) keeps the
+    // page byte-identical — the tag only exists on the dev wire.
+    assert_eq!(dev_token_tag(None, "nonce-1"), "");
+}
+
+#[test]
+fn dev_token_tag_escapes_script_breaking_bytes() {
+    // The token is minted hex, but the builder JSON-encodes whatever it is
+    // handed and `<`-escapes like the deferred-tag builder — a value that
+    // could break out of the script element cannot, whatever the minting
+    // path does someday.
+    let tag = dev_token_tag(Some("a<b"), "nonce-1");
+    assert!(tag.contains(r#""a\u003cb""#), "{tag}");
+    assert!(!tag.contains("<b>"), "{tag}");
 }
 
 #[test]
