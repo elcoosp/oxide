@@ -55,20 +55,21 @@ fn node_host_runtimes_hold_sse_like_node() {
     }
 }
 
-/// Cloudflare Workers can stream responses but do not guarantee long-lived
-/// connections: Degraded with a documented poll fallback.
+/// Cloudflare Workers cannot hold long-lived SSE connections:
+/// `live: true` is refused at build time (Unsupported), per V2-E09.
 #[test]
-fn edge_workers_degrade_to_poll() {
+fn edge_workers_refuse_live_at_build_time() {
     for t in [Target::Cloudflare, Target::CloudflarePages] {
         assert_eq!(
             capability_matrix(t).get(&Capability::Live),
-            Some(&FeatureSupport::Degraded),
-            "{t:?} falls back to transport: 'poll'"
+            Some(&FeatureSupport::Unsupported),
+            "{t:?} refuses live: true at build time"
         );
-        let reason = degradation(t, Capability::Live).expect("documented");
-        assert!(
-            reason.contains("poll"),
-            "the degradation names the poll fallback: {reason}"
+        // Unsupported cells have no degradation reason (§18 refusal rule)
+        assert_eq!(
+            degradation(t, Capability::Live),
+            None,
+            "{t:?} has no degradation reason for Live (Unsupported)"
         );
     }
 }

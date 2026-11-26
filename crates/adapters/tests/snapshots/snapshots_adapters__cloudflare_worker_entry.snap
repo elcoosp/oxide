@@ -2,14 +2,78 @@
 source: crates/adapters/tests/snapshots_adapters.rs
 expression: "cloudflare_worker_entry(\"build-abc123\")"
 ---
-// Oxide Cloudflare Workers entry (§18, §2 D18). build_id: build-abc123
-// WinterCG-compatible: `edge.js` dispatches through the web-standard
-// handler contract `(Request) => Promise<Response>`.
-import handler from "./edge.js";
+// Oxide Cloudflare Workers entry (§18, §2 D18, §V2-E09). build_id: build-abc123
+// WinterCG-compatible: the web-standard handler contract
+// `(req: Request, env, ctx) => Promise<Response>`.
+import { init, matchRoute, applyRules } from "./edge.js";
+import handler from "./handler.js";
+
+let ready = null;
+
+// Best-effort KV tag index (§V2-E09): one KV key per tag listing the L0 keys
+// that carry it. Capped at 4096 entries per tag and 16 tags per response — the
+// index is eventually consistent (KV list lags), documented as best effort.
+const TAG_INDEX_CAP = 4096;
+const TAG_INDEX_MAX_TAGS = 16;
+async function indexTags(env, l0Key, tagsHeader) {
+  if (!env.OXIDE_KV || !tagsHeader) return;
+  const tags = tagsHeader.split(",").map((t) => t.trim()).filter(Boolean);
+  for (const tag of tags.slice(0, TAG_INDEX_MAX_TAGS)) {
+    const idxKey = "tag:" + tag;
+    const list = await env.OXIDE_KV.get(idxKey, "json").catch(() => null);
+    const next = Array.isArray(list) ? list : [];
+    if (!next.includes(l0Key)) next.push(l0Key);
+    if (next.length > TAG_INDEX_CAP) next.shift();
+    await env.OXIDE_KV.put(idxKey, JSON.stringify(next), { expirationTtl: 3600 });
+  }
+}
 
 export default {
-  async fetch(request, env, ctx) {
-    const response = await handler(request, env, ctx);
-    return response ?? new Response("Not Found", { status: 404 });
+  async fetch(req, env, ctx) {
+    const url = new URL(req.url);
+    // Shipped payload: instantiate the wasm once (no silent JS fallback).
+    if (env.EDGE) {
+      try {
+        ready ??= init(env.EDGE);
+        await ready;
+      } catch (e) {
+        console.error("[oxide edge] wasm init failed for a shipped payload:", e);
+        ready = null;
+      }
+    }
+    if (env.EDGE && ready) {
+      // §12.1: native rules (redirects/rewrites/headers) in Rust before any JS.
+      const rule = applyRules(url.pathname, req.headers.get("accept-language") ?? "");
+      if (rule && rule.redirect) {
+        return Response.redirect(new URL(rule.redirect, url), rule.status || 308);
+      }
+      // Asset passthrough: Cloudflare ASSETS binding serves static assets
+      // directly (also bypassed via _routes.json at the CDN).
+      if (env.ASSETS) {
+        const asset = await env.ASSETS.fetch(req);
+        if (asset.status !== 404) return asset;
+      }
+      const m = matchRoute(url.pathname);
+      if (!m) return new Response("Not Found", { status: 404 });
+      // KV L0 get/put with TTL (§V2-E09): `l0:<route id>:<search>`.
+      if (env.OXIDE_KV) {
+        const key = "l0:" + m.id + ":" + url.search;
+        const hit = await env.OXIDE_KV.get(key, "arrayBuffer");
+        if (hit) {
+          return new Response(hit, {
+            headers: { "content-type": "text/html; charset=utf-8", "x-oxide-cache": "HIT" },
+          });
+        }
+        const res = await handler(req, env, ctx);
+        if (res.ok) {
+          const body = await res.clone().arrayBuffer();
+          ctx.waitUntil(env.OXIDE_KV.put(key, body, { expirationTtl: 60 }));
+          ctx.waitUntil(indexTags(env, key, res.headers.get("x-oxide-tags")));
+        }
+        return res;
+      }
+    }
+    // No wasm shipped (or init failed): the JS-only handler dispatches.
+    return handler(req, env, ctx) ?? new Response("Not Found", { status: 404 });
   },
 };
