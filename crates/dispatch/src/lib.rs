@@ -22,7 +22,10 @@
 //!   CLI adoption deferred, see `docs/deviations.md`).
 //! - [`locals`]: the unified request locals ([`RequestLocals`]) with the
 //!   pipeline-owned reserved keys `session` / `locale` / `experiments`
-//!   and the DSP-101 collision report (V2-A05; CLI adoption deferred).
+//!   and the DSP-101 collision report (V2-A05; the CLI adoption landed —
+//!   `stage_prelude` builds the slot, the middleware stage folds the
+//!   chain's answer through it, every consumer reads the `to_value()`
+//!   snapshot).
 //! - [`loads`]: the §9.2 parallel load graph (`run_load_graph`) —
 //!   independent loads concurrent, `parent()`-needing loads chained, the
 //!   substrate `stage_loaders` wires (V2-A06; CLI adoption deferred, see
