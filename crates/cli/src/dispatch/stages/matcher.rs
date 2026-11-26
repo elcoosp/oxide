@@ -59,7 +59,11 @@ pub(crate) async fn stage_match(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow {
     // >>> stage-wrapper (not part of the moved body; split_selfcheck --stages strips this block)
     cx.normalized = decision.normalized;
     cx.req_path = decision.req_path;
-    cx.resolved_locale = resolved_locale;
+    // V2-A05 step 4: the resolved locale rides the pipeline-owned slot
+    // (the `RequestLocals.locale` field — every consumer reads it through
+    // the `to_value()` snapshot or the typed field; there is no separate
+    // `resolved_locale` ctx carrier anymore).
+    cx.locals.locale = resolved_locale;
     cx.is_data_request = decision.is_data_request;
     cx.matched = decision.matched;
     cx.route_ctx = decision.route_ctx;
