@@ -23,7 +23,8 @@ pub(crate) async fn stage_data_route(d: &DispatchDeps, cx: &mut RequestCtx) -> F
     let middleware_locals = &cx.middleware_locals;
     let middleware_headers = &cx.middleware_headers;
     let layout_module_paths = &cx.layout_module_paths;
-    let resolved_locale = &cx.resolved_locale;
+    // V2-A05 step 4: the locale rides the pipeline-owned slot.
+    let resolved_locale = &cx.locals.locale;
     let session_codec = d.session_codec.clone();
     let waterfall = cx.waterfall.clone();
     let is_live = cx.is_live;
