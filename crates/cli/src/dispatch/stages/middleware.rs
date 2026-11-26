@@ -55,33 +55,23 @@ pub(crate) async fn stage_middleware(d: &DispatchDeps, cx: &mut RequestCtx) -> F
     // propagate verbatim, and a B-22 marker naming a layer absent
     // from this route's chain runs the chain from the top).
     let stage_middleware_start = std::time::Instant::now();
-    // §16.6: decode the encrypted session cookie into
-    // `locals.session` so a loader/action reads it as an object. A
-    // missing or tampered cookie is an empty session, never an error.
-    // B-05: the sealed token rides the `Cookie` header, never a
-    // header named `oxide_session`; read it through the cookie parser.
-    let mut middleware_locals: serde_json::Value = serde_json::json!({});
-    if let Some(codec) = session_codec.as_deref()
-        && let Some(token) = req_owned
-            .header("cookie")
-            .and_then(|h| oxide_fw_server::cookie_value(h, "oxide_session"))
-        && let Ok(sess) = oxide_fw_server::Session::decode(codec, token)
-    {
-        middleware_locals["session"] = sess.to_value();
-    }
-    // B-05: baseline for the session write-back. Middleware is the
-    // only phase that can refine `locals.session` (the loader gets a
-    // deserialized copy), so diffing around it captures every change.
-    let session_before = middleware_locals.get("session").cloned();
+    // V2-A05 step 4: the §16.6 session decoded into the pipeline-owned
+    // slot by the prelude (the slot IS the inbound state — the old
+    // standing-in `middleware_locals["session"]` seeding is deleted with
+    // the decode that built it). B-05: baseline for the session
+    // write-back. Middleware is the only phase that can refine
+    // `locals.session` (the loader gets a deserialized copy), so
+    // diffing around it captures every change.
+    let session_before = cx.locals.session.clone();
     // B-22: resume after the layer that issued the rewrite.
     let resume_after = req_owned.mw_resume_after.clone();
     let Some(dispatcher) = middleware_for_dispatch.as_deref() else {
         // No middleware dispatcher attached (the test-pipeline
-        // default): the decoded session still flows downstream and
+        // default): the prelude-seeded slot still flows downstream and
         // the write-back runs (a no-op without a codec).
         return finish_middleware_stage(
             cx,
-            middleware_locals,
+            serde_json::Value::Object(serde_json::Map::new()),
             Vec::new(),
             stage_middleware_start,
             &session_codec,
@@ -95,6 +85,10 @@ pub(crate) async fn stage_middleware(d: &DispatchDeps, cx: &mut RequestCtx) -> F
     let params_json = cx
         .endpoint_params_json
         .get_or_insert_with(|| build_params_json(params));
+    // V2-A05 step 4: the chain's initial locals are the prelude-built
+    // snapshot (the slot's `to_value()` — session and locale visible to
+    // every layer), not a standing-in empty literal.
+    let initial_locals = cx.middleware_locals.clone();
     let outcome = run_chain(
         dispatcher,
         &middleware_module_paths,
@@ -105,7 +99,7 @@ pub(crate) async fn stage_middleware(d: &DispatchDeps, cx: &mut RequestCtx) -> F
             headers: req_owned.headers.as_slice(),
             body: endpoint_body.as_ref(),
         },
-        middleware_locals,
+        initial_locals,
         resume_after.as_deref(),
     )
     .await;
@@ -159,14 +153,16 @@ pub(crate) async fn stage_middleware(d: &DispatchDeps, cx: &mut RequestCtx) -> F
                         }
                     }
                     if let Ok(token) = sess.encode(codec) {
+                        // Micro-debt (the V2-A05 fold's file): the
+                        // line-continuation whitespace + `.replace("  ", " ")`
+                        // bandage is gone — the format spells one clean line,
+                        // byte-identical output.
                         resp = resp.with_header(
                             "set-cookie",
                             format!(
-                                "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; \
-                                 Max-Age={}",
-                                session_ttl_secs()
-                            )
-                            .replace("  ", " "),
+                                "oxide_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={ttl}",
+                                ttl = session_ttl_secs()
+                            ),
                         );
                     }
                 }
@@ -226,23 +222,48 @@ pub(crate) async fn stage_middleware(d: &DispatchDeps, cx: &mut RequestCtx) -> F
     }
 }
 
-/// The Continue-path postlude: B-05 session write-back, PERF-06 timing,
-/// the F15 record capture and the context writes. Shared by the
-/// no-dispatcher early return, the unreachable rewrite fallback and the
-/// chain's Continue outcome so the three paths cannot drift.
+/// The Continue-path postlude: the V2-A05 fold into the pipeline-owned
+/// slot, B-05 session write-back, PERF-06 timing, the F15 record capture
+/// and the context writes. Shared by the no-dispatcher early return, the
+/// unreachable rewrite fallback and the chain's Continue outcome so the
+/// three paths cannot drift.
 fn finish_middleware_stage(
     cx: &mut RequestCtx,
-    middleware_locals: serde_json::Value,
+    returned_locals: serde_json::Value,
     mut middleware_headers: Vec<(String, String)>,
     stage_middleware_start: std::time::Instant,
     session_codec: &Option<std::sync::Arc<oxide_fw_server::SessionCodec>>,
     session_before: Option<&serde_json::Value>,
 ) -> Flow {
+    // V2-A05 step 4: the chain's merged answer folds into the ONE
+    // pipeline-owned slot. A staged `session` REFINES the slot (the B-05
+    // write-back below persists the refinement — WP-r10-1); the other
+    // reserved keys (`locale`, `experiments`) are REPORTED under DSP-101
+    // and dropped — the pipeline-owned slots win at `to_value` time (the
+    // matcher's i18n resolution and the F04 assignments decide). User
+    // keys merge later-wins into the free-form map (the substrate's
+    // `apply_middleware_locals`).
+    let mut rest = returned_locals;
+    let staged_session = rest.get("session").cloned();
+    if let Some(obj) = rest.as_object_mut() {
+        obj.remove("session");
+    }
+    if let Some(sess) = staged_session {
+        cx.locals.session = Some(sess);
+    }
+    let collisions = cx.locals.apply_middleware_locals(rest);
+    if !collisions.is_empty() {
+        tracing::warn!(
+            code = oxide_fw_dispatch::locals::DSP_RESERVED_KEY_COLLISION,
+            keys = %collisions.join(", "),
+            "middleware staged pipeline-owned locals keys; the pipeline-owned slots win",
+        );
+    }
     // B-05: write-back. If a middleware layer changed
     // `locals.session`, seal it and ride a `Set-Cookie` on every
     // response path via `middleware_headers`.
     if let Some(codec) = session_codec.as_deref() {
-        let after = middleware_locals.get("session").cloned();
+        let after = cx.locals.session.clone();
         if after.as_ref() != session_before && after.is_some() {
             let mut sess = oxide_fw_server::Session::new();
             if let Some(obj) = after.as_ref().and_then(|v| v.as_object()) {
@@ -268,12 +289,15 @@ fn finish_middleware_stage(
     // PERF-06: the middleware phase is done — record its duration
     // so `Server-Timing` reports the real cost (§12.1 step 8).
     let middleware_ms = stage_middleware_start.elapsed().as_secs_f64() * 1000.0;
+    // V2-A05 step 4: refresh the `to_value()` snapshot every consumer
+    // reads (one merge point; the consumers clone, never re-merge) —
+    // BEFORE the F15 record capture, which reads the final locals.
+    cx.middleware_locals = cx.locals.to_value();
     // V2-F15: the middleware locals are final — the record captures
     // them (the loader's threaded copy rides the loader inputs).
     if let Some(rec) = cx.req_recording.as_ref() {
-        rec.set_locals(&middleware_locals);
+        rec.set_locals(&cx.middleware_locals);
     }
-    cx.middleware_locals = middleware_locals;
     cx.middleware_headers = middleware_headers;
     cx.middleware_ms = middleware_ms;
     cx.session_before = session_before.cloned();
