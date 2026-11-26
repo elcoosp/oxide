@@ -1,0 +1,37 @@
+
+running 32 tests
+test apply_merges_a_config_key_into_an_existing_config_object ... ok
+test apply_is_idempotent_for_an_already_applied_key ... ok
+test apply_merges_a_leaf_into_an_existing_top_level_object ... ok
+test apply_merges_the_tsconfig_paths_entry_preserving_siblings ... ok
+test apply_never_overwrites_a_diverging_config_value ... ok
+test apply_refuses_an_existing_target ... ok
+test apply_refuses_an_unrecognizable_config_shape_as_pending ... ok
+test apply_rewrites_import_specifiers_by_span ... ok
+test apply_vite_writes_the_routes_dir_key_into_a_created_config ... ok
+test apply_sveltekit_moves_the_files_and_reports ... ok
+test apply_writes_the_next_compat_key_into_a_created_config ... ok
+test detect_framework_falls_back_to_the_signature_configs ... ok
+test detect_framework_prefers_the_framework_package_over_vite ... ok
+test detect_framework_table ... ok
+test import_rewrite_serializes_camel_case ... ok
+test next_config_and_pages_router_notes ... ok
+test next_plan_golden ... ok
+test next_plan_rewrites_and_compat_key ... ok
+test next_use_client_reports_island_candidates ... ok
+test nuxt_data_fetching_flags_manual ... ok
+test nuxt_plan_golden ... ok
+test nuxt_renames_map_pages_into_the_routes_root ... ok
+test plan_for_unknown_root_refuses_detect ... ok
+test plan_is_the_spec_four_field_model ... ok
+test regen_goldens ... ignored, the golden-regen path runs explicitly: cargo test -p oxide-fw-compiler --test migrate_tdd -- --ignored regen_goldens
+test sveltekit_hooks_plain_becomes_the_middleware_rename ... ok
+test plans_are_deterministic ... ok
+test sveltekit_hooks_sequence_flags_manual ... ok
+test sveltekit_lib_alias_lands_as_a_tsconfig_path ... ok
+test sveltekit_plan_golden ... ok
+test sveltekit_renames_strip_the_route_markers ... ok
+test vite_plan_golden ... ok
+
+test result: ok. 31 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
