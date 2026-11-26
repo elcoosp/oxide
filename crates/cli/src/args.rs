@@ -325,9 +325,10 @@ pub enum Command {
     },
     /// Migrate to oxide from a detected source framework (V2-E03): a dry
     /// run prints the plan; `--apply` performs the mechanical halves
-    /// (renames + import rewrites) and requires a clean git tree unless
-    /// `--force`. The framework is detected from the project's manifest
-    /// and config signatures; an explicit `source` must match it.
+    /// (renames + import rewrites + the plan's config keys) and requires
+    /// a clean git tree unless `--force`. The framework is detected from
+    /// the project's manifest and config signatures; an explicit
+    /// `source` must match it.
     Migrate {
         #[arg(long, default_value = ".")]
         root: String,
@@ -335,7 +336,7 @@ pub enum Command {
         /// optional; given, it must match the detection.
         source: Option<String>,
         /// Apply the plan's mechanical halves (renames + import
-        /// rewrites). A dry run never writes.
+        /// rewrites + the config keys). A dry run never writes.
         #[arg(long, default_value_t = false)]
         apply: bool,
         /// Apply even when the git tree is dirty (the clean-tree gate
