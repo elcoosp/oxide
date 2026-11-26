@@ -13,7 +13,7 @@ use std::hint::black_box;
 use std::path::Path;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use oxide_fw_compiler::migrate::{apply_plan, plan_for};
+use oxide_fw_compiler::migrate::{ConfigKey, MigrationPlan, apply_plan, plan_for};
 
 /// The fixture root the benches copy from (the committed fixture
 /// project; the plan pins walk it read-only).
@@ -95,5 +95,89 @@ fn bench_apply(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_plan, bench_apply);
+/// Seed a 24-path `tsconfig.json` (the merge bench's document shape).
+fn seed_tsconfig(root: &Path) {
+    let mut paths = serde_json::Map::new();
+    for i in 0..24 {
+        paths.insert(
+            format!("$alias{i}"),
+            serde_json::json!([format!("./src/lib{i}")]),
+        );
+    }
+    fs::write(
+        root.join("tsconfig.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "compilerOptions": { "target": "esnext", "paths": paths }
+        }))
+        .expect("the bench tsconfig serializes"),
+    )
+    .expect("the bench tsconfig writes");
+}
+
+/// Seed a 24-row `oxide.config.ts` (the insertion bench's document
+/// shape).
+fn seed_config(root: &Path) {
+    use std::fmt::Write as _;
+    let mut rows = String::new();
+    for i in 0..24 {
+        let _ = writeln!(rows, "  key{i}: 'value{i}',");
+    }
+    fs::write(
+        root.join("oxide.config.ts"),
+        format!(
+            "import {{ defineConfig }} from '@oxide-fw/core'\n\n\
+             export default defineConfig({{\n{rows}}})\n"
+        ),
+    )
+    .expect("the bench config writes");
+}
+
+/// The E03 apply-in-engine half: the config-key surgery cost — the
+/// tsconfig merge on a seeded 24-path document and the oxide.config.ts
+/// insertion over an existing 24-row `defineConfig` object, on a fresh
+/// copy per iteration (the same upper-bound convention as the apply
+/// group).
+fn bench_config_apply(c: &mut Criterion) {
+    let mut group = c.benchmark_group("migrate_config_apply");
+
+    group.bench_function("tsconfig_paths_merge_24", |b| {
+        b.iter(|| {
+            let tmp = tempfile::tempdir().expect("the tsconfig bench tempdir");
+            let root = tmp.path().join("app");
+            fs::create_dir_all(&root).expect("the bench root");
+            seed_tsconfig(&root);
+            let plan = MigrationPlan {
+                config: vec![ConfigKey {
+                    key: "tsconfig.paths.$lib".to_string(),
+                    value: "[\"./src/lib\"]".to_string(),
+                }],
+                ..MigrationPlan::default()
+            };
+            let report = apply_plan(&root, &plan).expect("the tsconfig bench apply");
+            black_box(report.config_applied.len());
+        });
+    });
+
+    group.bench_function("oxide_config_insert_24_rows", |b| {
+        b.iter(|| {
+            let tmp = tempfile::tempdir().expect("the config bench tempdir");
+            let root = tmp.path().join("app");
+            fs::create_dir_all(&root).expect("the bench root");
+            seed_config(&root);
+            let plan = MigrationPlan {
+                config: vec![ConfigKey {
+                    key: "routes.dir".to_string(),
+                    value: "\"src/routes\"".to_string(),
+                }],
+                ..MigrationPlan::default()
+            };
+            let report = apply_plan(&root, &plan).expect("the config bench apply");
+            black_box(report.config_applied.len());
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_plan, bench_apply, bench_config_apply);
 criterion_main!(benches);
