@@ -23,6 +23,7 @@ check() {
         2>/dev/null \
         | grep -v 'docs/scorecard-r9.md' \
         | grep -v 'docs/scorecard-r8.md' \
+        | grep -v 'docs/scorecard-r10.md' \
         | grep -v 'auditing-our-own-framework' \
         || true)
     if [ -n "$hits" ]; then
@@ -33,7 +34,7 @@ check() {
 }
 
 check '91 / 100|91/100'                 'the audited score moved past 91'
-check '93 / 100|93/100'                 'r10 scores 95/100'
+check '93 / 100|93/100'                 'the r10 scorecard does NOT re-score — the live record attributes ~93 to r9 and must stay qualified ("r9", "not re-scored"); the scorecard files themselves are excluded above'
 check '349 TypeScript|1,116 Rust'       'stale counts; see the README badge for the current numbers'
 check '1,190 Rust|387 TypeScript'        'stale counts; blog/homepage should use the current measured values'
 check '361 TypeScript|1,153 Rust'       'stale counts; see the README badge for the current numbers'
