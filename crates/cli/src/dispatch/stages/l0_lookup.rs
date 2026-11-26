@@ -133,7 +133,15 @@ pub(crate) async fn stage_l0_lookup(d: &DispatchDeps, cx: &mut RequestCtx) -> Fl
             None => (hit.materialize(nonce), None),
         };
         let mut resp = oxide_fw_server::OxideResponse::new(hit.status(), body);
-        for (k, v) in &hit.headers() {
+        // B09 budget repair: iterate the STORED headers directly — the old
+        // `hit.headers()` cloned the whole Vec (and every pair) into an
+        // intermediate that the `with_header` clone immediately discarded,
+        // paying every pair twice on the serving hot path. The committed
+        // `l0_alloc` dhat harness measures the hit's blocks before and
+        // after; the entry is the shared `Arc<Entry>` the P-03 seam
+        // serves, so the stored pair is the only source and the
+        // response's own clone is the one it keeps.
+        for (k, v) in hit.entry.headers.iter() {
             resp = resp.with_header(k, v.clone());
         }
         if let Some(enc) = &encoding {
