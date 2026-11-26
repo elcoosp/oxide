@@ -36,7 +36,8 @@ pub(crate) async fn stage_loaders(d: &DispatchDeps, cx: &mut RequestCtx) -> Flow
     let metrics = std::sync::Arc::clone(&d.metrics);
     let middleware_locals = cx.middleware_locals.clone();
     let session_codec = d.session_codec.clone();
-    let resolved_locale = cx.resolved_locale.clone();
+    // V2-A05 step 4: the locale rides the pipeline-owned slot.
+    let resolved_locale = cx.locals.locale.clone();
     let layout_module_paths = cx.layout_module_paths.clone();
     let waterfall = cx.waterfall.clone();
     let started = cx.started;
