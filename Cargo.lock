@@ -6434,6 +6434,7 @@ dependencies = [
  "clap",
  "criterion",
  "dashmap 6.2.1",
+ "dhat",
  "flate2",
  "futures",
  "image",
