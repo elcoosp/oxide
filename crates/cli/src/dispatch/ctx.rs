@@ -34,7 +34,13 @@ pub(crate) struct RequestCtx {
     pub(crate) normalized: String,
     pub(crate) raw: String,
     pub(crate) req_path: String,
-    pub(crate) resolved_locale: String,
+    /// V2-A05 step 4: the ONE pipeline-owned locals composition the
+    /// prelude builds (`locals.rs::RequestLocals`) — session from the
+    /// §16.6 codec, the locale from the matcher's i18n resolver, the
+    /// experiments from the assignment stage. Every consumer reads the
+    /// `to_value()` snapshot ([`Self::middleware_locals`]); no stage
+    /// threads a raw JSON map as locals anymore.
+    pub(crate) locals: oxide_fw_dispatch::locals::RequestLocals,
     pub(crate) is_data_request: bool,
     pub(crate) matched: Option<oxide_fw_router::MatchResult>,
     pub(crate) status: u16,
@@ -81,6 +87,12 @@ pub(crate) struct RequestCtx {
     pub(crate) l0_vary: String,
     pub(crate) l0_path: String,
     pub(crate) flight_key: String,
+    /// V2-A05 step 4: the `cx.locals.to_value()` snapshot every consumer
+    /// reads (`LoaderRunInput.locals`, `ActionDispatcher`,
+    /// `EndpointDispatcher`, the `/__data` envelope args). The stages that
+    /// mutate the slot (the prelude's session seed, the middleware fold,
+    /// the F04 assignments) refresh it; the consumers clone the snapshot,
+    /// never re-merge.
     pub(crate) middleware_locals: serde_json::Value,
     pub(crate) middleware_headers: Vec<(String, String)>,
     pub(crate) middleware_ms: f64,
@@ -122,7 +134,7 @@ impl RequestCtx {
             normalized: String::new(),
             raw: String::new(),
             req_path: String::new(),
-            resolved_locale: String::new(),
+            locals: oxide_fw_dispatch::locals::RequestLocals::default(),
             is_data_request: false,
             matched: None,
             status: 0,
